@@ -54,7 +54,16 @@ export interface Witden {
   close(): Promise<void>;
 }
 
+/** Worker processes never hold Docker access; computers are managed from the API process only. */
+const NO_DOCKER_ACCESS = new Proxy({} as ManagerApi, {
+  get: (_target, prop) =>
+    prop === "then"
+      ? undefined
+      : () => Promise.reject(new Error(`this worker process has no Docker access (${String(prop)})`)),
+});
+
 async function makeManager(settings: Settings): Promise<ManagerApi> {
+  if (settings.processRole === "worker") return NO_DOCKER_ACCESS;
   const mod: any = await import("@witden/manager");
   if (settings.managerUrl)
     return new mod.ManagerClient({ baseUrl: settings.managerUrl, token: settings.managerToken ?? "" });

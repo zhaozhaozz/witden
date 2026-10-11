@@ -1,0 +1,96 @@
+# Single-host deployment: PostgreSQL, the API, the worker and the Docker Manager.
+# Copy .env.example to .env and fill it in first; build the computer images with `make images`.
+#
+# Only the manager mounts the Docker socket. The API asks it for computer lifecycle over HTTP; the worker
+# has no Docker access at all and reaches computers only through the API's execution gateway. Computers
+# dial back to the runner hub (port 8330) through the host gateway. Read docs/security.md before exposing
+# this to a team (rootless Docker, a dedicated host or VM, or gVisor are recommended).
+
+x-platform: &platform
+  build: .
+  image: witden/platform:latest
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: witden
+      POSTGRES_USER: witden
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - witden-db:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U witden -d witden"]
+      interval: 5s
+      retries: 20
+
+  manager:
+    <<: *platform
+    command: ["node", "packages/manager/dist/main.js"]
+    # Only its own settings (no platform secrets) plus the Docker socket's group: DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+    group_add: ["${DOCKER_GID:?set DOCKER_GID in .env}"]
+    environment:
+      WITDEN_MANAGER_TOKEN: ${WITDEN_MANAGER_TOKEN:?set WITDEN_MANAGER_TOKEN in .env}
+      WITDEN_MANAGER_HOST: 0.0.0.0
+      WITDEN_MANAGER_DATA_DIR: /data/manager
+    volumes:
+      - witden-manager:/data
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    networks: [control]
+
+  api:
+    <<: *platform
+    command: ["node", "packages/server/dist/cli.js", "serve", "--role", "api"]
+    env_file: .env
+    environment:
+      WITDEN_DATABASE_URL: postgres://witden:${POSTGRES_PASSWORD}@db:5432/witden
+      WITDEN_MANAGER_URL: http://manager:8340
+      # fixed inside the container; WITDEN_PORT only chooses the published host port
+      WITDEN_PORT: "8320"
+      WITDEN_HUB_PORT: "8330"
+    ports:
+      - "${WITDEN_PORT:-8320}:8320"
+      # Runner hub: computers reach it as witden-hub (host gateway). Bind to the Docker bridge address to
+      # keep it off other interfaces, e.g. WITDEN_HUB_BIND=172.17.0.1
+      - "${WITDEN_HUB_BIND:-0.0.0.0}:8330:8330"
+    volumes:
+      - witden-data:/data
+    depends_on:
+      db: { condition: service_healthy }
+      manager: { condition: service_started }
+    networks: [control]
+
+  worker:
+    <<: *platform
+    command: ["node", "packages/server/dist/cli.js", "serve", "--role", "worker"]
+    env_file: .env
+    environment:
+      WITDEN_DATABASE_URL: postgres://witden:${POSTGRES_PASSWORD}@db:5432/witden
+      WITDEN_API_URL_FOR_WORKER: http://api:8320
+    volumes:
+      - witden-data:/data
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+    networks: [control]
+
+  # Build-only services for the computer images used by the built-in templates.
+  computer-shell:
+    build: { context: ., dockerfile: images/shell/Dockerfile }
+    image: witden/computer-shell:latest
+    profiles: ["images"]
+  computer-desktop:
+    build: { context: ., dockerfile: images/desktop/Dockerfile }
+    image: witden/computer-desktop:latest
+    profiles: ["images"]
+
+networks:
+  control: {}
+
+volumes:
+  witden-db:
+  witden-data:
+  witden-manager:
