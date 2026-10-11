@@ -22,6 +22,8 @@ export class Worker {
   readonly id = `${hostname()}:${process.pid}:${randomBytes(3).toString("hex")}`;
   private running = new Map<string, Promise<void>>();
   private stopped = false;
+  /** Scheduling runs by itself only after start(); tests step it with tick() / drain(). */
+  private started = false;
   private timer: NodeJS.Timeout | null = null;
   private heartbeat: NodeJS.Timeout | null = null;
   private unlisten: (() => Promise<void>) | null = null;
@@ -33,6 +35,7 @@ export class Worker {
   ) {}
 
   async start(database: Database, opts: { recoverAll?: boolean } = {}): Promise<void> {
+    this.started = true;
     if (opts.recoverAll) await this.recoverOrphans(true);
     this.unlisten = await database.listen(WAKE_CHANNEL, (what) => {
       if (what === "outbound") void this.opts.deliverOutbound?.();
@@ -52,7 +55,7 @@ export class Worker {
   }
 
   notify(): void {
-    if (this.stopped || this.ticking) return;
+    if (!this.started || this.stopped || this.ticking) return;
     this.ticking = true;
     this.tick()
       .catch((err) => console.error("[witden] worker tick failed", err))

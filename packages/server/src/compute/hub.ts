@@ -67,6 +67,37 @@ export interface StreamHandle {
   close(): void;
 }
 
+/**
+ * One tunnelled stream. Servers such as VNC speak first, so bytes (and a close) can arrive before the
+ * consumer has attached its listeners; they are held until then instead of being dropped.
+ */
+class StreamEntry {
+  private dataFns: ((d: Uint8Array) => void)[] = [];
+  private closeFns: ((r: string) => void)[] = [];
+  private held: Uint8Array[] = [];
+  private closedWith: string | null = null;
+
+  data(payload: Uint8Array): void {
+    if (this.dataFns.length) for (const fn of this.dataFns) fn(payload);
+    else this.held.push(payload);
+  }
+  close(reason: string): void {
+    if (this.closedWith !== null) return;
+    this.closedWith = reason;
+    for (const fn of this.closeFns) fn(reason);
+  }
+  onData(fn: (d: Uint8Array) => void): void {
+    this.dataFns.push(fn);
+    const held = this.held;
+    this.held = [];
+    for (const d of held) fn(d);
+  }
+  onClose(fn: (r: string) => void): void {
+    if (this.closedWith !== null) fn(this.closedWith);
+    else this.closeFns.push(fn);
+  }
+}
+
 type EventListener = (event: {
   event: string;
   sessionId?: string;
@@ -77,7 +108,7 @@ type EventListener = (event: {
 export class RunnerConnection {
   readonly connectedAt = new Date();
   private pending = new Map<string, Pending>();
-  private streams = new Map<number, { data: ((d: Uint8Array) => void)[]; close: ((r: string) => void)[] }>();
+  private streams = new Map<number, StreamEntry>();
   private streamOpens = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
   private nextStream = 1;
   private eventListeners = new Set<EventListener>();
@@ -93,7 +124,7 @@ export class RunnerConnection {
     transport.onText((text) => this.handleText(text));
     transport.onBinary((data) => {
       const { streamId, payload } = decodeStreamFrame(data);
-      for (const fn of this.streams.get(streamId)?.data ?? []) fn(payload);
+      this.streams.get(streamId)?.data(payload);
     });
     transport.onClose((reason) => this.shutdown(reason));
   }
@@ -128,7 +159,7 @@ export class RunnerConnection {
         opening.reject(new RunnerOpError("failed", msg.reason ?? "stream refused"));
         this.streamOpens.delete(msg.streamId);
       }
-      for (const fn of this.streams.get(msg.streamId)?.close ?? []) fn(msg.reason ?? "closed");
+      this.streams.get(msg.streamId)?.close(msg.reason ?? "closed");
       this.streams.delete(msg.streamId);
     } else if (msg.type === "ping") {
       this.transport.sendText(JSON.stringify({ type: "pong", at: msg.at }));
@@ -170,7 +201,7 @@ export class RunnerConnection {
 
   async openStream(port: number): Promise<StreamHandle> {
     const streamId = this.nextStream++;
-    const entry = { data: [] as ((d: Uint8Array) => void)[], close: [] as ((r: string) => void)[] };
+    const entry = new StreamEntry();
     this.streams.set(streamId, entry);
     await new Promise<void>((resolve, reject) => {
       this.streamOpens.set(streamId, { resolve, reject });
@@ -182,8 +213,8 @@ export class RunnerConnection {
     return {
       streamId,
       send: (data) => this.transport.sendBinary(encodeStreamFrame(streamId, data)),
-      onData: (fn) => entry.data.push(fn),
-      onClose: (fn) => entry.close.push(fn),
+      onData: (fn) => entry.onData(fn),
+      onClose: (fn) => entry.onClose(fn),
       close: () => {
         if (!this.streams.has(streamId)) return;
         this.streams.delete(streamId);
@@ -200,7 +231,7 @@ export class RunnerConnection {
       p.reject(new OutcomeUncertain(`connection to the computer was lost (${reason})`));
     }
     this.pending.clear();
-    for (const [, s] of this.streams) for (const fn of s.close) fn(reason);
+    for (const [, s] of this.streams) s.close(reason);
     this.streams.clear();
     try {
       this.transport.close(reason);

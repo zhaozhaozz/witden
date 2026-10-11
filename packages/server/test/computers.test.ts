@@ -1,0 +1,298 @@
+/** Templates, computer lifecycle, the execution boundary and desktop control. */
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ExecutionGateway } from "../src/compute/gateway.js";
+import { db } from "../src/db/client.js";
+import { newId } from "../src/db/ids.js";
+import { roles, tasks, topics } from "../src/db/schema.js";
+import { InstanceBusy, InstanceUnavailable } from "../src/errors.js";
+import { type Harness, startHarness } from "./support/harness.js";
+
+let h: Harness;
+beforeEach(async () => {
+  h = await startHarness();
+});
+afterEach(async () => {
+  await h.close();
+});
+
+async function template(overrides: Record<string, unknown> = {}) {
+  const res = await h.api("POST", "/api/templates", {
+    token: h.adminToken,
+    json: { name: "shell", image: "witden/computer-shell:latest", persistent_paths: ["/home/witden"], ...overrides },
+  });
+  expect(res.status, res.raw).toBe(200);
+  return res.body;
+}
+
+async function instance(templateId: string, name: string) {
+  const res = await h.api("POST", "/api/instances", { token: h.adminToken, json: { template_id: templateId, name } });
+  expect(res.status, res.raw).toBe(200);
+  await h.drain();
+  return h.waitFor(async () => {
+    const r = (await h.api("GET", `/api/instances/${res.body.id}`, { token: h.adminToken })).body;
+    return r.status === "running" && r.runner.connected && r;
+  });
+}
+
+describe("templates", () => {
+  it.each([
+    [{ persistent_paths: ["/"] }, "not allowed"],
+    [{ persistent_paths: ["/etc"] }, "not allowed"],
+    [{ cap_add: ["SYS_ADMIN"] }, "capabilities not allowed"],
+    [{ runtime: "evil" }, "runtime"],
+    [{ default_resources: { network: "host" } }, "network"],
+    [{ default_resources: { memory_mb: 1 } }, "memory_mb"],
+    [{ user: "root" }, "unprivileged"],
+    [{ env: { WITDEN_RUNNER_TOKEN: "x" } }, "reserved"],
+  ])("rejects unsafe config %o", async (overrides, message) => {
+    const res = await h.api("POST", "/api/templates", {
+      token: h.adminToken,
+      json: { name: "bad", image: "debian", ...overrides },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain(message);
+  });
+
+  it("versions templates without moving existing computers; protects templates in use", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-1");
+    const updated = (
+      await h.api("PATCH", `/api/templates/${tpl.id}`, { token: h.adminToken, json: { software: ["git"] } })
+    ).body;
+    expect(updated.version).toBe(2);
+    expect((await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body.template_version).toBe(1);
+    const copy = (
+      await h.api("POST", `/api/templates/${tpl.id}/copy`, { token: h.adminToken, json: { name: "shell-2" } })
+    ).body;
+    expect(copy.image).toBe(tpl.image);
+    expect((await h.api("DELETE", `/api/templates/${tpl.id}`, { token: h.adminToken })).status).toBe(409);
+  });
+});
+
+describe("instances", () => {
+  it("lifecycle, shared scope, previews and visibility", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-1");
+    expect(inst.shared_scope.credential_paths).toContain("/home/witden/.ssh");
+    expect(inst.runner.connected).toBe(true);
+    await h.api("POST", "/api/users", {
+      token: h.adminToken,
+      json: { name: "bob", email: "bob@example.com", password: "bob-pass-123" },
+    });
+    const bob = await h.login("bob@example.com", "bob-pass-123");
+    expect((await h.api("GET", "/api/instances", { token: bob })).body).toEqual([]);
+    expect(
+      (await h.api("POST", `/api/instances/${inst.id}/actions`, { token: bob, json: { action: "stop" } })).status,
+    ).toBe(403);
+    const reset = await h.api("POST", `/api/instances/${inst.id}/actions`, {
+      token: h.adminToken,
+      json: { action: "reset" },
+    });
+    expect(reset.body.error.code).toBe("confirmation_required");
+    const preview = (
+      await h.api("GET", `/api/instances/${inst.id}/preview/reset?keep_volumes=false`, { token: h.adminToken })
+    ).body;
+    expect(preview.will_clear.some((x: string) => x.includes("/home/witden"))).toBe(true);
+    await h.api("POST", `/api/instances/${inst.id}/actions`, { token: h.adminToken, json: { action: "stop" } });
+    await h.drain();
+    const stopped = (await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body;
+    expect(stopped.status).toBe("stopped");
+    expect(stopped.runner.connected).toBe(false);
+    await h.api("POST", `/api/instances/${inst.id}/actions`, { token: h.adminToken, json: { action: "start" } });
+    await h.drain();
+    await h.waitFor(
+      async () => (await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body.runner.connected,
+    );
+  });
+
+  it("a runner presenting a wrong secret is refused", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-1");
+    const pc = h.manager.computer(inst.id);
+    pc.disconnect();
+    (pc.spec.runner as any).token = "wdr_forged-token-value-1234567890";
+    pc.connect(h.manager.hub!);
+    await new Promise((r) => setTimeout(r, 200));
+    expect((await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body.runner.connected).toBe(
+      false,
+    );
+    const audit = (await h.api("GET", "/api/audit?action=runner.rejected", { token: h.adminToken })).body;
+    expect(audit[0].instance_id).toBe(inst.id);
+  });
+
+  it("clones without credentials", async () => {
+    const tpl = await template();
+    const src = await instance(tpl.id, "src-box");
+    const pc = h.manager.computer(src.id);
+    pc.files.set("/home/witden/.ssh/id_ed25519", Buffer.from("PRIVATE"));
+    pc.files.set("/home/witden/notes.txt", Buffer.from("hello"));
+    const res = await h.api("POST", `/api/instances/${src.id}/clone`, {
+      token: h.adminToken,
+      json: { name: "copy-box" },
+    });
+    expect(res.status, res.raw).toBe(200);
+    await h.drain();
+    await h.waitFor(
+      async () =>
+        (await h.api("GET", `/api/instances/${res.body.id}`, { token: h.adminToken })).body.status === "running",
+    );
+    const files = h.manager.computer(res.body.id).files;
+    expect(files.get("/home/witden/notes.txt")?.toString()).toBe("hello");
+    expect(files.has("/home/witden/.ssh/id_ed25519")).toBe(false);
+  });
+
+  it("operator console and screenshot go through the runner, audited", async () => {
+    const tpl = await template({ name: "desk", kind: "desktop" });
+    const inst = await instance(tpl.id, "desk-1");
+    const exec = (
+      await h.api("POST", `/api/instances/${inst.id}/exec`, { token: h.adminToken, json: { command: "uname -a" } })
+    ).body;
+    expect(exec.output).toContain("ran: uname -a");
+    const shot = await h.api("GET", `/api/instances/${inst.id}/screenshot`, { token: h.adminToken });
+    expect(shot.status).toBe(200);
+    expect((await h.api("GET", "/api/audit?action=instance.exec", { token: h.adminToken })).body.length).toBe(1);
+  });
+});
+
+describe("execution gateway", () => {
+  async function setup() {
+    const tpl = await template({ name: "desk", kind: "desktop" });
+    const a = await instance(tpl.id, "box-a");
+    const b = await instance(tpl.id, "box-b");
+    const mk = async (handle: string, inst: string) => {
+      const [role] = await db()
+        .insert(roles)
+        .values({ id: newId("role"), name: handle, handle, instanceId: inst, allowedTools: ["shell", "desktop"] })
+        .returning();
+      return role;
+    };
+    const r1 = await mk("one", a.id);
+    const r2 = await mk("two", a.id);
+    const [topic] = await db()
+      .insert(topics)
+      .values({ id: newId("top"), title: "t" })
+      .returning();
+    const task = async (roleId: string) =>
+      (
+        await db()
+          .insert(tasks)
+          .values({
+            id: newId("task"),
+            topicId: topic.id,
+            title: "t",
+            ownerRoleId: roleId,
+            instanceId: a.id,
+            status: "running",
+            envelope: { tools: ["shell", "desktop"] },
+          })
+          .returning()
+      )[0];
+    return { a, b, r1, r2, t1: await task(r1.id), t2: await task(r2.id) };
+  }
+
+  it("binds operations to the task's computer and never follows a moved role", async () => {
+    const { a, b, r1, t1 } = await setup();
+    const gw = new ExecutionGateway();
+    await gw.execute({
+      taskId: t1.id,
+      toolCallId: "c1",
+      op: "exec.run",
+      params: { command: "echo hi" },
+      timeoutMs: 5000,
+    });
+    expect(h.manager.computer(a.id).commands).toEqual(["echo hi"]);
+    expect(h.manager.computer(b.id).commands).toEqual([]);
+    const { eq } = await import("drizzle-orm");
+    await db().update(roles).set({ instanceId: b.id }).where(eq(roles.id, r1.id));
+    await expect(
+      gw.execute({
+        taskId: t1.id,
+        toolCallId: "c2",
+        op: "exec.run",
+        params: { command: "echo again" },
+        timeoutMs: 5000,
+      }),
+    ).rejects.toBeInstanceOf(InstanceUnavailable);
+    // operations outside the envelope are refused even if the worker asked
+    await db().update(roles).set({ instanceId: a.id }).where(eq(roles.id, r1.id));
+    await expect(
+      gw.execute({ taskId: t1.id, toolCallId: "c3", op: "file.read", params: { path: "x" }, timeoutMs: 5000 }),
+    ).rejects.toThrow("outside this task's permissions");
+  });
+
+  it("one task drives the desktop at a time; reading the screen needs no control", async () => {
+    const { t1, t2 } = await setup();
+    const gw = new ExecutionGateway();
+    await gw.execute({
+      taskId: t1.id,
+      toolCallId: "m1",
+      op: "input.mouse",
+      params: { action: "click", x: 1, y: 2 },
+      timeoutMs: 5000,
+    });
+    await gw.execute({ taskId: t2.id, toolCallId: "s1", op: "screen.capture", params: {}, timeoutMs: 5000 });
+    await expect(
+      gw.execute({ taskId: t2.id, toolCallId: "k1", op: "input.keyboard", params: { text: "hi" }, timeoutMs: 5000 }),
+    ).rejects.toBeInstanceOf(InstanceBusy);
+  });
+
+  it("human takeover pauses AI on that computer", async () => {
+    const { a, t1 } = await setup();
+    await h.api("POST", `/api/instances/${a.id}/takeover`, { token: h.adminToken, json: { reason: "login" } });
+    const { eq } = await import("drizzle-orm");
+    const [paused] = await db().select().from(tasks).where(eq(tasks.id, t1.id));
+    expect(paused.status).toBe("paused");
+    // a worker that missed the pause is still refused at the gateway
+    await expect(
+      new ExecutionGateway().execute({
+        taskId: t1.id,
+        toolCallId: "x",
+        op: "exec.run",
+        params: { command: "ls" },
+        timeoutMs: 5000,
+      }),
+    ).rejects.toThrow("not running");
+    expect(h.manager.computer(a.id).commands).toEqual([]);
+  });
+});
+
+describe("live view and permissions", () => {
+  it("VNC: close codes reach the client; observers get the view-only tunnel", async () => {
+    const tpl = await template({ name: "desk", kind: "desktop" });
+    const inst = await instance(tpl.id, "desk-1");
+    const app = h.witden.app!;
+    const base = (await app.listen({ port: 0, host: "127.0.0.1" })).replace("http", "ws");
+    const { default: WebSocket } = await import("ws");
+    const open = (token: string) => {
+      const ws = new WebSocket(`${base}/api/instances/${inst.id}/vnc?access_token=${token}`);
+      const first = new Promise<{ code?: number; data?: string }>((resolve) => {
+        ws.on("close", (code: number) => resolve({ code }));
+        ws.on("message", (d: Buffer) => resolve({ data: d.toString() }));
+      });
+      return { ws, first };
+    };
+    expect((await open("bad").first).code).toBe(4401);
+    const good = open(h.adminToken);
+    expect((await good.first).data).toContain("RFB 003.");
+    good.ws.terminate();
+    const audit = (await h.api("GET", "/api/audit?action=instance.vnc", { token: h.adminToken })).body;
+    expect(audit[0].detail.mode).toBe("view");
+  });
+
+  it("/api/auth/me reports resource-scoped permissions", async () => {
+    await h.api("POST", "/api/users", {
+      token: h.adminToken,
+      json: { name: "olga", email: "olga@example.com", password: "olga-pass-123" },
+    });
+    const olga = await h.login("olga@example.com", "olga-pass-123");
+    const me = (await h.api("GET", "/api/auth/me", { token: olga })).body;
+    await h.api("POST", "/api/grants", {
+      token: h.adminToken,
+      json: { permission: "instance.observe", user_id: me.id, resource_id: "inst_x" },
+    });
+    const after = (await h.api("GET", "/api/auth/me", { token: olga })).body;
+    expect(after.permissions).toContain("instance.observe");
+    expect(after.global_permissions).not.toContain("instance.observe");
+    expect(after.scoped_permissions).toContainEqual({ permission: "instance.observe", resource_id: "inst_x" });
+  });
+});
