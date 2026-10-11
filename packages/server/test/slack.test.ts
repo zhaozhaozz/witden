@@ -1,12 +1,14 @@
 /** Chat integrations end to end: signed Slack webhooks in, Web API calls out (and a small Feishu check). */
 import { createHmac } from "node:crypto";
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { externalIdentities, tasks } from "../src/db/schema.js";
+import { connections, externalIdentities, processedEvents, tasks } from "../src/db/schema.js";
+import { getAdapter } from "../src/integrations/base.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
+import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
 import { reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -145,6 +147,28 @@ describe("slack", () => {
       headers,
     });
     expect(tampered.status).toBe(401);
+  });
+
+  it("acknowledged events survive a crash before or during processing; text is not kept", async () => {
+    const [row] = await db().select().from(connections).where(eq(connections.id, conn.id));
+    const adapter = await getAdapter(row);
+    // the process died right after acknowledging: the events are only in the queue
+    await enqueueInbound(db(), conn.id, await adapter.parse(db(), row, event("<@UBOT> @dev first", { ts: "700.1" })));
+    await enqueueInbound(db(), conn.id, await adapter.parse(db(), row, event("<@UBOT> @dev second", { ts: "701.1" })));
+    expect(await allTasks()).toHaveLength(0);
+    // ...and another one was being processed when it died
+    await db()
+      .update(processedEvents)
+      .set({ status: "processing", claimedAt: new Date(Date.now() - 10 * 60_000) })
+      .where(eq(processedEvents.eventKey, "Ev701.1app_mention"));
+    expect(await processInbound()).toBe(2);
+    expect(await allTasks()).toHaveLength(2);
+    expect(await processInbound()).toBe(0);
+    const listed = await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken });
+    expect(listed.body.map((e: any) => e.status).sort()).toEqual(["dispatched", "dispatched"]);
+    expect(listed.raw).not.toContain("@dev first");
+    const stored = await db().select().from(processedEvents).where(eq(processedEvents.connectionId, conn.id));
+    expect(stored.every((e) => e.payload === null)).toBe(true);
   });
 
   it("a thread maps to one topic; retries and duplicate event types do not duplicate work", async () => {

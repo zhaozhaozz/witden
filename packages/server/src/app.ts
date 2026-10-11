@@ -31,6 +31,7 @@ import { type Settings, setSettings } from "./config.js";
 import { openDatabase, setDatabase, transaction } from "./db/client.js";
 import { WitdenError } from "./errors.js";
 import { deliverPending } from "./integrations/delivery.js";
+import { processInbound } from "./integrations/inbound.js";
 import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
 import { EventBus } from "./services/events.js";
@@ -151,6 +152,10 @@ export async function start(opts: StartOptions): Promise<Witden> {
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
     void reconcile().catch(() => {});
     timers.push(setInterval(() => void reconcile().catch(() => {}), 30_000));
+    // Inbound chat events left queued or half-processed by a crash.
+    const sweep = () => rt.background("inbound.sweep", async () => void (await processInbound()));
+    sweep();
+    timers.push(setInterval(sweep, 15_000));
   }
   let worker: Worker | null = null;
   if (settings.processRole !== "api" && opts.startWorker !== false) {

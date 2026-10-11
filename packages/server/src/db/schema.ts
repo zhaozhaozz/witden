@@ -537,13 +537,22 @@ export const externalThreadLinks = pgTable(
   (t) => [uniqueIndex("ux_thread_link").on(t.conversationId, t.threadKey), index("ix_thread_link_topic").on(t.topicId)],
 );
 
+/**
+ * Durable inbound queue and dedupe record. Webhooks store the parsed event (status queued) before they
+ * acknowledge; a consumer processes it afterwards and clears the payload. The unique key drops platform retries.
+ */
 export const processedEvents = pgTable(
   "processed_events",
   {
     id: id(),
     connectionId: text("connection_id").notNull(),
     eventKey: text("event_key").notNull(),
-    status: text("status").notNull().default("processing"),
+    kind: text("kind").notNull().default("message"), // message | edit | delete
+    /** The parsed action until processed; message text is not kept afterwards. */
+    payload: jsonb("payload").$type<Record<string, any> | null>(),
+    status: text("status").notNull().default("queued"), // queued | processing | <outcome> | failed
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: ts("claimed_at"),
     detail: text("detail"),
     receivedAt: created(),
   },

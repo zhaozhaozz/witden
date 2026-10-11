@@ -1,11 +1,13 @@
 /**
  * Platform-neutral handling of incoming chat events.
  *
- * External event -> verified by the adapter -> de-duplicated and persisted here -> linked to an internal
- * topic -> permission checks and role assignment -> tasks. The webhook acknowledges immediately; this runs
- * afterwards. Identity is the platform user id, never a display name.
+ * External event -> verified by the adapter -> queued durably (de-duplicated) -> acknowledged -> processed
+ * from the queue: linked to an internal topic -> permission checks and role assignment -> tasks. A crash
+ * between acknowledging and processing loses nothing: queued or stalled events are picked up again.
+ * Identity is the platform user id, never a display name.
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { dispatchHumanMessage, saveMessage } from "../agent/dispatch.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -30,7 +32,7 @@ import { audit } from "../services/audit.js";
 import { saveArtifact } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
-import { getAdapter } from "./base.js";
+import { getAdapter, type InboundAction } from "./base.js";
 
 const ROLE_TOKEN = /(?:(?<![\w@])@|\brole:)([a-z0-9][a-z0-9_.-]{0,31})/gi;
 
@@ -51,21 +53,98 @@ export interface InboundMessage {
   files?: Record<string, any>[];
 }
 
-/** Record a delivery in its own transaction. False means it was seen before (platform retry). */
-export async function claimEvent(connectionId: string, eventKey: string): Promise<boolean> {
-  const rows = await getDb()
-    .insert(processedEvents)
-    .values({ id: newId("evt"), connectionId, eventKey, status: "processing" })
-    .onConflictDoNothing()
-    .returning();
-  return rows.length > 0;
+const STALLED_MS = 5 * 60_000;
+const MAX_ATTEMPTS = 3;
+
+function eventKeyOf(action: InboundAction): string {
+  if (action.kind === "message") return action.message.eventKey;
+  if (action.kind === "delete") return `delete:${action.conversationId}:${action.ts}`;
+  const digest = createHash("sha256").update(action.text).digest("hex").slice(0, 16);
+  return `edit:${action.conversationId}:${action.ts}:${digest}`;
 }
 
-async function finishEvent(connectionId: string, eventKey: string, status: string, detail: string | null = null) {
-  await getDb()
-    .update(processedEvents)
-    .set({ status, detail: detail?.slice(0, 2000) ?? null })
-    .where(and(eq(processedEvents.connectionId, connectionId), eq(processedEvents.eventKey, eventKey)));
+/** Store verified events before the webhook acknowledges. Platform retries of the same event are dropped. */
+export async function enqueueInbound(db: Db, connectionId: string, actions: InboundAction[]): Promise<number> {
+  let queued = 0;
+  for (const action of actions) {
+    const rows = await db
+      .insert(processedEvents)
+      .values({
+        id: newId("evt"),
+        connectionId,
+        eventKey: eventKeyOf(action),
+        kind: action.kind,
+        payload: action as any,
+        status: "queued",
+      })
+      .onConflictDoNothing()
+      .returning({ id: processedEvents.id });
+    queued += rows.length;
+  }
+  return queued;
+}
+
+/**
+ * Process queued events (and ones whose processor died mid-way) in arrival order. Several processes may
+ * run this at once: claiming skips rows another one holds. Returns how many events were handled.
+ */
+export async function processInbound(limit = 20): Promise<number> {
+  const e = processedEvents;
+  const claimed = await getDb().execute(sql`
+    update ${e} set ${sql.identifier(e.status.name)} = 'processing', ${sql.identifier(e.claimedAt.name)} = now(),
+      ${sql.identifier(e.attempts.name)} = ${e.attempts} + 1
+    where ${e.id} in (
+      select ${e.id} from ${e}
+      where ${e.payload} is not null
+        and (${e.status} = 'queued'
+          or (${e.status} = 'processing' and ${e.claimedAt} < now() - (${STALLED_MS} || ' milliseconds')::interval))
+      order by ${e.receivedAt}
+      for update skip locked
+      limit ${limit}
+    )
+    returning ${e.id} as id, ${e.kind} as kind, ${e.payload} as payload, ${e.attempts} as attempts`);
+  const rows = ((claimed as any).rows ?? claimed) as { id: string; kind: string; payload: any; attempts: number }[];
+  for (const row of rows) {
+    let status: string;
+    let detail: string | null = null;
+    try {
+      status = await processOne(row.kind, row.payload);
+    } catch (err) {
+      console.error("[witden] inbound event failed", err);
+      detail = `${(err as Error).name}: ${(err as Error).message}`;
+      if (row.attempts < MAX_ATTEMPTS) {
+        await getDb()
+          .update(processedEvents)
+          .set({ status: "queued", detail: detail.slice(0, 2000) })
+          .where(eq(processedEvents.id, row.id));
+        continue;
+      }
+      status = "failed"; // stays visible on the connection page
+    }
+    // The message text is not retained once handled.
+    await getDb()
+      .update(processedEvents)
+      .set({ status, detail: detail?.slice(0, 2000) ?? null, payload: null })
+      .where(eq(processedEvents.id, row.id));
+  }
+  return rows.length;
+}
+
+async function processOne(kind: string, action: any): Promise<string> {
+  if (kind === "edit")
+    return (await handleEdit(action.connectionId, action.conversationId, action.ts, action.text))
+      ? "edited"
+      : "ignored";
+  if (kind === "delete")
+    return (await handleDelete(action.connectionId, action.conversationId, action.ts)) ? "deleted" : "ignored";
+  const msg = action.message as InboundMessage;
+  const [conn] = await getDb().select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);
+  if (!conn) return "unknown_connection";
+  const adapter = await getAdapter(conn);
+  const reply: Reply | undefined = adapter.reply
+    ? (text) => adapter.reply!(conn, msg.conversationId, msg.threadKey, text)
+    : undefined;
+  return String((await handleMessage(msg, reply)).status);
 }
 
 export async function resolveIdentity(
@@ -186,21 +265,8 @@ async function roleMentions(db: Db, text: string): Promise<string[]> {
 export type Reply = (text: string) => Promise<void>;
 
 /** Process one inbound message exactly once. ``reply`` posts a direct notice back (e.g. "not linked"). */
+/** Handle one message. Its effects commit in one transaction, so a retry after a crash starts clean. */
 export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise<Record<string, unknown>> {
-  if (!(await claimEvent(msg.connectionId, msg.eventKey))) return { status: "duplicate" };
-  try {
-    const result = await handle(msg, reply);
-    await finishEvent(msg.connectionId, msg.eventKey, String(result.status));
-    return result;
-  } catch (err) {
-    // failures stay visible on the connection page
-    console.error("[witden] inbound message failed", err);
-    await finishEvent(msg.connectionId, msg.eventKey, "failed", `${(err as Error).name}: ${(err as Error).message}`);
-    throw err;
-  }
-}
-
-async function handle(msg: InboundMessage, reply?: Reply): Promise<Record<string, unknown>> {
   let notice: string | null = null;
   const result = await transaction(async (db) => {
     const [conn] = await db.select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);

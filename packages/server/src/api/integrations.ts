@@ -16,7 +16,7 @@ import {
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter, type InboundAction } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
-import { handleDelete, handleEdit, handleMessage } from "../integrations/inbound.js";
+import { enqueueInbound, processInbound } from "../integrations/inbound.js";
 import { runtime } from "../runtime.js";
 import { secretBox } from "../security/crypto.js";
 import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/labels.js";
@@ -57,27 +57,18 @@ async function getConn(db: Db, id: string): Promise<Connection> {
   return conn;
 }
 
-/** Acknowledge quickly; processing continues in the background (platforms retry slow webhooks). */
-function dispatchActions(actions: InboundAction[]): void {
-  for (const action of actions) {
-    if (action.kind === "message") {
-      const m = action.message;
-      runtime().background("inbound", async () => {
-        const conn = await getConn(getDb(), m.connectionId);
-        const adapter = await getAdapter(conn);
-        await handleMessage(
-          m,
-          adapter.reply ? (text) => adapter.reply!(conn, m.conversationId, m.threadKey, text) : undefined,
-        );
-      });
-    } else if (action.kind === "edit") {
-      runtime().background("inbound.edit", () =>
-        handleEdit(action.connectionId, action.conversationId, action.ts, action.text),
-      );
-    } else {
-      runtime().background("inbound.delete", () => handleDelete(action.connectionId, action.conversationId, action.ts));
+/**
+ * Platforms retry slow webhooks, so events are stored durably first, then acknowledged, then processed from
+ * the queue (a periodic sweep picks up anything a crash left behind).
+ */
+async function acceptEvents(connectionId: string, actions: InboundAction[]): Promise<void> {
+  if (!actions.length) return;
+  await enqueueInbound(getDb(), connectionId, actions);
+  runtime().background("inbound", async () => {
+    while (await processInbound()) {
+      /* drain */
     }
-  }
+  });
 }
 
 export async function integrationRoutes(app: FastifyInstance) {
@@ -276,7 +267,7 @@ export async function integrationRoutes(app: FastifyInstance) {
             .where(and(...conds))
             .orderBy(desc(timeCol))
             .limit(200)
-        ).map((r: any) => row(r));
+        ).map(({ payload: _payload, ...r }: any) => row(r)); // queued message text is never listed
       }),
     );
   }
@@ -409,7 +400,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     if (payload.type !== "event_callback" || conn.status !== "active") return { ok: true };
     if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
       throw new Forbidden("event from another workspace");
-    dispatchActions(await (await getAdapter(conn)).parse(getDb(), conn, payload));
+    await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
     return { ok: true };
   });
 
@@ -421,7 +412,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     adapter.verify(conn, payload);
     if (payload.type === "url_verification") return reply.send({ challenge: payload.challenge });
     if (conn.status !== "active") return { ok: true };
-    dispatchActions(await adapter.parse(getDb(), conn, payload));
+    await acceptEvents(conn.id, await adapter.parse(getDb(), conn, payload));
     return { ok: true };
   });
 
