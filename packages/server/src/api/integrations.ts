@@ -2,7 +2,7 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { settings } from "../config.js";
-import { db as getDb, transaction } from "../db/client.js";
+import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   type Connection,
@@ -50,8 +50,9 @@ function cleanSettings(s: Record<string, any>): Record<string, any> {
   return s;
 }
 
-async function getConn(id: string): Promise<Connection> {
-  const [conn] = await getDb().select().from(connections).where(eq(connections.id, id)).limit(1);
+/** ``db`` must be the request transaction when there is one: PGlite has one connection, so a query outside it waits forever. */
+async function getConn(db: Db, id: string): Promise<Connection> {
+  const [conn] = await db.select().from(connections).where(eq(connections.id, id)).limit(1);
   if (!conn) throw new NotFound("connection not found");
   return conn;
 }
@@ -62,7 +63,7 @@ function dispatchActions(actions: InboundAction[]): void {
     if (action.kind === "message") {
       const m = action.message;
       runtime().background("inbound", async () => {
-        const conn = await getConn(m.connectionId);
+        const conn = await getConn(getDb(), m.connectionId);
         const adapter = await getAdapter(conn);
         await handleMessage(
           m,
@@ -150,7 +151,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections/:id",
     authed(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const conn = await getConn(params(req).id);
+      const conn = await getConn(db, params(req).id);
       const b = body(req);
       const update: Partial<Connection> = {};
       if (b.name) update.name = b.name;
@@ -190,7 +191,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections/:id/test",
     authedNoTx(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const conn = await getConn(params(req).id);
+      const conn = await getConn(db, params(req).id);
       try {
         const info = await (await getAdapter(conn)).test(db, conn);
         await db
@@ -314,7 +315,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (!(await topicSvc.isOwner(db, user, topic))) throw new Forbidden("only topic owners can publish a topic");
       if (topic.kind === "dm") throw new BadRequest("DMs cannot be published to a channel");
       const b = body(req);
-      const conn = await getConn(String(b.connectionId ?? ""));
+      const conn = await getConn(db, String(b.connectionId ?? ""));
       await requirePerm(db, user, Perm.TOPIC_PUBLISH, conn.id);
       if (conn.status !== "active") throw new BadRequest("connection is not active");
       const adapter = await getAdapter(conn);
@@ -395,7 +396,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   app.post("/api/integrations/slack/:id/events", async (req, reply) => {
     const { verifySignature, credentials } = await import("../integrations/slack.js");
     const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
-    const conn = await getConn(params(req).id);
+    const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "slack") throw new NotFound("unknown connection");
     verifySignature(
       credentials(conn).signing_secret ?? "",
@@ -413,7 +414,7 @@ export async function integrationRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/integrations/feishu/:id/events", async (req, reply) => {
-    const conn = await getConn(params(req).id);
+    const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "feishu") throw new NotFound("unknown connection");
     const adapter = (await getAdapter(conn)) as import("../integrations/feishu.js").FeishuAdapter;
     const payload: any = req.body ?? {};
@@ -426,7 +427,8 @@ export async function integrationRoutes(app: FastifyInstance) {
 
   app.post(
     "/api/integrations/deliver",
-    authed(async ({ db, user }) => {
+    // No request transaction: delivery claims and updates each record on its own, and calls out to platforms.
+    authedNoTx(async ({ db, user }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       return { sent: await deliverPending() };
     }),

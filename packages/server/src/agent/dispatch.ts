@@ -368,8 +368,16 @@ export async function lastActiveRole(db: Db, topic: Topic): Promise<string | nul
     .orderBy(desc(messages.createdAt))
     .limit(1);
   if (last?.authorId && (await topicSvc.participant(db, topic.id, "role", last.authorId))) return last.authorId;
-  const rs = await topicSvc.participants(db, topic.id, "role");
-  return rs[0]?.participantId ?? null;
+  // Nobody has answered yet: the role whose task is newest here. Never an arbitrary participant; with no
+  // work in the thread the assignment rules choose.
+  const [recent] = await db
+    .select({ roleId: tasks.ownerRoleId })
+    .from(tasks)
+    .where(eq(tasks.topicId, topic.id))
+    .orderBy(desc(tasks.createdAt))
+    .limit(1);
+  if (recent && (await topicSvc.participant(db, topic.id, "role", recent.roleId))) return recent.roleId;
+  return null;
 }
 
 /** `@handle` of an existing role that is not in this (internal) topic: say so instead of staying silent. */
