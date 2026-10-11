@@ -1,0 +1,240 @@
+/** Topics, participants and who may see which part of the history. */
+import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
+import type { Db } from "../db/client.js";
+import { newId } from "../db/ids.js";
+import { messages, type Role, roles, type Topic, topicParticipants, topics, type User, users } from "../db/schema.js";
+import { BadRequest, Forbidden, NotFound } from "../errors.js";
+import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+
+export async function getTopic(db: Db, id: string): Promise<Topic> {
+  const [topic] = await db.select().from(topics).where(eq(topics.id, id)).limit(1);
+  if (!topic) throw new NotFound("topic not found");
+  return topic;
+}
+
+export async function participant(db: Db, topicId: string, type: string, id: string) {
+  const [p] = await db
+    .select()
+    .from(topicParticipants)
+    .where(
+      and(
+        eq(topicParticipants.topicId, topicId),
+        eq(topicParticipants.participantType, type),
+        eq(topicParticipants.participantId, id),
+        isNull(topicParticipants.removedAt),
+      ),
+    )
+    .limit(1);
+  return p;
+}
+
+export async function participants(db: Db, topicId: string, type?: "user" | "role") {
+  const conds = [eq(topicParticipants.topicId, topicId), isNull(topicParticipants.removedAt)];
+  if (type) conds.push(eq(topicParticipants.participantType, type));
+  return db
+    .select()
+    .from(topicParticipants)
+    .where(and(...conds));
+}
+
+/** Private topics and DMs: participants only (administrators included). Internal group topics: all members. */
+export async function canView(db: Db, user: User, topic: Topic): Promise<boolean> {
+  if (!user.isActive) return false;
+  if (await participant(db, topic.id, "user", user.id)) return true;
+  return topic.kind === "group" && topic.visibility === "internal";
+}
+
+export async function requireView(db: Db, user: User, topic: Topic): Promise<void> {
+  if (!(await canView(db, user, topic))) throw new Forbidden("you cannot view this topic");
+}
+
+export async function visibleFrom(db: Db, user: User, topic: Topic): Promise<Date | null> {
+  return (await participant(db, topic.id, "user", user.id))?.historyFrom ?? null;
+}
+
+export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean> {
+  return topic.status === "active" && !!(await participant(db, topic.id, "user", user.id));
+}
+
+export async function isOwner(db: Db, user: User, topic: Topic): Promise<boolean> {
+  const p = await participant(db, topic.id, "user", user.id);
+  return !!p?.isOwner && user.isActive;
+}
+
+/** Owners, plus administrators for actions that remove or stop things; none of these widen a private topic. */
+export async function canAdminister(db: Db, user: User, topic: Topic): Promise<boolean> {
+  return (await isOwner(db, user, topic)) || (user.isAdmin && user.isActive && topic.kind === "group");
+}
+
+export async function addParticipant(
+  db: Db,
+  topic: Topic,
+  type: "user" | "role",
+  id: string,
+  opts: { invitedBy?: string | null; owner?: boolean } = {},
+) {
+  const existing = await participant(db, topic.id, type, id);
+  if (existing) return existing;
+  const now = new Date();
+  const [p] = await db
+    .insert(topicParticipants)
+    .values({
+      id: newId("tp"),
+      topicId: topic.id,
+      participantType: type,
+      participantId: id,
+      isOwner: opts.owner ?? false,
+      joinedAt: now,
+      // New members only see history from their joining time unless the topic says otherwise.
+      historyFrom: topic.historyPolicy === "full" || opts.owner ? null : now,
+      invitedBy: opts.invitedBy ?? null,
+    })
+    .returning();
+  return p;
+}
+
+/** Removed participants lose access to the whole topic, including earlier history. */
+export async function removeParticipant(db: Db, topic: Topic, type: string, id: string): Promise<boolean> {
+  const p = await participant(db, topic.id, type, id);
+  if (!p) return false;
+  await db.update(topicParticipants).set({ removedAt: new Date() }).where(eq(topicParticipants.id, p.id));
+  return true;
+}
+
+export async function getRole(db: Db, id: string): Promise<Role | undefined> {
+  const [role] = await db.select().from(roles).where(eq(roles.id, id)).limit(1);
+  return role;
+}
+
+export async function inviteRole(
+  db: Db,
+  user: User | null,
+  topic: Topic,
+  roleId: string,
+  opts: { byRole?: Role } = {},
+) {
+  const role = await getRole(db, roleId);
+  if (!role) throw new NotFound(`role ${roleId} not found`);
+  if (role.status !== "active") throw new BadRequest(`role ${role.handle} is disabled`);
+  if (topic.kind === "dm" && (await participants(db, topic.id, "role")).length)
+    throw new BadRequest("a DM has exactly one role");
+  if (opts.byRole) {
+    const contacts = opts.byRole.allowedContacts;
+    if (!contacts.includes("*") && !contacts.includes(role.id)) {
+      throw new Forbidden(`role ${opts.byRole.handle} may not bring in ${role.handle}`);
+    }
+  }
+  if (user) await requirePerm(db, user, Perm.ROLE_INVITE, role.id);
+  return addParticipant(db, topic, "role", role.id, { invitedBy: user?.id ?? opts.byRole?.id ?? null });
+}
+
+export async function createTopic(
+  db: Db,
+  user: User,
+  data: {
+    title: string;
+    goal?: string;
+    visibility?: string;
+    historyPolicy?: string;
+    userIds?: string[];
+    roleIds?: string[];
+    maxAutoRounds?: number | null;
+    allowedModelConfigIds?: string[] | null;
+    source?: string;
+    kind?: "group" | "dm";
+  },
+): Promise<Topic> {
+  await requirePerm(db, user, Perm.TOPIC_CREATE);
+  const visibility = data.visibility ?? "private";
+  const historyPolicy = data.historyPolicy ?? "since_join";
+  if (!["private", "internal"].includes(visibility)) throw new BadRequest("visibility must be private or internal");
+  if (!["full", "since_join"].includes(historyPolicy))
+    throw new BadRequest("history_policy must be full or since_join");
+  if (!data.title?.trim()) throw new BadRequest("title is required");
+  const kind = data.kind ?? "group";
+  const [topic] = await db
+    .insert(topics)
+    .values({
+      id: newId("top"),
+      title: data.title.trim(),
+      goal: data.goal ?? "",
+      kind,
+      visibility: kind === "group" ? visibility : "private",
+      historyPolicy,
+      maxAutoRounds: data.maxAutoRounds ?? null,
+      allowedModelConfigIds: data.allowedModelConfigIds ?? null,
+      source: data.source ?? "internal",
+      createdBy: user.id,
+    })
+    .returning();
+  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id, owner: true });
+  for (const uid of data.userIds ?? []) {
+    if (uid === user.id) continue;
+    const [u] = await db.select().from(users).where(eq(users.id, uid)).limit(1);
+    if (!u) throw new NotFound(`user ${uid} not found`);
+    await addParticipant(db, topic, "user", uid, { invitedBy: user.id });
+  }
+  for (const rid of data.roleIds ?? []) await inviteRole(db, user, topic, rid);
+  return topic;
+}
+
+export async function getOrCreateDm(db: Db, user: User, role: Role, source = "internal"): Promise<Topic> {
+  await requirePerm(db, user, Perm.ROLE_USE, role.id);
+  const dms = await db
+    .select()
+    .from(topics)
+    .where(and(eq(topics.kind, "dm"), eq(topics.source, source), eq(topics.status, "active")));
+  for (const t of dms) {
+    if ((await participant(db, t.id, "user", user.id)) && (await participant(db, t.id, "role", role.id))) return t;
+  }
+  const [topic] = await db
+    .insert(topics)
+    .values({
+      id: newId("top"),
+      title: `DM ${user.name} · ${role.name}`,
+      kind: "dm",
+      visibility: "private",
+      historyPolicy: "full",
+      source,
+      createdBy: user.id,
+    })
+    .returning();
+  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id, owner: true });
+  await addParticipant(db, topic, "role", role.id, { invitedBy: user.id });
+  return topic;
+}
+
+export async function visibleMessages(
+  db: Db,
+  topic: Topic,
+  since: Date | null,
+  opts: { limit?: number; before?: Date | null } = {},
+) {
+  const conds = [eq(messages.topicId, topic.id), isNull(messages.deletedAt)];
+  if (since) conds.push(gte(messages.createdAt, since));
+  if (opts.before) conds.push(lt(messages.createdAt, opts.before));
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(and(...conds))
+    .orderBy(desc(messages.createdAt))
+    .limit(opts.limit ?? 100);
+  return rows.reverse();
+}
+
+export async function roleHandles(db: Db, topicId: string): Promise<Map<string, Role>> {
+  const out = new Map<string, Role>();
+  for (const p of await participants(db, topicId, "role")) {
+    const role = await getRole(db, p.participantId);
+    if (role) out.set(role.handle.toLowerCase(), role);
+  }
+  return out;
+}
+
+export async function canDownload(db: Db, user: User, topic: Topic): Promise<boolean> {
+  return (
+    (await canView(db, user, topic)) &&
+    (!!(await participant(db, topic.id, "user", user.id)) ||
+      (await hasPermission(db, user, Perm.FILE_DOWNLOAD, topic.id)))
+  );
+}

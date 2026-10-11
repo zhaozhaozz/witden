@@ -1,0 +1,171 @@
+/**
+ * Process assembly. One codebase, three roles that can run together (single-host) or apart:
+ *  - api:    REST API, web console, runner hub + execution gateway, chat webhooks, live events
+ *  - worker: the agent loop (claims tasks from the PostgreSQL queue, calls the gateway over HTTP)
+ *  - all:    both in one process (development, small teams)
+ * The Docker Manager is used in-process or through its HTTP service (WITDEN_MANAGER_URL).
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import multipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
+import websocket from "@fastify/websocket";
+import type { ManagerApi } from "@witden/shared";
+import Fastify, { type FastifyInstance } from "fastify";
+import { Worker } from "./agent/worker.js";
+import { adminRoutes } from "./api/admin.js";
+import { authRoutes } from "./api/auth.js";
+import { computerRoutes } from "./api/computers.js";
+import { eventRoutes } from "./api/events.js";
+import { integrationRoutes } from "./api/integrations.js";
+import { liveRoutes } from "./api/live.js";
+import { modelRoutes } from "./api/models.js";
+import { roleRoutes } from "./api/roles.js";
+import { knowledgeRoutes, ruleRoutes } from "./api/rules-knowledge.js";
+import { taskRoutes } from "./api/tasks.js";
+import { topicRoutes } from "./api/topics.js";
+import { ExecutionGateway, type GatewayClient, HttpGatewayClient } from "./compute/gateway.js";
+import { RunnerHub, stdioTransport } from "./compute/hub.js";
+import { type Settings, setSettings } from "./config.js";
+import { openDatabase, setDatabase, transaction } from "./db/client.js";
+import { WitdenError } from "./errors.js";
+import { deliverPending } from "./integrations/delivery.js";
+import { Runtime, setRuntime } from "./runtime.js";
+import { initSecretBox } from "./security/crypto.js";
+import { EventBus } from "./services/events.js";
+import { reconcile } from "./services/instances.js";
+import { bootstrap } from "./services/users.js";
+
+export interface StartOptions {
+  settings: Settings;
+  /** Override the Docker Manager (tests use an in-memory fake). */
+  manager?: ManagerApi;
+  /** Do not start the agent worker loop even in "all" mode (tests drive it explicitly). */
+  startWorker?: boolean;
+  /** Listen for runners on settings.hubPort (tests attach runners in memory). */
+  listenHub?: boolean;
+}
+
+export interface Witden {
+  runtime: Runtime;
+  app: FastifyInstance | null;
+  worker: Worker | null;
+  close(): Promise<void>;
+}
+
+async function makeManager(settings: Settings): Promise<ManagerApi> {
+  const mod: any = await import("@witden/manager");
+  if (settings.managerUrl)
+    return new mod.ManagerClient({ baseUrl: settings.managerUrl, token: settings.managerToken ?? "" });
+  return new mod.DockerManager({
+    dataDir: path.join(settings.dataDir, "manager"),
+    allowedRuntimes: settings.allowedRuntimes,
+  });
+}
+
+function webDist(settings: Settings): string | null {
+  const candidates = [
+    settings.webDist,
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "web", "dist"),
+  ].filter(Boolean) as string[];
+  return candidates.find((p) => fs.existsSync(path.join(p, "index.html"))) ?? null;
+}
+
+export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
+  const app = Fastify({ logger: false, bodyLimit: 60 * 1024 * 1024 });
+  await app.register(websocket);
+  await app.register(multipart, { limits: { fileSize: 60 * 1024 * 1024 } });
+  app.setErrorHandler((err, _req, reply) => {
+    if (err instanceof WitdenError) {
+      return reply.code(err.status).send({ error: { code: err.code, message: err.message, detail: err.detail } });
+    }
+    const status = (err as any).statusCode ?? 500;
+    if (status >= 500) console.error("[witden] request failed", err);
+    return reply.code(status).send({
+      error: { code: status >= 500 ? "internal" : "bad_request", message: (err as Error).message, detail: {} },
+    });
+  });
+  app.get("/api/health", async () => ({ ok: true, version: "0.2.0" }));
+  for (const routes of [
+    authRoutes,
+    adminRoutes,
+    modelRoutes,
+    computerRoutes,
+    roleRoutes,
+    topicRoutes,
+    taskRoutes,
+    ruleRoutes,
+    knowledgeRoutes,
+    eventRoutes,
+    integrationRoutes,
+    liveRoutes,
+  ]) {
+    await routes(app);
+  }
+  const dist = webDist(rt.settings);
+  if (dist) {
+    await app.register(fastifyStatic, { root: dist, wildcard: false });
+    // Single-page console: unknown non-API paths fall back to index.html.
+    app.setNotFoundHandler((req, reply) => {
+      if (req.url.startsWith("/api/") || req.url.startsWith("/internal/")) {
+        return reply.code(404).send({ error: { code: "not_found", message: req.url, detail: {} } });
+      }
+      return reply.sendFile("index.html");
+    });
+  }
+  return app;
+}
+
+export async function start(opts: StartOptions): Promise<Witden> {
+  const settings = opts.settings;
+  setSettings(settings);
+  fs.mkdirSync(settings.dataDir, { recursive: true });
+  const database = await openDatabase(settings.databaseUrl);
+  setDatabase(database);
+  initSecretBox(settings);
+  await transaction((tx) => bootstrap(tx, settings));
+  const bus = new EventBus();
+  await bus.attach(database);
+  const manager = opts.manager ?? (await makeManager(settings));
+  const rt = new Runtime({ settings, database, bus, manager });
+  setRuntime(rt);
+
+  const hostsApi = settings.processRole !== "worker";
+  let app: FastifyInstance | null = null;
+  const timers: NodeJS.Timeout[] = [];
+  if (hostsApi) {
+    rt.hub = new RunnerHub(async (containerId) => stdioTransport(await manager.openRunnerChannel(containerId)));
+    rt.gateway = new ExecutionGateway();
+    if (opts.listenHub !== false) await rt.hub.listen(settings.hubPort, settings.hubHost);
+    app = await buildApp(rt);
+    // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
+    void reconcile().catch(() => {});
+    timers.push(setInterval(() => void reconcile().catch(() => {}), 30_000));
+  }
+  let worker: Worker | null = null;
+  if (settings.processRole !== "api" && opts.startWorker !== false) {
+    let gateway: GatewayClient | undefined = rt.gateway;
+    if (!gateway) {
+      if (!settings.internalToken) throw new Error("WITDEN_INTERNAL_TOKEN is required for a separate worker process");
+      gateway = new HttpGatewayClient(settings.apiUrlForWorker, settings.internalToken);
+    }
+    worker = new Worker(gateway, { deliverOutbound: deliverPending });
+    rt.worker = worker;
+    await worker.start(database, { recoverAll: settings.processRole === "all" });
+  }
+  return {
+    runtime: rt,
+    app,
+    worker,
+    async close() {
+      for (const t of timers) clearInterval(t);
+      await worker?.stop();
+      await app?.close();
+      await rt.hub?.close();
+      await rt.drain();
+      await bus.close();
+      await database.close();
+    },
+  };
+}

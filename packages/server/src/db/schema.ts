@@ -1,0 +1,664 @@
+/**
+ * Platform database (PostgreSQL; PGlite embeds the same engine for development and tests).
+ *
+ * The platform database holds identities, topics, messages, permissions, agent sessions and task state.
+ * Computers never get access to it: their state lives in their own volumes, managed by the Docker Manager.
+ */
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+
+const id = () => text("id").primaryKey();
+const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
+const created = () => ts("created_at").notNull().defaultNow();
+const updated = () =>
+  ts("updated_at")
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date());
+const json = <T>(name: string) => jsonb(name).$type<T>();
+
+export type Json = Record<string, any>;
+export type Mention = { type: "role" | "user"; id: string };
+
+// --- identity ---------------------------------------------------------------------------------------
+
+export const users = pgTable("users", {
+  id: id(),
+  name: text("name").notNull(),
+  email: text("email").unique(),
+  passwordHash: text("password_hash"),
+  avatarUrl: text("avatar_url"),
+  isAdmin: boolean("is_admin").notNull().default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const apiSessions = pgTable(
+  "api_sessions",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    kind: text("kind").notNull().default("session"),
+    name: text("name"),
+    expiresAt: ts("expires_at"),
+    revoked: boolean("revoked").notNull().default(false),
+    createdAt: created(),
+    lastUsedAt: ts("last_used_at"),
+  },
+  (t) => [index("ix_api_sessions_user").on(t.userId)],
+);
+
+/** Explicit permission grant. Everything not granted is denied. */
+export const grants = pgTable(
+  "grants",
+  {
+    id: id(),
+    subjectType: text("subject_type").notNull(), // user | all
+    subjectId: text("subject_id").notNull().default("*"),
+    permission: text("permission").notNull(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull().default("*"),
+    createdBy: text("created_by"),
+    createdAt: created(),
+  },
+  (t) => [
+    uniqueIndex("ux_grants").on(t.subjectType, t.subjectId, t.permission, t.resourceType, t.resourceId),
+    index("ix_grants_permission").on(t.permission),
+  ],
+);
+
+/** An account on a chat platform, identified by its stable platform id (never its display name). */
+export const externalIdentities = pgTable(
+  "external_identities",
+  {
+    id: id(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    externalUserId: text("external_user_id").notNull(),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    displayName: text("display_name"),
+    isBot: boolean("is_bot").notNull().default(false),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_external_identity").on(t.connectionId, t.externalUserId)],
+);
+
+// --- models & computers ---------------------------------------------------------------------------------
+
+export const modelConfigs = pgTable("model_configs", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  provider: text("provider").notNull().default("openai"), // openai | anthropic
+  baseUrl: text("base_url").notNull(),
+  model: text("model").notNull(),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  keyUpdatedAt: ts("key_updated_at"),
+  params: json<Json>("params").notNull().default({}),
+  capabilities: json<Json>("capabilities").notNull().default({}),
+  status: text("status").notNull().default("unchecked"), // unchecked | ok | error | revoked
+  dailyTokenLimit: integer("daily_token_limit"),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const computerTemplates = pgTable("computer_templates", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull().default(""),
+  version: integer("version").notNull().default(1),
+  image: text("image").notNull(),
+  kind: text("kind").notNull().default("shell"), // shell | desktop
+  workdir: text("workdir").notNull().default("/home/witden"),
+  /** The unprivileged user the runner (and therefore every AI action) runs as. Informational: set by the image. */
+  user: text("user").notNull().default("witden"),
+  command: json<string[] | null>("command"),
+  env: json<Record<string, string>>("env").notNull().default({}),
+  persistentPaths: json<string[]>("persistent_paths").notNull().default([]),
+  credentialPaths: json<string[]>("credential_paths").notNull().default([]),
+  software: json<string[]>("software").notNull().default([]),
+  defaultResources: json<Json>("default_resources").notNull().default({}),
+  capAdd: json<string[]>("cap_add").notNull().default([]),
+  runtime: text("runtime"),
+  desktop: json<Json | null>("desktop"),
+  archived: boolean("archived").notNull().default(false),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const computerInstances = pgTable("computer_instances", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => computerTemplates.id),
+  templateVersion: integer("template_version").notNull().default(1),
+  /** Snapshot of the template at creation: instances never silently follow template edits. */
+  spec: json<Json>("spec").notNull().default({}),
+  resources: json<Json>("resources").notNull().default({}),
+  // creating | running | stopped | error | deleting | deleted
+  status: text("status").notNull().default("creating"),
+  statusReason: text("status_reason"),
+  containerId: text("container_id"),
+  volumes: json<Record<string, string>>("volumes").notNull().default({}),
+  pausedAi: boolean("paused_ai").notNull().default(false),
+  /** sha256 of the per-computer runner secret; the secret itself only exists inside the computer. */
+  runnerTokenHash: text("runner_token_hash"),
+  runnerConnectedAt: ts("runner_connected_at"),
+  runnerInfo: json<Json | null>("runner_info"),
+  lastStartedAt: ts("last_started_at"),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+/** Exclusive control of a desktop for a continuous stretch of work (not per click). */
+export const instanceLeases = pgTable(
+  "instance_leases",
+  {
+    id: id(),
+    instanceId: text("instance_id")
+      .notNull()
+      .references(() => computerInstances.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("input"),
+    holderType: text("holder_type").notNull(), // role | user
+    holderId: text("holder_id").notNull(),
+    taskId: text("task_id"),
+    reason: text("reason"),
+    acquiredAt: created(),
+    expiresAt: ts("expires_at").notNull(),
+  },
+  (t) => [uniqueIndex("ux_lease").on(t.instanceId, t.kind)],
+);
+
+export const instanceBackups = pgTable("instance_backups", {
+  id: id(),
+  instanceId: text("instance_id").notNull(),
+  imageRef: text("image_ref"),
+  archives: json<Record<string, string>>("archives").notNull().default({}),
+  includesCredentials: boolean("includes_credentials").notNull().default(true),
+  status: text("status").notNull().default("running"), // running | complete | failed
+  note: text("note"),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  createdBy: text("created_by"),
+  createdAt: created(),
+});
+
+/** Terminal, browser and external-agent sessions living inside a computer (tracked for observability). */
+export const execSessions = pgTable(
+  "exec_sessions",
+  {
+    id: id(),
+    instanceId: text("instance_id")
+      .notNull()
+      .references(() => computerInstances.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // terminal | browser | agent
+    runnerSessionId: text("runner_session_id").notNull(),
+    // desktop: drives what people see and can take over; background: separate session, labelled as such
+    mode: text("mode").notNull().default("desktop"),
+    taskId: text("task_id"),
+    roleId: text("role_id"),
+    title: text("title").notNull().default(""),
+    status: text("status").notNull().default("open"), // open | closed
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("ix_exec_sessions_instance").on(t.instanceId)],
+);
+
+// --- roles & knowledge -------------------------------------------------------------------------------
+
+export const roles = pgTable("roles", {
+  id: id(),
+  name: text("name").notNull(),
+  handle: text("handle").notNull().unique(),
+  avatarUrl: text("avatar_url"),
+  description: text("description").notNull().default(""),
+  systemPrompt: text("system_prompt").notNull().default(""),
+  modelConfigId: text("model_config_id").references(() => modelConfigs.id),
+  modelParams: json<Json>("model_params").notNull().default({}),
+  instanceId: text("instance_id").references(() => computerInstances.id),
+  // witden: platform agent loop (outside the computer); external: a third-party agent process inside it
+  runtime: text("runtime").notNull().default("witden"),
+  runtimeConfig: json<Json>("runtime_config").notNull().default({}),
+  allowedTools: json<string[]>("allowed_tools").notNull().default([]),
+  allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
+  knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
+  approvalRequired: json<string[]>("approval_required").notNull().default([]),
+  responseMode: text("response_mode").notNull().default("mention"), // mention | active
+  maxSteps: integer("max_steps"),
+  maxTokensPerTask: integer("max_tokens_per_task"),
+  dailyTokenLimit: integer("daily_token_limit"),
+  status: text("status").notNull().default("active"),
+  configVersion: integer("config_version").notNull().default(1),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const knowledgeSpaces = pgTable("knowledge_spaces", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull().default(""),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+// --- collaboration -------------------------------------------------------------------------------------
+
+export const topics = pgTable("topics", {
+  id: id(),
+  title: text("title").notNull(),
+  goal: text("goal").notNull().default(""),
+  kind: text("kind").notNull().default("group"), // group | dm
+  status: text("status").notNull().default("active"),
+  visibility: text("visibility").notNull().default("private"), // private | internal
+  historyPolicy: text("history_policy").notNull().default("since_join"), // full | since_join
+  maxAutoRounds: integer("max_auto_rounds"),
+  allowedModelConfigIds: json<string[] | null>("allowed_model_config_ids"),
+  source: text("source").notNull().default("internal"),
+  createdBy: text("created_by"),
+  lastMessageAt: ts("last_message_at"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const topicParticipants = pgTable(
+  "topic_participants",
+  {
+    id: id(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    participantType: text("participant_type").notNull(), // user | role
+    participantId: text("participant_id").notNull(),
+    isOwner: boolean("is_owner").notNull().default(false),
+    joinedAt: created(),
+    historyFrom: ts("history_from"),
+    removedAt: ts("removed_at"),
+    invitedBy: text("invited_by"),
+  },
+  (t) => [index("ix_participant_lookup").on(t.topicId, t.participantType, t.participantId)],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: id(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    authorType: text("author_type").notNull(), // user | role | system | external
+    authorId: text("author_id"),
+    content: text("content").notNull().default(""),
+    mentions: json<Mention[]>("mentions").notNull().default([]),
+    replyToId: text("reply_to_id"),
+    taskId: text("task_id"),
+    attachments: json<string[]>("attachments").notNull().default([]),
+    source: text("source").notNull().default("web"),
+    externalRef: json<Json | null>("external_ref"),
+    round: integer("round").notNull().default(0),
+    createdAt: created(),
+    editedAt: ts("edited_at"),
+    deletedAt: ts("deleted_at"),
+  },
+  (t) => [index("ix_messages_topic_time").on(t.topicId, t.createdAt), index("ix_messages_task").on(t.taskId)],
+);
+
+/**
+ * Agent session: one role's model context inside one topic. Different topics never share a session, so a
+ * role working in several topics never mixes their contexts.
+ */
+export const agentSessions = pgTable(
+  "agent_sessions",
+  {
+    id: id(),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    /** Short record of earlier runs whose results were delivered to the topic. */
+    notes: json<{ taskId: string; request: string; result: string; at: string }[]>("notes").notNull().default([]),
+    runs: integer("runs").notNull().default(0),
+    lastRunAt: ts("last_run_at"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("ux_agent_session").on(t.roleId, t.topicId)],
+);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: id(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    sessionId: text("session_id"),
+    title: text("title").notNull(),
+    instruction: text("instruction").notNull().default(""),
+    // pending | running | waiting_human | waiting_approval | waiting_children | waiting_resource | waiting_timer
+    // | paused | completed | failed | cancelled
+    status: text("status").notNull().default("pending"),
+    statusReason: text("status_reason"),
+    requesterUserId: text("requester_user_id"),
+    requesterRoleId: text("requester_role_id"),
+    sourceMessageId: text("source_message_id"),
+    ownerRoleId: text("owner_role_id")
+      .notNull()
+      .references(() => roles.id),
+    collaboratorRoleIds: json<string[]>("collaborator_role_ids").notNull().default([]),
+    /** Fixed at creation; a task never moves to another computer implicitly. */
+    instanceId: text("instance_id"),
+    runtime: text("runtime").notNull().default("witden"),
+    parentTaskId: text("parent_task_id"),
+    spawnedByTaskId: text("spawned_by_task_id"),
+    depth: integer("depth").notNull().default(0),
+    round: integer("round").notNull().default(0),
+    envelope: json<Json>("envelope").notNull().default({}),
+    labels: json<string[]>("labels").notNull().default([]),
+    roleSnapshot: json<Json>("role_snapshot").notNull().default({}),
+    assignment: json<Json>("assignment").notNull().default({}),
+    budget: json<Json>("budget").notNull().default({}),
+    usage: json<Json>("usage").notNull().default({}),
+    wait: json<Json | null>("wait"),
+    progress: text("progress"),
+    result: text("result"),
+    error: text("error"),
+    idempotencyKey: text("idempotency_key").unique(),
+    /** Queue: which worker holds the task and until when (expired leases are recovered). */
+    claimedBy: text("claimed_by"),
+    leaseUntil: ts("lease_until"),
+    startedAt: ts("started_at"),
+    finishedAt: ts("finished_at"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [
+    index("ix_tasks_status").on(t.status, t.createdAt),
+    index("ix_tasks_topic").on(t.topicId),
+    index("ix_tasks_parent").on(t.parentTaskId),
+    index("ix_tasks_spawned").on(t.spawnedByTaskId),
+  ],
+);
+
+/**
+ * Persistent transcript and execution log of a task. Tool calls that reach a computer are recorded as
+ * "dispatched" before they are sent and "completed" afterwards, so recovery can tell an action that may
+ * already have happened (uncertain) from one that never started.
+ */
+export const taskSteps = pgTable(
+  "task_steps",
+  {
+    id: id(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    kind: text("kind").notNull(), // user | assistant | tool | event
+    payload: json<Json>("payload").notNull().default({}),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_steps_task_seq").on(t.taskId, t.seq)],
+);
+
+/** Computer operations sent through the execution gateway (journal for recovery and audit). */
+export const toolCalls = pgTable(
+  "tool_calls",
+  {
+    id: id(), // also the runner request id
+    taskId: text("task_id").notNull(),
+    toolCallId: text("tool_call_id").notNull(),
+    instanceId: text("instance_id").notNull(),
+    op: text("op").notNull(),
+    // dispatched | completed | failed | uncertain
+    state: text("state").notNull().default("dispatched"),
+    readOnly: boolean("read_only").notNull().default(false),
+    createdAt: created(),
+    finishedAt: ts("finished_at"),
+  },
+  (t) => [index("ix_tool_calls_task").on(t.taskId)],
+);
+
+export const approvals = pgTable("approvals", {
+  id: id(),
+  taskId: text("task_id")
+    .notNull()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  topicId: text("topic_id").notNull(),
+  roleId: text("role_id").notNull(),
+  action: text("action").notNull(),
+  detail: json<Json>("detail").notNull().default({}),
+  status: text("status").notNull().default("pending"),
+  approverUserIds: json<string[]>("approver_user_ids").notNull().default([]),
+  decidedBy: text("decided_by"),
+  decidedAt: ts("decided_at"),
+  createdAt: created(),
+});
+
+export const artifacts = pgTable(
+  "artifacts",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    mime: text("mime").notNull().default("application/octet-stream"),
+    size: integer("size").notNull().default(0),
+    sha256: text("sha256").notNull().default(""),
+    storageKey: text("storage_key").notNull(),
+    kind: text("kind").notNull().default("upload"), // upload | generated | screenshot | log
+    topicId: text("topic_id"),
+    taskId: text("task_id"),
+    instanceId: text("instance_id"),
+    createdByType: text("created_by_type").notNull().default("user"),
+    createdById: text("created_by_id"),
+    labels: json<string[]>("labels").notNull().default([]),
+    createdAt: created(),
+    deletedAt: ts("deleted_at"),
+  },
+  (t) => [index("ix_artifacts_topic").on(t.topicId)],
+);
+
+export const memories = pgTable("memories", {
+  id: id(),
+  scope: text("scope").notNull(), // role | team | topic | user
+  roleId: text("role_id"),
+  spaceId: text("space_id"),
+  topicId: text("topic_id"),
+  userId: text("user_id"),
+  content: text("content").notNull(),
+  sourceMessageIds: json<string[]>("source_message_ids").notNull().default([]),
+  labels: json<string[]>("labels").notNull().default([]),
+  createdByType: text("created_by_type").notNull().default("user"),
+  createdById: text("created_by_id"),
+  createdAt: created(),
+  deletedAt: ts("deleted_at"),
+});
+
+// --- integrations ----------------------------------------------------------------------------------------
+
+export const connections = pgTable("connections", {
+  id: id(),
+  platform: text("platform").notNull(),
+  name: text("name").notNull().unique(),
+  externalWorkspaceId: text("external_workspace_id"),
+  botUserId: text("bot_user_id"),
+  credentialsEncrypted: text("credentials_encrypted"),
+  settings: json<Json>("settings").notNull().default({}),
+  status: text("status").notNull().default("active"),
+  statusReason: text("status_reason"),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const externalConversations = pgTable(
+  "external_conversations",
+  {
+    id: id(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    kind: text("kind").notNull().default("public"), // public | private | im | mpim
+    name: text("name"),
+    syncMode: text("sync_mode").notNull().default("mentions"),
+    memberIds: json<string[]>("member_ids").notNull().default([]),
+    membersSyncedAt: ts("members_synced_at"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("ux_external_conversation").on(t.connectionId, t.externalId)],
+);
+
+export const externalThreadLinks = pgTable(
+  "external_thread_links",
+  {
+    id: id(),
+    connectionId: text("connection_id").notNull(),
+    conversationId: text("conversation_id")
+      .notNull()
+      .references(() => externalConversations.id, { onDelete: "cascade" }),
+    threadKey: text("thread_key").notNull(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_thread_link").on(t.conversationId, t.threadKey), index("ix_thread_link_topic").on(t.topicId)],
+);
+
+export const processedEvents = pgTable(
+  "processed_events",
+  {
+    id: id(),
+    connectionId: text("connection_id").notNull(),
+    eventKey: text("event_key").notNull(),
+    status: text("status").notNull().default("processing"),
+    detail: text("detail"),
+    receivedAt: created(),
+  },
+  (t) => [uniqueIndex("ux_processed_event").on(t.connectionId, t.eventKey)],
+);
+
+export const outboundMessages = pgTable("outbound_messages", {
+  id: id(),
+  connectionId: text("connection_id").notNull(),
+  conversationExternalId: text("conversation_external_id").notNull(),
+  threadKey: text("thread_key"),
+  messageId: text("message_id"),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  payload: json<Json>("payload").notNull().default({}),
+  status: text("status").notNull().default("pending"),
+  attempts: integer("attempts").notNull().default(0),
+  lastError: text("last_error"),
+  externalTs: text("external_ts"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+// --- governance -----------------------------------------------------------------------------------------
+
+export const assignmentRules = pgTable("assignment_rules", {
+  id: id(),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  priority: integer("priority").notNull().default(100),
+  match: json<Json>("match").notNull().default({}),
+  effect: text("effect").notNull().default("allow"),
+  allowRoleIds: json<string[] | null>("allow_role_ids"),
+  denyRoleIds: json<string[]>("deny_role_ids").notNull().default([]),
+  defaultRoleId: text("default_role_id"),
+  allowInstanceIds: json<string[] | null>("allow_instance_ids"),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: id(),
+    actorType: text("actor_type").notNull(),
+    actorId: text("actor_id"),
+    action: text("action").notNull(),
+    outcome: text("outcome").notNull().default("ok"),
+    resourceType: text("resource_type"),
+    resourceId: text("resource_id"),
+    topicId: text("topic_id"),
+    taskId: text("task_id"),
+    roleId: text("role_id"),
+    instanceId: text("instance_id"),
+    connectionId: text("connection_id"),
+    detail: json<Json>("detail").notNull().default({}),
+    createdAt: created(),
+  },
+  (t) => [
+    index("ix_audit_time").on(t.createdAt),
+    index("ix_audit_task").on(t.taskId),
+    index("ix_audit_action").on(t.action),
+  ],
+);
+
+export const usageRecords = pgTable(
+  "usage_records",
+  {
+    id: id(),
+    taskId: text("task_id"),
+    roleId: text("role_id"),
+    instanceId: text("instance_id"),
+    modelConfigId: text("model_config_id"),
+    promptTokens: integer("prompt_tokens").notNull().default(0),
+    completionTokens: integer("completion_tokens").notNull().default(0),
+    createdAt: created(),
+  },
+  (t) => [index("ix_usage_time").on(t.createdAt)],
+);
+
+export const killSwitches = pgTable("kill_switches", {
+  id: id(),
+  scope: text("scope").notNull(), // global | connection | role | instance | topic | task
+  targetId: text("target_id"),
+  reason: text("reason").notNull().default(""),
+  active: boolean("active").notNull().default(true),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  releasedAt: ts("released_at"),
+});
+
+export type User = typeof users.$inferSelect;
+export type Grant = typeof grants.$inferSelect;
+export type ModelConfig = typeof modelConfigs.$inferSelect;
+export type ComputerTemplate = typeof computerTemplates.$inferSelect;
+export type ComputerInstance = typeof computerInstances.$inferSelect;
+export type Role = typeof roles.$inferSelect;
+export type Topic = typeof topics.$inferSelect;
+export type TopicParticipant = typeof topicParticipants.$inferSelect;
+export type Message = typeof messages.$inferSelect;
+export type AgentSession = typeof agentSessions.$inferSelect;
+export type Task = typeof tasks.$inferSelect;
+export type TaskStep = typeof taskSteps.$inferSelect;
+export type Approval = typeof approvals.$inferSelect;
+export type Artifact = typeof artifacts.$inferSelect;
+export type Memory = typeof memories.$inferSelect;
+export type Connection = typeof connections.$inferSelect;
+export type ExternalConversation = typeof externalConversations.$inferSelect;
+export type AssignmentRule = typeof assignmentRules.$inferSelect;
+export type KillSwitch = typeof killSwitches.$inferSelect;
+export type ExecSession = typeof execSessions.$inferSelect;
+export type ToolCallRecord = typeof toolCalls.$inferSelect;
+
+export const nowSql = sql`now()`;
+export type OutboundMessage = typeof outboundMessages.$inferSelect;
+export type ExternalIdentity = typeof externalIdentities.$inferSelect;
+export type ApiSession = typeof apiSessions.$inferSelect;
