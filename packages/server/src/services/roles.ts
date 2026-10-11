@@ -29,6 +29,8 @@ const BEHAVIOUR_FIELDS = new Set([
   "runtimeConfig",
 ]);
 export const RUNTIMES = new Set(["witden", "external"]);
+/** Field names as the REST API spells them. */
+const apiName = (field: string) => field.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
 export async function getRole(db: Db, id: string): Promise<Role> {
   const [role] = await db.select().from(roles).where(eq(roles.id, id)).limit(1);
@@ -189,7 +191,7 @@ export async function updateRole(db: Db, user: User, role: Role, input: Record<s
       "this change affects a role with active work; review the impact and repeat with confirm=true",
       {
         code: "confirmation_required",
-        detail: { impact: report, changes: behaviour },
+        detail: { impact: report, changes: behaviour.map(apiName) },
       },
     );
   }
@@ -212,7 +214,7 @@ export async function updateRole(db: Db, user: User, role: Role, input: Record<s
     .set({ ...(clean as any), ...(behaviour.length ? { configVersion: role.configVersion + 1 } : {}) })
     .where(eq(roles.id, role.id))
     .returning();
-  return { role: updated, changes, impact: report };
+  return { role: updated, changes: changes.map(apiName), impact: report };
 }
 
 /** Same job on another computer: independent identity, own sessions (job knowledge is copied). */

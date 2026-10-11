@@ -44,7 +44,7 @@ const FIELD_ZH: Record<string, string> = {
   runtime_config: "外部智能体配置",
 };
 
-/** Field names come back camelCase from the server (`changes`) and snake_case from the editor. */
+/** Field names are snake_case (server `changes` and the editor); camelCase is accepted too. */
 export function fieldLabel(f: string): string {
   const snake = f.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
   return FIELD_ZH[snake] ?? snake;

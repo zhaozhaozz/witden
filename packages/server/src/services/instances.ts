@@ -10,13 +10,16 @@ import {
   type ComputerInstance,
   type ComputerTemplate,
   computerInstances,
+  execSessions,
   instanceBackups,
   roles,
   tasks,
+  type User,
 } from "../db/schema.js";
 import { BadRequest, Conflict, InstanceUnavailable, NotFound } from "../errors.js";
 import { runtime } from "../runtime.js";
 import { hashToken, newToken } from "../security/crypto.js";
+import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "./audit.js";
 import { publish } from "./events.js";
 import { validateResources } from "./templates.js";
@@ -123,11 +126,28 @@ function buildSpec(inst: ComputerInstance, runnerToken: string): ComputerSpec {
   };
 }
 
+/** Seeing a computer (details, screen, live view): observing, controlling and managing all include it. */
+export async function canObserveInstance(db: Db, user: User, instanceId: string): Promise<boolean> {
+  for (const p of [Perm.INSTANCE_OBSERVE, Perm.INSTANCE_CONTROL, Perm.INSTANCE_MANAGE]) {
+    if (await hasPermission(db, user, p, instanceId)) return true;
+  }
+  return false;
+}
+
+/** Container stopped, restarted or recreated: none of its terminals, browsers or agents survive. */
+async function closeInstanceSessions(tx: Db, instanceId: string): Promise<void> {
+  await tx
+    .update(execSessions)
+    .set({ status: "closed" })
+    .where(and(eq(execSessions.instanceId, instanceId), eq(execSessions.status, "open")));
+}
+
 async function setStatus(id: string, status: string, reason: string | null, fields: Partial<ComputerInstance> = {}) {
   await transaction(async (tx) => {
     const update: Partial<ComputerInstance> = { status, statusReason: reason, ...fields };
     if (status === "running") update.lastStartedAt = new Date();
     await tx.update(computerInstances).set(update).where(eq(computerInstances.id, id));
+    if (["stopped", "deleted", "creating"].includes(status)) await closeInstanceSessions(tx, id);
     await publish(tx, "instance.status", { id, status, reason }, `instance:${id}`, "admin");
   });
 }
@@ -188,6 +208,7 @@ export async function opRestart(id: string): Promise<void> {
   try {
     runtime().hub?.disconnect(id, "computer restarting");
     await runtime().manager.restart(inst.containerId!);
+    await transaction((tx) => closeInstanceSessions(tx, id));
     await verifyRunning(id, inst.containerId!);
   } catch (err) {
     await setStatus(id, "error", `restart failed: ${(err as Error).message}`);

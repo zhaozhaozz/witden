@@ -12,6 +12,7 @@ import {
   roles,
   type Task,
   tasks,
+  toolCalls,
   topics,
   type User,
   users,
@@ -164,6 +165,10 @@ export async function taskRoutes(app: FastifyInstance) {
         envelope: task.envelope,
         labels: task.labels,
         session_id: task.sessionId,
+        // Execution-gateway journal: which computer operations ran, failed or have an uncertain outcome.
+        tool_calls: (
+          await db.select().from(toolCalls).where(eq(toolCalls.taskId, task.id)).orderBy(asc(toolCalls.createdAt))
+        ).map((c) => row(c)),
         audit: rows.map((a) => (visible ? row(a) : { ...row(a, ["detail"]), detail: "[restricted]" })),
       };
     }),

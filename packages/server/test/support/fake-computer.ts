@@ -37,6 +37,9 @@ export class FakeComputer {
   /** Run the next request with this op, journal its result, then drop the connection and reconnect shortly. */
   dropAfter: string | null = null;
   agentOutput: (prompt: string) => string = (p) => `agent done: ${p.split("\n").pop()}`;
+  /** How many agent.read calls an agent stays running for. */
+  agentReadsBeforeExit = 2;
+  stoppedAgents: string[] = [];
   private transport: HubTransport | null = null;
   private hub: RunnerHub | null = null;
   private sessions = 0;
@@ -211,11 +214,13 @@ export class FakeComputer {
         const a = this.agents.get(p.sessionId);
         if (!a) throw Object.assign(new Error("unknown session"), { code: "not_found" });
         a.reads++;
-        return { sessionId: p.sessionId, output: a.output, running: a.reads < 2, exitCode: a.reads < 2 ? null : 0 };
+        const running = a.reads < this.agentReadsBeforeExit;
+        return { sessionId: p.sessionId, output: a.output, running, exitCode: running ? null : 0 };
       }
       case "agent.stop":
         this.agents.delete(p.sessionId);
-        return {};
+        this.stoppedAgents.push(p.sessionId);
+        return { sessionId: p.sessionId, killed: true };
       default:
         throw Object.assign(new Error(`unsupported op ${req.op}`), { code: "unsupported" });
     }

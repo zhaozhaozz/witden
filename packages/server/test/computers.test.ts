@@ -279,6 +279,34 @@ describe("live view and permissions", () => {
     expect(audit[0].detail.mode).toBe("view");
   });
 
+  it("whoever may take over a computer may also watch it", async () => {
+    const tpl = await template({ name: "desk", kind: "desktop" });
+    const inst = await instance(tpl.id, "desk-1");
+    await h.api("POST", "/api/users", {
+      token: h.adminToken,
+      json: { name: "ctl", email: "ctl@example.com", password: "ctl-pass-1234" },
+    });
+    const ctl = await h.login("ctl@example.com", "ctl-pass-1234");
+    const me = (await h.api("GET", "/api/auth/me", { token: ctl })).body;
+    await h.api("POST", "/api/grants", {
+      token: h.adminToken,
+      json: { permission: "instance.control", user_id: me.id, resource_id: inst.id },
+    });
+    expect((await h.api("POST", `/api/instances/${inst.id}/takeover`, { token: ctl, json: {} })).status).toBe(200);
+    expect((await h.api("GET", `/api/instances/${inst.id}/screenshot`, { token: ctl })).status).toBe(200);
+    const base = (await h.witden.app!.listen({ port: 0, host: "127.0.0.1" })).replace("http", "ws");
+    const { default: WebSocket } = await import("ws");
+    const ws = new WebSocket(`${base}/api/instances/${inst.id}/vnc?access_token=${ctl}&mode=control`);
+    const first = await new Promise<{ code?: number; data?: string }>((resolve) => {
+      ws.on("close", (code: number) => resolve({ code }));
+      ws.on("message", (d: Buffer) => resolve({ data: d.toString() }));
+    });
+    ws.terminate();
+    expect(first.data).toContain("RFB 003.");
+    const audit = (await h.api("GET", "/api/audit?action=instance.vnc", { token: h.adminToken })).body;
+    expect(audit[0].detail.mode).toBe("control");
+  });
+
   it("/api/auth/me reports resource-scoped permissions", async () => {
     await h.api("POST", "/api/users", {
       token: h.adminToken,

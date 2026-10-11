@@ -15,7 +15,7 @@ import { computerInstances } from "../db/schema.js";
 import { runtime } from "../runtime.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
-import { ensureUsable } from "../services/instances.js";
+import { canObserveInstance, ensureUsable } from "../services/instances.js";
 import { currentLease } from "../services/leases.js";
 import { resolveToken } from "../services/users.js";
 import { params, query } from "./http.js";
@@ -29,7 +29,7 @@ async function authorizeVnc(
     const user = await resolveToken(db, token);
     const [inst] = await db.select().from(computerInstances).where(eq(computerInstances.id, instanceId)).limit(1);
     if (!user) return [4401, {} as any];
-    if (!inst || !(await hasPermission(db, user, Perm.INSTANCE_OBSERVE, instanceId))) return [4403, {} as any];
+    if (!inst || !(await canObserveInstance(db, user, instanceId))) return [4403, {} as any];
     const desktop = inst.spec.desktop ?? {};
     if (inst.spec.kind !== "desktop" || inst.status !== "running") return [4409, {} as any];
     const lease = await currentLease(db, inst.id);

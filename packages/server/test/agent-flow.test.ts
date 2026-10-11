@@ -281,6 +281,8 @@ describe("computers", () => {
     await w.drain();
     expect(sawUncertain).toContain("uncertain");
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
+    const trace = (await w.api("GET", `/api/tasks/${posted.tasks[0].id}/trace`, { token: w.alice })).body;
+    expect(trace.tool_calls.map((c: any) => [c.op, c.state])).toEqual([["exec.run", "uncertain"]]);
   });
 
   it("after a brief disconnect the runner's journal answers instead of repeating the action", async () => {
@@ -358,6 +360,49 @@ describe("computers", () => {
     expect(task.result).toBe("refactored 3 files, tests pass");
     expect(pc.agentPrompts[0]).toContain("refactor the parser");
     expect(pc.commands).toEqual([]); // nothing ran outside the agent process in the computer
+    const sessions = (await w.api("GET", `/api/instances/${w.ids.instance}/sessions`, { token: w.adminToken })).body;
+    expect(sessions.find((x: any) => x.kind === "agent").status).toBe("closed"); // it exited by itself
+  });
+
+  it("pausing an external agent stops its process; resuming starts a fresh run", async () => {
+    const role = (
+      await w.api("POST", "/api/roles", {
+        token: w.adminToken,
+        json: {
+          name: "Coder",
+          handle: "coder",
+          instance_id: w.ids.instance,
+          runtime: "external",
+          runtime_config: { command: "agent" },
+        },
+      })
+    ).body;
+    for (const permission of ["role.use", "role.invite"]) {
+      await w.api("POST", "/api/grants", {
+        token: w.adminToken,
+        json: { permission, user_id: w.ids.alice, resource_id: role.id },
+      });
+    }
+    await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
+      token: w.alice,
+      json: { type: "role", id: role.id },
+    });
+    const pc = w.manager.computer(w.ids.instance);
+    pc.agentReadsBeforeExit = Number.POSITIVE_INFINITY;
+    const id = (await w.post(w.alice, w.ids.topic, "@coder long job")).tasks[0].id;
+    void w.worker.tick();
+    await w.waitFor(async () => pc.agentPrompts.length === 1);
+    await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "pause" } });
+    await w.waitFor(async () => pc.stoppedAgents.length === 1);
+    await w.drain();
+    expect((await w.task(id)).status).toBe("paused");
+    pc.agentReadsBeforeExit = 2;
+    await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "resume" } });
+    await w.drain();
+    expect(pc.agentPrompts).toHaveLength(2);
+    expect((await w.task(id)).status).toBe("completed");
+    const sessions = (await w.api("GET", `/api/instances/${w.ids.instance}/sessions`, { token: w.adminToken })).body;
+    expect(sessions.filter((x: any) => x.kind === "agent").map((x: any) => x.status)).toEqual(["closed", "closed"]);
   });
 });
 
@@ -402,6 +447,12 @@ describe("sessions and data lifecycle", () => {
     );
     expect(
       JSON.stringify((await w.api("GET", `/api/tasks/${posted.tasks[0].id}/log`, { token: w.alice })).body),
+    ).not.toContain("4242");
+    // nor does the role's session in this topic still carry it into its next run
+    const sessions = await w.api("GET", `/api/topics/${w.ids.topic}/sessions`, { token: w.alice });
+    expect(sessions.raw).not.toContain("4242");
+    expect(
+      JSON.stringify((await w.api("GET", `/api/tasks/${posted.tasks[0].id}`, { token: w.alice })).body),
     ).not.toContain("4242");
   });
 

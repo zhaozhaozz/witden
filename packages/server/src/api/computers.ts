@@ -16,7 +16,7 @@ import {
   tasks,
   type User,
 } from "../db/schema.js";
-import { BadRequest, Conflict, Unavailable } from "../errors.js";
+import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
 import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
@@ -26,12 +26,7 @@ import * as tpl from "../services/templates.js";
 import { canView } from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
-async function canSee(db: Db, user: User, inst: ComputerInstance): Promise<boolean> {
-  for (const p of [Perm.INSTANCE_MANAGE, Perm.INSTANCE_OBSERVE, Perm.INSTANCE_CONTROL]) {
-    if (await hasPermission(db, user, p, inst.id)) return true;
-  }
-  return false;
-}
+const canSee = (db: Db, user: User, inst: ComputerInstance) => svc.canObserveInstance(db, user, inst.id);
 
 /** Task text from many topics: only shown to people who may read everything the task read. */
 async function taskTitle(db: Db, user: User, task: Task): Promise<string> {
@@ -327,7 +322,7 @@ export async function computerRoutes(app: FastifyInstance) {
   app.get(
     "/api/instances/:id/screenshot",
     authedNoTx(async ({ db, user, req, reply }) => {
-      await requirePerm(db, user, Perm.INSTANCE_OBSERVE, params(req).id);
+      if (!(await svc.canObserveInstance(db, user, params(req).id))) throw new Forbidden("cannot view this computer");
       const inst = await svc.getInstance(db, params(req).id);
       if (inst.spec.kind !== "desktop") throw new BadRequest("this computer has no desktop");
       const conn = await humanConnection(inst);

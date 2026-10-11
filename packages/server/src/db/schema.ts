@@ -328,7 +328,7 @@ export const agentSessions = pgTable(
       .references(() => topics.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("active"),
     /** Short record of earlier runs whose results were delivered to the topic. */
-    notes: json<{ taskId: string; request: string; result: string; at: string }[]>("notes").notNull().default([]),
+    notes: json<{ task_id: string; request: string; result: string; at: string }[]>("notes").notNull().default([]),
     runs: integer("runs").notNull().default(0),
     lastRunAt: ts("last_run_at"),
     createdAt: created(),

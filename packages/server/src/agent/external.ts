@@ -71,7 +71,25 @@ export async function runExternal(gateway: GatewayClient, taskId: string): Promi
       const current = await getTask(getDb(), taskId);
       // Cancelled, paused or stopped by an emergency switch: the agent process inside the computer stops too.
       if (current?.status !== "running" || (await activeKillSwitch(getDb(), current))) {
-        await call("agent.stop", { sessionId }).catch(() => {});
+        const stopped = await call("agent.stop", { sessionId }).then(
+          () => true,
+          (err) => (console.warn(`[witden] could not stop external agent ${sessionId}`, err.message), false),
+        );
+        await transaction(async (tx) => {
+          const t = await getTask(tx, taskId);
+          if (!t) return;
+          await appendStep(tx, t, "event", {
+            type: "external_agent_stopped",
+            session: sessionId,
+            stopped,
+            status: t.status,
+          });
+          // A paused task starts a fresh agent run when resumed; the stopped one cannot continue.
+          if (!TERMINAL.has(t.status) && t.wait?.external_session === sessionId) {
+            const { external_session: _gone, ...wait } = t.wait as Record<string, any>;
+            await tx.update(tasks).set({ wait }).where(eq(tasks.id, taskId));
+          }
+        });
         return;
       }
       const state = await call("agent.read", { sessionId });

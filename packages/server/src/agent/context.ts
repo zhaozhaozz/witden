@@ -136,7 +136,7 @@ export async function recordSessionNote(db: Db, task: Task, result: string): Pro
   const notes = [
     ...session.notes,
     {
-      taskId: task.id,
+      task_id: task.id,
       request: task.instruction.slice(0, 300),
       result: result.slice(0, 600),
       at: new Date().toISOString(),
