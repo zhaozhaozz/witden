@@ -433,13 +433,19 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
     }, 90_000);
 
     it("refuses to run the runner as root", () => {
-      // The desktop container's default user is root (supervisord); the runner itself must not be.
-      const asRoot = spawnSync("docker", ["exec", name, "node", "/opt/witden/runner/witden-runner.mjs", "--stdio"], {
-        input: "",
-      });
+      // The whole desktop runs as witden; even an explicit root exec cannot start the runner as root.
+      const asRoot = spawnSync(
+        "docker",
+        ["exec", "-u", "root", name, "node", "/opt/witden/runner/witden-runner.mjs", "--stdio"],
+        {
+          input: "",
+        },
+      );
       expect(asRoot.status).toBe(78);
-      const supervised = execFileSync("docker", ["exec", name, "ps", "-o", "user=", "-C", "node"]).toString().trim();
-      expect(supervised.split(/\s+/)).toEqual(["witden"]);
+      const supervised = execFileSync("docker", ["exec", name, "ps", "-o", "user=", "-C", "node,supervisord"])
+        .toString()
+        .trim();
+      expect(new Set(supervised.split(/\s+/))).toEqual(new Set(["witden"]));
     });
 
     it("tunnels the view-only VNC port", async () => {

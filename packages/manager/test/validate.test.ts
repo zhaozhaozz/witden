@@ -136,6 +136,11 @@ describe("validateComputerSpec", () => {
     rejects(() => validateComputerSpec(spec({ name: "Dev_Box" }), options), /computer name/);
     rejects(() => validateComputerSpec(spec({ image: "debian bookworm" }), options), /image reference/);
     rejects(() => validateComputerSpec(spec({ workdir: "workspace" }), options), /absolute/);
+    for (const user of ["root", "0", "1000:0", "witden:root", "00"]) {
+      rejects(() => validateComputerSpec(spec({ user }), options), /never run as root/);
+    }
+    expect(validateComputerSpec(spec({ user: "1000:1000" }), options).user).toBe("1000:1000");
+    expect(validateComputerSpec(spec(), options).user).toBe("witden");
     rejects(() => validateComputerSpec(spec({ command: ["sh", 1] }), options), /command/);
     rejects(() => validateComputerSpec(spec({ runner: { token: "short", hubUrl: null } }), options), /runner.token/);
     rejects(

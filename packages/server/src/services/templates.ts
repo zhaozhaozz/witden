@@ -90,7 +90,9 @@ export function validateTemplate(data: Record<string, any>, settings: Settings):
   const workdir = data.workdir || "/home/witden";
   if (!workdir.startsWith("/")) throw new BadRequest("workdir must be absolute");
   const user = data.user || "witden";
-  if (user === "root" || user === "0") {
+  if (!/^(?:[a-z_][a-z0-9_-]{0,31}|\d{1,10})(?::(?:[a-z_][a-z0-9_-]{0,31}|\d{1,10}))?$/.test(user))
+    throw new BadRequest("user must be a user name or uid[:gid]");
+  if (user.split(":").some((part: string) => part === "root" || /^0+$/.test(part))) {
     // AI actions run as this user through the runner; root would void the computer's own permission model.
     throw new BadRequest("computers run AI work as an unprivileged user; root is not allowed");
   }

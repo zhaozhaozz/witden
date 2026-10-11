@@ -34,6 +34,7 @@ function makeSpec(suffix: string, overrides: Partial<ComputerSpec> = {}): Comput
     name,
     image: IMAGE,
     workdir: "/workspace",
+    user: "1000:1000",
     command: ["sleep", "infinity"],
     env: { GREETING: "hello" },
     volumes: { "/home/witden": `witden-${name}-home`, "/workspace": `witden-${name}-ws` },

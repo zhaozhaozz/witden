@@ -3,8 +3,7 @@
 # reaches them through the runner's loopback streams, so the desktop is never exposed directly.
 # Build from the repository root:  docker build -f images/desktop/Dockerfile -t witden/computer-desktop:latest .
 #
-# supervisord runs as root only to start every program as the unprivileged user `witden` (uid 1000);
-# the runner, the X server and the browser all run as witden.
+# Everything, supervisord included, runs as the unprivileged user `witden` (uid 1000).
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -39,7 +38,7 @@ RUN apt-get update \
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=runner /opt/witden/runner /opt/witden/runner
 
-COPY images/desktop/supervisord.conf /etc/supervisor/conf.d/witden.conf
+COPY images/desktop/supervisord.conf /etc/witden/supervisord.conf
 COPY images/desktop/fluxbox-startup /home/witden/.fluxbox/startup
 # Plain background: the default style tries to set a wallpaper and pops up an error dialog without one,
 # which would confuse a role reading the screen.
@@ -48,5 +47,6 @@ COPY images/desktop/fluxbox-overlay /home/witden/.fluxbox/overlay
 RUN chown -R witden:witden /home/witden/.fluxbox && chmod +x /home/witden/.fluxbox/startup \
  && printf '#!/bin/sh\nexec fbsetroot -solid "#2f3b45"\n' > /usr/bin/fbsetbg
 
+USER witden
 WORKDIR /home/witden
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/witden/supervisord.conf"]

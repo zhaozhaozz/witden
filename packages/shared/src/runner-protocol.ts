@@ -105,7 +105,13 @@ export interface PingMessage {
   at: number;
 }
 
-export type HubToRunner = WelcomeMessage | RequestMessage | CancelMessage | StreamOpenMessage | StreamCloseMessage | PingMessage;
+export type HubToRunner =
+  | WelcomeMessage
+  | RequestMessage
+  | CancelMessage
+  | StreamOpenMessage
+  | StreamCloseMessage
+  | PingMessage;
 export type RunnerToHub =
   | HelloMessage
   | ResponseMessage

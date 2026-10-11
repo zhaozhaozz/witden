@@ -106,6 +106,7 @@ function buildSpec(inst: ComputerInstance, runnerToken: string): ComputerSpec {
     name: inst.name,
     image: spec.image,
     workdir: spec.workdir ?? "/home/witden",
+    user: spec.user ?? "witden",
     command: spec.command ?? null,
     env: { ...(spec.env ?? {}) },
     volumes: { ...inst.volumes },

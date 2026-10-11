@@ -25,6 +25,8 @@ export interface ComputerSpec {
   name: string;
   image: string;
   workdir: string;
+  /** Unprivileged user (name or uid[:gid]) everything in the computer runs as; root is refused. Default witden. */
+  user?: string | null;
   /** Overrides the image command (e.g. a shell template's long-running command). */
   command?: string[] | null;
   env: Record<string, string>;

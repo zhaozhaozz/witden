@@ -399,7 +399,8 @@ export class DockerManager implements ManagerApi {
     try {
       exec = await container.exec({
         Cmd: this.runnerCommand,
-        User: this.runnerUser,
+        // the user the computer was created as; the configured default only for containers without one
+        User: info.Config?.User || this.runnerUser,
         AttachStdin: true,
         AttachStdout: true,
         AttachStderr: false,
@@ -475,6 +476,7 @@ export class DockerManager implements ManagerApi {
       Image: spec.image,
       Hostname: spec.name,
       WorkingDir: spec.workdir,
+      User: spec.user ?? DEFAULT_RUNNER_USER,
       Env: [
         ...Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
         `WITDEN_INSTANCE_ID=${spec.instanceId}`,

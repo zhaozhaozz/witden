@@ -202,6 +202,18 @@ function validateCaps(value: unknown): string[] {
   return [...new Set(value as string[])];
 }
 
+const USER_PART = "(?:[a-z_][a-z0-9_-]{0,31}|\\d{1,10})";
+const USER_SPEC = new RegExp(`^${USER_PART}(?::${USER_PART})?$`);
+export const DEFAULT_COMPUTER_USER = "witden";
+
+/** Computers never run as root: neither user nor group may be root / 0. */
+function validateUser(value: unknown): string {
+  if (value === undefined || value === null || value === "") return DEFAULT_COMPUTER_USER;
+  const user = match(value, USER_SPEC, "user");
+  if (user.split(":").some((part) => part === "root" || /^0+$/.test(part))) invalid("computers never run as root");
+  return user;
+}
+
 function validateRuntime(value: unknown, allowed: readonly string[]): string | null {
   if (value === undefined || value === null || value === "") return null;
   const runtime = match(value, RUNTIME_NAME, "runtime");
@@ -234,6 +246,7 @@ const SPEC_FIELDS = [
   "name",
   "image",
   "workdir",
+  "user",
   "command",
   "env",
   "volumes",
@@ -256,6 +269,7 @@ export function validateComputerSpec(value: unknown, options: ValidationOptions)
     name: match(spec.name, COMPUTER_NAME, "computer name"),
     image: validateImageRef(spec.image),
     workdir: normalizeAbsolutePath(spec.workdir, "workdir"),
+    user: validateUser(spec.user),
     command: validateCommand(spec.command),
     env: validateEnv(spec.env ?? {}),
     volumes: validateVolumes(spec.volumes ?? {}),
