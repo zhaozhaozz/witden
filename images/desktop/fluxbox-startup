@@ -1,4 +1,10 @@
 #!/bin/sh
 # Minimal session: a terminal so a fresh desktop is not blank.
+# Xvfb starts at the same time as this script; wait until it accepts clients, otherwise xterm exits and the
+# desktop stays without its terminal (only fluxbox is restarted by supervisord).
+for _ in $(seq 100); do
+  xdpyinfo >/dev/null 2>&1 && break
+  sleep 0.1
+done
 xterm -geometry 100x30+40+40 &
 exec fluxbox

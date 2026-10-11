@@ -1,0 +1,8 @@
+# Build context for the platform and computer images (repo root). The runner is bundled from sources.
+.git
+**/node_modules
+**/dist
+.tmp
+data
+.env
+*.log

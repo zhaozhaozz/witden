@@ -5,9 +5,12 @@
   "type": "module",
   "description": "Computer Runner: executes operations inside one cloud computer",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "bin": { "witden-runner": "dist/main.js" },
   "scripts": {
     "build": "tsc -p tsconfig.json && node build.mjs",
+    "bundle": "node build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": { "@witden/shared": "0.2.0", "ws": "^8.18.0" },
