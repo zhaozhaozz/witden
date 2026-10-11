@@ -34,8 +34,11 @@ export class FakeComputer {
   execHandler: ExecHandler | null = null;
   /** Drop the connection instead of answering the next request with this op (simulates a crash mid-call). */
   dropOn: string | null = null;
+  /** Run the next request with this op, journal its result, then drop the connection and reconnect shortly. */
+  dropAfter: string | null = null;
   agentOutput: (prompt: string) => string = (p) => `agent done: ${p.split("\n").pop()}`;
   private transport: HubTransport | null = null;
+  private hub: RunnerHub | null = null;
   private sessions = 0;
   private agents = new Map<string, { output: string; reads: number }>();
 
@@ -49,6 +52,7 @@ export class FakeComputer {
   }
 
   connect(hub: RunnerHub): void {
+    this.hub = hub;
     const [hubSide, runnerSide] = memoryTransportPair();
     hub.accept(hubSide, "memory");
     this.transport = runnerSide;
@@ -99,6 +103,20 @@ export class FakeComputer {
     }
     if (msg.type !== "request") return;
     const req = msg as RequestMessage;
+    if (this.dropAfter === req.op) {
+      this.dropAfter = null;
+      let msg: unknown;
+      try {
+        msg = { type: "response", id: req.id, ok: true, result: await this.run(req) };
+      } catch (err) {
+        msg = { type: "response", id: req.id, ok: false, error: { code: "failed", message: (err as Error).message } };
+      }
+      this.journal.set(req.id, msg);
+      const hub = this.hub;
+      this.disconnect();
+      setTimeout(() => hub && this.connect(hub), 50);
+      return;
+    }
     if (this.dropOn === req.op) {
       this.dropOn = null;
       this.journal.set(req.id, "running");

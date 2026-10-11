@@ -6,7 +6,7 @@
  * computer operations happen outside them.
  */
 import { and, eq, inArray, sql } from "drizzle-orm";
-import type { GatewayClient } from "../compute/gateway.js";
+import type { GatewayClient, RecoverResult } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
@@ -130,11 +130,10 @@ export class TaskRunner {
       let content: string;
       if (spec && opBacked(call.function.name)) {
         const outcome = await this.gateway.recover(taskId, call.id);
-        if (outcome.state === "completed")
-          content = `recovered result: ${JSON.stringify(outcome.result).slice(0, settings().toolOutputLimit)}`;
-        else if (outcome.state === "failed")
-          content = `this call did not run (${outcome.error?.message ?? "not delivered"}); you may retry it`;
-        else content = UNCERTAIN;
+        content =
+          outcome.state === "failed" && (!outcome.error || outcome.error.code === "never_sent")
+            ? `this call did not run (${outcome.error?.message ?? "not delivered"}); you may retry it`
+            : describeRecovered(outcome, "the worker restarted during this call");
       } else {
         content = UNCERTAIN;
       }
@@ -303,7 +302,15 @@ export class TaskRunner {
       );
     } catch (err) {
       if (err instanceof OutcomeUncertain && SIDE_EFFECT_TOOLS.has(call.name)) {
-        result = { content: `${UNCERTAIN} (${err.message})` };
+        // Never repeat blindly. Ask the runner's journal first: after a short blip it usually knows the answer.
+        const outcome = await this.gateway
+          .recover(taskId, call.id)
+          .catch(() => ({ state: "uncertain" }) as RecoverResult);
+        if (outcome.state === "failed" && outcome.error?.code === "never_sent") {
+          await this.waitForInstance(taskId, call, err.message);
+          return false;
+        }
+        result = { content: describeRecovered(outcome, err.message) };
       } else if (err instanceof InstanceUnavailable || err instanceof InstanceBusy || err instanceof OutcomeUncertain) {
         // Not delivered (or harmless to repeat): wait for the computer and run the same call again.
         await this.waitForInstance(taskId, call, err.message);
@@ -474,6 +481,15 @@ export class TaskRunner {
 
 const UNCERTAIN =
   "uncertain: the computer did not confirm whether this action happened. Check the current state (screenshot, read the file, list the directory, read the page) before repeating it.";
+
+/** What the model is told about an interrupted operation, from the runner's journal. */
+function describeRecovered(outcome: RecoverResult, why: string): string {
+  if (outcome.state === "completed")
+    return `recovered result (${why}; the computer had finished it): ${JSON.stringify(outcome.result).slice(0, settings().toolOutputLimit)}`;
+  if (outcome.state === "failed") return `error: ${outcome.error?.message ?? "the operation failed"}`;
+  if (outcome.state === "running") return `${UNCERTAIN} The operation is still running in the computer (${why}).`;
+  return `${UNCERTAIN} (${why})`;
+}
 
 /** Tools whose effect is a computer operation journaled by the gateway. */
 function opBacked(name: string): boolean {

@@ -283,6 +283,23 @@ describe("computers", () => {
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
   });
 
+  it("after a brief disconnect the runner's journal answers instead of repeating the action", async () => {
+    const pc = w.manager.computer(w.ids.instance);
+    pc.dropAfter = "exec.run"; // the command ran, but the answer was lost with the connection
+    let seen = "";
+    w.scripts.dev = (m, turn) => {
+      if (turn === 0) return reply("", [call("run_command", { command: "git push" })]);
+      seen = lastToolResult(m);
+      return reply("pushed");
+    };
+    const posted = await w.post(w.alice, w.ids.topic, "@dev push");
+    await w.drain();
+    expect(seen).toContain("recovered result");
+    expect(seen).toContain("ran: git push");
+    expect(pc.commands.filter((c) => c === "git push")).toHaveLength(1);
+    expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
+  });
+
   it("desktop and browser tools: one task drives the desktop at a time, background sessions are labelled", async () => {
     let browserText = "";
     w.scripts.dev = (m, turn) => {
