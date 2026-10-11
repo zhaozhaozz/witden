@@ -53,6 +53,7 @@ Slack webhook ─验签─► processed_events（queued，去重）─► 200 �
 ## 执行边界
 
 - **执行网关**（`server/src/compute/gateway.ts`）是 AI 到电脑的唯一通道。每次操作检查：操作所属工具组在任务信封内、任务仍在运行、角色仍属于任务固定的那台电脑、电脑在运行且没有人类接管、紧急停止未生效、桌面操作持有控制租约。然后写 `tool_calls` 再发往 Runner。
+- 停止类操作（`agent.stop`）只会让工作停下来，在任务已暂停/取消、电脑被接管或紧急停止时仍放行。
 - 独立部署的 Worker 用 `HttpGatewayClient` 调 `POST /internal/gateway/{execute|recover}`（`WITDEN_INTERNAL_TOKEN`），自己既不连 Docker 也不连 Runner。
 - **Runner Hub**（`server/src/compute/hub.ts`）：Runner 主动拨入 `ws://witden-hub:8330/runner`，`hello` 携带实例 ID 和令牌，与数据库中的哈希比对；没有网络路由的电脑（`internal`/`none` 网络）经 Manager 的 `docker exec` stdio 通道连接，帧格式相同。VNC 等本机端口通过同一连接的二进制流隧道转发。
 - 电脑不可用时任务进入等待，超时失败；恢复后**重放同一个工具调用**，不会换到别的电脑，也没有宿主机执行路径。
