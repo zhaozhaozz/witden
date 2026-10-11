@@ -8,7 +8,16 @@ import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
 import { Empty, Field, FormModal, Handle, Loaded, PageHeader, Tag } from "../../ui/kit";
-import { ComputersNav, fromDraft, InstanceStatusChip, ResourceFields, resourceSummary, toDraft, type ResourceDraft } from "./computerParts";
+import {
+  ComputersNav,
+  fromDraft,
+  InstanceStatusChip,
+  type ResourceDraft,
+  ResourceFields,
+  RunnerBadge,
+  resourceSummary,
+  toDraft,
+} from "./computerParts";
 
 export default function InstancesPage() {
   const { can } = useAuth();
@@ -18,7 +27,7 @@ export default function InstancesPage() {
   const templates = useResource(() => api.get<Template[]>("/api/templates"), []);
   const refresh = useDebounced(() => void res.reload(), 500);
   const live = useLiveEvents(can("audit.view") || can("instance.manage") ? { admin: true } : null, (type) => {
-    if (type === "instance.status" || type === "instance.operator") refresh();
+    if (type.startsWith("instance.")) refresh();
   });
   const tplName = (id: string) => templates.data?.find((t) => t.id === id)?.name ?? id;
 
@@ -31,7 +40,7 @@ export default function InstancesPage() {
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
             {can("instance.manage") ? (
-              <button className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
                 新建电脑
               </button>
             ) : null}
@@ -64,8 +73,12 @@ export default function InstancesPage() {
                         <div className="small muted">{i.spec?.kind === "desktop" ? "桌面电脑" : "命令行电脑"}</div>
                       </td>
                       <td className="cell-status">
-                        <InstanceStatusChip inst={i} compact />
-                        {i.status_reason ? <div className={`reason reason-${i.status === "error" ? "bad" : "info"}`}>{i.status_reason}</div> : null}
+                        <InstanceStatusChip inst={i} compact /> <RunnerBadge inst={i} />
+                        {i.status_reason ? (
+                          <div className={`reason reason-${i.status === "error" ? "bad" : "info"}`}>
+                            {i.status_reason}
+                          </div>
+                        ) : null}
                       </td>
                       <td>
                         {tplName(i.template_id)} <span className="muted small">v{i.template_version}</span>
@@ -93,10 +106,12 @@ export default function InstancesPage() {
           ) : (
             <Empty
               title="还没有电脑"
-              hint={can("instance.manage") ? "从模板创建一台电脑，再把角色分配到这台电脑上。" : "你没有可以查看的电脑。"}
+              hint={
+                can("instance.manage") ? "从模板创建一台电脑，再把角色分配到这台电脑上。" : "你没有可以查看的电脑。"
+              }
               action={
                 can("instance.manage") ? (
-                  <button className="btn btn-primary" onClick={() => setCreating(true)}>
+                  <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
                     新建电脑
                   </button>
                 ) : undefined
@@ -182,8 +197,15 @@ function CreateInstanceDialog({
           ))}
         </select>
       </Field>
-      {!templates.length ? <p className="small text-bad">还没有可用的模板，请先在「模板」中创建或导入内置模板。</p> : null}
+      {!templates.length ? (
+        <p className="small text-bad">还没有可用的模板，请先在「模板」中创建或导入内置模板。</p>
+      ) : null}
       {tpl?.description ? <p className="small muted">{tpl.description}</p> : null}
+      {tpl ? (
+        <p className="small muted">
+          AI 的所有操作都以电脑内的非特权用户 <code>{tpl.user}</code> 身份执行。
+        </p>
+      ) : null}
       <Field label="名称" hint="2–63 个字符：小写字母、数字和短横线，例如 dev-01。创建后不能修改。">
         <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="dev-01" />
       </Field>

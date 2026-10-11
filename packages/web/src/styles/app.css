@@ -29,9 +29,11 @@
   --info-bg: #e5edf5;
   --stop: #b42318;
 
-  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+  --font:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
     "Source Han Sans SC", "Segoe UI", system-ui, sans-serif;
-  --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono",
+  --mono:
+    ui-monospace, "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono",
     "Noto Sans Mono CJK SC", monospace;
 
   --radius: 6px;
@@ -142,7 +144,9 @@ textarea {
   padding: 5px 10px;
   min-height: 32px;
   width: 100%;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
 }
 textarea {
   resize: vertical;
@@ -198,7 +202,9 @@ textarea.prompt {
   white-space: nowrap;
   cursor: pointer;
   text-decoration: none;
-  transition: background 0.12s, border-color 0.12s;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
 }
 .btn:hover {
   background: var(--paper-2);
@@ -1662,7 +1668,9 @@ textarea.prompt {
 .topic-on,
 .topic-on:hover {
   background: var(--surface);
-  box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(23, 33, 43, 0.06);
+  box-shadow:
+    0 0 0 1px var(--line),
+    0 1px 2px rgba(23, 33, 43, 0.06);
 }
 .topic-item-title {
   font-size: 13.5px;
@@ -1921,7 +1929,9 @@ textarea.prompt {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
 }
 .composer-box:focus-within {
   border-color: var(--harbor-2);

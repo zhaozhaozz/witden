@@ -5,7 +5,21 @@ import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LA
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
-import { CopyText, Empty, Field, FormModal, JsonBlock, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag, Toggle } from "../ui/kit";
+import {
+  CopyText,
+  Empty,
+  Field,
+  FormModal,
+  JsonBlock,
+  KV,
+  Loaded,
+  PageHeader,
+  Section,
+  StatusChip,
+  Tabs,
+  Tag,
+  Toggle,
+} from "../ui/kit";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
 
@@ -59,10 +73,10 @@ export default function ConnectionsPage() {
         sub="把 Slack、飞书等平台的机器人接入进来。接入平台不等于导入全部消息：每个会话可以单独设置同步范围，外部请求还要经过分配规则。"
         actions={
           <>
-            <button className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
+            <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
               {showCaps ? "收起能力对照" : "各平台能力对照"}
             </button>
-            <button className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
               新建接入
             </button>
           </>
@@ -70,7 +84,9 @@ export default function ConnectionsPage() {
       />
       {showCaps ? (
         <Section title="各平台能力对照">
-          <p className="small muted">平台不支持的消息类型或操作不会表现为已同步；下表列出每个平台实际同步的范围和替代行为。</p>
+          <p className="small muted">
+            平台不支持的消息类型或操作不会表现为已同步；下表列出每个平台实际同步的范围和替代行为。
+          </p>
           <Loaded res={caps}>{(m) => <CapabilityTable matrix={m} />}</Loaded>
         </Section>
       ) : null}
@@ -81,13 +97,21 @@ export default function ConnectionsPage() {
               <ul className="conn-list">
                 {rows.map((c) => (
                   <li key={c.id}>
-                    <button className={`conn-item${c.id === selected ? " conn-on" : ""}`} onClick={() => setSelected(c.id)}>
+                    <button
+                      type="button"
+                      className={`conn-item${c.id === selected ? " conn-on" : ""}`}
+                      onClick={() => setSelected(c.id)}
+                    >
                       <span className="conn-name">
                         {c.name}
                         <Tag>{PLATFORM_LABEL[c.platform] ?? c.platform}</Tag>
                       </span>
                       <StatusChip meta={genericStatus(c.status)} compact />
-                      {c.status_reason ? <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>{c.status_reason}</span> : null}
+                      {c.status_reason ? (
+                        <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>
+                          {c.status_reason}
+                        </span>
+                      ) : null}
                     </button>
                   </li>
                 ))}
@@ -109,7 +133,7 @@ export default function ConnectionsPage() {
               title="还没有接入任何通讯平台"
               hint="创建 Slack 应用（或飞书应用）并填写凭据，再把事件地址配置到平台后台。"
               action={
-                <button className="btn btn-primary" onClick={() => setCreating(true)}>
+                <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
                   新建接入
                 </button>
               }
@@ -139,12 +163,23 @@ function CapabilityTable({ matrix }: { matrix: CapabilityMatrix }) {
       const s = CAP_STATUS[v];
       return s ? <Tag tone={s.tone}>{s.label}</Tag> : v;
     }
-    if (Array.isArray(v)) return v.length ? <ul className="plain-list">{v.map((x, i) => <li key={i}>{String(x)}</li>)}</ul> : <span className="muted">—</span>;
+    if (Array.isArray(v))
+      return v.length ? (
+        <ul className="plain-list">
+          {v.map((x, i) => (
+            <li key={i}>{String(x)}</li>
+          ))}
+        </ul>
+      ) : (
+        <span className="muted">—</span>
+      );
     if (v === undefined || v === null || v === "") return <span className="muted">—</span>;
     if (typeof v === "object") return <JsonBlock value={v} />;
     return String(v);
   };
-  const extraKeys = Array.from(new Set(platforms.flatMap((p) => Object.keys(matrix[p] ?? {})))).filter((k) => !CAP_ROWS.some(([r]) => r === k));
+  const extraKeys = Array.from(new Set(platforms.flatMap((p) => Object.keys(matrix[p] ?? {})))).filter(
+    (k) => !CAP_ROWS.some(([r]) => r === k),
+  );
   return (
     <div className="table-wrap">
       <table className="table cap-table">
@@ -171,7 +206,15 @@ function CapabilityTable({ matrix }: { matrix: CapabilityMatrix }) {
   );
 }
 
-function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; onChanged: (c: Connection) => void; onDeleted: () => void }) {
+function ConnectionDetail({
+  conn,
+  onChanged,
+  onDeleted,
+}: {
+  conn: Connection;
+  onChanged: (c: Connection) => void;
+  onDeleted: () => void;
+}) {
   const { can } = useAuth();
   const { confirm, toast } = useFeedback();
   const { run, busy } = useAction();
@@ -189,10 +232,15 @@ function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; on
         actions={
           <div className="btn-row">
             <button
+              type="button"
               className="btn btn-sm"
               disabled={busy}
               onClick={async () => {
-                const out = await run(() => api.post<{ ok: boolean; error?: string } & Record<string, unknown>>(`/api/connections/${conn.id}/test`));
+                const out = await run(() =>
+                  api.post<{ ok: boolean; error?: string } & Record<string, unknown>>(
+                    `/api/connections/${conn.id}/test`,
+                  ),
+                );
                 if (!out) return;
                 if (out.ok) toast("连接正常", "ok");
                 else toast(`连接失败：${out.error ?? "未知错误"}`, "bad");
@@ -204,6 +252,7 @@ function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; on
               测试连接
             </button>
             <button
+              type="button"
               className="btn btn-sm"
               disabled={busy}
               onClick={async () => {
@@ -217,16 +266,20 @@ function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; on
                   });
                   if (!ok) return;
                 }
-                const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { status: next }), next === "paused" ? "已暂停" : "已恢复");
+                const out = await run(
+                  () => api.patch<Connection>(`/api/connections/${conn.id}`, { status: next }),
+                  next === "paused" ? "已暂停" : "已恢复",
+                );
                 if (out) onChanged(out);
               }}
             >
               {conn.status === "paused" ? "恢复" : "暂停"}
             </button>
-            <button className="btn btn-sm" onClick={() => setEditing(true)}>
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>
               编辑
             </button>
             <button
+              type="button"
               className="btn btn-sm btn-danger-ghost"
               disabled={busy}
               onClick={async () => {
@@ -248,21 +301,43 @@ function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; on
       >
         <div className={`status-banner${conn.status === "error" ? " status-banner-bad" : ""}`}>
           <StatusChip meta={genericStatus(conn.status)} compact />
-          <div className="status-banner-text">{conn.status_reason ?? (conn.status === "active" ? "正在接收和发送消息" : "")}</div>
+          <div className="status-banner-text">
+            {conn.status_reason ?? (conn.status === "active" ? "正在接收和发送消息" : "")}
+          </div>
         </div>
         <KV
           items={[
             ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
             ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
-            ["外部工作空间", conn.external_workspace_id ? <code className="id">{conn.external_workspace_id}</code> : <span className="muted">首次测试后获取</span>],
-            ["机器人账号", conn.bot_user_id ? <code className="id">{conn.bot_user_id}</code> : <span className="muted">首次测试后获取</span>],
+            [
+              "外部工作空间",
+              conn.external_workspace_id ? (
+                <code className="id">{conn.external_workspace_id}</code>
+              ) : (
+                <span className="muted">首次测试后获取</span>
+              ),
+            ],
+            [
+              "机器人账号",
+              conn.bot_user_id ? (
+                <code className="id">{conn.bot_user_id}</code>
+              ) : (
+                <span className="muted">首次测试后获取</span>
+              ),
+            ],
             ["新会话默认同步", SYNC_MODE[conn.settings?.default_sync_mode ?? "mentions"]],
-            ["自动创建成员", conn.settings?.auto_provision_users ? "是：未关联的外部账号自动创建内部成员" : "否：需要管理员关联身份"],
+            [
+              "自动创建成员",
+              conn.settings?.auto_provision_users ? "是：未关联的外部账号自动创建内部成员" : "否：需要管理员关联身份",
+            ],
             ["角色身份显示", conn.settings?.custom_identity ? "用角色自己的名称和头像发消息" : "在消息前加角色名称"],
           ]}
         />
         {conn.platform === "slack" ? (
-          <p className="small muted">把事件地址填到 Slack 应用的 Event Subscriptions，并订阅 app_mention、message.channels、message.groups、message.im 等事件。</p>
+          <p className="small muted">
+            把事件地址填到 Slack 应用的 Event Subscriptions，并订阅
+            app_mention、message.channels、message.groups、message.im 等事件。
+          </p>
         ) : null}
       </Section>
       <Tabs
@@ -295,7 +370,10 @@ function ConnectionDetail({ conn, onChanged, onDeleted }: { conn: Connection; on
 
 function Conversations({ conn }: { conn: Connection }) {
   const { run } = useAction();
-  const res = useResource(() => api.get<(ExternalConversation & { threads?: number })[]>(`/api/connections/${conn.id}/conversations`), [conn.id]);
+  const res = useResource(
+    () => api.get<(ExternalConversation & { threads?: number })[]>(`/api/connections/${conn.id}/conversations`),
+    [conn.id],
+  );
   return (
     <Loaded res={res}>
       {(rows) =>
@@ -328,7 +406,10 @@ function Conversations({ conn }: { conn: Connection }) {
                         onChange={async (e) => {
                           const mode = e.target.value as ExternalConversation["sync_mode"];
                           const out = await run(
-                            () => api.patch<ExternalConversation>(`/api/connections/${conn.id}/conversations/${c.id}`, { sync_mode: mode }),
+                            () =>
+                              api.patch<ExternalConversation>(`/api/connections/${conn.id}/conversations/${c.id}`, {
+                                sync_mode: mode,
+                              }),
                             "同步范围已更新",
                           );
                           if (out) res.setData((prev) => prev?.map((x) => (x.id === c.id ? { ...x, ...out } : x)));
@@ -360,7 +441,9 @@ function Identities({ conn }: { conn: Connection }) {
   const res = useResource(() => api.get<ExternalIdentity[]>("/api/identities", { connection_id: conn.id }), [conn.id]);
   return (
     <>
-      <p className="small muted side-note">外部账号按平台用户 ID 关联到内部成员，不按显示名称判断身份。未关联的账号无法使用需要授权的角色。</p>
+      <p className="small muted side-note">
+        外部账号按平台用户 ID 关联到内部成员，不按显示名称判断身份。未关联的账号无法使用需要授权的角色。
+      </p>
       <Loaded res={res}>
         {(rows) =>
           rows.length ? (
@@ -389,7 +472,10 @@ function Identities({ conn }: { conn: Connection }) {
                           aria-label="关联成员"
                           onChange={async (e) => {
                             const out = await run(
-                              () => api.patch<ExternalIdentity>(`/api/identities/${i.id}`, { user_id: e.target.value || null }),
+                              () =>
+                                api.patch<ExternalIdentity>(`/api/identities/${i.id}`, {
+                                  user_id: e.target.value || null,
+                                }),
                               e.target.value ? "已关联" : "已解除关联",
                             );
                             if (out) res.setData((prev) => prev?.map((x) => (x.id === i.id ? out : x)));
@@ -421,7 +507,10 @@ function Identities({ conn }: { conn: Connection }) {
 function Outbound({ conn }: { conn: Connection }) {
   const { run } = useAction();
   const [status, setStatus] = useState("failed");
-  const res = useResource(() => api.get<OutboundMessage[]>(`/api/connections/${conn.id}/outbound`, { status: status || undefined }), [conn.id, status]);
+  const res = useResource(
+    () => api.get<OutboundMessage[]>(`/api/connections/${conn.id}/outbound`, { status: status || undefined }),
+    [conn.id, status],
+  );
   return (
     <>
       <div className="toolbar">
@@ -433,7 +522,7 @@ function Outbound({ conn }: { conn: Connection }) {
             ["sent", "已送达"],
             ["", "全部"],
           ].map(([k, v]) => (
-            <button key={k} className={k === status ? "seg seg-on" : "seg"} onClick={() => setStatus(k)}>
+            <button type="button" key={k} className={k === status ? "seg seg-on" : "seg"} onClick={() => setStatus(k)}>
               {v}
             </button>
           ))}
@@ -472,9 +561,13 @@ function Outbound({ conn }: { conn: Connection }) {
                       <td>
                         {o.status === "failed" || o.status === "blocked" ? (
                           <button
+                            type="button"
                             className="btn btn-xs"
                             onClick={async () => {
-                              const out = await run(() => api.post<OutboundMessage>(`/api/outbound/${o.id}/retry`), "已重新排队发送");
+                              const out = await run(
+                                () => api.post<OutboundMessage>(`/api/outbound/${o.id}/retry`),
+                                "已重新排队发送",
+                              );
                               if (out) res.setData((prev) => prev?.map((x) => (x.id === o.id ? out : x)));
                             }}
                           >
@@ -496,13 +589,17 @@ function Outbound({ conn }: { conn: Connection }) {
   );
 }
 
+// Outcomes recorded by the server's inbound handler (integrations/inbound.ts).
 const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "bad"]> = {
-  processed: ["已处理", "ok"],
   processing: ["处理中", "wait"],
-  ignored: ["已忽略", "off"],
+  dispatched: ["已交给角色", "ok"],
+  stored: ["已同步（未 @ 机器人）", "ok"],
+  ignored: ["已忽略（不在同步范围）", "off"],
+  sync_off: ["会话不同步", "off"],
+  connection_paused: ["接入已暂停", "off"],
+  unknown_connection: ["接入不存在", "bad"],
+  unlinked_user: ["账号未关联成员", "bad"],
   failed: ["处理失败", "bad"],
-  refused: ["已拒绝", "bad"],
-  denied: ["已拒绝", "bad"],
 };
 
 interface InboundEvent {
@@ -538,7 +635,9 @@ function Inbound({ conn }: { conn: Connection }) {
                       <code className="id">{e.event_key}</code>
                     </td>
                     <td>
-                      <Tag tone={INBOUND_STATUS[e.status]?.[1] ?? "info"}>{INBOUND_STATUS[e.status]?.[0] ?? e.status}</Tag>
+                      <Tag tone={INBOUND_STATUS[e.status]?.[1] ?? "info"}>
+                        {INBOUND_STATUS[e.status]?.[0] ?? e.status}
+                      </Tag>
                       {e.detail ? <div className="small muted">{e.detail}</div> : null}
                     </td>
                   </tr>
@@ -554,7 +653,15 @@ function Inbound({ conn }: { conn: Connection }) {
   );
 }
 
-function ConnectionEditor({ conn, onClose, onSaved }: { conn: Connection | null; onClose: () => void; onSaved: (c: Connection) => void }) {
+function ConnectionEditor({
+  conn,
+  onClose,
+  onSaved,
+}: {
+  conn: Connection | null;
+  onClose: () => void;
+  onSaved: (c: Connection) => void;
+}) {
   const { run, busy } = useAction();
   const [platform, setPlatform] = useState(conn?.platform ?? "slack");
   const [name, setName] = useState(conn?.name ?? "");
@@ -574,7 +681,11 @@ function ConnectionEditor({ conn, onClose, onSaved }: { conn: Connection | null;
       onClose={onClose}
       onSubmit={async () => {
         const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
-        const settings = { auto_provision_users: autoProvision, custom_identity: customIdentity, default_sync_mode: syncMode };
+        const settings = {
+          auto_provision_users: autoProvision,
+          custom_identity: customIdentity,
+          default_sync_mode: syncMode,
+        };
         const out = await run(
           () =>
             conn
@@ -583,7 +694,12 @@ function ConnectionEditor({ conn, onClose, onSaved }: { conn: Connection | null;
                   settings,
                   ...(Object.keys(filled).length ? { credentials: filled } : {}),
                 })
-              : api.post<Connection>("/api/connections", { platform, name: name.trim(), credentials: filled, settings }),
+              : api.post<Connection>("/api/connections", {
+                  platform,
+                  name: name.trim(),
+                  credentials: filled,
+                  settings,
+                }),
           conn ? "已保存" : "接入已创建，请把事件地址配置到平台后台，然后测试连接",
         );
         if (out) onSaved(out);
@@ -620,8 +736,16 @@ function ConnectionEditor({ conn, onClose, onSaved }: { conn: Connection | null;
           ))}
         </select>
       </Field>
-      <Toggle checked={autoProvision} onChange={setAutoProvision} label="自动为未关联的外部账号创建内部成员（默认无任何权限）" />
-      <Toggle checked={customIdentity} onChange={setCustomIdentity} label="以角色自己的名称和头像发送消息（Slack 需要 chat:write.customize）" />
+      <Toggle
+        checked={autoProvision}
+        onChange={setAutoProvision}
+        label="自动为未关联的外部账号创建内部成员（默认无任何权限）"
+      />
+      <Toggle
+        checked={customIdentity}
+        onChange={setCustomIdentity}
+        label="以角色自己的名称和头像发送消息（Slack 需要 chat:write.customize）"
+      />
     </FormModal>
   );
 }

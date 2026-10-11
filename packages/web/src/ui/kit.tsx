@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { genericStatus, hueOf, initials, shortId, type StatusMeta, type Tone } from "../lib/format";
+import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { genericStatus, hueOf, initials, type StatusMeta, shortId, type Tone } from "../lib/format";
 
 // --- status ----------------------------------------------------------------------------------------
 
@@ -131,7 +131,7 @@ export function ErrorNote({ error, onRetry }: { error: string | null | undefined
     <div className="error-note" role="alert">
       <span>{error}</span>
       {onRetry ? (
-        <button className="btn btn-sm" onClick={onRetry}>
+        <button type="button" className="btn btn-sm" onClick={onRetry}>
           重试
         </button>
       ) : null}
@@ -173,6 +173,7 @@ export function Tabs({ tabs, value, onChange }: { tabs: TabDef[]; value: string;
         .filter((t) => !t.hidden)
         .map((t) => (
           <button
+            type="button"
             key={t.key}
             role="tab"
             aria-selected={t.key === value}
@@ -210,7 +211,17 @@ export function Field({
 }
 
 /** Field wrapper for groups of controls (checkbox lists) where a <label> would steal clicks. */
-export function FieldGroup({ label, hint, children, wide }: { label: ReactNode; hint?: ReactNode; children: ReactNode; wide?: boolean }) {
+export function FieldGroup({
+  label,
+  hint,
+  children,
+  wide,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   const id = useId();
   return (
     <div className={`field${wide ? " field-wide" : ""}`} role="group" aria-labelledby={id}>
@@ -331,7 +342,7 @@ export function Modal({
       <div className="modal" role="dialog" aria-modal="true" ref={panel} style={width ? { width } : undefined}>
         <div className="modal-head">
           <h3>{title}</h3>
-          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+          <button type="button" className="icon-btn" aria-label="关闭" onClick={onClose}>
             ×
           </button>
         </div>

@@ -21,7 +21,7 @@ export default function ModelsPage() {
         title="模型"
         sub="保存多套模型配置供不同角色使用。密钥加密保存且不会返回到页面；能够使用某个角色的成员不会因此获得它的密钥。"
         actions={
-          <button className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
             新建模型配置
           </button>
         }
@@ -39,7 +39,8 @@ export default function ModelsPage() {
                       <div>
                         <h3>{m.name}</h3>
                         <div className="small muted">
-                          {m.provider === "anthropic" ? "Anthropic 协议" : "OpenAI 兼容协议"} · <code className="id">{m.model}</code>
+                          {m.provider === "anthropic" ? "Anthropic 协议" : "OpenAI 兼容协议"} ·{" "}
+                          <code className="id">{m.model}</code>
                         </div>
                       </div>
                       <StatusChip meta={genericStatus(m.status)} compact />
@@ -74,7 +75,12 @@ export default function ModelsPage() {
                           {m.status === "revoked" ? (
                             <span className="text-bad">已撤销</span>
                           ) : m.has_api_key ? (
-                            <>已设置{m.key_updated_at ? <span className="muted">（{fmtRelative(m.key_updated_at)}更新）</span> : null}</>
+                            <>
+                              已设置
+                              {m.key_updated_at ? (
+                                <span className="muted">（{fmtRelative(m.key_updated_at)}更新）</span>
+                              ) : null}
+                            </>
                           ) : (
                             <span className="muted">未设置</span>
                           )}
@@ -84,13 +90,19 @@ export default function ModelsPage() {
                         <dt>今日用量</dt>
                         <dd>
                           {fmtNumber(m.tokens_today ?? 0)} tokens
-                          {m.daily_token_limit ? <span className="muted"> / 上限 {fmtNumber(m.daily_token_limit)}</span> : null}
+                          {m.daily_token_limit ? (
+                            <span className="muted"> / 上限 {fmtNumber(m.daily_token_limit)}</span>
+                          ) : null}
                         </dd>
                       </div>
                       <div className="kv-row">
                         <dt>使用的角色</dt>
                         <dd className="inline-list">
-                          {m.used_by_roles?.length ? m.used_by_roles.map((h) => <Handle key={h} handle={h} />) : <span className="muted">无</span>}
+                          {m.used_by_roles?.length ? (
+                            m.used_by_roles.map((h) => <Handle key={h} handle={h} />)
+                          ) : (
+                            <span className="muted">无</span>
+                          )}
                         </dd>
                       </div>
                       <div className="kv-row">
@@ -101,6 +113,7 @@ export default function ModelsPage() {
                     <footer className="card-foot">
                       <div className="btn-row">
                         <button
+                          type="button"
                           className="btn btn-xs btn-primary"
                           disabled={checking === m.id}
                           onClick={async () => {
@@ -112,11 +125,12 @@ export default function ModelsPage() {
                         >
                           {checking === m.id ? "检测中…" : "检测能力"}
                         </button>
-                        <button className="btn btn-xs" onClick={() => setEditing(m)}>
+                        <button type="button" className="btn btn-xs" onClick={() => setEditing(m)}>
                           编辑
                         </button>
                         {m.has_api_key && m.status !== "revoked" ? (
                           <button
+                            type="button"
                             className="btn btn-xs btn-danger-ghost"
                             disabled={busy}
                             onClick={async () => {
@@ -127,7 +141,10 @@ export default function ModelsPage() {
                                 confirmLabel: "撤销密钥",
                               });
                               if (!ok) return;
-                              const out = await run(() => api.post<ModelConfig>(`/api/model-configs/${m.id}/revoke-key`), "密钥已撤销");
+                              const out = await run(
+                                () => api.post<ModelConfig>(`/api/model-configs/${m.id}/revoke-key`),
+                                "密钥已撤销",
+                              );
                               if (out) replace(out);
                             }}
                           >
@@ -135,6 +152,7 @@ export default function ModelsPage() {
                           </button>
                         ) : null}
                         <button
+                          type="button"
                           className="btn btn-xs btn-danger-ghost"
                           disabled={busy || !!m.used_by_roles?.length}
                           title={m.used_by_roles?.length ? "仍有角色在使用，先为它们更换模型" : undefined}
@@ -158,7 +176,7 @@ export default function ModelsPage() {
               title="还没有模型配置"
               hint="填写自有或第三方模型服务的地址、模型名称和密钥，保存后检测它是否支持工具调用和图像理解。"
               action={
-                <button className="btn btn-primary" onClick={() => setEditing("new")}>
+                <button type="button" className="btn btn-primary" onClick={() => setEditing("new")}>
                   新建模型配置
                 </button>
               }
@@ -180,14 +198,24 @@ export default function ModelsPage() {
   );
 }
 
-function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig | null; onClose: () => void; onSaved: () => void }) {
+function ModelEditor({
+  model,
+  onClose,
+  onSaved,
+}: {
+  model: ModelConfig | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { run, busy } = useAction();
   const [name, setName] = useState(model?.name ?? "");
   const [provider, setProvider] = useState(model?.provider ?? "openai");
   const [baseUrl, setBaseUrl] = useState(model?.base_url ?? "");
   const [modelName, setModelName] = useState(model?.model ?? "");
   const [apiKey, setApiKey] = useState("");
-  const [params, setParams] = useState(model?.params && Object.keys(model.params).length ? JSON.stringify(model.params, null, 2) : "");
+  const [params, setParams] = useState(
+    model?.params && Object.keys(model.params).length ? JSON.stringify(model.params, null, 2) : "",
+  );
   const [limit, setLimit] = useState(model?.daily_token_limit?.toString() ?? "");
   const [error, setError] = useState<string | null>(null);
 

@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 import { downloadFile } from "../../api/client";
 import type { Artifact, Message } from "../../api/types";
@@ -108,7 +108,13 @@ export function MessageItem({
         {compact ? (
           <time className="msg-hover-time">{fmtTime(msg.created_at)}</time>
         ) : (
-          <Avatar id={author.id} name={author.name} kind={author.kind === "role" ? "role" : "user"} size={32} src={author.avatarUrl} />
+          <Avatar
+            id={author.id}
+            name={author.name}
+            kind={author.kind === "role" ? "role" : "user"}
+            size={32}
+            src={author.avatarUrl}
+          />
         )}
       </div>
       <div className="msg-main">
@@ -121,7 +127,11 @@ export function MessageItem({
               <span className="tag">来自 {PLATFORM_LABEL[msg.source] ?? msg.source}</span>
             ) : null}
             <time title={fmtDateTime(msg.created_at)}>{fmtTime(msg.created_at)}</time>
-            {msg.round > 0 ? <span className="small muted" title="角色之间自动讨论的轮次">第 {msg.round} 轮</span> : null}
+            {msg.round > 0 ? (
+              <span className="small muted" title="角色之间自动讨论的轮次">
+                第 {msg.round} 轮
+              </span>
+            ) : null}
           </div>
         ) : null}
         {msg.deleted ? (
@@ -130,10 +140,11 @@ export function MessageItem({
           <div className="msg-edit">
             <textarea rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
             <div className="btn-row">
-              <button className="btn btn-xs" onClick={() => setEditing(false)}>
+              <button type="button" className="btn btn-xs" onClick={() => setEditing(false)}>
                 取消
               </button>
               <button
+                type="button"
                 className="btn btn-xs btn-primary"
                 onClick={async () => {
                   if (await onEdit(draft)) setEditing(false);
@@ -166,6 +177,7 @@ export function MessageItem({
         <div className="msg-actions">
           {canEdit ? (
             <button
+              type="button"
               className="btn btn-xs btn-ghost"
               onClick={() => {
                 setDraft(msg.content);
@@ -176,7 +188,7 @@ export function MessageItem({
             </button>
           ) : null}
           {canDelete ? (
-            <button className="btn btn-xs btn-ghost" onClick={onDelete}>
+            <button type="button" className="btn btn-xs btn-ghost" onClick={onDelete}>
               删除
             </button>
           ) : null}

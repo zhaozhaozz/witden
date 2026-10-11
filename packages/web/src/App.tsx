@@ -1,24 +1,24 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import { AuthProvider, DirectoryProvider, useAuth } from "./lib/session";
-import { FeedbackProvider } from "./ui/feedback";
-import { Loading } from "./ui/kit";
 import Layout, { RequirePerm } from "./Layout";
-import LoginPage from "./pages/LoginPage";
-import TopicsPage from "./pages/topics/TopicsPage";
-import TasksPage from "./pages/tasks/TasksPage";
-import TaskDetailPage from "./pages/tasks/TaskDetailPage";
+import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
+import { AuthProvider, DirectoryProvider, useAuth } from "./lib/session";
 import ApprovalsPage from "./pages/ApprovalsPage";
-import InstancesPage from "./pages/computers/InstancesPage";
+import AdminPage from "./pages/admin/AdminPage";
+import ConnectionsPage from "./pages/ConnectionsPage";
 import InstanceDetailPage from "./pages/computers/InstanceDetailPage";
+import InstancesPage from "./pages/computers/InstancesPage";
 import TemplatesPage from "./pages/computers/TemplatesPage";
-import RolesPage from "./pages/roles/RolesPage";
-import RoleEditorPage from "./pages/roles/RoleEditorPage";
+import LoginPage from "./pages/LoginPage";
+import MePage from "./pages/MePage";
 import ModelsPage from "./pages/ModelsPage";
 import RulesPage from "./pages/RulesPage";
-import ConnectionsPage from "./pages/ConnectionsPage";
-import AdminPage from "./pages/admin/AdminPage";
-import MePage from "./pages/MePage";
-import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
+import RoleEditorPage from "./pages/roles/RoleEditorPage";
+import RolesPage from "./pages/roles/RolesPage";
+import TaskDetailPage from "./pages/tasks/TaskDetailPage";
+import TasksPage from "./pages/tasks/TasksPage";
+import TopicsPage from "./pages/topics/TopicsPage";
+import { FeedbackProvider } from "./ui/feedback";
+import { Loading } from "./ui/kit";
 
 function Gate() {
   const { status } = useAuth();

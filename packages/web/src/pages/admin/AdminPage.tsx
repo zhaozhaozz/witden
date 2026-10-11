@@ -23,7 +23,10 @@ export default function AdminPage() {
 
   return (
     <div className="page">
-      <PageHeader title="管理" sub="成员与授权、团队知识、审计记录、模型用量和紧急停止。所有权限默认不授予，按需逐项开放。" />
+      <PageHeader
+        title="管理"
+        sub="成员与授权、团队知识、审计记录、模型用量和紧急停止。所有权限默认不授予，按需逐项开放。"
+      />
       <Tabs tabs={tabs} value={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
       {tab === "members" ? <MembersTab /> : null}
       {tab === "grants" ? <GrantsTab /> : null}

@@ -3,15 +3,19 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
 import type { Task } from "../../api/types";
-import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, taskStatus } from "../../lib/format";
+import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, RUNTIME_LABEL, taskStatus } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
-import { Empty, Guarded, Handle, Loaded, PageHeader } from "../../ui/kit";
+import { Empty, Guarded, Handle, Loaded, PageHeader, Tag } from "../../ui/kit";
 import { TaskStatusChip } from "./taskParts";
 
 const FILTERS: { key: string; label: string; statuses: string[] }[] = [
   { key: "active", label: "进行中", statuses: ACTIVE_TASK_STATUSES },
-  { key: "waiting", label: "等待中", statuses: ["waiting_human", "waiting_approval", "waiting_children", "waiting_resource", "waiting_timer"] },
+  {
+    key: "waiting",
+    label: "等待中",
+    statuses: ["waiting_human", "waiting_approval", "waiting_children", "waiting_resource", "waiting_timer"],
+  },
   { key: "running", label: "执行中", statuses: ["running"] },
   { key: "paused", label: "已暂停", statuses: ["paused"] },
   { key: "failed", label: "失败", statuses: ["failed"] },
@@ -52,7 +56,7 @@ export default function TasksPage() {
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
-            <button className="btn btn-sm" onClick={() => void res.reload()}>
+            <button type="button" className="btn btn-sm" onClick={() => void res.reload()}>
               刷新
             </button>
           </>
@@ -61,7 +65,12 @@ export default function TasksPage() {
       <div className="toolbar">
         <div className="segmented">
           {FILTERS.map((f) => (
-            <button key={f.key} className={f.key === filter ? "seg seg-on" : "seg"} onClick={() => setFilter(f.key)}>
+            <button
+              type="button"
+              key={f.key}
+              className={f.key === filter ? "seg seg-on" : "seg"}
+              onClick={() => setFilter(f.key)}
+            >
               {f.label}
             </button>
           ))}
@@ -103,7 +112,14 @@ export default function TasksPage() {
                           <Guarded text={t.title} label="受限任务" />
                         </Link>
                         {t.parent_task_id ? <div className="small muted">委托的子任务 · 第 {t.depth} 层</div> : null}
-                        {t.progress && !isRestricted(t.progress) ? <div className="small task-progress">{t.progress}</div> : null}
+                        {t.runtime === "external" ? (
+                          <div>
+                            <Tag tone="accent">{RUNTIME_LABEL.external}</Tag>
+                          </div>
+                        ) : null}
+                        {t.progress && !isRestricted(t.progress) ? (
+                          <div className="small task-progress">{t.progress}</div>
+                        ) : null}
                       </td>
                       <td className="cell-status">
                         <TaskStatusChip status={t.status} compact />

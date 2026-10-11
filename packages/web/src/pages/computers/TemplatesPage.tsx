@@ -6,9 +6,20 @@ import { useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, Field, FormModal, Loaded, PageHeader, Tag } from "../../ui/kit";
-import { ComputersNav, fromDraft, ResourceFields, resourceSummary, toDraft, type ResourceDraft } from "./computerParts";
+import { ComputersNav, fromDraft, type ResourceDraft, ResourceFields, resourceSummary, toDraft } from "./computerParts";
 
-const DEFAULT_DESKTOP = '{\n  "display": ":1",\n  "vnc_port": 5900,\n  "vnc_view_port": 5901\n}';
+const DEFAULT_DESKTOP =
+  '{\n  "display": ":1",\n  "width": 1280,\n  "height": 800,\n  "vnc_port": 5900,\n  "vnc_view_port": 5901\n}';
+
+// Mirrors the server: a user name or uid[:gid], never root / uid 0.
+const USER_RE = /^(?:[a-z_][a-z0-9_-]{0,31}|\d{1,10})(?::(?:[a-z_][a-z0-9_-]{0,31}|\d{1,10}))?$/;
+
+function userProblem(user: string): string | null {
+  if (!USER_RE.test(user)) return "运行用户应为用户名或 uid[:gid]";
+  if (user.split(":").some((p) => p === "root" || /^0+$/.test(p)))
+    return "运行用户不能是 root：AI 的操作必须以非特权用户执行";
+  return null;
+}
 
 export default function TemplatesPage() {
   const { can } = useAuth();
@@ -29,10 +40,17 @@ export default function TemplatesPage() {
         actions={
           manage ? (
             <>
-              <button className="btn btn-sm" disabled={busy} onClick={() => void run(() => api.post("/api/templates/seed-builtin"), "内置模板已导入").then(() => res.reload())}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={busy}
+                onClick={() =>
+                  void run(() => api.post("/api/templates/seed-builtin"), "内置模板已导入").then(() => res.reload())
+                }
+              >
                 导入内置模板
               </button>
-              <button className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
                 新建模板
               </button>
             </>
@@ -56,7 +74,15 @@ export default function TemplatesPage() {
                 hint="可以先导入内置的开发环境和浏览器桌面环境模板，再按需复制修改。"
                 action={
                   manage ? (
-                    <button className="btn btn-primary" onClick={() => void run(() => api.post("/api/templates/seed-builtin"), "内置模板已导入").then(() => res.reload())}>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() =>
+                        void run(() => api.post("/api/templates/seed-builtin"), "内置模板已导入").then(() =>
+                          res.reload(),
+                        )
+                      }
+                    >
                       导入内置模板
                     </button>
                   ) : undefined
@@ -72,7 +98,9 @@ export default function TemplatesPage() {
                       <h3>{t.name}</h3>
                       <div className="inline-list small">
                         <Tag>v{t.version}</Tag>
-                        <Tag tone={t.kind === "desktop" ? "accent" : undefined}>{t.kind === "desktop" ? "桌面" : "命令行"}</Tag>
+                        <Tag tone={t.kind === "desktop" ? "accent" : undefined}>
+                          {t.kind === "desktop" ? "桌面" : "命令行"}
+                        </Tag>
                         {t.archived ? <Tag tone="off">已归档</Tag> : null}
                         <span className="muted">{t.instance_count} 台电脑在用</span>
                       </div>
@@ -90,12 +118,14 @@ export default function TemplatesPage() {
                       <dt>工作目录</dt>
                       <dd>
                         <code className="id">{t.workdir}</code>
-                        {t.user ? <span className="muted small"> · 用户 {t.user}</span> : null}
+                        <span className="muted small"> · 以用户 {t.user} 运行</span>
                       </dd>
                     </div>
                     <div className="kv-row">
                       <dt>持久化</dt>
-                      <dd>{t.persistent_paths.length ? t.persistent_paths.join("，") : <span className="muted">无</span>}</dd>
+                      <dd>
+                        {t.persistent_paths.length ? t.persistent_paths.join("，") : <span className="muted">无</span>}
+                      </dd>
                     </div>
                     <div className="kv-row">
                       <dt>默认资源</dt>
@@ -116,10 +146,11 @@ export default function TemplatesPage() {
                     <span className="small muted">更新于 {fmtRelative(t.updated_at)}</span>
                     {manage ? (
                       <div className="btn-row">
-                        <button className="btn btn-xs" onClick={() => setEditing(t)}>
+                        <button type="button" className="btn btn-xs" onClick={() => setEditing(t)}>
                           编辑
                         </button>
                         <button
+                          type="button"
                           className="btn btn-xs"
                           onClick={() => {
                             setCopyName(`${t.name}-copy`);
@@ -129,21 +160,31 @@ export default function TemplatesPage() {
                           复制
                         </button>
                         <button
+                          type="button"
                           className="btn btn-xs"
                           disabled={busy}
                           onClick={async () => {
-                            const out = await run(() => api.patch(`/api/templates/${t.id}`, { archived: !t.archived }), t.archived ? "已恢复" : "已归档");
+                            const out = await run(
+                              () => api.patch(`/api/templates/${t.id}`, { archived: !t.archived }),
+                              t.archived ? "已恢复" : "已归档",
+                            );
                             if (out) void res.reload();
                           }}
                         >
                           {t.archived ? "恢复" : "归档"}
                         </button>
                         <button
+                          type="button"
                           className="btn btn-xs btn-danger-ghost"
                           disabled={busy || t.instance_count > 0}
                           title={t.instance_count > 0 ? "还有电脑在使用这个模板，可以先归档" : undefined}
                           onClick={async () => {
-                            const ok = await confirm({ title: `删除模板 ${t.name}`, body: <p>删除后无法恢复。已有电脑不受影响。</p>, danger: true, confirmLabel: "删除" });
+                            const ok = await confirm({
+                              title: `删除模板 ${t.name}`,
+                              body: <p>删除后无法恢复。已有电脑不受影响。</p>,
+                              danger: true,
+                              confirmLabel: "删除",
+                            });
                             if (!ok) return;
                             const out = await run(() => api.del(`/api/templates/${t.id}`), "模板已删除");
                             if (out) void res.reload();
@@ -179,7 +220,10 @@ export default function TemplatesPage() {
           disabled={!copyName.trim()}
           onClose={() => setCopying(null)}
           onSubmit={async () => {
-            const out = await run(() => api.post(`/api/templates/${copying.id}/copy`, { name: copyName.trim() }), "模板已复制");
+            const out = await run(
+              () => api.post(`/api/templates/${copying.id}/copy`, { name: copyName.trim() }),
+              "模板已复制",
+            );
             if (out) {
               setCopying(null);
               void res.reload();
@@ -195,7 +239,15 @@ export default function TemplatesPage() {
   );
 }
 
-function TemplateEditor({ template, onClose, onSaved }: { template: Template | null; onClose: () => void; onSaved: () => void }) {
+function TemplateEditor({
+  template,
+  onClose,
+  onSaved,
+}: {
+  template: Template | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { run, busy } = useAction();
   const t = template;
   const [form, setForm] = useState({
@@ -203,13 +255,13 @@ function TemplateEditor({ template, onClose, onSaved }: { template: Template | n
     description: t?.description ?? "",
     image: t?.image ?? "",
     kind: t?.kind ?? "shell",
-    workdir: t?.workdir ?? "/workspace",
-    user: t?.user ?? "",
+    workdir: t?.workdir ?? "/home/witden",
+    user: t?.user ?? "witden",
     command: listToLines(t?.command),
     env: Object.entries(t?.env ?? {})
       .map(([k, v]) => `${k}=${v}`)
       .join("\n"),
-    persistent_paths: listToLines(t?.persistent_paths ?? ["/workspace"]),
+    persistent_paths: listToLines(t?.persistent_paths ?? ["/home/witden"]),
     credential_paths: listToLines(t?.credential_paths),
     software: listToLines(t?.software),
     cap_add: listToLines(t?.cap_add),
@@ -220,8 +272,14 @@ function TemplateEditor({ template, onClose, onSaved }: { template: Template | n
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
 
+  const userError = userProblem(form.user.trim() || "witden");
+
   const submit = async () => {
     setError(null);
+    if (userError) {
+      setError(userError);
+      return;
+    }
     let desktop: unknown = null;
     if (form.kind === "desktop") {
       try {
@@ -246,8 +304,8 @@ function TemplateEditor({ template, onClose, onSaved }: { template: Template | n
       description: form.description,
       image: form.image.trim(),
       kind: form.kind,
-      workdir: form.workdir.trim() || "/workspace",
-      user: form.user.trim() || null,
+      workdir: form.workdir.trim() || "/home/witden",
+      user: form.user.trim() || "witden",
       command: command.length ? command : null,
       env,
       persistent_paths: linesToList(form.persistent_paths),
@@ -296,8 +354,14 @@ function TemplateEditor({ template, onClose, onSaved }: { template: Template | n
         <Field label="工作目录">
           <input className="mono" value={form.workdir} onChange={set("workdir")} />
         </Field>
-        <Field label="运行用户" hint="留空使用镜像默认">
-          <input className="mono" value={form.user} onChange={set("user")} />
+        <Field
+          label="运行用户"
+          hint={
+            userError ??
+            "Runner 和 AI 的所有操作都以这个非特权用户执行，不能是 root；必须是镜像中已有的用户，或数字 uid[:gid]"
+          }
+        >
+          <input className="mono" value={form.user} onChange={set("user")} placeholder="witden" />
         </Field>
       </div>
       <div className="form-row">

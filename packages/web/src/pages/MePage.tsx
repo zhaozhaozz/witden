@@ -61,6 +61,7 @@ export default function MePage() {
             title="私密记忆"
             actions={
               <button
+                type="button"
                 className="btn btn-xs btn-danger-ghost"
                 disabled={busy}
                 onClick={async () => {
@@ -82,20 +83,30 @@ export default function MePage() {
               </button>
             }
           >
-            <p className="small muted">只对你本人有效的偏好和资料，例如称呼、常用格式。只有你自己能看到，角色在为你工作时才会使用，不会带入其他人的请求或群组回答。</p>
+            <p className="small muted">
+              只对你本人有效的偏好和资料，例如称呼、常用格式。只有你自己能看到，角色在为你工作时才会使用，不会带入其他人的请求或群组回答。
+            </p>
             <form
               className="note-form"
               onSubmit={async (e) => {
                 e.preventDefault();
-                const m = await run(() => api.post<Memory>("/api/memories", { scope: "user", content: text.trim() }), "已保存");
+                const m = await run(
+                  () => api.post<Memory>("/api/memories", { scope: "user", content: text.trim() }),
+                  "已保存",
+                );
                 if (m) {
                   setText("");
                   notes.setData((p) => [m, ...(p ?? [])]);
                 }
               }}
             >
-              <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="例如：周报请用表格，结论放在最前面" />
-              <button className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
+              <textarea
+                rows={2}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="例如：周报请用表格，结论放在最前面"
+              />
+              <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
                 添加
               </button>
             </form>
@@ -109,6 +120,7 @@ export default function MePage() {
                         <div className="small muted">
                           {m.created_by_type === "role" ? "角色为你记录" : "你自己添加"} · {fmtRelative(m.created_at)}
                           <button
+                            type="button"
                             className="link-btn"
                             onClick={async () => {
                               const ok = await run(() => api.del(`/api/memories/${m.id}`));

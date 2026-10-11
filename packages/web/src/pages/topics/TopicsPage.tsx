@@ -6,8 +6,8 @@ import { fmtRelative, PLATFORM_LABEL } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { Empty, ErrorNote, Loading } from "../../ui/kit";
-import { NewTopicDialog, OpenDmDialog } from "./topicDialogs";
 import { TopicView } from "./TopicView";
+import { NewTopicDialog, OpenDmDialog } from "./topicDialogs";
 
 export default function TopicsPage() {
   const { topicId } = useParams();
@@ -18,7 +18,10 @@ export default function TopicsPage() {
   const [archived, setArchived] = useState(false);
   const [dialog, setDialog] = useState<null | "new" | "dm">(null);
   const applyQuery = useDebounced(() => setQuery(q.trim()), 250);
-  const list = useResource(() => api.get<Topic[]>("/api/topics", { q: query, include_archived: archived }), [query, archived]);
+  const list = useResource(
+    () => api.get<Topic[]>("/api/topics", { q: query, include_archived: archived }),
+    [query, archived],
+  );
 
   useEffect(applyQuery, [q, applyQuery]);
 
@@ -57,14 +60,20 @@ export default function TopicsPage() {
     <div className="workspace">
       <aside className="topic-list">
         <div className="topic-list-head">
-          <input type="search" placeholder="搜索标题或目标" value={q} onChange={(e) => setQ(e.target.value)} aria-label="搜索话题" />
+          <input
+            type="search"
+            placeholder="搜索标题或目标"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="搜索话题"
+          />
           <div className="btn-row">
             {can("topic.create") ? (
-              <button className="btn btn-sm btn-primary" onClick={() => setDialog("new")}>
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog("new")}>
                 新建话题
               </button>
             ) : null}
-            <button className="btn btn-sm" onClick={() => setDialog("dm")}>
+            <button type="button" className="btn btn-sm" onClick={() => setDialog("dm")}>
               私信角色
             </button>
           </div>
@@ -77,7 +86,10 @@ export default function TopicsPage() {
           {list.error ? <ErrorNote error={list.error} onRetry={list.reload} /> : null}
           {list.data === undefined && !list.error ? <Loading /> : null}
           {list.data && !topics.length ? (
-            <Empty title={query ? "没有匹配的话题" : "还没有话题"} hint={query ? undefined : "新建一个话题，邀请同事和角色一起推进一件事。"} />
+            <Empty
+              title={query ? "没有匹配的话题" : "还没有话题"}
+              hint={query ? undefined : "新建一个话题，邀请同事和角色一起推进一件事。"}
+            />
           ) : null}
           {groups.length ? (
             <>
@@ -103,7 +115,7 @@ export default function TopicsPage() {
             hint="话题是围绕一件具体事情的协作空间：成员和 AI 角色在这里讨论、分派任务、交付结果。"
             action={
               can("topic.create") ? (
-                <button className="btn btn-primary" onClick={() => setDialog("new")}>
+                <button type="button" className="btn btn-primary" onClick={() => setDialog("new")}>
                   新建话题
                 </button>
               ) : undefined

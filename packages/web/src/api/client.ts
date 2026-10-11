@@ -52,7 +52,10 @@ const MESSAGE_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^missing permission ([\w.]+)( on (\S+))?$/, (m) => `缺少权限：${m[1]}${m[3] ? `（对象 ${m[3]}）` : ""}`],
   [/^this file draws on material you are not allowed to see$/, () => "这个文件用到了你无权查看的资料，不能下载"],
   [/^this task has read material you are not allowed to see/, () => "该任务读取了你无权查看的资料，执行日志已隐藏"],
-  [/^you are not a \(verified\) member of that conversation$/, () => "你不是该会话的（已验证）成员，不能把话题发布到这里"],
+  [
+    /^you are not a \(verified\) member of that conversation$/,
+    () => "你不是该会话的（已验证）成员，不能把话题发布到这里",
+  ],
   [/^only topic owners/, () => "只有话题负责人可以执行这个操作"],
   [/^you cannot view this topic$/, () => "你无权查看这个话题"],
 ];

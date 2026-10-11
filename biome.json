@@ -1,17 +1,65 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
   "files": {
-    "includes": ["packages/*/src/**", "packages/*/test/**", "!**/dist", "!**/node_modules", "!packages/server/drizzle/**"]
+    "includes": ["packages/*/src/**", "packages/*/test/**", "!**/dist", "!**/node_modules", "!packages/server/drizzle"]
   },
-  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 120
+  },
   "linter": {
     "enabled": true,
     "rules": {
       "recommended": true,
-      "style": { "noNonNullAssertion": "off", "useTemplate": "off" },
-      "suspicious": { "noExplicitAny": "off" },
-      "complexity": { "noForEach": "off" }
+      "style": {
+        "noNonNullAssertion": "off",
+        "useTemplate": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off"
+      },
+      "complexity": {
+        "noForEach": "off"
+      }
     }
   },
-  "javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } }
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "semicolons": "always"
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["packages/web/**"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "useJsxKeyInIterable": "off",
+            "useExhaustiveDependencies": "off"
+          },
+          "suspicious": {
+            "noArrayIndexKey": "off"
+          },
+          "complexity": {
+            "noCommaOperator": "off",
+            "noImportantStyles": "off"
+          },
+          "style": {
+            "noDescendingSpecificity": "off"
+          },
+          "a11y": {
+            "noAutofocus": "off",
+            "useSemanticElements": "off",
+            "noNoninteractiveElementToInteractiveRole": "off",
+            "useFocusableInteractive": "off",
+            "noLabelWithoutControl": "off",
+            "noStaticElementInteractions": "off"
+          }
+        }
+      }
+    }
+  ]
 }

@@ -1,24 +1,32 @@
-import { useEffect, useRef, useState } from "react";
 import RFB from "@novnc/novnc";
+import { useEffect, useRef, useState } from "react";
 import { buildUrl, getToken } from "../../api/client";
 
 type Phase = "connecting" | "connected" | "closed";
 
-// Close codes sent by /api/instances/{id}/vnc.
+// Close codes sent by /api/instances/{id}/vnc (see packages/server/src/api/live.ts).
 const CLOSE_REASON: Record<number, string> = {
-  4401: "登录已失效，请重新登录后再连接。",
-  4403: "你没有观察这台电脑的权限（需要「观察电脑」授权）。",
+  4401: "未登录或登录已失效，请重新登录后再连接。",
+  4403: "你没有观察这台电脑的权限（需要对这台电脑的「观察电脑」授权）。",
   4409: "这台电脑当前不是运行中的桌面电脑，启动后再连接。",
-  4501: "当前的计算后端不提供实时画面（例如测试用的模拟后端），请使用下方的截图查看。",
-  1011: "无法连接到电脑内的画面服务，请确认桌面环境已经启动。",
+  4501: "提供这个页面的服务进程没有运行 Runner 连接中心，无法转发实时画面。请检查部署：实时画面需要由运行 API 的进程提供。",
+  1011: "无法通过 Runner 连接到电脑内的画面服务：Runner 未连接，或电脑里的桌面画面服务没有启动。可以先用下方的截图查看。",
 };
 
 /**
- * Live view of a desktop computer through noVNC. `mode="control"` is only honoured by the server for the
- * person currently holding the takeover; everyone else silently gets the view-only stream, so the
- * canvas is also forced view-only on our side unless control was requested.
+ * Live view of a desktop computer through noVNC. View-only by default; `mode="control"` is requested only
+ * by the person holding the takeover, and the server re-checks that (anyone else silently gets the
+ * view-only stream), so the canvas is also forced view-only on our side unless control was requested.
  */
-export function LiveDesktop({ instanceId, mode, fallbackHint }: { instanceId: string; mode: "view" | "control"; fallbackHint?: string }) {
+export function LiveDesktop({
+  instanceId,
+  mode,
+  fallbackHint,
+}: {
+  instanceId: string;
+  mode: "view" | "control";
+  fallbackHint?: string;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<Phase>("connecting");
   const [message, setMessage] = useState<string | null>(null);
@@ -60,7 +68,8 @@ export function LiveDesktop({ instanceId, mode, fallbackHint }: { instanceId: st
           if (known) setMessage(known);
           else if (!connected)
             setMessage(
-              fallbackHint ?? "无法建立实时画面连接。可能是权限不足、电脑未运行或计算后端不支持实时画面，可以先使用截图查看。",
+              fallbackHint ??
+                "无法建立实时画面连接。可能是权限不足、电脑未运行或计算后端不支持实时画面，可以先使用截图查看。",
             );
           else setMessage("连接已断开。");
         }, 50);
@@ -86,10 +95,16 @@ export function LiveDesktop({ instanceId, mode, fallbackHint }: { instanceId: st
     <div className={`desktop desktop-${phase}${mode === "control" ? " desktop-control" : ""}`}>
       <div className="desktop-bar">
         <span className={`live-dot${phase === "connected" ? " live-on" : ""}`}>
-          {phase === "connected" ? (mode === "control" ? "实时 · 可操作" : "实时 · 只读") : phase === "connecting" ? "连接中" : "未连接"}
+          {phase === "connected"
+            ? mode === "control"
+              ? "实时 · 可操作"
+              : "实时 · 只读"
+            : phase === "connecting"
+              ? "连接中"
+              : "未连接"}
         </span>
         {phase === "closed" ? (
-          <button className="btn btn-xs" onClick={() => setAttempt((a) => a + 1)}>
+          <button type="button" className="btn btn-xs" onClick={() => setAttempt((a) => a + 1)}>
             重新连接
           </button>
         ) : null}

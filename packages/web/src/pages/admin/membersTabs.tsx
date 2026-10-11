@@ -1,6 +1,15 @@
 import { useMemo, useState } from "react";
 import { api } from "../../api/client";
-import type { Connection, Grant, Instance, KnowledgeSpace, ModelConfig, PermissionInfo, Topic, User } from "../../api/types";
+import type {
+  Connection,
+  Grant,
+  Instance,
+  KnowledgeSpace,
+  ModelConfig,
+  PermissionInfo,
+  Topic,
+  User,
+} from "../../api/types";
 import { fmtDateTime, fmtRelative, permissionLabel } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -19,7 +28,7 @@ export function MembersTab() {
     <>
       <div className="toolbar">
         <span className="small muted">新成员默认没有任何权限，需要在「授权」中逐项开放。</span>
-        <button className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
           添加成员
         </button>
       </div>
@@ -53,23 +62,29 @@ export function MembersTab() {
                     <td className="nowrap">{u.created_at ? fmtRelative(u.created_at) : "—"}</td>
                     <td className="nowrap">
                       <div className="btn-row">
-                        <button className="btn btn-xs" onClick={() => setEditing(u)}>
+                        <button type="button" className="btn btn-xs" onClick={() => setEditing(u)}>
                           编辑
                         </button>
                         {u.id !== me?.id ? (
                           <button
+                            type="button"
                             className={u.is_active ? "btn btn-xs btn-danger-ghost" : "btn btn-xs"}
                             onClick={async () => {
                               if (u.is_active) {
                                 const ok = await confirm({
                                   title: `停用 ${u.name}`,
-                                  body: <p>停用后立即失去访问：登录令牌失效，由他发起的进行中工作会被重新检查并停止。</p>,
+                                  body: (
+                                    <p>停用后立即失去访问：登录令牌失效，由他发起的进行中工作会被重新检查并停止。</p>
+                                  ),
                                   confirmLabel: "停用",
                                   danger: true,
                                 });
                                 if (!ok) return;
                               }
-                              const out = await run(() => api.patch<User>(`/api/users/${u.id}`, { is_active: !u.is_active }), u.is_active ? "已停用" : "已恢复");
+                              const out = await run(
+                                () => api.patch<User>(`/api/users/${u.id}`, { is_active: !u.is_active }),
+                                u.is_active ? "已停用" : "已恢复",
+                              );
                               if (out) {
                                 res.setData((p) => p?.map((x) => (x.id === out.id ? out : x)));
                                 void dir.reload();
@@ -124,7 +139,10 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
           body.email = email.trim();
           body.is_admin = isAdmin;
         }
-        const out = await run(() => (user ? api.patch(`/api/users/${user.id}`, body) : api.post("/api/users", body)), user ? "已保存" : "成员已添加");
+        const out = await run(
+          () => (user ? api.patch(`/api/users/${user.id}`, body) : api.post("/api/users", body)),
+          user ? "已保存" : "成员已添加",
+        );
         if (out) onSaved();
       }}
     >
@@ -137,9 +155,19 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
         </Field>
       ) : null}
       <Field label={user ? "重置密码" : "初始密码"} hint={user ? "留空保持不变" : undefined}>
-        <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
       </Field>
-      <Toggle checked={isAdmin} onChange={setIsAdmin} disabled={!me?.is_admin} label="管理员（拥有全部管理权限，但仍看不到他人的私信）" />
+      <Toggle
+        checked={isAdmin}
+        onChange={setIsAdmin}
+        disabled={!me?.is_admin}
+        label="管理员（拥有全部管理权限，但仍看不到他人的私信）"
+      />
     </FormModal>
   );
 }
@@ -160,12 +188,21 @@ function useResourceNames() {
   const dir = useDirectory();
   const { can } = useAuth();
   const connections = useResource(
-    () => (can("connection.manage") ? api.get<Connection[]>("/api/connections").catch(() => [] as Connection[]) : Promise.resolve([] as Connection[])),
+    () =>
+      can("connection.manage")
+        ? api.get<Connection[]>("/api/connections").catch(() => [] as Connection[])
+        : Promise.resolve([] as Connection[]),
     [],
   );
   const instances = useResource(() => api.get<Instance[]>("/api/instances").catch(() => [] as Instance[]), []);
-  const topics = useResource(() => api.get<Topic[]>("/api/topics", { include_archived: true }).catch(() => [] as Topic[]), []);
-  const spaces = useResource(() => api.get<KnowledgeSpace[]>("/api/knowledge-spaces").catch(() => [] as KnowledgeSpace[]), []);
+  const topics = useResource(
+    () => api.get<Topic[]>("/api/topics", { include_archived: true }).catch(() => [] as Topic[]),
+    [],
+  );
+  const spaces = useResource(
+    () => api.get<KnowledgeSpace[]>("/api/knowledge-spaces").catch(() => [] as KnowledgeSpace[]),
+    [],
+  );
   const models = useResource(() => api.get<ModelConfig[]>("/api/model-configs").catch(() => [] as ModelConfig[]), []);
   return useMemo(() => {
     const options: Record<string, { value: string; label: string }[]> = {
@@ -176,7 +213,8 @@ function useResourceNames() {
       model: (models.data ?? []).map((m) => ({ value: m.id, label: m.name })),
       connection: (connections.data ?? []).map((c) => ({ value: c.id, label: c.name })),
     };
-    const name = (type: string, id: string) => (id === "*" ? "全部" : (options[type]?.find((o) => o.value === id)?.label ?? id));
+    const name = (type: string, id: string) =>
+      id === "*" ? "全部" : (options[type]?.find((o) => o.value === id)?.label ?? id);
     return { options, name };
   }, [dir.roles, instances.data, topics.data, spaces.data, models.data, connections.data]);
 }
@@ -204,13 +242,15 @@ export function GrantsTab() {
           ))}
         </select>
         <span className="small muted">撤销授权立即生效，进行中的任务和待发送的结果会被重新检查。</span>
-        <button className="btn btn-sm btn-primary" onClick={() => setAdding(true)}>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => setAdding(true)}>
           添加授权
         </button>
       </div>
       <Loaded res={res}>
         {(rows) => {
-          const list = rows.filter((g) => !userFilter || (userFilter === "*" ? g.subject_type === "all" : g.subject_id === userFilter));
+          const list = rows.filter(
+            (g) => !userFilter || (userFilter === "*" ? g.subject_type === "all" : g.subject_id === userFilter),
+          );
           if (!list.length) return <Empty title="没有授权" hint="除管理员外，没有授权的成员只能参与被邀请的话题。" />;
           return (
             <div className="table-wrap">
@@ -228,7 +268,8 @@ export function GrantsTab() {
                   {list.map((g) => (
                     <tr key={g.id}>
                       <td>
-                        <span className="strong">{permissionLabel(g.permission)}</span> <code className="id">{g.permission}</code>
+                        <span className="strong">{permissionLabel(g.permission)}</span>{" "}
+                        <code className="id">{g.permission}</code>
                       </td>
                       <td>{g.subject_type === "all" ? <Tag tone="wait">全体成员</Tag> : dir.userName(g.subject_id)}</td>
                       <td>
@@ -240,11 +281,14 @@ export function GrantsTab() {
                       </td>
                       <td>
                         <button
+                          type="button"
                           className="btn btn-xs btn-danger-ghost"
                           onClick={async () => {
                             const ok = await confirm({
                               title: "撤销授权",
-                              body: <p>撤销「{permissionLabel(g.permission)}」后立即生效，相关的进行中任务会被重新检查。</p>,
+                              body: (
+                                <p>撤销「{permissionLabel(g.permission)}」后立即生效，相关的进行中任务会被重新检查。</p>
+                              ),
                               confirmLabel: "撤销",
                               danger: true,
                             });
@@ -306,7 +350,12 @@ function GrantEditor({
       onClose={onClose}
       onSubmit={async () => {
         const out = await run(
-          () => api.post("/api/grants", { permission, user_id: subject || null, resource_id: rtype === "*" ? "*" : resourceId || "*" }),
+          () =>
+            api.post("/api/grants", {
+              permission,
+              user_id: subject || null,
+              resource_id: rtype === "*" ? "*" : resourceId || "*",
+            }),
           "授权已添加",
         );
         if (out) onSaved();
@@ -339,7 +388,9 @@ function GrantEditor({
             ))}
         </select>
       </Field>
-      {!subject ? <p className="small text-wait">授予全体成员的权限对之后加入的新成员也生效，请只开放确实需要的范围。</p> : null}
+      {!subject ? (
+        <p className="small text-wait">授予全体成员的权限对之后加入的新成员也生效，请只开放确实需要的范围。</p>
+      ) : null}
       {rtype !== "*" ? (
         <Field label={`适用的${RESOURCE_LABEL[rtype] ?? rtype}`}>
           <select value={resourceId} onChange={(e) => setResourceId(e.target.value)}>

@@ -1,4 +1,5 @@
 // Response shapes of the witden API (see packages/server/src/api/*.ts and db/schema.ts).
+// Top-level keys are snake_case; nested JSON columns are returned exactly as stored.
 
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 export type Dict = Record<string, unknown>;
@@ -15,7 +16,10 @@ export interface User {
 }
 
 export interface Me extends User {
+  /** Global permissions plus anything held on at least one resource. */
   permissions: string[];
+  global_permissions?: string[];
+  scoped_permissions?: { permission: string; resource_id: string }[];
 }
 
 export interface Participant {
@@ -49,6 +53,8 @@ export interface Topic {
   can_post: boolean;
   /** false: an administrator sees a private topic's metadata only (manage, never read). */
   can_view?: boolean;
+  /** Owner, or administrator of a group topic: may archive, remove participants and clean up. */
+  can_administer?: boolean;
   participants?: Participant[];
   external?: ExternalContext | null;
 }
@@ -124,9 +130,40 @@ export interface Ref {
   kind?: string;
 }
 
+export type Runtime = "witden" | "external";
+
+/**
+ * Why a task is not running (`task.wait`), as written by the server. Fields depend on `type`; a paused task
+ * keeps the wait it had plus `resume_to` / `paused_by`. Viewers without access to the task's material only
+ * get `{type}`.
+ */
+export interface TaskWait {
+  type?: "instance" | "approval" | "children" | "human" | "timer" | string;
+  /** instance: the computer the task is pinned to and since when it waits. */
+  instance_id?: string | null;
+  since?: string;
+  /** instance: the computer operation that will be retried when the computer is back. */
+  retry_call?: { id: string; name: string; arguments?: unknown };
+  /** external runtime: the agent process session inside the computer. */
+  external_session?: string;
+  approval_id?: string;
+  child_ids?: string[];
+  user_ids?: string[];
+  /** timer */
+  until?: string;
+  note?: string;
+  tool_call_id?: string;
+  /** paused: the state to return to, and who paused it (user | kill:<id> | takeover:<instance id>). */
+  resume_to?: string;
+  paused_by?: string;
+  [key: string]: unknown;
+}
+
 export interface Task {
   id: string;
   topic_id: string;
+  /** Agent session (role × topic) the task ran in. */
+  session_id: string | null;
   title: string;
   instruction: string;
   status: TaskStatus;
@@ -137,7 +174,12 @@ export interface Task {
   owner_role_id: string;
   collaborator_role_ids: string[];
   instance_id: string | null;
+  /** Fixed at creation from the role's runtime. */
+  runtime: Runtime | string;
+  /** Parent that waits for this task's result (delegation). */
   parent_task_id: string | null;
+  /** Task that started this one, whether or not it waits for it. */
+  spawned_by_task_id: string | null;
   depth: number;
   round: number;
   envelope: Dict;
@@ -145,7 +187,7 @@ export interface Task {
   assignment: Dict;
   budget: Dict;
   usage: Dict;
-  wait: Dict | null;
+  wait: TaskWait | null;
   progress: string | null;
   result: string | null;
   error: string | null;
@@ -194,7 +236,26 @@ export interface TaskTrace {
   assignment: Dict;
   envelope: Dict;
   labels: string[];
+  session_id: string | null;
   audit: AuditEntry[];
+}
+
+/** One role's context inside one topic; different topics never share a session. */
+export interface AgentSession {
+  id: string;
+  role_id: string;
+  topic_id: string;
+  status: string;
+  /** Short record of earlier runs whose results were delivered (stored with camelCase keys). */
+  notes: { taskId?: string; task_id?: string; request: string; result: string; at: string }[];
+  runs: number;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Present on GET /api/roles/:id/sessions. */
+  topic?: { id: string; title: string; kind: string };
+  /** Present on GET /api/topics/:id/sessions. */
+  role?: { id: string; handle: string; name: string } | null;
 }
 
 export interface Approval {
@@ -223,7 +284,8 @@ export interface Template {
   image: string;
   kind: "shell" | "desktop";
   workdir: string;
-  user: string | null;
+  /** Unprivileged user the runner and every AI action run as (never root). */
+  user: string;
   command: string[] | null;
   env: Record<string, string>;
   persistent_paths: string[];
@@ -256,6 +318,26 @@ export interface InstanceOperator {
   expires_at: string;
 }
 
+/** What the runner reported when it connected (nested JSON, camelCase as sent by the runner). */
+export interface RunnerInfo {
+  hostname?: string;
+  user?: string;
+  uid?: number;
+  workdir?: string;
+  desktop?: { display?: string; width?: number; height?: number; vncPort?: number; vncViewPort?: number } | null;
+  browser?: boolean;
+  tools?: string[];
+}
+
+/** Live connection of the computer's runner to the hub of the API process answering the request. */
+export interface RunnerStatus {
+  connected: boolean;
+  via?: "websocket" | "stdio" | "memory" | string;
+  /** When the current connection was established. */
+  since?: string;
+  info?: RunnerInfo;
+}
+
 export interface Instance {
   id: string;
   name: string;
@@ -267,7 +349,12 @@ export interface Instance {
   status_reason: string | null;
   container_id: string | null;
   volumes: Record<string, string>;
+  /** A person has taken over: AI work on this computer waits. */
   paused_ai: boolean;
+  /** Last time a runner authenticated, and what it reported then (kept after it disconnects). */
+  runner_connected_at: string | null;
+  runner_info: RunnerInfo | null;
+  runner: RunnerStatus;
   last_started_at: string | null;
   created_by: string | null;
   created_at: string;
@@ -309,12 +396,29 @@ export interface ActionPreview {
   active_tasks: string[];
 }
 
+/** Terminal, browser and external-agent sessions living inside a computer. */
+export interface ExecSession {
+  id: string;
+  instance_id: string;
+  kind: "terminal" | "browser" | "agent" | string;
+  runner_session_id: string;
+  /** desktop: the visible desktop people can watch and take over; background: a separate, unseen session. */
+  mode: "desktop" | "background" | string;
+  task_id: string | null;
+  role_id: string | null;
+  title: string;
+  status: "open" | "closed" | string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Backup {
   id: string;
   instance_id: string;
   image_ref: string | null;
   archives: Record<string, string>;
   includes_credentials: boolean;
+  status: "running" | "complete" | "failed" | string;
   note: string | null;
   size_bytes: number;
   created_by: string | null;
@@ -335,6 +439,16 @@ export interface RoleImpact {
   notes: string[];
 }
 
+/** How an external runtime starts its agent inside the role's computer (read by the server's external runner). */
+export interface RuntimeConfig {
+  command?: string;
+  cwd?: string;
+  env?: Record<string, string>;
+  /** Stop the agent after this long (server default 60). */
+  timeout_minutes?: number;
+  [key: string]: unknown;
+}
+
 export interface Role {
   id: string;
   name: string;
@@ -345,6 +459,10 @@ export interface Role {
   model_config_id: string | null;
   model_params?: Dict;
   instance_id: string | null;
+  /** witden: the platform's agent loop (outside the computer); external: a third-party agent CLI inside it. */
+  runtime: Runtime;
+  /** Only returned to role managers. */
+  runtime_config?: RuntimeConfig;
   allowed_tools: string[];
   allowed_contacts?: string[];
   knowledge_space_ids?: string[];
@@ -364,7 +482,8 @@ export interface Role {
   /** Configuration problems that will make work fail (no model, computer stopped, ...). */
   warnings?: string[];
   impact?: RoleImpact;
-  result?: Dict;
+  /** PATCH response: changed fields (server-side camelCase names) and the impact report. */
+  result?: { changes?: string[]; impact?: RoleImpact } & Dict;
 }
 
 export interface ToolGroup {
@@ -527,6 +646,19 @@ export interface Connection {
   events_url?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+/** GET /api/connections/publishable: connections the viewer holds topic.publish on (no settings or credentials). */
+export interface PublishableConnection {
+  id: string;
+  name: string;
+  platform: string;
+}
+
+export interface PublishResult {
+  ok: boolean;
+  thread_key: string;
+  conversation_id: string;
 }
 
 export interface ExternalConversation {

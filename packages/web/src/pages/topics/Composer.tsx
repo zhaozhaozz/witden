@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import { type ChangeEvent, type KeyboardEvent, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { Artifact, Mention, Participant, PostMessageResult } from "../../api/types";
 import { fmtBytes } from "../../lib/format";
@@ -205,7 +205,7 @@ export function Composer({
             <span key={a.id} className="attach attach-pending">
               <span className="attach-name">{a.name}</span>
               <span className="attach-size">{fmtBytes(a.size)}</span>
-              <button className="icon-btn" aria-label="移除附件" onClick={() => void removePending(a)}>
+              <button type="button" className="icon-btn" aria-label="移除附件" onClick={() => void removePending(a)}>
                 ×
               </button>
             </span>

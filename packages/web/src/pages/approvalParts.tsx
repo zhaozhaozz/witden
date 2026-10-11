@@ -106,7 +106,9 @@ export function ApprovalCard({
       ) : null}
 
       {rejectOnly ? (
-        <p className="small text-wait">你可以拒绝这个请求，但批准需要能查看它涉及的全部资料，你没有这些资料的查看权限。</p>
+        <p className="small text-wait">
+          你可以拒绝这个请求，但批准需要能查看它涉及的全部资料，你没有这些资料的查看权限。
+        </p>
       ) : null}
       <footer className="approval-foot">
         <div className="approval-meta small muted">
@@ -131,11 +133,11 @@ export function ApprovalCard({
         {a.status === "pending" && a.can_decide ? (
           <div className="approval-decide">
             <input placeholder="备注（可选）" value={note} onChange={(e) => setNote(e.target.value)} />
-            <button className="btn btn-sm btn-danger-ghost" disabled={busy} onClick={() => decide(false)}>
+            <button type="button" className="btn btn-sm btn-danger-ghost" disabled={busy} onClick={() => decide(false)}>
               拒绝
             </button>
             {rejectOnly ? null : (
-              <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => decide(true)}>
+              <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => decide(true)}>
                 批准
               </button>
             )}

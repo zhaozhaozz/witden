@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, NavLink, Navigate, Outlet } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
 import { api } from "./api/client";
 import type { Approval, KillSwitch } from "./api/types";
 import { useInterval } from "./lib/hooks";
-import { useAuth, useDirectory } from "./lib/session";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
+import { useAuth, useDirectory } from "./lib/session";
 import { Avatar } from "./ui/kit";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
@@ -123,7 +123,11 @@ export default function Layout() {
               <div key={g.title} className="nav-group">
                 <div className="nav-group-title">{g.title}</div>
                 {items.map((i) => (
-                  <NavLink key={i.to} to={i.to} className={({ isActive }) => (isActive ? "nav-item nav-on" : "nav-item")}>
+                  <NavLink
+                    key={i.to}
+                    to={i.to}
+                    className={({ isActive }) => (isActive ? "nav-item nav-on" : "nav-item")}
+                  >
                     <span>{i.label}</span>
                     {i.badge ? <span className="nav-badge">{i.badge}</span> : null}
                   </NavLink>
@@ -141,6 +145,7 @@ export default function Layout() {
             </span>
           </NavLink>
           <button
+            type="button"
             className="btn btn-ghost btn-sm"
             onClick={() => {
               void logout();
@@ -158,8 +163,7 @@ export default function Layout() {
               {kills
                 .map((k) => {
                   const scope = SCOPE_LABEL[k.scope] ?? k.scope;
-                  const target =
-                    k.scope === "role" ? dir.roleLabel(k.target_id) : k.target_id ? k.target_id : "";
+                  const target = k.scope === "role" ? dir.roleLabel(k.target_id) : k.target_id ? k.target_id : "";
                   return `${scope}${target ? ` ${target}` : ""}${k.reason ? `（${k.reason}）` : ""}`;
                 })
                 .join("；")}

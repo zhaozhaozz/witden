@@ -1,8 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError } from "../../api/client";
-import type { Instance, KnowledgeSpace, Memory, ModelConfig, Role, RoleImpact, ToolGroup } from "../../api/types";
-import { fmtNumber, fmtRelative, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
+import { ApiError, api } from "../../api/client";
+import type {
+  AgentSession,
+  Instance,
+  KnowledgeSpace,
+  Memory,
+  ModelConfig,
+  Role,
+  RoleImpact,
+  Runtime,
+  RuntimeConfig,
+  ToolGroup,
+} from "../../api/types";
+import {
+  fmtNumber,
+  fmtRelative,
+  genericStatus,
+  instanceStatus,
+  linesToList,
+  RUNTIME_LABEL,
+  TOOL_GROUP_LABEL,
+} from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -21,8 +40,10 @@ import {
   PageHeader,
   Section,
   StatusChip,
+  Tag,
   Toggle,
 } from "../../ui/kit";
+import { AgentSessionList } from "../sessionParts";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
 interface Draft {
@@ -34,6 +55,13 @@ interface Draft {
   model_config_id: string;
   model_params: string;
   instance_id: string;
+  runtime: Runtime;
+  // External runtime: runtime_config split into fields; keys the editor does not know are kept as-is.
+  rt_command: string;
+  rt_cwd: string;
+  rt_env: string;
+  rt_timeout: string;
+  rt_extra: Record<string, unknown>;
   allowed_tools: string[];
   any_contact: boolean;
   allowed_contacts: string[];
@@ -46,6 +74,7 @@ interface Draft {
 }
 
 function toDraft(r: Role | null): Draft {
+  const { command, cwd, env, timeout_minutes, ...extra } = r?.runtime_config ?? {};
   return {
     name: r?.name ?? "",
     handle: r?.handle ?? "",
@@ -55,6 +84,14 @@ function toDraft(r: Role | null): Draft {
     model_config_id: r?.model_config_id ?? "",
     model_params: r?.model_params && Object.keys(r.model_params).length ? JSON.stringify(r.model_params, null, 2) : "",
     instance_id: r?.instance_id ?? "",
+    runtime: r?.runtime === "external" ? "external" : "witden",
+    rt_command: typeof command === "string" ? command : "",
+    rt_cwd: typeof cwd === "string" ? cwd : "",
+    rt_env: Object.entries(env ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("\n"),
+    rt_timeout: timeout_minutes != null ? String(timeout_minutes) : "",
+    rt_extra: extra,
     allowed_tools: r?.allowed_tools ?? [],
     any_contact: (r?.allowed_contacts ?? []).includes("*"),
     allowed_contacts: (r?.allowed_contacts ?? []).filter((c) => c !== "*"),
@@ -68,8 +105,34 @@ function toDraft(r: Role | null): Draft {
 }
 
 const num = (s: string) => (s.trim() ? Number(s) : null);
+const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+function runtimeConfig(d: Draft): RuntimeConfig {
+  const env: Record<string, string> = {};
+  for (const line of linesToList(d.rt_env)) {
+    const i = line.indexOf("=");
+    const key = i > 0 ? line.slice(0, i).trim() : "";
+    if (!ENV_KEY.test(key)) throw new Error(`环境变量格式应为 KEY=VALUE：${line}`);
+    env[key] = line.slice(i + 1);
+  }
+  const out: RuntimeConfig = { ...d.rt_extra };
+  if (d.rt_command.trim()) out.command = d.rt_command.trim();
+  if (d.rt_cwd.trim()) out.cwd = d.rt_cwd.trim();
+  if (Object.keys(env).length) out.env = env;
+  if (d.rt_timeout.trim()) out.timeout_minutes = Number(d.rt_timeout);
+  return out;
+}
+
+/** Throws an Error with a readable message when a free-form field does not parse. */
 function toBody(d: Draft): Record<string, unknown> {
+  let modelParams: unknown = {};
+  if (d.model_params.trim()) {
+    try {
+      modelParams = JSON.parse(d.model_params);
+    } catch {
+      throw new Error("模型参数不是有效的 JSON");
+    }
+  }
   return {
     name: d.name.trim(),
     handle: d.handle.trim().toLowerCase(),
@@ -77,8 +140,10 @@ function toBody(d: Draft): Record<string, unknown> {
     description: d.description,
     system_prompt: d.system_prompt,
     model_config_id: d.model_config_id || null,
-    model_params: d.model_params.trim() ? JSON.parse(d.model_params) : {},
+    model_params: modelParams,
     instance_id: d.instance_id || null,
+    runtime: d.runtime,
+    runtime_config: runtimeConfig(d),
     allowed_tools: d.allowed_tools,
     allowed_contacts: d.any_contact ? ["*"] : d.allowed_contacts,
     knowledge_space_ids: d.knowledge_space_ids,
@@ -95,9 +160,18 @@ export default function RoleEditorPage() {
   const isNew = !roleId;
   const role = useResource(() => api.get<Role>(`/api/roles/${roleId}`), [roleId], !isNew);
   if (!isNew && role.data === undefined) {
-    return <div className="page">{role.error ? <ErrorNote error={role.error} onRetry={role.reload} /> : <Loading />}</div>;
+    return (
+      <div className="page">{role.error ? <ErrorNote error={role.error} onRetry={role.reload} /> : <Loading />}</div>
+    );
   }
-  return <RoleEditor key={roleId ?? "new"} role={isNew ? null : (role.data ?? null)} reload={() => void role.reload()} setRole={(r) => role.setData(r)} />;
+  return (
+    <RoleEditor
+      key={roleId ?? "new"}
+      role={isNew ? null : (role.data ?? null)}
+      reload={() => void role.reload()}
+      setRole={(r) => role.setData(r)}
+    />
+  );
 }
 
 function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () => void; setRole: (r: Role) => void }) {
@@ -114,18 +188,28 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
   useEffect(() => setDraft(toDraft(role)), [role]);
 
-  const original = useMemo(() => (role ? toBody(toDraft(role)) : null), [role]);
+  const original = useMemo(() => {
+    try {
+      return role ? toBody(toDraft(role)) : null;
+    } catch {
+      return null;
+    }
+  }, [role]);
   let body: Record<string, unknown> | null = null;
-  let jsonError: string | null = null;
+  let formError: string | null = null;
   try {
     body = toBody(draft);
-  } catch {
-    jsonError = "模型参数不是有效的 JSON";
+  } catch (err) {
+    formError = (err as Error).message;
   }
-  const changed = body && original ? Object.keys(body).filter((k) => JSON.stringify(body![k]) !== JSON.stringify(original[k])) : [];
+  const changed =
+    body && original ? Object.keys(body).filter((k) => JSON.stringify(body![k]) !== JSON.stringify(original[k])) : [];
   const dirty = !role || changed.length > 0;
-  const selectedModel = models.data?.find((m) => m.id === draft.model_config_id) ?? (role?.model && role.model.id === draft.model_config_id ? role.model : null);
+  const selectedModel =
+    models.data?.find((m) => m.id === draft.model_config_id) ??
+    (role?.model && role.model.id === draft.model_config_id ? role.model : null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const external = draft.runtime === "external";
 
   const save = async () => {
     if (!body) return;
@@ -179,7 +263,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     };
     const out = await run(() => attempt({}));
     if (out) {
-      toast(`已保存 ${(out.result?.changes as string[] | undefined)?.length ?? changed.length} 项修改`, "ok");
+      toast(`已保存 ${out.result?.changes?.length ?? changed.length} 项修改`, "ok");
       void dir.reload();
       reload();
     }
@@ -189,7 +273,9 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const alwaysTools = (toolGroups.data ?? []).find((g) => !g.group)?.tools ?? [];
   const approvalOptions = [
     ...groups.map((g) => ({ value: g.group!, label: `整组：${TOOL_GROUP_LABEL[g.group!] ?? g.group}` })),
-    ...groups.flatMap((g) => g.tools.map((t) => ({ value: t, label: t, hint: TOOL_GROUP_LABEL[g.group!] ?? g.group! }))),
+    ...groups.flatMap((g) =>
+      g.tools.map((t) => ({ value: t, label: t, hint: TOOL_GROUP_LABEL[g.group!] ?? g.group! })),
+    ),
   ];
 
   return (
@@ -212,6 +298,9 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               <>
                 <span>/</span>
                 <StatusChip meta={genericStatus(role.status)} compact />
+                <Tag tone={role.runtime === "external" ? "accent" : undefined}>
+                  {RUNTIME_LABEL[role.runtime] ?? role.runtime}
+                </Tag>
                 <span className="muted">配置版本 {role.config_version}</span>
                 <span className="muted">今日 {fmtNumber(role.tokens_today ?? 0)} tokens</span>
               </>
@@ -221,15 +310,16 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
         actions={
           role ? (
             <>
-              <button className="btn btn-sm" onClick={() => setDialog("copy")}>
+              <button type="button" className="btn btn-sm" onClick={() => setDialog("copy")}>
                 复制到其他电脑
               </button>
               {role.status === "active" ? (
-                <button className="btn btn-sm btn-danger-ghost" onClick={() => setDialog("disable")}>
+                <button type="button" className="btn btn-sm btn-danger-ghost" onClick={() => setDialog("disable")}>
                   停用
                 </button>
               ) : (
                 <button
+                  type="button"
                   className="btn btn-sm"
                   disabled={busy}
                   onClick={async () => {
@@ -267,10 +357,19 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           <Section title="身份">
             <div className="form-row">
               <Field label="名称">
-                <input value={draft.name} onChange={(e) => set("name", e.target.value)} placeholder="例如：开发工程师" />
+                <input
+                  value={draft.name}
+                  onChange={(e) => set("name", e.target.value)}
+                  placeholder="例如：开发工程师"
+                />
               </Field>
               <Field label="@ 名称" hint="小写字母、数字、_ . -，最多 32 个字符；在话题中用 @名称 呼叫">
-                <input className="mono" value={draft.handle} onChange={(e) => set("handle", e.target.value.toLowerCase())} placeholder="dev" />
+                <input
+                  className="mono"
+                  value={draft.handle}
+                  onChange={(e) => set("handle", e.target.value.toLowerCase())}
+                  placeholder="dev"
+                />
               </Field>
               <Field label="头像地址" hint="可选">
                 <input value={draft.avatar_url} onChange={(e) => set("avatar_url", e.target.value)} />
@@ -283,25 +382,125 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
           <Section title="工作方式">
             <Field label="提示词" hint="职责、工作规则、沟通方式与行为约束。权限限制由系统执行，不依赖提示词。">
-              <textarea className="prompt" rows={10} value={draft.system_prompt} onChange={(e) => set("system_prompt", e.target.value)} />
+              <textarea
+                className="prompt"
+                rows={10}
+                value={draft.system_prompt}
+                onChange={(e) => set("system_prompt", e.target.value)}
+              />
             </Field>
             <FieldGroup label="在话题中的参与方式">
               <div className="radio-row">
                 <label className="check">
-                  <input type="radio" checked={draft.response_mode === "mention"} onChange={() => set("response_mode", "mention")} />
+                  <input
+                    type="radio"
+                    checked={draft.response_mode === "mention"}
+                    onChange={() => set("response_mode", "mention")}
+                  />
                   只在被 @ 时响应
                 </label>
                 <label className="check">
-                  <input type="radio" checked={draft.response_mode === "active"} onChange={() => set("response_mode", "active")} />
+                  <input
+                    type="radio"
+                    checked={draft.response_mode === "active"}
+                    onChange={() => set("response_mode", "active")}
+                  />
                   在加入的话题中持续参与
                 </label>
               </div>
             </FieldGroup>
           </Section>
 
+          <Section title="运行方式">
+            <div
+              className="pick"
+              role="radiogroup"
+              aria-label="运行方式"
+              style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", maxHeight: "none" }}
+            >
+              {(
+                [
+                  [
+                    "witden",
+                    "平台智能体",
+                    "平台在电脑之外运行智能体循环：用下面选定的模型思考，再通过工具在所属电脑里执行命令、读写文件、操作桌面和浏览器。每一步都受工具范围和审批约束，并记录在任务日志里。",
+                  ],
+                  [
+                    "external",
+                    "外部智能体",
+                    "在角色的电脑里启动一个第三方智能体命令行程序，由它自己完成任务。它使用自己的模型和凭据，平台负责启动、记录输出、超时和停止。",
+                  ],
+                ] as const
+              ).map(([value, label, hint]) => (
+                <label key={value} className={`pick-item${draft.runtime === value ? " pick-on" : ""}`}>
+                  <input
+                    type="radio"
+                    name="runtime"
+                    checked={draft.runtime === value}
+                    onChange={() => set("runtime", value)}
+                  />
+                  <span className="pick-text">
+                    <strong>{label}</strong>
+                    <span className="pick-hint">{hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {external ? (
+              <>
+                <div className="callout callout-wait">
+                  命令在所属电脑里以电脑的非特权用户身份通过 <code>/bin/sh -c</code>{" "}
+                  执行。任务说明（角色提示词和这次的要求）写入它的标准输入；输出的结尾部分作为结果发回话题，退出码不为 0
+                  时任务失败。下方的工具范围和逐项审批不约束外部程序在电脑内的操作，它能做的事以这台电脑本身的边界为准。
+                </div>
+                <Field label="启动命令" hint="必填。从标准输入读取任务说明，结果输出到标准输出。">
+                  <textarea
+                    className="mono"
+                    rows={2}
+                    value={draft.rt_command}
+                    onChange={(e) => set("rt_command", e.target.value)}
+                    placeholder="my-agent --non-interactive"
+                  />
+                </Field>
+                <div className="form-row">
+                  <Field label="工作目录" hint="可选；默认是电脑的工作目录，可用 ~/ 开头">
+                    <input
+                      className="mono"
+                      value={draft.rt_cwd}
+                      onChange={(e) => set("rt_cwd", e.target.value)}
+                      placeholder="~/project"
+                    />
+                  </Field>
+                  <Field label="超时（分钟）" hint="可选；默认 60 分钟，超时后停止并标记失败">
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.rt_timeout}
+                      onChange={(e) => set("rt_timeout", e.target.value)}
+                    />
+                  </Field>
+                </div>
+                <Field
+                  label="环境变量"
+                  hint="可选；每行 KEY=VALUE。会以明文保存在角色配置中，密钥更适合放在电脑的凭据目录里。"
+                >
+                  <textarea
+                    className="mono"
+                    rows={3}
+                    value={draft.rt_env}
+                    onChange={(e) => set("rt_env", e.target.value)}
+                  />
+                </Field>
+              </>
+            ) : null}
+          </Section>
+
           <Section title="模型与电脑">
             <div className="form-row">
-              <Field label="模型配置">
+              <Field
+                label="模型配置"
+                hint={external ? "外部智能体不使用这里的模型；切回平台智能体时才会用到。" : undefined}
+              >
                 <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
                   <option value="">未配置</option>
                   {(models.data ?? []).map((m) => (
@@ -309,7 +508,9 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                       {m.name}（{m.model}）
                     </option>
                   ))}
-                  {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? <option value={role.model.id}>{role.model.name}</option> : null}
+                  {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
+                    <option value={role.model.id}>{role.model.name}</option>
+                  ) : null}
                 </select>
               </Field>
               <Field label="所属电脑" hint="角色执行任务时只能操作这台电脑">
@@ -326,24 +527,51 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 </select>
               </Field>
             </div>
-            {selectedModel ? (
+            {selectedModel && !external ? (
               <div className="caps">
-                <Capability label="对话" value={selectedModel.capabilities?.chat} error={selectedModel.capabilities?.errors?.chat} falseLabel="不可用" />
-                <Capability label="工具调用" value={selectedModel.capabilities?.tools} error={selectedModel.capabilities?.errors?.tools} />
-                <Capability label="图像理解" value={selectedModel.capabilities?.vision} error={selectedModel.capabilities?.errors?.vision} />
+                <Capability
+                  label="对话"
+                  value={selectedModel.capabilities?.chat}
+                  error={selectedModel.capabilities?.errors?.chat}
+                  falseLabel="不可用"
+                />
+                <Capability
+                  label="工具调用"
+                  value={selectedModel.capabilities?.tools}
+                  error={selectedModel.capabilities?.errors?.tools}
+                />
+                <Capability
+                  label="图像理解"
+                  value={selectedModel.capabilities?.vision}
+                  error={selectedModel.capabilities?.errors?.vision}
+                />
               </div>
             ) : null}
             {role && draft.instance_id !== (role.instance_id ?? "") ? (
-              <div className="callout callout-wait">更换电脑不会迁移文件、已安装的软件和登录状态。已固定在旧电脑上的任务需要等它们完成或取消。</div>
+              <div className="callout callout-wait">
+                更换电脑不会迁移文件、已安装的软件和登录状态。已固定在旧电脑上的任务需要等它们完成或取消。
+              </div>
             ) : null}
             <Field label="模型参数（JSON，可选）" hint='例如 {"temperature": 0.2}'>
-              <textarea className="mono" rows={3} value={draft.model_params} onChange={(e) => set("model_params", e.target.value)} />
+              <textarea
+                className="mono"
+                rows={3}
+                value={draft.model_params}
+                onChange={(e) => set("model_params", e.target.value)}
+              />
             </Field>
-            {jsonError ? <div className="error-note">{jsonError}</div> : null}
           </Section>
 
           <Section title="能力范围">
-            <FieldGroup label="允许使用的工具" hint={alwaysTools.length ? `始终可用：${alwaysTools.join("、")}` : undefined}>
+            {external ? (
+              <p className="small muted">
+                以下设置作用于平台智能体；角色使用外部智能体时，它们不限制外部程序在电脑内的操作。
+              </p>
+            ) : null}
+            <FieldGroup
+              label="允许使用的工具"
+              hint={alwaysTools.length ? `始终可用：${alwaysTools.join("、")}` : undefined}
+            >
               <Loaded res={toolGroups}>
                 {() => (
                   <MultiPick
@@ -360,14 +588,21 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               </Loaded>
             </FieldGroup>
             <FieldGroup label="每次使用都需要人工批准" hint="角色不能批准自己的请求；审批人由「审批」权限决定。">
-              <MultiPick columns={3} options={approvalOptions} value={draft.approval_required} onChange={(v) => set("approval_required", v)} />
+              <MultiPick
+                columns={3}
+                options={approvalOptions}
+                value={draft.approval_required}
+                onChange={(v) => set("approval_required", v)}
+              />
             </FieldGroup>
             <FieldGroup label="可以联系、委托的角色">
               <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
               {!draft.any_contact ? (
                 <MultiPick
                   columns={3}
-                  options={dir.roles.filter((r) => r.id !== role?.id).map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
+                  options={dir.roles
+                    .filter((r) => r.id !== role?.id)
+                    .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
                   value={draft.allowed_contacts}
                   onChange={(v) => set("allowed_contacts", v)}
                   empty="没有其他角色"
@@ -388,23 +623,45 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           <Section title="限额">
             <div className="form-row">
               <Field label="单个任务最多步数" hint="留空使用系统上限">
-                <input type="number" min={1} value={draft.max_steps} onChange={(e) => set("max_steps", e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.max_steps}
+                  onChange={(e) => set("max_steps", e.target.value)}
+                />
               </Field>
               <Field label="单个任务 token 上限">
-                <input type="number" min={1} value={draft.max_tokens_per_task} onChange={(e) => set("max_tokens_per_task", e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.max_tokens_per_task}
+                  onChange={(e) => set("max_tokens_per_task", e.target.value)}
+                />
               </Field>
               <Field label="每日 token 上限">
-                <input type="number" min={1} value={draft.daily_token_limit} onChange={(e) => set("daily_token_limit", e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  value={draft.daily_token_limit}
+                  onChange={(e) => set("daily_token_limit", e.target.value)}
+                />
               </Field>
             </div>
           </Section>
 
           <div className="sticky-actions">
-            {role && changed.length ? <span className="small muted">已修改：{changed.map(fieldLabelAll).join("、")}</span> : null}
+            {formError ? <span className="small text-bad">{formError}</span> : null}
+            {role && changed.length ? (
+              <span className="small muted">已修改：{changed.map(fieldLabelAll).join("、")}</span>
+            ) : null}
             <button type="button" className="btn" disabled={!dirty} onClick={() => setDraft(toDraft(role))}>
               还原
             </button>
-            <button className="btn btn-primary" disabled={busy || !dirty || !!jsonError || !draft.name.trim() || !draft.handle.trim()}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={busy || !dirty || !!formError || !draft.name.trim() || !draft.handle.trim()}
+            >
               {busy ? "保存中…" : role ? "保存修改" : "创建角色"}
             </button>
           </div>
@@ -417,6 +674,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 <ImpactView impact={role.impact} />
               </Section>
             ) : null}
+            <RoleSessions role={role} />
             <RoleMemories role={role} />
           </aside>
         ) : null}
@@ -467,7 +725,17 @@ function fieldLabelAll(f: string): string {
   return ALL_FIELD_ZH[f] ?? fieldLabel(f);
 }
 
-function CopyRoleDialog({ role, instances, onClose, onDone }: { role: Role; instances: Instance[]; onClose: () => void; onDone: (r: Role) => void }) {
+function CopyRoleDialog({
+  role,
+  instances,
+  onClose,
+  onDone,
+}: {
+  role: Role;
+  instances: Instance[];
+  onClose: () => void;
+  onDone: (r: Role) => void;
+}) {
   const { run, busy } = useAction();
   const [handle, setHandle] = useState(`${role.handle}-2`);
   const [name, setName] = useState(role.name);
@@ -481,7 +749,12 @@ function CopyRoleDialog({ role, instances, onClose, onDone }: { role: Role; inst
       onClose={onClose}
       onSubmit={async () => {
         const out = await run(
-          () => api.post<Role>(`/api/roles/${role.id}/copy`, { handle: handle.trim(), name: name.trim() || null, instance_id: instanceId || null }),
+          () =>
+            api.post<Role>(`/api/roles/${role.id}/copy`, {
+              handle: handle.trim(),
+              name: name.trim() || null,
+              instance_id: instanceId || null,
+            }),
           "已复制角色",
         );
         if (out) onDone(out);
@@ -528,7 +801,11 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
       onClose={onClose}
       onSubmit={async () => {
         const out = await run(
-          () => api.post<Role>(`/api/roles/${role.id}/disable`, { on_tasks: onTasks, reassign_to: onTasks === "reassign" ? target : null }),
+          () =>
+            api.post<Role>(`/api/roles/${role.id}/disable`, {
+              on_tasks: onTasks,
+              reassign_to: onTasks === "reassign" ? target : null,
+            }),
           "角色已停用",
         );
         if (out) onDone(out);
@@ -567,6 +844,18 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
   );
 }
 
+function RoleSessions({ role }: { role: Role }) {
+  const res = useResource(() => api.get<AgentSession[]>(`/api/roles/${role.id}/sessions`), [role.id]);
+  return (
+    <Section title="会话">
+      <p className="small muted">
+        角色在每个话题里有一个独立的会话，不同话题的上下文互不共享；这里只列出你能查看的话题。会话笔记是此前交付到话题的结果摘要，角色在同一话题继续工作时会读到。
+      </p>
+      <Loaded res={res}>{(rows) => <AgentSessionList sessions={rows} by="topic" />}</Loaded>
+    </Section>
+  );
+}
+
 function RoleMemories({ role }: { role: Role }) {
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
@@ -574,20 +863,30 @@ function RoleMemories({ role }: { role: Role }) {
   const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "role", role_id: role.id }), [role.id]);
   return (
     <Section title="岗位知识">
-      <p className="small muted">岗位知识跟随角色，在它参与的所有话题中都可使用；不要写入只属于某个人或某个话题的私密信息。</p>
+      <p className="small muted">
+        岗位知识跟随角色，在它参与的所有话题中都可使用；不要写入只属于某个人或某个话题的私密信息。
+      </p>
       <form
         className="note-form"
         onSubmit={async (e) => {
           e.preventDefault();
-          const m = await run(() => api.post<Memory>("/api/memories", { scope: "role", role_id: role.id, content: text.trim() }), "已添加");
+          const m = await run(
+            () => api.post<Memory>("/api/memories", { scope: "role", role_id: role.id, content: text.trim() }),
+            "已添加",
+          );
           if (m) {
             setText("");
             res.setData((p) => [m, ...(p ?? [])]);
           }
         }}
       >
-        <textarea rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="例如：发布前必须跑完 make check" />
-        <button className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
+        <textarea
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="例如：发布前必须跑完 make check"
+        />
+        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
           添加
         </button>
       </form>
@@ -601,6 +900,7 @@ function RoleMemories({ role }: { role: Role }) {
                   <div className="small muted">
                     {m.created_by_type === "role" ? "角色自己记录" : "成员添加"} · {fmtRelative(m.created_at)}
                     <button
+                      type="button"
                       className="link-btn"
                       onClick={async () => {
                         if (!(await confirm({ title: "删除这条岗位知识", danger: true, confirmLabel: "删除" }))) return;

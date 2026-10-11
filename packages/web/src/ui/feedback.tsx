@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { ApiError, errorMessage } from "../api/client";
 import { Modal } from "./kit";
 
@@ -55,7 +55,12 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
         {toasts.map((t) => (
           <div key={t.id} className={`toast toast-${t.tone}`}>
             <span>{t.text}</span>
-            <button className="toast-x" aria-label="关闭" onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}>
+            <button
+              type="button"
+              className="toast-x"
+              aria-label="关闭"
+              onClick={() => setToasts((x) => x.filter((y) => y.id !== t.id))}
+            >
               ×
             </button>
           </div>
@@ -67,10 +72,15 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
           onClose={() => close(false)}
           footer={
             <>
-              <button className="btn" onClick={() => close(false)}>
+              <button type="button" className="btn" onClick={() => close(false)}>
                 {pending.cancelLabel ?? "取消"}
               </button>
-              <button className={pending.danger ? "btn btn-danger" : "btn btn-primary"} autoFocus onClick={() => close(true)}>
+              <button
+                type="button"
+                className={pending.danger ? "btn btn-danger" : "btn btn-primary"}
+                autoFocus
+                onClick={() => close(true)}
+              >
                 {pending.confirmLabel ?? "确认"}
               </button>
             </>

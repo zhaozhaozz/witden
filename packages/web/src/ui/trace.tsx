@@ -60,13 +60,7 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
   const dir = useDirectory();
   const roleName = (id: string) => dir.roleLabel(id);
   const named = (id: string | null | undefined, fn?: (id: string) => string | undefined) =>
-    id ? (
-      <span>
-        {fn?.(id) ?? <IdText id={id} />}
-      </span>
-    ) : (
-      <span className="muted">—</span>
-    );
+    id ? <span>{fn?.(id) ?? <IdText id={id} />}</span> : <span className="muted">—</span>;
 
   const stops: Stop[] = trace.map((step, i) => {
     const key = `${i}-${step.step}`;
@@ -106,7 +100,12 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
         };
       }
       case "matched_rules": {
-        const rules = (Array.isArray(d) ? d : []) as { id: string; name: string; effect: string; specificity: number }[];
+        const rules = (Array.isArray(d) ? d : []) as {
+          id: string;
+          name: string;
+          effect: string;
+          specificity: number;
+        }[];
         return {
           key,
           title: "匹配分配规则",
@@ -115,7 +114,9 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
             <ul className="rail-list">
               {rules.map((r) => (
                 <li key={r.id}>
-                  <span className={r.effect === "deny" ? "tag tag-bad" : "tag tag-ok"}>{r.effect === "deny" ? "拒绝" : "允许"}</span>
+                  <span className={r.effect === "deny" ? "tag tag-bad" : "tag tag-ok"}>
+                    {r.effect === "deny" ? "拒绝" : "允许"}
+                  </span>
                   <strong>{r.name}</strong>
                   <span className="muted small">具体度 {r.specificity}</span>
                 </li>
@@ -165,11 +166,20 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
       }
       case "candidates": {
         const text = String(d);
-        const explicit = text.match(/^explicitly requested: \[(.*)\]$/);
+        // Server format: "explicitly requested: role_a, role_b" (role ids joined by ", ").
+        const explicit = text.match(/^explicitly requested: (.*)$/);
         const byRule = text.match(/^default role from rule '(.*)'$/);
         let body: ReactNode = zh(text);
         if (explicit) {
-          const ids = Array.from(explicit[1].matchAll(/'([^']+)'/g), (m) => m[1]);
+          const ids = explicit[1]
+            .split(",")
+            .map((s) =>
+              s
+                .trim()
+                .replace(/^\[|\]$/g, "")
+                .replace(/^'|'$/g, ""),
+            )
+            .filter(Boolean);
           body = `消息中明确 @ 了：${ids.map(roleName).join("、")}`;
         } else if (byRule) {
           body = `没有 @ 角色，使用规则「${byRule[1]}」中的默认角色`;
@@ -207,7 +217,12 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
       }
       case "result": {
         const ok = d === "allowed";
-        return { key, title: ok ? "结论：允许" : "结论：拒绝", tone: ok ? "ok" : "bad", body: ok ? undefined : zh(String(d ?? "")) };
+        return {
+          key,
+          title: ok ? "结论：允许" : "结论：拒绝",
+          tone: ok ? "ok" : "bad",
+          body: ok ? undefined : zh(String(d ?? "")),
+        };
       }
       default:
         return {

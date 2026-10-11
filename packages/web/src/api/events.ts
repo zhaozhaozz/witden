@@ -8,6 +8,7 @@ export type LiveEventType =
   | "task.step"
   | "instance.status"
   | "instance.operator"
+  | "instance.runner"
   | "emergency.stop";
 
 const EVENT_TYPES: LiveEventType[] = [
@@ -17,6 +18,7 @@ const EVENT_TYPES: LiveEventType[] = [
   "task.step",
   "instance.status",
   "instance.operator",
+  "instance.runner",
   "emergency.stop",
 ];
 

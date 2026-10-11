@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
 import type { Me, Role, User } from "../api/types";
 
@@ -62,7 +62,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const can = useCallback((perm: string) => !!me && (!!me.is_admin || me.permissions.includes(perm)), [me]);
 
-  const value = useMemo(() => ({ me, status, login, logout, refreshMe, can }), [me, status, login, logout, refreshMe, can]);
+  const value = useMemo(
+    () => ({ me, status, login, logout, refreshMe, can }),
+    [me, status, login, logout, refreshMe, can],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

@@ -43,6 +43,7 @@ const GENERIC_STATUS: Record<string, StatusMeta> = {
   approved: { label: "已批准", tone: "ok" },
   rejected: { label: "已拒绝", tone: "bad" },
   sent: { label: "已送达", tone: "ok" },
+  sending: { label: "发送中", tone: "run" },
   failed: { label: "失败", tone: "bad" },
   blocked: { label: "已拦截", tone: "bad" },
   denied: { label: "拒绝", tone: "bad" },
@@ -202,9 +203,29 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   terminal: "终端会话",
   files: "文件",
   desktop: "桌面操作",
+  browser: "浏览器",
   collaborate: "协作委托",
   memory: "记忆",
   topics: "跨话题引用",
+  // Added to the task envelope by the server for roles with the external runtime.
+  external: "外部智能体",
+};
+
+export const RUNTIME_LABEL: Record<string, string> = {
+  witden: "平台智能体",
+  external: "外部智能体",
+};
+
+export const RUNNER_VIA_LABEL: Record<string, string> = {
+  websocket: "主动连入（WebSocket）",
+  stdio: "管理通道（stdio）",
+  memory: "进程内（测试）",
+};
+
+export const EXEC_SESSION_KIND: Record<string, string> = {
+  terminal: "终端",
+  browser: "浏览器",
+  agent: "外部智能体",
 };
 
 export const PERMISSION_LABEL: Record<string, string> = {
@@ -250,14 +271,24 @@ const AUDIT_LABEL: Record<string, string> = {
   "tool.denied": "工具被拒绝",
   "approval.request": "申请审批",
   "approval.decide": "审批决定",
+  "approval.approved": "审批通过",
+  "approval.rejected": "审批拒绝",
   "output.blocked": "输出被拦截",
   "file.upload": "上传文件",
   "file.download": "下载文件",
   "memory.create": "写入记忆",
   "emergency.stop": "紧急停止",
+  "emergency.release": "解除紧急停止",
+  "topic.publish": "发布到外部频道",
+  "instance.takeover": "接管电脑",
+  "instance.handback": "交还电脑",
+  "instance.vnc": "打开实时画面",
+  "runner.rejected": "拒绝 Runner 连接",
 };
 
 export function auditLabel(action: string): string {
+  // Every tool call is audited as tool.<name>.
+  if (!AUDIT_LABEL[action] && action.startsWith("tool.")) return `工具 ${action.slice(5)}`;
   return AUDIT_LABEL[action] ?? action;
 }
 

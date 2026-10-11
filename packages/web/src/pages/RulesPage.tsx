@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { Connection, ExplainResult, Instance, MatchKey, Rule, Topic } from "../api/types";
 import { CONVERSATION_KIND } from "../lib/format";
@@ -6,7 +6,7 @@ import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
 import { Empty, Field, FieldGroup, FormModal, Loaded, MultiPick, PageHeader, Section, Tag, Toggle } from "../ui/kit";
-import { AssignmentTrace, zh, type NameLookups } from "../ui/trace";
+import { AssignmentTrace, type NameLookups, zh } from "../ui/trace";
 
 const MATCH_LABEL: Record<MatchKey, string> = {
   topic_id: "话题",
@@ -90,7 +90,7 @@ export default function RulesPage() {
         title="分配规则"
         sub="决定一条请求可以交给哪些角色、在哪些电脑上执行。所有匹配的规则同时生效：允许范围取交集，拒绝优先；默认角色取最具体的规则（话题 > 外部会话 > 成员 > 会话类型 > 通讯接入 > 全局）。外部会话没有匹配规则时一律拒绝。"
         actions={
-          <button className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
             新建规则
           </button>
         }
@@ -126,8 +126,20 @@ export default function RulesPage() {
                           <td>{matchText(r)}</td>
                           <td>{r.effect === "deny" ? <Tag tone="bad">拒绝</Tag> : <Tag tone="ok">允许</Tag>}</td>
                           <td>{roleChips(r.allow_role_ids, <span className="muted">不限</span>)}</td>
-                          <td>{r.deny_role_ids.length ? roleChips(r.deny_role_ids, null) : <span className="muted">—</span>}</td>
-                          <td>{r.default_role_id ? `@${dir.roleById.get(r.default_role_id)?.handle ?? r.default_role_id}` : <span className="muted">—</span>}</td>
+                          <td>
+                            {r.deny_role_ids.length ? (
+                              roleChips(r.deny_role_ids, null)
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
+                          <td>
+                            {r.default_role_id ? (
+                              `@${dir.roleById.get(r.default_role_id)?.handle ?? r.default_role_id}`
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
                           <td>
                             {r.allow_instance_ids === null ? (
                               <span className="muted">不限</span>
@@ -146,13 +158,21 @@ export default function RulesPage() {
                           </td>
                           <td className="nowrap">
                             <div className="btn-row">
-                              <button className="btn btn-xs" onClick={() => setEditing(r)}>
+                              <button type="button" className="btn btn-xs" onClick={() => setEditing(r)}>
                                 编辑
                               </button>
                               <button
+                                type="button"
                                 className="btn btn-xs btn-danger-ghost"
                                 onClick={async () => {
-                                  if (!(await confirm({ title: `删除规则「${r.name}」`, danger: true, confirmLabel: "删除" }))) return;
+                                  if (
+                                    !(await confirm({
+                                      title: `删除规则「${r.name}」`,
+                                      danger: true,
+                                      confirmLabel: "删除",
+                                    }))
+                                  )
+                                    return;
                                   const out = await run(() => api.del(`/api/rules/${r.id}`), "规则已删除");
                                   if (out) void res.reload();
                                 }}
@@ -194,7 +214,17 @@ export default function RulesPage() {
 
 type Ctx = ReturnType<typeof useLookups>;
 
-function RuleEditor({ rule, ctx, onClose, onSaved }: { rule: Rule | null; ctx: Ctx; onClose: () => void; onSaved: () => void }) {
+function RuleEditor({
+  rule,
+  ctx,
+  onClose,
+  onSaved,
+}: {
+  rule: Rule | null;
+  ctx: Ctx;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const dir = useDirectory();
   const { run, busy } = useAction();
   const [name, setName] = useState(rule?.name ?? "");
@@ -233,7 +263,10 @@ function RuleEditor({ rule, ctx, onClose, onSaved }: { rule: Rule | null; ctx: C
           default_role_id: defaultRole || null,
           allow_instance_ids: limitInstances ? allowInstances : null,
         };
-        const out = await run(() => (rule ? api.patch(`/api/rules/${rule.id}`, body) : api.post("/api/rules", body)), "规则已保存");
+        const out = await run(
+          () => (rule ? api.patch(`/api/rules/${rule.id}`, body) : api.post("/api/rules", body)),
+          "规则已保存",
+        );
         if (out) onSaved();
       }}
     >
@@ -299,11 +332,20 @@ function RuleEditor({ rule, ctx, onClose, onSaved }: { rule: Rule | null; ctx: C
                 ))}
               </select>
             ) : (
-              <input className="mono" value={match.connection_id ?? ""} onChange={(e) => setM("connection_id", e.target.value)} placeholder="接入 ID" />
+              <input
+                className="mono"
+                value={match.connection_id ?? ""}
+                onChange={(e) => setM("connection_id", e.target.value)}
+                placeholder="接入 ID"
+              />
             )}
           </Field>
           <Field label="外部会话 ID" hint="内部记录的会话 ID（在「通讯接入」中可查）">
-            <input className="mono" value={match.conversation_id ?? ""} onChange={(e) => setM("conversation_id", e.target.value)} />
+            <input
+              className="mono"
+              value={match.conversation_id ?? ""}
+              onChange={(e) => setM("conversation_id", e.target.value)}
+            />
           </Field>
         </div>
       </FieldGroup>
@@ -312,7 +354,9 @@ function RuleEditor({ rule, ctx, onClose, onSaved }: { rule: Rule | null; ctx: C
         <>
           <FieldGroup label="允许的角色" wide>
             <Toggle checked={limitRoles} onChange={setLimitRoles} label="只允许下列角色（不勾选表示不限制）" />
-            {limitRoles ? <MultiPick columns={3} options={roleOptions} value={allowRoles} onChange={setAllowRoles} /> : null}
+            {limitRoles ? (
+              <MultiPick columns={3} options={roleOptions} value={allowRoles} onChange={setAllowRoles} />
+            ) : null}
           </FieldGroup>
           <FieldGroup label="排除的角色" wide>
             <MultiPick columns={3} options={roleOptions} value={denyRoles} onChange={setDenyRoles} />
@@ -361,7 +405,9 @@ function ExplainPanel({ ctx }: { ctx: Ctx }) {
 
   return (
     <Section title="规则检查" className="explain">
-      <p className="small muted">模拟一条请求，查看会交给哪个角色、在哪台电脑上执行，以及每一步的判断依据。不会创建任务。</p>
+      <p className="small muted">
+        模拟一条请求，查看会交给哪个角色、在哪台电脑上执行，以及每一步的判断依据。不会创建任务。
+      </p>
       <form
         className="form"
         onSubmit={async (e) => {
@@ -431,9 +477,14 @@ function ExplainPanel({ ctx }: { ctx: Ctx }) {
           </div>
         ) : null}
         <FieldGroup label="消息中 @ 的角色" hint="不选表示没有 @ 任何角色，由默认角色处理">
-          <MultiPick columns={2} options={dir.roles.map((r) => ({ value: r.id, label: `@${r.handle}` }))} value={roles} onChange={setRoles} />
+          <MultiPick
+            columns={2}
+            options={dir.roles.map((r) => ({ value: r.id, label: `@${r.handle}` }))}
+            value={roles}
+            onChange={setRoles}
+          />
         </FieldGroup>
-        <button className="btn btn-primary btn-sm" disabled={busy || !userId}>
+        <button type="submit" className="btn btn-primary btn-sm" disabled={busy || !userId}>
           {busy ? "检查中…" : "检查"}
         </button>
       </form>
@@ -445,7 +496,10 @@ function ExplainPanel({ ctx }: { ctx: Ctx }) {
               <span>
                 {result.candidates
                   .filter((c) => c.allowed)
-                  .map((c) => `${dir.roleLabel(c.role_id)}${c.instance_id ? ` 在 ${ctx.lookups.instanceName?.(c.instance_id) ?? c.instance_id}` : ""}`)
+                  .map(
+                    (c) =>
+                      `${dir.roleLabel(c.role_id)}${c.instance_id ? ` 在 ${ctx.lookups.instanceName?.(c.instance_id) ?? c.instance_id}` : ""}`,
+                  )
                   .join("；")}
               </span>
             ) : (

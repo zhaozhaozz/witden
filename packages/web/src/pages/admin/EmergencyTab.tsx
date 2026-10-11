@@ -102,10 +102,15 @@ export function EmergencyTab() {
         </div>
         {globalActive ? (
           <button
+            type="button"
             className="btn btn-lg"
             disabled={busy}
             onClick={async () => {
-              const ok = await confirm({ title: "解除全局紧急停止", body: <p>解除后新的 AI 工作可以开始；已暂停的任务需要逐个继续。</p>, confirmLabel: "解除" });
+              const ok = await confirm({
+                title: "解除全局紧急停止",
+                body: <p>解除后新的 AI 工作可以开始；已暂停的任务需要逐个继续。</p>,
+                confirmLabel: "解除",
+              });
               if (!ok) return;
               const out = await run(() => api.post(`/api/kill-switches/${globalActive.id}/release`), "已解除");
               if (out) {
@@ -130,8 +135,12 @@ export function EmergencyTab() {
               if (ok && (await engage({ scope: "global", reason: globalReason.trim() }))) setGlobalReason("");
             }}
           >
-            <input placeholder="原因（会显示给所有管理员）" value={globalReason} onChange={(e) => setGlobalReason(e.target.value)} />
-            <button className="btn btn-lg btn-stop" disabled={busy}>
+            <input
+              placeholder="原因（会显示给所有管理员）"
+              value={globalReason}
+              onChange={(e) => setGlobalReason(e.target.value)}
+            />
+            <button type="submit" className="btn btn-lg btn-stop" disabled={busy}>
               停止全部 AI
             </button>
           </form>
@@ -168,7 +177,12 @@ export function EmergencyTab() {
               </Field>
               <Field label="对象">
                 {scope === "task" || !targetOptions.length ? (
-                  <input className="mono" value={target} onChange={(e) => setTarget(e.target.value)} placeholder={scope === "task" ? "任务 ID" : "ID"} />
+                  <input
+                    className="mono"
+                    value={target}
+                    onChange={(e) => setTarget(e.target.value)}
+                    placeholder={scope === "task" ? "任务 ID" : "ID"}
+                  />
                 ) : (
                   <select value={target} onChange={(e) => setTarget(e.target.value)}>
                     <option value="">请选择</option>
@@ -184,7 +198,7 @@ export function EmergencyTab() {
             <Field label="原因">
               <input value={reason} onChange={(e) => setReason(e.target.value)} />
             </Field>
-            <button className="btn btn-danger btn-sm" disabled={busy || !target.trim()}>
+            <button type="submit" className="btn btn-danger btn-sm" disabled={busy || !target.trim()}>
               停止
             </button>
           </form>
@@ -207,6 +221,7 @@ export function EmergencyTab() {
                       </div>
                       {k.active && k.scope !== "global" ? (
                         <button
+                          type="button"
                           className="btn btn-xs"
                           disabled={busy}
                           onClick={async () => {

@@ -27,7 +27,7 @@ export function KnowledgeTab() {
         <span className="small muted">
           知识空间存放团队共享资料。成员需要「读取知识空间」授权才能查看；角色需要在配置中选择空间才能读取。
         </span>
-        <button className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
           新建知识空间
         </button>
       </div>
@@ -38,7 +38,11 @@ export function KnowledgeTab() {
               <ul className="conn-list">
                 {rows.map((s) => (
                   <li key={s.id}>
-                    <button className={`conn-item${s.id === selected ? " conn-on" : ""}`} onClick={() => setSelected(s.id)}>
+                    <button
+                      type="button"
+                      className={`conn-item${s.id === selected ? " conn-on" : ""}`}
+                      onClick={() => setSelected(s.id)}
+                    >
                       <span className="conn-name">{s.name}</span>
                       {s.description ? <span className="small muted">{s.description}</span> : null}
                     </button>
@@ -59,7 +63,10 @@ export function KnowledgeTab() {
           disabled={!name.trim()}
           onClose={() => setCreating(false)}
           onSubmit={async () => {
-            const out = await run(() => api.post<KnowledgeSpace>("/api/knowledge-spaces", { name: name.trim(), description }), "已创建");
+            const out = await run(
+              () => api.post<KnowledgeSpace>("/api/knowledge-spaces", { name: name.trim(), description }),
+              "已创建",
+            );
             if (out) {
               setCreating(false);
               setName("");
@@ -94,15 +101,23 @@ function SpaceMemories({ space }: { space: KnowledgeSpace }) {
         className="note-form"
         onSubmit={async (e) => {
           e.preventDefault();
-          const m = await run(() => api.post<Memory>("/api/memories", { scope: "team", space_id: space.id, content: text.trim() }), "已添加");
+          const m = await run(
+            () => api.post<Memory>("/api/memories", { scope: "team", space_id: space.id, content: text.trim() }),
+            "已添加",
+          );
           if (m) {
             setText("");
             res.setData((p) => [m, ...(p ?? [])]);
           }
         }}
       >
-        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="添加一条共享资料（需要「编辑知识空间」授权）" />
-        <button className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
+        <textarea
+          rows={3}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="添加一条共享资料（需要「编辑知识空间」授权）"
+        />
+        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
           添加
         </button>
       </form>
@@ -114,8 +129,10 @@ function SpaceMemories({ space }: { space: KnowledgeSpace }) {
                 <li key={m.id}>
                   <div className="memory-text">{m.content}</div>
                   <div className="small muted">
-                    {m.created_by_type === "role" ? dir.roleLabel(m.created_by_id) : dir.userName(m.created_by_id)} · {fmtRelative(m.created_at)}
+                    {m.created_by_type === "role" ? dir.roleLabel(m.created_by_id) : dir.userName(m.created_by_id)} ·{" "}
+                    {fmtRelative(m.created_at)}
                     <button
+                      type="button"
                       className="link-btn"
                       onClick={async () => {
                         if (!(await confirm({ title: "删除这条资料", danger: true, confirmLabel: "删除" }))) return;

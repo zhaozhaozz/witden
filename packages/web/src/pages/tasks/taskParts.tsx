@@ -6,7 +6,15 @@ import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Field, FormModal, StatusChip } from "../../ui/kit";
 
-export function TaskStatusChip({ status, reason, compact }: { status: TaskStatus | string; reason?: string | null; compact?: boolean }) {
+export function TaskStatusChip({
+  status,
+  reason,
+  compact,
+}: {
+  status: TaskStatus | string;
+  reason?: string | null;
+  compact?: boolean;
+}) {
   return <StatusChip meta={taskStatus(status)} reason={reason} compact={compact} />;
 }
 
@@ -50,32 +58,33 @@ export function TaskControls({
   return (
     <div className="btn-row">
       {active && task.status !== "paused" ? (
-        <button className={cls} disabled={busy} onClick={() => control("pause", "", "任务已暂停")}>
+        <button type="button" className={cls} disabled={busy} onClick={() => control("pause", "", "任务已暂停")}>
           暂停
         </button>
       ) : null}
       {task.status === "paused" ? (
-        <button className={cls} disabled={busy} onClick={() => control("resume", "", "任务已继续")}>
+        <button type="button" className={cls} disabled={busy} onClick={() => control("resume", "", "任务已继续")}>
           继续
         </button>
       ) : null}
       {active ? (
-        <button className={cls} disabled={busy} onClick={() => setDialog("instruct")}>
+        <button type="button" className={cls} disabled={busy} onClick={() => setDialog("instruct")}>
           补充要求
         </button>
       ) : null}
       {active ? (
-        <button className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
+        <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
           转交
         </button>
       ) : null}
       {task.status === "failed" || task.status === "cancelled" ? (
-        <button className={cls} disabled={busy} onClick={() => control("retry", "", "已重新排队")}>
+        <button type="button" className={cls} disabled={busy} onClick={() => control("retry", "", "已重新排队")}>
           重试
         </button>
       ) : null}
       {active ? (
         <button
+          type="button"
           className={`${cls} btn-danger-ghost`}
           disabled={busy}
           onClick={async () => {
@@ -122,7 +131,10 @@ export function TaskControls({
           disabled={!target}
           onClose={() => setDialog(null)}
           onSubmit={async () => {
-            const out = await run(() => api.post<Task>(`/api/tasks/${task.id}/reassign`, { role_id: target }), "任务已转交");
+            const out = await run(
+              () => api.post<Task>(`/api/tasks/${task.id}/reassign`, { role_id: target }),
+              "任务已转交",
+            );
             if (out) {
               setDialog(null);
               onChanged(out);

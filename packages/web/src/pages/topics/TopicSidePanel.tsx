@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
-import type { Approval, Artifact, Memory, Task, Topic } from "../../api/types";
+import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../../api/types";
 import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted } from "../../lib/format";
-import { useResource, type Resource } from "../../lib/hooks";
+import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Avatar, Empty, Field, Guarded, Handle, Loaded, Tabs, Tag, Toggle } from "../../ui/kit";
 import { ApprovalCard } from "../approvalParts";
+import { AgentSessionList } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { InviteDialog, PublishDialog } from "./topicDialogs";
 
@@ -30,7 +31,10 @@ export function TopicSidePanel({
   const [tab, setTab] = useState(manageOnly ? "people" : "tasks");
   const tasks = useResource(() => api.get<Task[]>("/api/tasks", { topic_id: topic.id }), [topic.id], !manageOnly);
   const approvals = useResource(
-    () => api.get<Approval[]>("/api/approvals", { status: "pending" }).then((rows) => rows.filter((a) => a.topic_id === topic.id)),
+    () =>
+      api
+        .get<Approval[]>("/api/approvals", { status: "pending" })
+        .then((rows) => rows.filter((a) => a.topic_id === topic.id)),
     [topic.id],
     !manageOnly,
   );
@@ -54,6 +58,7 @@ export function TopicSidePanel({
           { key: "tasks", label: "任务", badge: activeCount, hidden: manageOnly },
           { key: "approvals", label: "审批", badge: approvals.data?.length, hidden: manageOnly },
           { key: "people", label: "参与者" },
+          { key: "sessions", label: "会话", hidden: manageOnly },
           { key: "files", label: "文件", hidden: manageOnly },
           { key: "notes", label: "记忆", hidden: manageOnly },
           { key: "settings", label: "设置" },
@@ -85,9 +90,12 @@ export function TopicSidePanel({
           </Loaded>
         ) : null}
         {tab === "people" ? <PeopleTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} /> : null}
+        {tab === "sessions" ? <SessionsTab topic={topic} /> : null}
         {tab === "files" ? <FilesTab topic={topic} canAdmin={canAdmin} /> : null}
         {tab === "notes" ? <NotesTab topic={topic} /> : null}
-        {tab === "settings" ? <SettingsTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} onCleared={onCleared} /> : null}
+        {tab === "settings" ? (
+          <SettingsTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} onCleared={onCleared} />
+        ) : null}
       </div>
     </aside>
   );
@@ -115,8 +123,12 @@ function TasksTab({ res }: { res: Resource<Task[]> }) {
                     </Link>
                     <TaskStatusChip status={t.status} compact />
                   </div>
-                  {t.status_reason && !isRestricted(t.status_reason) ? <div className="reason">{t.status_reason}</div> : null}
-                  {t.progress && !isRestricted(t.progress) ? <div className="small task-progress">{t.progress}</div> : null}
+                  {t.status_reason && !isRestricted(t.status_reason) ? (
+                    <div className="reason">{t.status_reason}</div>
+                  ) : null}
+                  {t.progress && !isRestricted(t.progress) ? (
+                    <div className="small task-progress">{t.progress}</div>
+                  ) : null}
                   <div className="task-card-meta small muted">
                     {t.owner ? <Handle handle={t.owner.handle} /> : null}
                     {t.instance ? <span>电脑 {t.instance.name}</span> : <span>无电脑</span>}
@@ -134,7 +146,15 @@ function TasksTab({ res }: { res: Resource<Task[]> }) {
   );
 }
 
-function PeopleTab({ topic, canAdmin, onTopicChange }: { topic: Topic; canAdmin: boolean; onTopicChange: (t: Topic) => void }) {
+function PeopleTab({
+  topic,
+  canAdmin,
+  onTopicChange,
+}: {
+  topic: Topic;
+  canAdmin: boolean;
+  onTopicChange: (t: Topic) => void;
+}) {
   const { me } = useAuth();
   const { confirm } = useFeedback();
   const { run } = useAction();
@@ -158,7 +178,10 @@ function PeopleTab({ topic, canAdmin, onTopicChange }: { topic: Topic; canAdmin:
       danger: true,
     });
     if (!ok) return;
-    const t = await run(() => api.del<Topic>(`/api/topics/${topic.id}/participants/${type}/${id}`), self ? "已离开话题" : "已移除");
+    const t = await run(
+      () => api.del<Topic>(`/api/topics/${topic.id}/participants/${type}/${id}`),
+      self ? "已离开话题" : "已移除",
+    );
     if (t) onTopicChange(t);
   };
 
@@ -166,10 +189,11 @@ function PeopleTab({ topic, canAdmin, onTopicChange }: { topic: Topic; canAdmin:
     <>
       <div className="side-toolbar">
         <span className="small muted">
-          {participants.filter((p) => p.type === "user").length} 位成员 · {participants.filter((p) => p.type === "role").length} 个角色
+          {participants.filter((p) => p.type === "user").length} 位成员 ·{" "}
+          {participants.filter((p) => p.type === "role").length} 个角色
         </span>
         {topic.can_post ? (
-          <button className="btn btn-xs" onClick={() => setInviting(true)}>
+          <button type="button" className="btn btn-xs" onClick={() => setInviting(true)}>
             邀请
           </button>
         ) : null}
@@ -190,8 +214,9 @@ function PeopleTab({ topic, canAdmin, onTopicChange }: { topic: Topic; canAdmin:
                 {p.history_from ? ` · 可见 ${fmtTime(p.history_from)} 之后的消息` : " · 可见全部历史"}
               </div>
             </div>
-            {(canAdmin && !(p.type === "user" && p.id === me?.id)) || (p.type === "user" && p.id === me?.id && !p.is_owner) ? (
-              <button className="btn btn-xs btn-ghost" onClick={() => void remove(p.type, p.id, p.name)}>
+            {(canAdmin && !(p.type === "user" && p.id === me?.id)) ||
+            (p.type === "user" && p.id === me?.id && !p.is_owner) ? (
+              <button type="button" className="btn btn-xs btn-ghost" onClick={() => void remove(p.type, p.id, p.name)}>
                 {p.type === "user" && p.id === me?.id ? "离开" : "移除"}
               </button>
             ) : null}
@@ -212,6 +237,18 @@ function PeopleTab({ topic, canAdmin, onTopicChange }: { topic: Topic; canAdmin:
   );
 }
 
+function SessionsTab({ topic }: { topic: Topic }) {
+  const res = useResource(() => api.get<AgentSession[]>(`/api/topics/${topic.id}/sessions`), [topic.id]);
+  return (
+    <>
+      <p className="small muted side-note">
+        每个角色在这个话题里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。
+      </p>
+      <Loaded res={res}>{(rows) => <AgentSessionList sessions={rows} by="role" />}</Loaded>
+    </>
+  );
+}
+
 function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
   const { me } = useAuth();
   const dir = useDirectory();
@@ -226,7 +263,7 @@ function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
             {rows.map((f) => (
               <li key={f.id}>
                 <div className="file-main">
-                  <button className="link-btn" onClick={() => void run(() => downloadFile(f.id, f.name))}>
+                  <button type="button" className="link-btn" onClick={() => void run(() => downloadFile(f.id, f.name))}>
                     {f.name}
                   </button>
                   <div className="small muted">
@@ -237,9 +274,17 @@ function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
                 </div>
                 {f.created_by_id === me?.id || canAdmin ? (
                   <button
+                    type="button"
                     className="btn btn-xs btn-ghost"
                     onClick={async () => {
-                      if (await confirm({ title: "删除文件", body: <p>删除「{f.name}」？文件内容会被永久清除。</p>, danger: true, confirmLabel: "删除" })) {
+                      if (
+                        await confirm({
+                          title: "删除文件",
+                          body: <p>删除「{f.name}」？文件内容会被永久清除。</p>,
+                          danger: true,
+                          confirmLabel: "删除",
+                        })
+                      ) {
                         const ok = await run(() => api.del(`/api/files/${f.id}`), "文件已删除");
                         if (ok) void res.reload();
                       }
@@ -272,15 +317,22 @@ function NotesTab({ topic }: { topic: Topic }) {
           onSubmit={async (e) => {
             e.preventDefault();
             if (!text.trim()) return;
-            const m = await run(() => api.post<Memory>("/api/memories", { scope: "topic", topic_id: topic.id, content: text.trim() }));
+            const m = await run(() =>
+              api.post<Memory>("/api/memories", { scope: "topic", topic_id: topic.id, content: text.trim() }),
+            );
             if (m) {
               setText("");
               res.setData((prev) => [m, ...(prev ?? [])]);
             }
           }}
         >
-          <textarea rows={2} value={text} placeholder="记下这个话题的要点或约定" onChange={(e) => setText(e.target.value)} />
-          <button className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
+          <textarea
+            rows={2}
+            value={text}
+            placeholder="记下这个话题的要点或约定"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
             添加
           </button>
         </form>
@@ -296,6 +348,7 @@ function NotesTab({ topic }: { topic: Topic }) {
                     {m.created_by_type === "role" ? "角色记录" : "成员记录"} · {fmtRelative(m.created_at)}
                     {topic.is_owner ? (
                       <button
+                        type="button"
                         className="link-btn"
                         onClick={async () => {
                           const ok = await run(() => api.del(`/api/memories/${m.id}`));
@@ -368,49 +421,49 @@ function SettingsTab({
         </p>
       ) : null}
       {topic.is_owner ? (
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void patch(
-            {
-              title: title.trim(),
-              goal,
-              ...(topic.kind === "group" ? { visibility } : {}),
-              history_policy: history,
-              max_auto_rounds: rounds ? Number(rounds) : null,
-            },
-            "设置已保存",
-          );
-        }}
-      >
-        <Field label="标题">
-          <input value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label="目标">
-          <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </Field>
-        {topic.kind === "group" ? (
-          <Field label="可见范围">
-            <select value={visibility} onChange={(e) => setVisibility(e.target.value as Topic["visibility"])}>
-              <option value="private">私密：仅参与者可见</option>
-              <option value="internal">团队内公开：所有成员可阅读</option>
+        <form
+          className="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void patch(
+              {
+                title: title.trim(),
+                goal,
+                ...(topic.kind === "group" ? { visibility } : {}),
+                history_policy: history,
+                max_auto_rounds: rounds ? Number(rounds) : null,
+              },
+              "设置已保存",
+            );
+          }}
+        >
+          <Field label="标题">
+            <input value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Field label="目标">
+            <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
+          </Field>
+          {topic.kind === "group" ? (
+            <Field label="可见范围">
+              <select value={visibility} onChange={(e) => setVisibility(e.target.value as Topic["visibility"])}>
+                <option value="private">私密：仅参与者可见</option>
+                <option value="internal">团队内公开：所有成员可阅读</option>
+              </select>
+            </Field>
+          ) : null}
+          <Field label="新成员可看的历史">
+            <select value={history} onChange={(e) => setHistory(e.target.value as Topic["history_policy"])}>
+              <option value="since_join">只看加入之后的消息</option>
+              <option value="full">可看全部历史</option>
             </select>
           </Field>
-        ) : null}
-        <Field label="新成员可看的历史">
-          <select value={history} onChange={(e) => setHistory(e.target.value as Topic["history_policy"])}>
-            <option value="since_join">只看加入之后的消息</option>
-            <option value="full">可看全部历史</option>
-          </select>
-        </Field>
-        <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
-          <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
-        </Field>
-        <button className="btn btn-sm btn-primary" disabled={busy || !title.trim()}>
-          保存设置
-        </button>
-      </form>
+          <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
+            <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
+          </Field>
+          <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !title.trim()}>
+            保存设置
+          </button>
+        </form>
       ) : null}
 
       <div className="settings-block">
@@ -421,9 +474,15 @@ function SettingsTab({
             : "归档后话题只读，进行中的任务会被重新检查并停止。"}
         </p>
         <button
+          type="button"
           className="btn btn-sm"
           disabled={busy}
-          onClick={() => void patch({ status: topic.status === "archived" ? "active" : "archived" }, topic.status === "archived" ? "话题已恢复" : "话题已归档")}
+          onClick={() =>
+            void patch(
+              { status: topic.status === "archived" ? "active" : "archived" },
+              topic.status === "archived" ? "话题已恢复" : "话题已归档",
+            )
+          }
         >
           {topic.status === "archived" ? "恢复话题" : "归档话题"}
         </button>
@@ -431,12 +490,28 @@ function SettingsTab({
 
       {topic.kind === "group" && topic.is_owner ? (
         <div className="settings-block">
-          <h4>发布到 Slack</h4>
-          <p className="small muted">把话题发布到 Slack 频道，并在对应 thread 中继续交流。需要对该通讯接入拥有「发布话题到外部频道」权限。</p>
-          <button className="btn btn-sm" onClick={() => setPublishing(true)}>
+          <h4>发布到外部频道</h4>
+          <p className="small muted">
+            把话题发布到 Slack 或飞书的频道 / 群聊，并在对应 thread
+            中继续交流。需要对该通讯接入拥有「发布话题到外部频道」权限。
+            {topic.external?.conversation_kind ? " 这个话题已经关联了一个外部会话。" : ""}
+          </p>
+          <button type="button" className="btn btn-sm" onClick={() => setPublishing(true)}>
             发布到频道
           </button>
-          {publishing ? <PublishDialog topic={topic} onClose={() => setPublishing(false)} /> : null}
+          {publishing ? (
+            <PublishDialog
+              topic={topic}
+              onClose={() => setPublishing(false)}
+              onPublished={() => {
+                // The topic now carries its external link (`external`).
+                void api
+                  .get<Topic>(`/api/topics/${topic.id}`)
+                  .then(onTopicChange)
+                  .catch(() => {});
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
 
@@ -447,19 +522,32 @@ function SettingsTab({
         </p>
         <div className="check-col">
           <label className="check">
-            <input type="checkbox" checked={clean.messages} onChange={(e) => setClean({ ...clean, messages: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={clean.messages}
+              onChange={(e) => setClean({ ...clean, messages: e.target.checked })}
+            />
             消息与任务记录
           </label>
           <label className="check">
-            <input type="checkbox" checked={clean.memories} onChange={(e) => setClean({ ...clean, memories: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={clean.memories}
+              onChange={(e) => setClean({ ...clean, memories: e.target.checked })}
+            />
             话题记忆
           </label>
           <label className="check">
-            <input type="checkbox" checked={clean.files} onChange={(e) => setClean({ ...clean, files: e.target.checked })} />
+            <input
+              type="checkbox"
+              checked={clean.files}
+              onChange={(e) => setClean({ ...clean, files: e.target.checked })}
+            />
             文件
           </label>
         </div>
         <button
+          type="button"
           className="btn btn-sm btn-danger"
           disabled={busy || (!clean.messages && !clean.memories && !clean.files)}
           onClick={async () => {
@@ -471,7 +559,10 @@ function SettingsTab({
             });
             if (!ok) return;
             const out = await run(() =>
-              api.post<{ messages: number; memories: number; files: number }>(`/api/topics/${topic.id}/cleanup`, { ...clean, confirm: true }),
+              api.post<{ messages: number; memories: number; files: number }>(`/api/topics/${topic.id}/cleanup`, {
+                ...clean,
+                confirm: true,
+              }),
             );
             if (out) {
               toast(`已清理 ${out.messages} 条消息、${out.memories} 条记忆、${out.files} 个文件`, "ok");

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { type FormEvent, useState } from "react";
 import { errorMessage } from "../api/client";
 import { useAuth } from "../lib/session";
 
@@ -59,7 +59,7 @@ export default function LoginPage() {
               {error}
             </div>
           ) : null}
-          <button className="btn btn-primary btn-block" disabled={busy}>
+          <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
             {busy ? "正在登录…" : "登录"}
           </button>
         </form>

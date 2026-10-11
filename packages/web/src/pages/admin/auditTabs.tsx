@@ -13,7 +13,8 @@ export function AuditTab() {
   const [filters, setFilters] = useState(draft);
   const [open, setOpen] = useState<string | null>(null);
   const res = useResource(() => api.get<AuditEntry[]>("/api/audit", { ...filters, limit: 300 }), [filters]);
-  const set = (k: keyof typeof draft) => (e: { target: { value: string } }) => setDraft({ ...draft, [k]: e.target.value });
+  const set = (k: keyof typeof draft) => (e: { target: { value: string } }) =>
+    setDraft({ ...draft, [k]: e.target.value });
 
   const actor = (a: AuditEntry) =>
     a.actor_type === "user"
@@ -45,7 +46,9 @@ export function AuditTab() {
         <input className="mono" placeholder="任务 ID" value={draft.task_id} onChange={set("task_id")} />
         <input className="mono" placeholder="话题 ID" value={draft.topic_id} onChange={set("topic_id")} />
         <input className="mono" placeholder="电脑 ID" value={draft.instance_id} onChange={set("instance_id")} />
-        <button className="btn btn-sm btn-primary">筛选</button>
+        <button type="submit" className="btn btn-sm btn-primary">
+          筛选
+        </button>
         <button
           type="button"
           className="btn btn-sm"
@@ -81,14 +84,21 @@ export function AuditTab() {
                         <td className="nowrap">{fmtDateTime(a.created_at)}</td>
                         <td>{actor(a)}</td>
                         <td>
-                          {auditLabel(a.action)} {auditLabel(a.action) !== a.action ? <code className="id">{a.action}</code> : null}
+                          {auditLabel(a.action)}{" "}
+                          {auditLabel(a.action) !== a.action ? <code className="id">{a.action}</code> : null}
                           {a.resource_type ? (
                             <div className="small muted">
                               {a.resource_type} {a.resource_id ?? ""}
                             </div>
                           ) : null}
                         </td>
-                        <td>{a.outcome === "ok" ? <Tag tone="ok">成功</Tag> : <Tag tone="bad">{a.outcome === "denied" ? "拒绝" : a.outcome}</Tag>}</td>
+                        <td>
+                          {a.outcome === "ok" ? (
+                            <Tag tone="ok">成功</Tag>
+                          ) : (
+                            <Tag tone="bad">{a.outcome === "denied" ? "拒绝" : a.outcome}</Tag>
+                          )}
+                        </td>
                         <td className="small">
                           <span className="inline-list">
                             {a.task_id ? <Link to={`/tasks/${a.task_id}`}>任务</Link> : null}
@@ -99,7 +109,11 @@ export function AuditTab() {
                         </td>
                         <td>
                           {Object.keys(a.detail ?? {}).length ? (
-                            <button className="link-btn small" onClick={() => setOpen(open === a.id ? null : a.id)}>
+                            <button
+                              type="button"
+                              className="link-btn small"
+                              onClick={() => setOpen(open === a.id ? null : a.id)}
+                            >
                               {open === a.id ? "收起" : "详情"}
                             </button>
                           ) : null}
@@ -157,7 +171,12 @@ export function UsageTab() {
       <div className="toolbar">
         <div className="segmented">
           {GROUPS.map(([k, v]) => (
-            <button key={k} className={k === groupBy ? "seg seg-on" : "seg"} onClick={() => setGroupBy(k)}>
+            <button
+              type="button"
+              key={k}
+              className={k === groupBy ? "seg seg-on" : "seg"}
+              onClick={() => setGroupBy(k)}
+            >
               {v}
             </button>
           ))}
@@ -173,7 +192,9 @@ export function UsageTab() {
       <Loaded res={res}>
         {(rows) => {
           if (!rows.length) return <Empty title="这段时间没有模型调用" />;
-          const sorted = [...rows].sort((a, b) => b.prompt_tokens + b.completion_tokens - (a.prompt_tokens + a.completion_tokens));
+          const sorted = [...rows].sort(
+            (a, b) => b.prompt_tokens + b.completion_tokens - (a.prompt_tokens + a.completion_tokens),
+          );
           const total = sorted.reduce(
             (acc, r) => ({ p: acc.p + r.prompt_tokens, c: acc.c + r.completion_tokens, n: acc.n + r.calls }),
             { p: 0, c: 0, n: 0 },

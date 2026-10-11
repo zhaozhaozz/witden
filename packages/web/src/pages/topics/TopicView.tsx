@@ -8,7 +8,7 @@ import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, ErrorNote, Loading, Tag } from "../../ui/kit";
 import { Composer } from "./Composer";
-import { MessageItem, type Author } from "./MessageItem";
+import { type Author, MessageItem } from "./MessageItem";
 import { TopicSidePanel } from "./TopicSidePanel";
 
 const PAGE = 100;
@@ -54,7 +54,10 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     if (!messages?.length) return;
     setLoadingMore(true);
     try {
-      const rows = await api.get<Message[]>(`/api/topics/${topicId}/messages`, { limit: PAGE, before: messages[0].created_at });
+      const rows = await api.get<Message[]>(`/api/topics/${topicId}/messages`, {
+        limit: PAGE,
+        before: messages[0].created_at,
+      });
       prependAnchor.current = scroller.current ? scroller.current.scrollHeight - scroller.current.scrollTop : null;
       stickToBottom.current = false;
       setMessages((prev) => [...rows, ...(prev ?? [])]);
@@ -120,7 +123,13 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     if (m.author_type === "role") {
       const p = participantMap.get(`role:${id}`);
       const r = dir.roleById.get(id);
-      return { kind: "role", id, name: p?.name ?? r?.name ?? "已移除的角色", handle: p?.handle ?? r?.handle, avatarUrl: p?.avatar_url ?? r?.avatar_url };
+      return {
+        kind: "role",
+        id,
+        name: p?.name ?? r?.name ?? "已移除的角色",
+        handle: p?.handle ?? r?.handle,
+        avatarUrl: p?.avatar_url ?? r?.avatar_url,
+      };
     }
     if (m.author_type === "user") {
       const p = participantMap.get(`user:${id}`);
@@ -162,8 +171,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   }
 
   const ext = topic.external;
-  // Owners, plus administrators for removing / stopping things in group topics.
-  const canAdmin = topic.is_owner || (!!me?.is_admin && topic.kind === "group");
+  // Owners, plus administrators for removing / stopping things in group topics (decided by the server).
+  const canAdmin = topic.can_administer ?? (topic.is_owner || (!!me?.is_admin && topic.kind === "group"));
   const manageOnly = topic.can_view === false;
 
   return (
@@ -179,8 +188,12 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                   {topic.visibility === "internal" ? "团队内公开" : "私密"}
                 </Tag>
               ) : null}
-              <Tag title="新加入者可阅读的历史范围">{topic.history_policy === "full" ? "新成员可看全部历史" : "新成员只看加入后消息"}</Tag>
-              {topic.source !== "internal" ? <Tag tone="accent">来自 {PLATFORM_LABEL[topic.source] ?? topic.source}</Tag> : null}
+              <Tag title="新加入者可阅读的历史范围">
+                {topic.history_policy === "full" ? "新成员可看全部历史" : "新成员只看加入后消息"}
+              </Tag>
+              {topic.source !== "internal" ? (
+                <Tag tone="accent">来自 {PLATFORM_LABEL[topic.source] ?? topic.source}</Tag>
+              ) : null}
               {ext?.conversation_kind ? (
                 <Tag tone="accent" title={ext.thread_key ? `thread ${ext.thread_key}` : undefined}>
                   已关联外部{CONVERSATION_KIND[ext.conversation_kind] ?? ext.conversation_kind}
@@ -189,14 +202,17 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               {topic.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
               {manageOnly ? <Tag tone="wait">仅可管理</Tag> : null}
               {manageOnly ? null : (
-                <span className={`live-dot${live ? " live-on" : ""}`} title={live ? "实时更新已连接" : "实时更新未连接，正在重试"}>
+                <span
+                  className={`live-dot${live ? " live-on" : ""}`}
+                  title={live ? "实时更新已连接" : "实时更新未连接，正在重试"}
+                >
                   {live ? "实时" : "离线"}
                 </span>
               )}
             </div>
             {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
           </div>
-          <button className="btn btn-sm" onClick={togglePanel} aria-pressed={panel}>
+          <button type="button" className="btn btn-sm" onClick={togglePanel} aria-pressed={panel}>
             {panel ? "收起侧栏" : "任务与参与者"}
           </button>
         </header>
@@ -209,78 +225,93 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             />
           </div>
         ) : (
-        <div
-          className="timeline"
-          ref={scroller}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          }}
-        >
-          {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
-          {messages === null ? (
-            <Loading />
-          ) : (
-            <>
-              {hasMore ? (
-                <div className="timeline-more">
-                  <button className="btn btn-xs" disabled={loadingMore} onClick={() => void loadEarlier()}>
-                    {loadingMore ? "加载中…" : "加载更早的消息"}
-                  </button>
-                </div>
-              ) : messages.length ? (
-                <div className="timeline-start small muted">
-                  {participantMap.get(`user:${me?.id}`)?.history_from ? "你加入之前的消息不可见（话题设置为只看加入后的消息）" : "话题开始"}
-                </div>
-              ) : null}
-              {!messages.length ? (
-                <Empty
-                  title={topic.kind === "dm" ? "开始和角色私信" : "还没有消息"}
-                  hint={topic.can_post ? "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。" : undefined}
-                />
-              ) : null}
-              {messages.map((m, i) => {
-                const prev = messages[i - 1];
-                const compact =
-                  !!prev &&
-                  prev.author_type === m.author_type &&
-                  prev.author_id === m.author_id &&
-                  m.author_type !== "system" &&
-                  (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) < 5 * 60_000;
-                const author = authorOf(m);
-                return (
-                  <MessageItem
-                    key={m.id}
-                    msg={m}
-                    author={author}
-                    compact={compact}
-                    files={fileMap}
-                    canDelete={(m.author_type === "user" && m.author_id === me?.id) || canAdmin}
-                    onEdit={async (content) => {
-                      const out = await run(() => api.patch<Message>(`/api/messages/${m.id}`, { content }));
-                      if (out) setMessages((prev) => prev?.map((x) => (x.id === out.id ? out : x)) ?? prev);
-                      return !!out;
-                    }}
-                    onDelete={async () => {
-                      const ok = await confirm({
-                        title: "删除消息",
-                        body: <p>消息内容会被清空，由这条消息产生的记忆也会一并删除。</p>,
-                        confirmLabel: "删除",
-                        danger: true,
-                      });
-                      if (!ok) return;
-                      const out = await run(() => api.del<{ memories_deleted: number }>(`/api/messages/${m.id}`));
-                      if (out) {
-                        setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev);
-                        toast(out.memories_deleted ? `消息已删除，同时删除了 ${out.memories_deleted} 条相关记忆` : "消息已删除", "ok");
-                      }
-                    }}
+          <div
+            className="timeline"
+            ref={scroller}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            }}
+          >
+            {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
+            {messages === null ? (
+              <Loading />
+            ) : (
+              <>
+                {hasMore ? (
+                  <div className="timeline-more">
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      disabled={loadingMore}
+                      onClick={() => void loadEarlier()}
+                    >
+                      {loadingMore ? "加载中…" : "加载更早的消息"}
+                    </button>
+                  </div>
+                ) : messages.length ? (
+                  <div className="timeline-start small muted">
+                    {participantMap.get(`user:${me?.id}`)?.history_from
+                      ? "你加入之前的消息不可见（话题设置为只看加入后的消息）"
+                      : "话题开始"}
+                  </div>
+                ) : null}
+                {!messages.length ? (
+                  <Empty
+                    title={topic.kind === "dm" ? "开始和角色私信" : "还没有消息"}
+                    hint={
+                      topic.can_post ? "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。" : undefined
+                    }
                   />
-                );
-              })}
-            </>
-          )}
-        </div>
+                ) : null}
+                {messages.map((m, i) => {
+                  const prev = messages[i - 1];
+                  const compact =
+                    !!prev &&
+                    prev.author_type === m.author_type &&
+                    prev.author_id === m.author_id &&
+                    m.author_type !== "system" &&
+                    (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) <
+                      5 * 60_000;
+                  const author = authorOf(m);
+                  return (
+                    <MessageItem
+                      key={m.id}
+                      msg={m}
+                      author={author}
+                      compact={compact}
+                      files={fileMap}
+                      canDelete={(m.author_type === "user" && m.author_id === me?.id) || canAdmin}
+                      onEdit={async (content) => {
+                        const out = await run(() => api.patch<Message>(`/api/messages/${m.id}`, { content }));
+                        if (out) setMessages((prev) => prev?.map((x) => (x.id === out.id ? out : x)) ?? prev);
+                        return !!out;
+                      }}
+                      onDelete={async () => {
+                        const ok = await confirm({
+                          title: "删除消息",
+                          body: <p>消息内容会被清空，由这条消息产生的记忆也会一并删除。</p>,
+                          confirmLabel: "删除",
+                          danger: true,
+                        });
+                        if (!ok) return;
+                        const out = await run(() => api.del<{ memories_deleted: number }>(`/api/messages/${m.id}`));
+                        if (out) {
+                          setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev);
+                          toast(
+                            out.memories_deleted
+                              ? `消息已删除，同时删除了 ${out.memories_deleted} 条相关记忆`
+                              : "消息已删除",
+                            "ok",
+                          );
+                        }
+                      }}
+                    />
+                  );
+                })}
+              </>
+            )}
+          </div>
         )}
 
         {manageOnly ? null : topic.can_post ? (

@@ -6,6 +6,7 @@ import { TaskStatusChip } from "../tasks/taskParts";
 
 // Backend warnings are English sentences with a few fixed shapes; show them in Chinese when recognised.
 const WARNING_PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
+  [/^external runtime without a command/, () => "外部运行方式没有填写启动命令：任务会失败"],
   [/^no model configured/, () => "未配置模型：角色无法工作"],
   [/^model (.+) has been revoked$/, (m) => `模型 ${m[1]} 的密钥已撤销`],
   [/^model (.+) has not been checked yet$/, (m) => `模型 ${m[1]} 还没有做能力检测`],
@@ -25,10 +26,12 @@ export function translateWarning(w: string): string {
 }
 
 const NOTE_ZH: Record<string, string> = {
-  "Running and queued tasks keep the prompt and model they started with.": "执行中和排队中的任务继续使用开始时的提示词和模型。",
-  "Changing the computer does not move files, installed software or logins; tasks already pinned to the old computer must be cancelled or re-run explicitly.":
+  "Running and queued tasks keep the prompt, model and computer they started with.":
+    "执行中和排队中的任务继续使用开始时的提示词、模型和电脑。",
+  "Changing the computer does not move files, installed software or logins; tasks pinned to the old computer must be cancelled or re-run explicitly.":
     "更换电脑不会迁移文件、已安装的软件和登录状态；已固定在旧电脑上的任务需要明确取消或重新执行。",
-  "Topic memories stay with their topics; job knowledge stays with the role.": "话题记忆留在各自话题中；岗位知识跟随角色。",
+  "Agent sessions and topic notes stay with their topics; job knowledge stays with the role.":
+    "角色会话和话题记忆留在各自话题中；岗位知识跟随角色。",
 };
 
 const FIELD_ZH: Record<string, string> = {
@@ -37,10 +40,14 @@ const FIELD_ZH: Record<string, string> = {
   model_params: "模型参数",
   instance_id: "电脑",
   allowed_tools: "工具",
+  runtime: "运行方式",
+  runtime_config: "外部智能体配置",
 };
 
+/** Field names come back camelCase from the server (`changes`) and snake_case from the editor. */
 export function fieldLabel(f: string): string {
-  return FIELD_ZH[f] ?? f;
+  const snake = f.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+  return FIELD_ZH[snake] ?? snake;
 }
 
 /** What a configuration change touches: running work, topics, memories. */
