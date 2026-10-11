@@ -1,0 +1,4 @@
+#!/bin/sh
+# Minimal session: a terminal so a fresh desktop is not blank.
+xterm -geometry 100x30+40+40 &
+exec fluxbox

@@ -1,0 +1,27 @@
+{
+  "name": "@witden/server",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Witden API, execution gateway, runner hub, agent worker and chat integrations",
+  "main": "dist/index.js",
+  "bin": { "witden": "dist/cli.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@witden/shared": "0.2.0",
+    "@witden/manager": "0.2.0",
+    "@electric-sql/pglite": "^0.3.0",
+    "@fastify/multipart": "^9.0.3",
+    "@fastify/static": "^8.2.0",
+    "@fastify/websocket": "^11.2.0",
+    "drizzle-orm": "^0.44.0",
+    "fastify": "^5.4.0",
+    "pg": "^8.16.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
+  }
+}

@@ -1,0 +1,558 @@
+// Response shapes of the witden API (see packages/server/src/api/*.ts and db/schema.ts).
+
+export type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+export type Dict = Record<string, unknown>;
+
+export interface User {
+  id: string;
+  name: string;
+  email?: string | null;
+  avatar_url?: string | null;
+  is_admin?: boolean;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface Me extends User {
+  permissions: string[];
+}
+
+export interface Participant {
+  type: "user" | "role";
+  id: string;
+  name: string;
+  is_owner: boolean;
+  joined_at: string;
+  history_from: string | null;
+  handle?: string | null;
+  avatar_url?: string | null;
+  status?: string | null;
+}
+
+export interface Topic {
+  id: string;
+  title: string;
+  goal: string;
+  kind: "group" | "dm";
+  status: "active" | "archived";
+  visibility: "private" | "internal";
+  history_policy: "full" | "since_join";
+  max_auto_rounds: number | null;
+  allowed_model_config_ids: string[] | null;
+  source: string;
+  created_by: string | null;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+  is_owner: boolean;
+  can_post: boolean;
+  /** false: an administrator sees a private topic's metadata only (manage, never read). */
+  can_view?: boolean;
+  participants?: Participant[];
+  external?: ExternalContext | null;
+}
+
+export interface ExternalContext {
+  connection_id?: string;
+  conversation_id?: string;
+  conversation_kind?: string;
+  thread_key?: string;
+}
+
+export interface Mention {
+  type: "role" | "user";
+  id: string;
+}
+
+export interface Message {
+  id: string;
+  topic_id: string;
+  author_type: "user" | "role" | "system" | "external";
+  author_id: string | null;
+  content: string;
+  mentions: Mention[];
+  reply_to_id: string | null;
+  task_id: string | null;
+  attachments: string[];
+  source: string;
+  round: number;
+  created_at: string;
+  edited_at: string | null;
+  deleted: boolean;
+}
+
+export interface PostMessageResult extends Message {
+  tasks: { id: string; owner_role_id: string; status: string }[];
+}
+
+export interface Artifact {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  kind: string;
+  topic_id: string | null;
+  task_id: string | null;
+  instance_id: string | null;
+  created_by_type: string;
+  created_by_id: string | null;
+  labels: string[];
+  created_at: string;
+}
+
+export type TaskStatus =
+  | "pending"
+  | "running"
+  | "waiting_human"
+  | "waiting_approval"
+  | "waiting_children"
+  | "waiting_resource"
+  | "waiting_timer"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface Ref {
+  id: string;
+  name?: string;
+  title?: string;
+  handle?: string;
+  status?: string;
+  kind?: string;
+}
+
+export interface Task {
+  id: string;
+  topic_id: string;
+  title: string;
+  instruction: string;
+  status: TaskStatus;
+  status_reason: string | null;
+  requester_user_id: string | null;
+  requester_role_id: string | null;
+  source_message_id: string | null;
+  owner_role_id: string;
+  collaborator_role_ids: string[];
+  instance_id: string | null;
+  parent_task_id: string | null;
+  depth: number;
+  round: number;
+  envelope: Dict;
+  labels: string[];
+  assignment: Dict;
+  budget: Dict;
+  usage: Dict;
+  wait: Dict | null;
+  progress: string | null;
+  result: string | null;
+  error: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+  owner: { id: string; handle: string; name: string } | null;
+  instance: { id: string; name: string; status: string } | null;
+  topic: { id: string; title: string; kind: string } | null;
+  requester: { id: string; name: string } | null;
+  children?: { id: string; title: string; status: TaskStatus; owner_role_id: string }[];
+  approvals?: Approval[];
+  role_snapshot?: Dict;
+  /** The task read material this viewer may not see: text fields are "[restricted]", the log is hidden. */
+  content_restricted?: boolean;
+}
+
+export interface TaskStep {
+  seq: number;
+  kind: "system" | "user" | "assistant" | "tool" | "event";
+  payload: Dict;
+  created_at?: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  actor_type: string;
+  actor_id: string | null;
+  action: string;
+  outcome: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  topic_id: string | null;
+  task_id: string | null;
+  role_id: string | null;
+  instance_id: string | null;
+  connection_id: string | null;
+  detail: Dict | string;
+  created_at: string;
+}
+
+export interface TaskTrace {
+  task: Task;
+  source: ExternalContext & Dict;
+  assignment: Dict;
+  envelope: Dict;
+  labels: string[];
+  audit: AuditEntry[];
+}
+
+export interface Approval {
+  id: string;
+  task_id: string;
+  topic_id: string;
+  role_id: string;
+  action: string;
+  detail: Dict;
+  status: "pending" | "approved" | "rejected";
+  approver_user_ids: string[];
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+  can_decide?: boolean;
+  /** Approving needs sight of the held material; deciders without it may only reject. */
+  can_approve?: boolean;
+  role?: { id: string; handle: string } | null;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  image: string;
+  kind: "shell" | "desktop";
+  workdir: string;
+  user: string | null;
+  command: string[] | null;
+  env: Record<string, string>;
+  persistent_paths: string[];
+  credential_paths: string[];
+  software: string[];
+  default_resources: Resources;
+  cap_add: string[];
+  runtime: string | null;
+  desktop: Dict | null;
+  archived: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  instance_count: number;
+}
+
+export interface Resources {
+  cpus?: number;
+  memory_mb?: number;
+  pids_limit?: number;
+  disk_gb?: number;
+  network?: string;
+}
+
+export interface InstanceOperator {
+  holder_type: "role" | "user";
+  holder_id: string;
+  task_id: string | null;
+  reason: string | null;
+  expires_at: string;
+}
+
+export interface Instance {
+  id: string;
+  name: string;
+  template_id: string;
+  template_version: number;
+  spec: Dict & { kind?: string; image?: string; user?: string; workdir?: string; desktop?: Dict | null };
+  resources: Resources;
+  status: "creating" | "running" | "stopped" | "error" | "deleting" | "deleted";
+  status_reason: string | null;
+  container_id: string | null;
+  volumes: Record<string, string>;
+  paused_ai: boolean;
+  last_started_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  roles: { id: string; name: string; handle: string; status: string }[];
+  operator: InstanceOperator | null;
+  active_tasks?: { id: string; title: string; status: TaskStatus; owner_role_id: string }[];
+  waiting_tasks?: string[];
+  shared_scope?: {
+    note: string;
+    shared_by_roles: string[];
+    persistent_paths: string[];
+    credential_paths: string[];
+    home: string;
+  };
+  applies_after?: string;
+}
+
+export interface InstanceStats {
+  limits: Resources;
+  usage?: {
+    cpu_percent?: number;
+    memory_bytes?: number;
+    memory_limit_bytes?: number | null;
+    net_rx_bytes?: number;
+    net_tx_bytes?: number;
+    block_read_bytes?: number;
+    block_write_bytes?: number;
+    pids?: number | null;
+  };
+  volumes?: Record<string, number>;
+}
+
+export interface ActionPreview {
+  will_clear: string[];
+  will_keep?: string[];
+  roles_detached?: string[];
+  note?: string;
+  active_tasks: string[];
+}
+
+export interface Backup {
+  id: string;
+  instance_id: string;
+  image_ref: string | null;
+  archives: Record<string, string>;
+  includes_credentials: boolean;
+  note: string | null;
+  size_bytes: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ExecResult {
+  exit_code: number;
+  output: string;
+  timed_out: boolean;
+  truncated: boolean;
+}
+
+export interface RoleImpact {
+  active_tasks: { id: string; title: string; status: TaskStatus }[];
+  topics: number;
+  memories: number;
+  notes: string[];
+}
+
+export interface Role {
+  id: string;
+  name: string;
+  handle: string;
+  avatar_url: string | null;
+  description: string;
+  system_prompt?: string;
+  model_config_id: string | null;
+  model_params?: Dict;
+  instance_id: string | null;
+  allowed_tools: string[];
+  allowed_contacts?: string[];
+  knowledge_space_ids?: string[];
+  approval_required?: string[];
+  response_mode: "mention" | "active";
+  max_steps: number | null;
+  max_tokens_per_task: number | null;
+  daily_token_limit: number | null;
+  status: "active" | "disabled";
+  config_version: number;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+  instance: { id: string; name: string; status: string; kind?: string } | null;
+  model: { id: string; name: string; capabilities: Capabilities; status: string } | null;
+  tokens_today?: number;
+  /** Configuration problems that will make work fail (no model, computer stopped, ...). */
+  warnings?: string[];
+  impact?: RoleImpact;
+  result?: Dict;
+}
+
+export interface ToolGroup {
+  group: string | null;
+  description: string;
+  tools: string[];
+}
+
+export interface Capabilities {
+  chat?: boolean | null;
+  tools?: boolean | null;
+  vision?: boolean | null;
+  checked_at?: string;
+  errors?: Record<string, string>;
+  error?: string | null;
+}
+
+export interface ModelConfig {
+  id: string;
+  name: string;
+  provider: string;
+  base_url: string;
+  model: string;
+  key_updated_at: string | null;
+  params: Dict;
+  capabilities: Capabilities;
+  status: "unchecked" | "ok" | "error" | "revoked";
+  daily_token_limit: number | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  has_api_key: boolean;
+  used_by_roles?: string[];
+  tokens_today?: number;
+}
+
+export type MatchKey = "connection_id" | "conversation_id" | "conversation_kind" | "topic_id" | "user_id";
+
+export interface Rule {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  priority: number;
+  match: Partial<Record<MatchKey, string>>;
+  effect: "allow" | "deny";
+  allow_role_ids: string[] | null;
+  deny_role_ids: string[];
+  default_role_id: string | null;
+  allow_instance_ids: string[] | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  specificity: number;
+}
+
+export interface TraceStep {
+  step: string;
+  detail: unknown;
+}
+
+export interface RoleDecision {
+  role_id: string;
+  allowed: boolean;
+  instance_id: string | null;
+  reasons: string[];
+}
+
+export interface ExplainResult {
+  allowed: boolean;
+  reason: string | null;
+  candidates: RoleDecision[];
+  trace: TraceStep[];
+}
+
+export interface Grant {
+  id: string;
+  subject_type: "user" | "all";
+  subject_id: string;
+  permission: string;
+  resource_type: string;
+  resource_id: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PermissionInfo {
+  permission: string;
+  resource_type: string;
+}
+
+export interface ExternalIdentity {
+  id: string;
+  connection_id: string;
+  external_user_id: string;
+  user_id: string | null;
+  display_name: string | null;
+  is_bot: boolean;
+  created_at: string;
+}
+
+export interface UsageRow {
+  key: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  calls: number;
+}
+
+export interface KillSwitch {
+  id: string;
+  scope: "global" | "connection" | "role" | "instance" | "topic" | "task";
+  target_id: string | null;
+  reason: string;
+  active: boolean;
+  created_by: string | null;
+  created_at: string;
+  released_at: string | null;
+  tasks_paused?: unknown;
+}
+
+export interface KnowledgeSpace {
+  id: string;
+  name: string;
+  description: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface Memory {
+  id: string;
+  scope: "role" | "team" | "topic" | "user";
+  role_id: string | null;
+  space_id: string | null;
+  topic_id: string | null;
+  user_id: string | null;
+  content: string;
+  source_message_ids: string[];
+  labels: string[];
+  created_by_type: string;
+  created_by_id: string | null;
+  created_at: string;
+}
+
+export interface Connection {
+  id: string;
+  platform: "slack" | "feishu" | string;
+  name: string;
+  status: "active" | "paused" | "error" | string;
+  status_reason: string | null;
+  settings: {
+    auto_provision_users?: boolean;
+    custom_identity?: boolean;
+    default_sync_mode?: "mentions" | "all" | "off";
+    [key: string]: unknown;
+  };
+  has_credentials: boolean;
+  external_workspace_id: string | null;
+  bot_user_id: string | null;
+  capabilities?: unknown;
+  events_url?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ExternalConversation {
+  id: string;
+  connection_id: string;
+  external_id: string;
+  kind: "public" | "private" | "im" | "mpim" | string;
+  name: string | null;
+  sync_mode: "mentions" | "all" | "off";
+  member_ids?: string[];
+  members_synced_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface OutboundMessage {
+  id: string;
+  connection_id: string;
+  conversation_external_id: string;
+  thread_key: string | null;
+  message_id: string | null;
+  payload: Dict;
+  status: "pending" | "sent" | "failed" | "blocked" | string;
+  attempts: number;
+  last_error: string | null;
+  external_ts: string | null;
+  created_at: string;
+  updated_at: string;
+}

@@ -1,0 +1,480 @@
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { genericStatus, hueOf, initials, shortId, type StatusMeta, type Tone } from "../lib/format";
+
+// --- status ----------------------------------------------------------------------------------------
+
+export function StatusChip({ meta, reason, compact }: { meta: StatusMeta; reason?: string | null; compact?: boolean }) {
+  return (
+    <span className={`chip chip-${meta.tone}`} title={reason ?? undefined}>
+      <span className="chip-dot" aria-hidden />
+      {meta.label}
+      {!compact && reason ? <span className="chip-reason">{reason}</span> : null}
+    </span>
+  );
+}
+
+export function Status({ value, reason }: { value: string; reason?: string | null }) {
+  return <StatusChip meta={genericStatus(value)} reason={reason} compact />;
+}
+
+export function Tag({ children, tone, title }: { children: ReactNode; tone?: Tone | "accent"; title?: string }) {
+  return (
+    <span className={`tag${tone ? ` tag-${tone}` : ""}`} title={title}>
+      {children}
+    </span>
+  );
+}
+
+/** Reason line under a status: the "why" is always visible, never hidden in a tooltip only. */
+export function Reason({ children, tone = "info" }: { children: ReactNode; tone?: Tone }) {
+  if (!children) return null;
+  return <div className={`reason reason-${tone}`}>{children}</div>;
+}
+
+// --- identity --------------------------------------------------------------------------------------
+
+export function Avatar({
+  id,
+  name,
+  kind,
+  size = 28,
+  src,
+}: {
+  id: string;
+  name: string;
+  kind: "role" | "user" | "system";
+  size?: number;
+  src?: string | null;
+}) {
+  const style = { width: size, height: size, fontSize: Math.round(size * 0.42), "--hue": hueOf(id) } as CSSProperties;
+  if (src) return <img className={`avatar avatar-${kind}`} style={style} src={src} alt="" />;
+  return (
+    <span className={`avatar avatar-${kind}`} style={style} aria-hidden>
+      {initials(name)}
+    </span>
+  );
+}
+
+export function Handle({ handle }: { handle: string }) {
+  return <span className="handle">@{handle}</span>;
+}
+
+export function IdText({ id, full }: { id: string | null | undefined; full?: boolean }) {
+  if (!id) return <span className="muted">—</span>;
+  return (
+    <code className="id" title={id}>
+      {full ? id : shortId(id)}
+    </code>
+  );
+}
+
+// --- layout ----------------------------------------------------------------------------------------
+
+export function PageHeader({ title, sub, actions }: { title: ReactNode; sub?: ReactNode; actions?: ReactNode }) {
+  return (
+    <header className="page-head">
+      <div>
+        <h1>{title}</h1>
+        {sub ? <p className="page-sub">{sub}</p> : null}
+      </div>
+      {actions ? <div className="page-actions">{actions}</div> : null}
+    </header>
+  );
+}
+
+export function Section({
+  title,
+  actions,
+  children,
+  className,
+}: {
+  title?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`section${className ? ` ${className}` : ""}`}>
+      {title || actions ? (
+        <div className="section-head">
+          {title ? <h2>{title}</h2> : <span />}
+          {actions ? <div className="section-actions">{actions}</div> : null}
+        </div>
+      ) : null}
+      {children}
+    </section>
+  );
+}
+
+export function Empty({ title, hint, action }: { title: string; hint?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      <p className="empty-title">{title}</p>
+      {hint ? <p className="empty-hint">{hint}</p> : null}
+      {action ? <div className="empty-action">{action}</div> : null}
+    </div>
+  );
+}
+
+export function Loading({ label = "加载中" }: { label?: string }) {
+  return (
+    <div className="loading" role="status">
+      <span className="spinner" aria-hidden />
+      {label}
+    </div>
+  );
+}
+
+export function ErrorNote({ error, onRetry }: { error: string | null | undefined; onRetry?: () => void }) {
+  if (!error) return null;
+  return (
+    <div className="error-note" role="alert">
+      <span>{error}</span>
+      {onRetry ? (
+        <button className="btn btn-sm" onClick={onRetry}>
+          重试
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** Standard loading / error / content switch for a `useResource` result. */
+export function Loaded<T>({
+  res,
+  children,
+}: {
+  res: { data: T | undefined; error: string | null; loading: boolean; reload: () => void };
+  children: (data: T) => ReactNode;
+}) {
+  if (res.data === undefined) {
+    if (res.error) return <ErrorNote error={res.error} onRetry={res.reload} />;
+    return <Loading />;
+  }
+  return (
+    <>
+      {res.error ? <ErrorNote error={res.error} onRetry={res.reload} /> : null}
+      {children(res.data)}
+    </>
+  );
+}
+
+export interface TabDef {
+  key: string;
+  label: ReactNode;
+  hidden?: boolean;
+  badge?: number;
+}
+
+export function Tabs({ tabs, value, onChange }: { tabs: TabDef[]; value: string; onChange: (key: string) => void }) {
+  return (
+    <div className="tabs" role="tablist">
+      {tabs
+        .filter((t) => !t.hidden)
+        .map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={t.key === value}
+            className={t.key === value ? "tab tab-on" : "tab"}
+            onClick={() => onChange(t.key)}
+          >
+            {t.label}
+            {t.badge ? <span className="tab-badge">{t.badge}</span> : null}
+          </button>
+        ))}
+    </div>
+  );
+}
+
+// --- forms -----------------------------------------------------------------------------------------
+
+export function Field({
+  label,
+  hint,
+  children,
+  wide,
+}: {
+  label: ReactNode;
+  hint?: ReactNode;
+  children: ReactNode;
+  wide?: boolean;
+}) {
+  return (
+    <label className={`field${wide ? " field-wide" : ""}`}>
+      <span className="field-label">{label}</span>
+      {children}
+      {hint ? <span className="field-hint">{hint}</span> : null}
+    </label>
+  );
+}
+
+/** Field wrapper for groups of controls (checkbox lists) where a <label> would steal clicks. */
+export function FieldGroup({ label, hint, children, wide }: { label: ReactNode; hint?: ReactNode; children: ReactNode; wide?: boolean }) {
+  const id = useId();
+  return (
+    <div className={`field${wide ? " field-wide" : ""}`} role="group" aria-labelledby={id}>
+      <span className="field-label" id={id}>
+        {label}
+      </span>
+      {children}
+      {hint ? <span className="field-hint">{hint}</span> : null}
+    </div>
+  );
+}
+
+export interface PickOption {
+  value: string;
+  label: ReactNode;
+  hint?: ReactNode;
+  disabled?: boolean;
+}
+
+/** Checkbox list for choosing several values. */
+export function MultiPick({
+  options,
+  value,
+  onChange,
+  empty = "没有可选项",
+  columns,
+}: {
+  options: PickOption[];
+  value: string[];
+  onChange: (next: string[]) => void;
+  empty?: string;
+  columns?: number;
+}) {
+  if (!options.length) return <span className="muted small">{empty}</span>;
+  const set = new Set(value);
+  return (
+    <div className="pick" style={columns ? { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` } : undefined}>
+      {options.map((o) => (
+        <label key={o.value} className={`pick-item${set.has(o.value) ? " pick-on" : ""}`}>
+          <input
+            type="checkbox"
+            checked={set.has(o.value)}
+            disabled={o.disabled}
+            onChange={(e) => {
+              const next = new Set(set);
+              if (e.target.checked) next.add(o.value);
+              else next.delete(o.value);
+              onChange(options.map((x) => x.value).filter((v) => next.has(v)));
+            }}
+          />
+          <span className="pick-text">
+            <span>{o.label}</span>
+            {o.hint ? <span className="pick-hint">{o.hint}</span> : null}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+export function Toggle({
+  checked,
+  onChange,
+  label,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="toggle">
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      <span className="toggle-track" aria-hidden />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+// --- overlays --------------------------------------------------------------------------------------
+
+export function Modal({
+  title,
+  children,
+  footer,
+  onClose,
+  width,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  onClose: () => void;
+  width?: number;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCloseRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    // Move focus into the dialog unless a child already claimed it via autoFocus.
+    const t = window.setTimeout(() => {
+      if (panel.current && !panel.current.contains(document.activeElement)) {
+        const first = panel.current.querySelector<HTMLElement>("input, textarea, select, button.btn-primary");
+        first?.focus();
+      }
+    }, 0);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.clearTimeout(t);
+    };
+  }, []);
+  return (
+    <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" ref={panel} style={width ? { width } : undefined}>
+        <div className="modal-head">
+          <h3>{title}</h3>
+          <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <div className="modal-body">{children}</div>
+        {footer ? <div className="modal-foot">{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+/** Dialog containing a form: Enter submits, the primary button shows progress. */
+export function FormModal({
+  title,
+  children,
+  onClose,
+  onSubmit,
+  submitLabel = "保存",
+  busy,
+  danger,
+  width,
+  disabled,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  onClose: () => void;
+  onSubmit: () => void;
+  submitLabel?: string;
+  busy?: boolean;
+  danger?: boolean;
+  width?: number;
+  disabled?: boolean;
+}) {
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      width={width}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button
+            type="submit"
+            form="modal-form"
+            className={danger ? "btn btn-danger" : "btn btn-primary"}
+            disabled={busy || disabled}
+          >
+            {busy ? "处理中…" : submitLabel}
+          </button>
+        </>
+      }
+    >
+      <form
+        id="modal-form"
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!busy && !disabled) onSubmit();
+        }}
+      >
+        {children}
+      </form>
+    </Modal>
+  );
+}
+
+// --- data display ----------------------------------------------------------------------------------
+
+export function KV({ items }: { items: [ReactNode, ReactNode][] }) {
+  return (
+    <dl className="kv">
+      {items.map(([k, v], i) => (
+        <div key={i} className="kv-row">
+          <dt>{k}</dt>
+          <dd>{v ?? <span className="muted">—</span>}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function JsonBlock({ value, maxHeight }: { value: unknown; maxHeight?: number }) {
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return (
+    <pre className="mono-block" style={maxHeight ? { maxHeight } : undefined}>
+      {text}
+    </pre>
+  );
+}
+
+export function CopyText({ text, label }: { text: string; label?: string }) {
+  const [done, setDone] = useState(false);
+  return (
+    <span className="copy">
+      <code className="id">{label ?? text}</code>
+      <button
+        type="button"
+        className="btn btn-xs"
+        onClick={async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            setDone(true);
+            window.setTimeout(() => setDone(false), 1500);
+          } catch {
+            // clipboard unavailable (non-secure context); the text stays selectable
+          }
+        }}
+      >
+        {done ? "已复制" : "复制"}
+      </button>
+    </span>
+  );
+}
+
+export function Capability({
+  label,
+  value,
+  error,
+  falseLabel = "不支持",
+}: {
+  label: string;
+  value: boolean | null | undefined;
+  error?: string;
+  falseLabel?: string;
+}) {
+  const tone = value === true ? "ok" : value === false ? "bad" : "off";
+  const mark = value === true ? "支持" : value === false ? falseLabel : "未检测";
+  return (
+    <span className={`cap cap-${tone}`} title={error}>
+      <span className="cap-name">{label}</span>
+      <span className="cap-val">{mark}</span>
+    </span>
+  );
+}
+
+/** Shows task text, or a neutral marker when the backend withheld it ("[restricted]"). */
+export function Guarded({ text, label = "受限内容" }: { text: string | null | undefined; label?: string }) {
+  if (text === "[restricted]")
+    return (
+      <span className="restricted" title="这部分内容来自你无权查看的资料，已隐藏">
+        {label}
+      </span>
+    );
+  return <>{text}</>;
+}

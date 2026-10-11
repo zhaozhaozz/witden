@@ -1,0 +1,39 @@
+{
+  "name": "witden",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Self-hosted platform for AI employees that work inside isolated Docker computers",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/runner",
+    "packages/manager",
+    "packages/server",
+    "packages/web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm run build -w @witden/shared -w @witden/runner -w @witden/manager -w @witden/server -w @witden/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "vitest run",
+    "test:docker": "WITDEN_DOCKER_TESTS=1 vitest run",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/dockerode": "^3.3.47",
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "@types/tar-stream": "^3.1.5",
+    "@types/ws": "^8.18.2",
+    "drizzle-kit": "^0.31.11",
+    "esbuild": "^0.25.12",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9",
+    "vitest": "^3.2.7"
+  }
+}

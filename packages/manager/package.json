@@ -1,0 +1,11 @@
+{
+  "name": "@witden/manager",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Docker Manager: the only component that holds Docker access",
+  "main": "dist/index.js",
+  "bin": { "witden-manager": "dist/main.js" },
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": { "@witden/shared": "0.2.0", "dockerode": "^4.0.7", "fastify": "^5.4.0", "@fastify/websocket": "^11.2.0", "tar-stream": "^3.1.7", "ws": "^8.18.0" }
+}

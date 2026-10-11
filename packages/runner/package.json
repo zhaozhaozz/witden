@@ -1,0 +1,15 @@
+{
+  "name": "@witden/runner",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Computer Runner: executes operations inside one cloud computer",
+  "main": "dist/index.js",
+  "bin": { "witden-runner": "dist/main.js" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": { "@witden/shared": "0.2.0", "ws": "^8.18.0" },
+  "optionalDependencies": { "playwright-core": "^1.55.0" }
+}
