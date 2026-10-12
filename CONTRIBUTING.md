@@ -1,36 +1,60 @@
 # 参与开发
 
-## 环境与常用命令
+本文面向为 witden 贡献代码的开发者，说明开发环境、测试方法、代码约定和必须保持的设计约束。
 
-- Node.js 22+（npm workspaces）；端到端测试需要 Docker。
-- `npm ci` 安装依赖；`npm run build` 编译全部包与控制台（`server` 依赖 `shared`、`manager` 的 `dist`）。
-- `npm test` 跑快速测试：模拟电脑（`packages/server/test/support/fake-computer.ts`，说真实的 Runner 协议）+ 内存 PGlite。
-- `make test-docker` 先构建云电脑镜像，再跑包含真实 Docker 的测试（`WITDEN_DOCKER_TESTS=1`），包括平台 → Manager → 电脑 → Runner 的端到端测试。
-- `make lint` 运行 biome 与各包类型检查（行宽 120）。
-- 改了 `packages/server/src/db/schema.ts` 后，在 `packages/server` 下运行 `npx drizzle-kit generate --name <描述>` 生成迁移并一起提交。
-- 测试与临时文件写在仓库内 `.tmp/`（已忽略），不要写到 `/tmp`。
+## 1. 开发环境
 
-## 注意事项
+- Node.js 22 或更高版本（npm workspaces）；运行涉及 Docker 的测试需要 Docker。
+- `npm ci` 安装依赖；`npm run build` 编译全部包和网页控制台（`server` 依赖 `shared` 和 `manager` 的编译产物）。
+- `npm run dev -w @witden/web` 启动控制台开发服务器，`/api` 请求代理到本机 8320 端口。
 
-- 在 PGlite 上，事务内只能用事务句柄（`tx`）。在 `transaction()` 或 `authed()` 处理函数里调用全局 `db()`（包括间接调用）会让单连接数据库死锁。需要长时间操作或对外调用的接口用 `authedNoTx`。
-- 模型调用、Runner 操作、对外 HTTP 都放在事务之外。
-- REST 接口对外保持 snake_case（`api/http.ts` 的 `body()` / `row()` 负责转换并隐藏密钥字段）。
+| 包 | 内容 |
+|---|---|
+| `packages/shared` | 执行代理协议和 Docker Manager 协议（类型与编解码） |
+| `packages/runner` | 虚拟电脑内的执行代理（打包为单个文件放入虚拟电脑镜像） |
+| `packages/manager` | Docker Manager（库、HTTP 服务、客户端） |
+| `packages/server` | 平台：API、Worker、执行网关、通讯接入、权限、数据库与迁移 |
+| `packages/web` | 网页控制台（React） |
+| `images/` | 虚拟电脑镜像（命令行、桌面），从仓库根目录构建 |
 
-## 必须保持的不变量
+## 2. 测试与检查
 
-修改以下模块时，请同时补充或更新对应测试（`packages/server/test/` 下的 `agent-flow`、`isolation`、`computers`、`slack`、`core`、`model-proxy`、`migrations`）：
+| 命令 | 内容 |
+|---|---|
+| `npm test` | 快速测试：使用模拟的虚拟电脑（实现真实的执行代理协议）和内存中的嵌入式 PostgreSQL。 |
+| `make test-docker` | 先构建虚拟电脑镜像，再运行包含真实 Docker 的测试，包括平台 → Docker Manager → 虚拟电脑 → 执行代理的端到端测试。 |
+| `make lint` | biome 检查（行宽 120）和各包的类型检查。 |
 
-1. **执行边界**：AI 工具只能通过执行网关（`compute/gateway.ts`）访问电脑，且只访问任务固定的实例。不要新增在平台宿主机上执行的代码路径，也不要在实例不可用时“换一台”。新的 Runner 操作必须在 `opGroup` 中归入某个工具组。
-2. **Docker 权限只在 Manager**：API 只通过 `ManagerApi` 请求白名单操作；Worker 不得持有 Docker 或 Runner 连接。Manager 的入参全部经 `validate.ts` 校验（未知字段拒绝）。
-3. **非 root 与无 socket**：电脑不能以 root 运行、不能挂宿主机路径或 Docker socket；Runner 拒绝 root。
-   真实的模型服务地址和密钥绝不进入电脑：电脑内的模型访问只能经 Runner 的模型代理，用平台为这台电脑签发的密钥。
-4. **不盲目重试**：有副作用的操作结果不确定时，先查 Runner 请求日志，再如实告诉模型；不要自动重放。
-5. **权限由系统执行**：新工具必须归入某个工具组（`agent/tools.ts`），由运行器按任务信封检查；新接口必须显式检查权限（默认拒绝）。
-6. **信息流**：任何由角色产生、会被其他人看到的内容（消息、文件、进度、预览、外部同步）都要经过 `security/labels.ts` 的 `checkFlow`；工具读取新来源的数据时要返回对应标签。
-7. **审计不存正文**：审计记录“谁、在哪、做了什么”，不保存消息或记忆的正文；入站队列处理完清空正文；密钥在任何输出前都要脱敏。
-8. **幂等**：入站事件先落库后确认并按消息去重，出站按“消息 × 目标会话”去重；Runner 请求按 ID 去重。重试不能重复执行任务或重复发送。
+- 修改 `packages/server/src/db/schema.ts` 后，在 `packages/server` 目录运行 `npx drizzle-kit generate --name <说明>` 生成迁移，与代码一起提交。迁移在平台启动时自动执行。
+- 测试和临时文件写在仓库内的 `.tmp/` 目录（已加入忽略列表），不要写到系统临时目录。
 
-## 提交
+## 3. 代码约定
 
-- 提交信息使用英文祈使句，正文说明动机与影响。
-- 提交前运行 `make lint` 与 `npm test`；涉及电脑、Runner、Manager 时再跑 `make test-docker`。
+- 使用嵌入式 PostgreSQL（PGlite）时，事务内只能使用事务句柄；在事务中直接或间接使用全局数据库连接会导致单连接数据库死锁。需要长时间运行或调用外部服务的接口，不要放在事务中处理。
+- 模型调用、执行代理操作和对外 HTTP 请求都必须在数据库事务之外进行。
+- REST 接口对外使用 snake_case 字段名，内部使用 camelCase，由接口层统一转换并隐藏密钥字段。
+- React 的 `useEffect` 使用块体写法，不返回清理函数以外的值。
+
+## 4. 必须保持的设计约束
+
+修改以下相关模块时，请同时补充或更新 `packages/server/test/` 中的对应测试。
+
+1. **执行边界**：AI 工具只能通过执行网关访问虚拟电脑，并且只能访问任务固定的那一台。不要新增在平台服务器上执行操作的路径，也不要在虚拟电脑不可用时改用其他机器。新的执行代理操作必须归入某个工具类别。
+2. **Docker 权限只在 Docker Manager**：API 只能请求白名单内的操作；Worker 不得持有 Docker 或执行代理的连接。Docker Manager 的所有入参都经过校验，未知字段一律拒绝。
+3. **非 root、无 Docker socket**：虚拟电脑不能以 root 运行，不能挂载宿主机路径或 Docker socket；执行代理拒绝以 root 运行。真实的模型服务地址和密钥不得进入虚拟电脑，虚拟电脑内的模型访问只能经过执行代理的模型代理，使用平台为这台虚拟电脑签发的密钥。
+4. **不盲目重试**：有副作用的操作结果不确定时，先查询执行代理的操作记录，再如实告诉模型，不要自动重做。
+5. **权限由系统执行**：新工具必须归入某个工具类别，由服务器按任务的工具范围检查；新接口必须显式检查权限（默认拒绝）。
+6. **只有有效的 @ 触发工作**：成员的 @ 以控制台提交的结构化列表为准；角色之间只能通过专门的工具相互 @，不得根据回答正文中的文字触发其他角色。
+7. **信息流检查**：角色产生、会被其他人看到的任何内容（消息、文件、进度、预览、实时输出、外部同步）都必须经过信息流检查；工具读取新来源的数据时必须返回对应的来源标记。
+8. **审计不保存正文**：审计记录“谁、在哪、对什么、做了什么、结果如何”，不保存消息或记忆的正文；入站事件处理完成后清除正文；任何输出前都要遮盖密钥。
+9. **幂等**：入站事件先保存后确认，并按消息去重；出站按“消息 × 目标频道”去重；执行代理按请求编号去重。重试不能导致任务重复执行或消息重复发送。
+
+## 5. 文档
+
+- `README.md` 和 `docs/` 是面向最终用户和管理员的正式文档。用户能感知的功能、配置、部署方式或安全边界发生变化时，请同步更新。
+- 文档使用正式、完整的书面语，说明功能是什么、如何使用、有哪些限制；不记录开发过程或讨论经过。
+
+## 6. 提交
+
+- 提交信息使用英文祈使句，正文说明动机和影响。
+- 提交前运行 `make lint` 和 `npm test`；涉及虚拟电脑、执行代理或 Docker Manager 时，再运行 `make test-docker`。
