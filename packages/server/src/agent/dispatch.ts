@@ -8,6 +8,7 @@ import {
   computerInstances,
   type Mention,
   type Message,
+  messageRoutes,
   messages,
   type Role,
   roles,
@@ -240,6 +241,8 @@ export interface CreateTaskOptions {
   round?: number;
   idempotencyKey?: string | null;
   waitsForResult?: boolean;
+  /** Nobody @-mentioned the role: it reached it automatically and may decline (stay_silent). */
+  auto?: boolean;
 }
 
 export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
@@ -280,7 +283,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       spawnedByTaskId: parent?.id ?? null,
       depth: parent ? parent.depth + 1 : 0,
       round: o.round ?? 0,
-      envelope: buildEnvelope(role, parent),
+      envelope: { ...buildEnvelope(role, parent), ...(o.auto ? { auto: true } : {}) },
       labels,
       roleSnapshot: {
         config_version: role.configVersion,
@@ -405,6 +408,7 @@ export async function dispatchHumanMessage(
   const resumed = await resumeWaiting(db, topic, msg, user, new Set(mentioned));
   const external = (await contextForTopic(db, topic, user.id, [])).conversationKind !== "internal";
   let explicit = true;
+  let auto = false;
   let candidates: string[];
   if (mentioned.length) {
     candidates = mentioned.filter((r) => !resumed.has(r));
@@ -419,14 +423,18 @@ export async function dispatchHumanMessage(
     const last = await lastActiveRole(db, topic);
     candidates = last ? [last] : [];
   } else {
-    // Only roles configured to take part actively react without being mentioned.
+    // Nobody was @-mentioned. "mention" topics stay quiet. In "auto" topics a single role sees the message and
+    // decides itself whether to answer; with several roles the dispatcher chooses, in the worker (it calls a
+    // model, which never happens inside this transaction).
     explicit = false;
-    candidates = [];
-    for (const p of await topicSvc.participants(db, topic.id, "role")) {
-      const r = await topicSvc.getRole(db, p.participantId);
-      if (r?.responseMode === "active") candidates.push(r.id);
-    }
+    if (topic.responseMode !== "auto") return [];
+    candidates = await activeRoleIds(db, topic);
     if (!candidates.length) return [];
+    if (candidates.length > 1) {
+      await queueRoute(db, topic, msg, user);
+      return [];
+    }
+    auto = true;
   }
   const { allowed, refusals } = await authorize(db, topic, user.id, candidates);
   const created: Task[] = [];
@@ -441,6 +449,7 @@ export async function dispatchHumanMessage(
         sourceMessage: msg,
         assignment,
         idempotencyKey: opts.idempotencyPrefix ? `${opts.idempotencyPrefix}:${role.id}` : null,
+        auto,
       }),
     );
   }
@@ -456,6 +465,25 @@ export async function dispatchHumanMessage(
     });
   }
   return created;
+}
+
+/** Roles taking part in a topic that can work (not disabled). */
+export async function activeRoleIds(db: Db, topic: Topic): Promise<string[]> {
+  const out: string[] = [];
+  for (const p of await topicSvc.participants(db, topic.id, "role")) {
+    const r = await topicSvc.getRole(db, p.participantId);
+    if (r?.status === "active") out.push(r.id);
+  }
+  return out;
+}
+
+/** Hand an un-mentioned message to the dispatcher (agent/router.ts); the worker picks it up after commit. */
+async function queueRoute(db: Db, topic: Topic, msg: Message, user: User): Promise<void> {
+  await db
+    .insert(messageRoutes)
+    .values({ messageId: msg.id, topicId: topic.id, userId: user.id })
+    .onConflictDoNothing();
+  await wake(db, "tasks");
 }
 
 /** A role @-mentioning other roles asks them to respond, bounded by contacts and round limits. */

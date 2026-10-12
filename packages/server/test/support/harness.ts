@@ -2,6 +2,7 @@
 
 import type { ChatMessage, LLMResponse, OnDelta, ToolCall, ToolSchema } from "../../src/agent/llm.js";
 import { setFetch } from "../../src/agent/llm.js";
+import { DISPATCHER_PROMPT_START } from "../../src/agent/router.js";
 import { Worker } from "../../src/agent/worker.js";
 import { start, type Witden } from "../../src/app.js";
 import { loadSettings, type Settings } from "../../src/config.js";
@@ -118,7 +119,11 @@ export async function startHarness(overrides: Partial<Settings> = {}): Promise<H
 export function useScripts(scriptFor: (handle: string) => Script | undefined): void {
   setModelFactory(() => ({
     async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta) {
-      const m = /\(@([a-z0-9_.-]+)\)/.exec(String(messages[0]?.content ?? ""));
+      const system = String(messages[0]?.content ?? "");
+      // The dispatcher of auto topics is scripted as "__dispatcher"; roles by the "(@handle)" in their prompt.
+      const m = system.startsWith(DISPATCHER_PROMPT_START)
+        ? [system, "__dispatcher"]
+        : /\(@([a-z0-9_.-]+)\)/.exec(system);
       const script = m ? scriptFor(m[1]) : undefined;
       const out = script ? script(messages, tools) : reply(`${m?.[1] ?? "?"} has nothing to say`);
       // Stream the answer in a few pieces, like a real endpoint.

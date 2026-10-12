@@ -262,7 +262,6 @@ export const roles = pgTable("roles", {
   allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
   knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
   approvalRequired: json<string[]>("approval_required").notNull().default([]),
-  responseMode: text("response_mode").notNull().default("mention"), // mention | active
   maxSteps: integer("max_steps"),
   maxTokensPerTask: integer("max_tokens_per_task"),
   dailyTokenLimit: integer("daily_token_limit"),
@@ -291,6 +290,8 @@ export const topics = pgTable("topics", {
   kind: text("kind").notNull().default("group"), // group | dm
   status: text("status").notNull().default("active"),
   visibility: text("visibility").notNull().default("private"), // private | internal
+  /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
+  responseMode: text("response_mode").notNull().default("mention"), // mention | auto
   maxAutoRounds: integer("max_auto_rounds"),
   allowedModelConfigIds: json<string[] | null>("allowed_model_config_ids"),
   source: text("source").notNull().default("internal"),
@@ -345,6 +346,27 @@ export const messages = pgTable(
  * Agent session: one role's model context inside one topic. Different topics never share a session, so a
  * role working in several topics never mixes their contexts.
  */
+/**
+ * Messages in "auto" topics waiting for the dispatcher to decide which roles (if any) take them. The worker
+ * claims them like tasks, so a crash or restart never loses one.
+ */
+export const messageRoutes = pgTable(
+  "message_routes",
+  {
+    messageId: text("message_id")
+      .primaryKey()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    topicId: text("topic_id").notNull(),
+    userId: text("user_id").notNull(),
+    status: text("status").notNull().default("pending"), // pending | routing | done | failed
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: ts("claimed_at"),
+    result: json<Record<string, any> | null>("result"),
+    createdAt: created(),
+  },
+  (t) => [index("ix_message_routes_status").on(t.status)],
+);
+
 export const agentSessions = pgTable(
   "agent_sessions",
   {
@@ -700,3 +722,11 @@ export const nowSql = sql`now()`;
 export type OutboundMessage = typeof outboundMessages.$inferSelect;
 export type ExternalIdentity = typeof externalIdentities.$inferSelect;
 export type ApiSession = typeof apiSessions.$inferSelect;
+
+/** Platform-wide settings edited in the console (e.g. the dispatcher model), keyed by name. */
+export const platformSettings = pgTable("platform_settings", {
+  key: text("key").primaryKey(),
+  value: json<Record<string, any>>("value").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});

@@ -178,7 +178,16 @@ export async function topicRoutes(app: FastifyInstance) {
         throw new BadRequest("status must be active or archived");
       if (b.visibility !== undefined && (!["private", "internal"].includes(b.visibility) || topic.kind === "dm"))
         throw new BadRequest("invalid visibility");
-      const allowed = ["title", "goal", "status", "visibility", "maxAutoRounds", "allowedModelConfigIds"];
+      if (b.responseMode !== undefined) svc.parseResponseMode(b.responseMode);
+      const allowed = [
+        "title",
+        "goal",
+        "status",
+        "visibility",
+        "responseMode",
+        "maxAutoRounds",
+        "allowedModelConfigIds",
+      ];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
       const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
       if (b.status === "archived") {

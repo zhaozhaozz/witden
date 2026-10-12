@@ -45,8 +45,8 @@ export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "to
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
   labels?: string[];
-  /** "wait": the task must pause (status / wait describe for what). */
-  control?: "wait";
+  /** "wait": the task must pause (status / wait describe for what). "silent": it ends without a reply. */
+  control?: "wait" | "silent";
   wait?: Record<string, any>;
   status?: string;
   statusReason?: string;
@@ -457,6 +457,10 @@ async function postProgress(ctx: ToolContext, args: Record<string, any>): Promis
 }
 
 /** Pause this task and pick it up again later (check on a long build, a pending reply...). */
+async function stayQuiet(_ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return { content: `no reply: ${String(args.reason ?? "").slice(0, 300)}`, control: "silent" };
+}
+
 async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const minutes = Math.max(1, Math.min(Number(args.minutes ?? 30), 7 * 24 * 60));
   const until = new Date(Date.now() + minutes * 60_000);
@@ -825,6 +829,13 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       postProgress,
     ),
     spec(
+      "stay_silent",
+      null,
+      "Nobody @-mentioned you: if this message does not need you (small talk, people talking to each other, not your responsibility, already handled), end here without posting anything.",
+      obj({ reason: str }, []),
+      stayQuiet,
+    ),
+    spec(
       "follow_up_later",
       null,
       "Pause this task and resume it after some minutes, to follow up on something that takes time.",
@@ -836,7 +847,10 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
 
 export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   const groups = new Set<string>(envelope.tools ?? []);
-  return [...TOOLS.values()].filter((t) => t.group === null || groups.has(t.group));
+  return [...TOOLS.values()].filter(
+    // Declining to answer is for messages that reached the role without an @-mention.
+    (t) => (t.group === null || groups.has(t.group)) && (t.name !== "stay_silent" || !!envelope.auto),
+  );
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec): boolean {

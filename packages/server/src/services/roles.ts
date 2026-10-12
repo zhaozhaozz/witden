@@ -43,7 +43,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     "name",
     "description",
     "systemPrompt",
-    "responseMode",
     "maxSteps",
     "maxTokensPerTask",
     "dailyTokenLimit",
@@ -53,8 +52,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   }
   if ("avatarUrl" in data) out.avatarUrl = parseAvatarUrl(data.avatarUrl);
   if ("color" in data) out.color = parseColor(data.color);
-  if (!["mention", "active"].includes(out.responseMode ?? "mention"))
-    throw new BadRequest("response_mode must be mention or active");
   if ("modelConfigId" in data) {
     if (data.modelConfigId) {
       const [cfg] = await db.select().from(modelConfigs).where(eq(modelConfigs.id, data.modelConfigId)).limit(1);
@@ -226,7 +223,6 @@ export async function copyRole(
     allowedContacts: role.allowedContacts,
     knowledgeSpaceIds: role.knowledgeSpaceIds,
     approvalRequired: role.approvalRequired,
-    responseMode: role.responseMode,
     maxSteps: role.maxSteps,
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,

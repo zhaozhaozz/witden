@@ -6,9 +6,11 @@ import { asc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db/client.js";
 import { type ModelConfig, type ModelProvider, modelConfigs, modelProviders, type User } from "../db/schema.js";
+import { BadRequest } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import * as svc from "../services/model-configs.js";
+import { DISPATCHER, type DispatcherSetting, getSetting, putSetting } from "../services/platform-settings.js";
 import { authed, authedNoTx, body, params, row } from "./http.js";
 
 const providerOut = (p: ModelProvider, manage: boolean) =>
@@ -45,6 +47,31 @@ async function visible(db: Db, user: User) {
 }
 
 export async function modelRoutes(app: FastifyInstance) {
+  // The dispatcher model of "auto" topics (agent/router.ts). Anyone signed in may see which one is set.
+  app.get(
+    "/api/settings/dispatcher",
+    authed(async ({ db }) => {
+      const setting = await getSetting<DispatcherSetting>(db, DISPATCHER);
+      const found = setting?.model_config_id ? await svc.modelWithProvider(db, setting.model_config_id) : null;
+      return {
+        model_config_id: found ? found.model.id : null,
+        model: found ? { id: found.model.id, label: svc.modelLabel(found.model, found.provider) } : null,
+        usable: !!found && !svc.unusableReason(found.model, found.provider),
+      };
+    }),
+  );
+  app.put(
+    "/api/settings/dispatcher",
+    authed(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.SECRETS_MANAGE);
+      const id = body(req).modelConfigId ?? null;
+      if (id && !(await svc.modelWithProvider(db, String(id)))) throw new BadRequest("model not found");
+      await putSetting(db, DISPATCHER, { model_config_id: id }, user.id);
+      await audit(db, "settings.dispatcher", { actorType: "user", actorId: user.id, detail: { model_config_id: id } });
+      return { model_config_id: id };
+    }),
+  );
+
   app.get(
     "/api/model-providers",
     authed(({ db, user }) => visible(db, user)),

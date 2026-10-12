@@ -349,6 +349,21 @@ export class TaskRunner {
         instanceId: current.instanceId,
         detail: { args: auditArgs(call.arguments) },
       });
+      if (result.control === "silent") {
+        // The role decided the message does not need it: the task ends, nothing is posted.
+        await appendStep(tx, current, "tool", { tool_call_id: call.id, name: call.name, content });
+        const done = await setStatus(tx, current, "completed", "chose not to reply", { result: "" });
+        await audit(tx, "task.silent", {
+          actorType: "role",
+          actorId: current.ownerRoleId,
+          taskId,
+          topicId: current.topicId,
+          roleId: current.ownerRoleId,
+          detail: { reason: typeof content === "string" ? content.slice(0, 300) : "" },
+        });
+        await notifyParent(tx, done);
+        return false;
+      }
       if (result.control === "wait") {
         // The call's real result (answer, approval, delegate outcome) is appended when the wait ends.
         await appendStep(tx, current, "event", {

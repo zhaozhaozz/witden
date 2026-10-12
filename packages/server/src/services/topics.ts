@@ -129,6 +129,7 @@ export async function createTopic(
     title: string;
     goal?: string;
     visibility?: string;
+    responseMode?: string;
     userIds?: string[];
     roleIds?: string[];
     maxAutoRounds?: number | null;
@@ -140,6 +141,7 @@ export async function createTopic(
   await requirePerm(db, user, Perm.TOPIC_CREATE);
   const visibility = data.visibility ?? "private";
   if (!["private", "internal"].includes(visibility)) throw new BadRequest("visibility must be private or internal");
+  const responseMode = parseResponseMode(data.responseMode ?? "mention");
   if (!data.title?.trim()) throw new BadRequest("title is required");
   const kind = data.kind ?? "group";
   const [topic] = await db
@@ -150,6 +152,7 @@ export async function createTopic(
       goal: data.goal ?? "",
       kind,
       visibility: kind === "group" ? visibility : "private",
+      responseMode,
       maxAutoRounds: data.maxAutoRounds ?? null,
       allowedModelConfigIds: data.allowedModelConfigIds ?? null,
       source: data.source ?? "internal",
@@ -190,6 +193,19 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
   await addParticipant(db, topic, "user", user.id, { invitedBy: user.id, owner: true });
   await addParticipant(db, topic, "role", role.id, { invitedBy: user.id });
   return topic;
+}
+
+/**
+ * How roles respond in a group topic. "mention": only when @-mentioned (picked from the composer's list, or
+ * by a role through message_role). "auto": a message nobody is @-mentioned in may still reach roles — the
+ * only role decides itself whether to answer; with several, the dispatcher picks none, one or more.
+ */
+export const RESPONSE_MODES = ["mention", "auto"] as const;
+
+export function parseResponseMode(value: unknown): string {
+  if (!RESPONSE_MODES.includes(value as (typeof RESPONSE_MODES)[number]))
+    throw new BadRequest("response_mode must be mention or auto");
+  return String(value);
 }
 
 /** A topic's messages, newest page first in time order. Every participant reads the whole history. */

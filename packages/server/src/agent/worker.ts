@@ -9,9 +9,10 @@ import { and, eq, inArray, lt } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
-import { computerInstances, tasks } from "../db/schema.js";
+import { computerInstances, messageRoutes, tasks } from "../db/schema.js";
 import { WAKE_CHANNEL } from "../services/events.js";
 import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./control.js";
+import { claimRoutes, routeMessage } from "./router.js";
 import { claimNext, collectChildren, TaskRunner } from "./runner.js";
 import { appendStep } from "./transcript.js";
 
@@ -67,6 +68,8 @@ export class Worker {
   /** One scheduling round (also used synchronously by tests via ``drain``). */
   async tick(): Promise<void> {
     await transaction((tx) => expireTakeovers(tx));
+    // Messages in "auto" topics waiting for the dispatcher (agent/router.ts).
+    await Promise.all((await claimRoutes(getDb(), 5)).map((id) => routeMessage(id)));
     await this.checkWaits();
     await this.recoverOrphans(false);
     const free = (this.opts.concurrency ?? settings().workerConcurrency) - this.running.size;
@@ -94,7 +97,12 @@ export class Worker {
         await new Promise((r) => setTimeout(r, 5));
       }
       const pending = await getDb().select({ id: tasks.id }).from(tasks).where(eq(tasks.status, "pending")).limit(1);
-      if (!pending.length) return;
+      const routes = await getDb()
+        .select({ id: messageRoutes.messageId })
+        .from(messageRoutes)
+        .where(inArray(messageRoutes.status, ["pending", "routing"]))
+        .limit(1);
+      if (!pending.length && !routes.length) return;
     }
     throw new Error("tasks kept coming back to pending");
   }

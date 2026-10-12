@@ -116,7 +116,10 @@ export async function firstUserMessage(db: Db, task: Task, topic: Topic): Promis
   const sessionPart = notes.length
     ? `Your earlier work in this topic:\n${notes.map((n) => `- [${n.at.slice(0, 16)}] asked: ${n.request}\n  you answered: ${n.result}`).join("\n")}\n\n`
     : "";
-  return `${sessionPart}Recent messages in this topic:\n${lines.join("\n") || "(no earlier messages)"}\n\n---\nRequest from ${who}:\n${task.instruction}`;
+  const auto = task.envelope?.auto
+    ? "\n\n(Nobody @-mentioned you: this message reached you because the topic answers automatically. Answer only if it needs you; if it is small talk, addressed to someone else, not your responsibility or already handled, call stay_silent instead.)"
+    : "";
+  return `${sessionPart}Recent messages in this topic:\n${lines.join("\n") || "(no earlier messages)"}\n\n---\nRequest from ${who}:\n${task.instruction}${auto}`;
 }
 
 export async function initialMessages(db: Db, task: Task, role: Role, topic: Topic): Promise<ChatMessage[]> {
