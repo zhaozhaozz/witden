@@ -3,9 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
 import type { Instance, Template } from "../../api/types";
-import { fmtRelative } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
-import { useAuth, useDirectory } from "../../lib/session";
+import { useAuth } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
 import {
   ColorPicker,
@@ -17,8 +16,8 @@ import {
   Loaded,
   PageHeader,
   RoleBadge,
-  Tag,
 } from "../../ui/kit";
+import { OperatorLabel } from "./computerControls";
 import {
   ComputersNav,
   fromDraft,
@@ -146,23 +145,6 @@ export default function InstancesPage() {
         />
       ) : null}
     </div>
-  );
-}
-
-export function OperatorLabel({ inst }: { inst: Pick<Instance, "operator"> }) {
-  const dir = useDirectory();
-  const op = inst.operator;
-  if (!op) return <span className="muted">空闲</span>;
-  if (op.holder_type === "user")
-    return (
-      <span title={op.reason ?? undefined}>
-        <Tag tone="wait">人工接管</Tag> {dir.userName(op.holder_id)}
-      </span>
-    );
-  return (
-    <span title={`租约到期 ${fmtRelative(op.expires_at)}`}>
-      <Tag tone="run">AI 操作中</Tag> {dir.roleLabel(op.holder_id)}
-    </span>
   );
 }
 

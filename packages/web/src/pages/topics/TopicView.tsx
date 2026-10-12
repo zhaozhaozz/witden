@@ -6,6 +6,7 @@ import { CONVERSATION_KIND, PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
+import { ResizeGrips, useFloatingWindow } from "../../ui/floating";
 import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
@@ -31,6 +32,14 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const [loadingMore, setLoadingMore] = useState(false);
   const [version, setVersion] = useState(0);
   const [panel, setPanel] = useState(() => localStorage.getItem(PANEL_KEY) !== "0");
+  // The side panel's virtual computer laid over the whole topic; the conversation then floats.
+  const [computerMax, setComputerMax] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [unseen, setUnseen] = useState(0);
+  const chat = useFloatingWindow("witden.chatWindow", () => {
+    const h = Math.min(620, window.innerHeight - 140);
+    return { w: 420, h, x: window.innerWidth - 444, y: window.innerHeight - h - 96 };
+  });
   const scroller = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
   const prependAnchor = useRef<number | null>(null);
@@ -81,7 +90,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     } else if (stickToBottom.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [messages]);
+    // also when the floating conversation opens (it was hidden, so it had no scroll position)
+  }, [messages, chatOpen, computerMax]);
 
   const bumpTasks = useDebounced(() => setVersion((v) => v + 1), 400);
   const reloadTopic = useDebounced(() => void topicRes.reload(), 300);
@@ -120,6 +130,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       const m = data as unknown as Message;
       if (m.topic_id !== topicId) return;
       appendMessage(m);
+      if (computerMax && !chatOpen && m.author_id !== me?.id) setUnseen((n) => n + 1);
       if (data.truncated) refreshRecent();
       // Participant changes and archive notices arrive as system messages.
       if (m.author_type === "system") reloadTopic();
@@ -178,6 +189,17 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     onTopicUpdated();
   };
 
+  const toggleComputerMax = () => {
+    setComputerMax((v) => !v);
+    setChatOpen(false);
+    setUnseen(0);
+  };
+  const openChat = () => {
+    setChatOpen(true);
+    setUnseen(0);
+    stickToBottom.current = true;
+  };
+
   const togglePanel = () => {
     setPanel((v) => {
       localStorage.setItem(PANEL_KEY, v ? "0" : "1");
@@ -199,9 +221,25 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const manageOnly = topic.can_view === false;
 
   return (
-    <div className={`topic-view${panel ? " with-panel" : ""}`}>
-      {panel ? <ResizeHandle name="topic-panel" side="end" min={260} max={720} /> : null}
-      <div className="conversation">
+    <div className={`topic-view${panel || computerMax ? " with-panel" : ""}${computerMax ? " computer-max" : ""}`}>
+      {panel && !computerMax ? <ResizeHandle name="topic-panel" side="end" min={260} max={720} /> : null}
+      <div
+        className={`conversation${computerMax ? (chatOpen ? " chat-float" : " chat-hidden") : ""}`}
+        style={computerMax && chatOpen ? chat.style : undefined}
+        {...(computerMax ? { role: "dialog", "aria-label": "对话" } : {})}
+      >
+        {computerMax ? (
+          <div className="chat-float-bar" {...chat.handle("move")}>
+            <span className="chat-float-title">{topic.kind === "dm" ? "私信" : topic.title}</span>
+            <button type="button" className="btn btn-xs btn-ghost" onClick={() => setChatOpen(false)}>
+              收起
+            </button>
+            <button type="button" className="btn btn-xs btn-ghost" onClick={toggleComputerMax}>
+              还原布局
+            </button>
+          </div>
+        ) : null}
+        {computerMax && chatOpen ? <ResizeGrips handle={chat.handle} /> : null}
         <header className="topic-head">
           <div className="topic-head-main">
             <h2>
@@ -353,11 +391,27 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           </div>
         )}
       </div>
-      {panel ? (
+      {computerMax && !chatOpen ? (
+        <button type="button" className="chat-fab" onClick={openChat} title="打开对话" aria-label="打开对话">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
+            <path
+              d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {unseen ? <span className="chat-fab-badge">{unseen > 99 ? "99+" : unseen}</span> : null}
+        </button>
+      ) : null}
+      {panel || computerMax ? (
         <TopicSidePanel
           topic={topic}
           canAdmin={canAdmin}
           version={version}
+          computerMax={computerMax}
+          onToggleComputerMax={toggleComputerMax}
           onTopicChange={(t) => {
             topicRes.setData(t);
             onTopicUpdated();

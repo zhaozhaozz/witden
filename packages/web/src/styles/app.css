@@ -3709,3 +3709,237 @@ body.resizing {
 .msg-human.msg-mine .mention {
   background: #cfdcea;
 }
+
+/* --- a topic's virtual computer: in the side panel, or laid over the whole topic ------------------------ */
+.topic-computer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tc-bar,
+.tc-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tc-bar select {
+  width: auto;
+  max-width: 180px;
+}
+.tc-spacer {
+  flex: 1;
+}
+.tc-status {
+  justify-content: space-between;
+}
+.tc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.topic-computer .desktop-screen {
+  height: auto;
+  aspect-ratio: 16 / 10;
+}
+.topic-computer .console {
+  height: 300px;
+}
+
+.topic-view.computer-max {
+  grid-template-columns: minmax(0, 1fr);
+}
+.topic-view.computer-max .side-panel {
+  border-left: 0;
+  background: var(--surface);
+}
+.side-panel-max > .tabs {
+  display: none;
+}
+.side-panel-max > .side-body {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px 14px;
+  overflow: hidden;
+}
+.topic-computer-max,
+.topic-computer-max .tc-body {
+  flex: 1;
+  min-height: 0;
+}
+.topic-computer-max .desktop {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.topic-computer-max .desktop-screen {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+.topic-computer-max .tc-body > .section {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.topic-computer-max .console {
+  flex: 1;
+  height: auto;
+}
+
+/* The conversation as a floating window over a maximised computer. */
+.conversation.chat-hidden {
+  display: none;
+}
+.conversation.chat-float {
+  position: fixed;
+  z-index: 60;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+}
+.chat-float .topic-head {
+  display: none;
+}
+.chat-float-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper-2);
+  cursor: move;
+  touch-action: none;
+  user-select: none;
+}
+.chat-float-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-float .msg {
+  padding-right: 12px;
+  padding-left: 12px;
+}
+.float-grip {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+.float-grip-n,
+.float-grip-s {
+  right: 10px;
+  left: 10px;
+  height: 6px;
+  cursor: ns-resize;
+}
+.float-grip-n {
+  top: 0;
+}
+.float-grip-s {
+  bottom: 0;
+}
+.float-grip-e,
+.float-grip-w {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+  cursor: ew-resize;
+}
+.float-grip-e {
+  right: 0;
+}
+.float-grip-w {
+  left: 0;
+}
+.float-grip-ne,
+.float-grip-nw,
+.float-grip-se,
+.float-grip-sw {
+  width: 14px;
+  height: 14px;
+}
+.float-grip-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.float-grip-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+.float-grip-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.float-grip-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+  background: linear-gradient(
+    135deg,
+    transparent 55%,
+    var(--line) 55%,
+    var(--line) 65%,
+    transparent 65%,
+    transparent 75%,
+    var(--line) 75%,
+    var(--line) 85%,
+    transparent 85%
+  );
+}
+/* Semi-transparent button that brings the conversation back. */
+.chat-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(34, 70, 106, 0.5);
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  opacity: 0.85;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.chat-fab:hover,
+.chat-fab:focus-visible {
+  background: rgba(34, 70, 106, 0.85);
+  opacity: 1;
+}
+.chat-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+}

@@ -22,6 +22,7 @@ import {
 import { ApprovalCard } from "../approvalParts";
 import { AgentSessionList } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
+import { TopicComputer, topicComputers } from "./TopicComputer";
 import { InviteDialog, PublishDialog } from "./topicDialogs";
 
 export function TopicSidePanel({
@@ -30,6 +31,8 @@ export function TopicSidePanel({
   onTopicChange,
   onCleared,
   version,
+  computerMax = false,
+  onToggleComputerMax,
 }: {
   topic: Topic;
   /** Owner, or administrator of a group topic (may archive, remove and clean up, not edit). */
@@ -38,9 +41,15 @@ export function TopicSidePanel({
   onCleared: () => void;
   /** Bumped by live task events so the task / approval lists refresh. */
   version: number;
+  /** The computer tab is laid over the whole topic (tabs hidden). */
+  computerMax?: boolean;
+  onToggleComputerMax?: () => void;
 }) {
   const manageOnly = topic.can_view === false;
   const [tab, setTab] = useState(manageOnly ? "people" : "tasks");
+  const hasComputers = topicComputers(topic).length > 0;
+  // Maximised, the panel shows only the computer (the tab row is hidden).
+  const shown = computerMax ? "computer" : tab;
   const tasks = useResource(() => api.get<Task[]>("/api/tasks", { topic_id: topic.id }), [topic.id], !manageOnly);
   const approvals = useResource(
     () =>
@@ -62,13 +71,14 @@ export function TopicSidePanel({
   const activeCount = (tasks.data ?? []).filter((t) => isActiveTask(t.status)).length;
 
   return (
-    <aside className="side-panel">
+    <aside className={`side-panel${computerMax ? " side-panel-max" : ""}`}>
       <Tabs
         value={tab}
         onChange={setTab}
         tabs={[
           { key: "tasks", label: "任务", badge: activeCount, hidden: manageOnly },
           { key: "approvals", label: "审批", badge: approvals.data?.length, hidden: manageOnly },
+          { key: "computer", label: "虚拟电脑", hidden: manageOnly || !hasComputers },
           { key: "people", label: "参与者" },
           { key: "sessions", label: "会话", hidden: manageOnly },
           { key: "files", label: "文件", hidden: manageOnly },
@@ -77,8 +87,8 @@ export function TopicSidePanel({
         ]}
       />
       <div className="side-body">
-        {tab === "tasks" ? <TasksTab res={tasks} /> : null}
-        {tab === "approvals" ? (
+        {shown === "tasks" ? <TasksTab res={tasks} /> : null}
+        {shown === "approvals" ? (
           <Loaded res={approvals}>
             {(rows) =>
               rows.length ? (
@@ -101,11 +111,14 @@ export function TopicSidePanel({
             }
           </Loaded>
         ) : null}
-        {tab === "people" ? <PeopleTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} /> : null}
-        {tab === "sessions" ? <SessionsTab topic={topic} /> : null}
-        {tab === "files" ? <FilesTab topic={topic} canAdmin={canAdmin} /> : null}
-        {tab === "notes" ? <NotesTab topic={topic} /> : null}
-        {tab === "settings" ? (
+        {shown === "computer" ? (
+          <TopicComputer topic={topic} maximized={computerMax} onToggleMax={() => onToggleComputerMax?.()} />
+        ) : null}
+        {shown === "people" ? <PeopleTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} /> : null}
+        {shown === "sessions" ? <SessionsTab topic={topic} /> : null}
+        {shown === "files" ? <FilesTab topic={topic} canAdmin={canAdmin} /> : null}
+        {shown === "notes" ? <NotesTab topic={topic} /> : null}
+        {shown === "settings" ? (
           <SettingsTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} onCleared={onCleared} />
         ) : null}
       </div>
