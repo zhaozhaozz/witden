@@ -6,10 +6,11 @@
  * always see which role is speaking.
  */
 import { createHmac } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
+  artifacts,
   type Connection,
   type ExternalConversation,
   externalConversations,
@@ -23,6 +24,7 @@ import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
+import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 
 const API = "https://slack.com/api/";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -102,12 +104,25 @@ export function verifySignature(
   if (!safeEqual(expected, signature ?? "")) throw new Unauthorized("bad Slack signature");
 }
 
-export function clean(conn: Connection, text: string): string {
+/** Incoming Slack text as witden Markdown: no bot mention, people mentioned by their names. */
+export async function clean(db: Db, conn: Connection, text: string): Promise<string> {
   let out = text;
   if (conn.botUserId) out = out.split(`<@${conn.botUserId}>`).join("");
-  out = out.replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, "$2 ($1)");
-  return out.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+  const ids = [...new Set([...out.matchAll(/<@([A-Z0-9]+)(?:\|[^>]*)?>/g)].map((m) => m[1]))];
+  const names = new Map<string, string>();
+  if (ids.length) {
+    const known = await db
+      .select({ ext: externalIdentities.externalUserId, display: externalIdentities.displayName, name: users.name })
+      .from(externalIdentities)
+      .leftJoin(users, eq(users.id, externalIdentities.userId))
+      .where(and(eq(externalIdentities.connectionId, conn.id), inArray(externalIdentities.externalUserId, ids)));
+    for (const k of known) if (k.name || k.display) names.set(k.ext, (k.name ?? k.display) as string);
+  }
+  return fromSlack(out, names).trim();
 }
+
+/** Prefix a message with who wrote it; multi-line bodies start on their own line. */
+const signed = (who: string, text: string) => `${who}:${text.includes("\n") ? "\n" : " "}${text}`;
 
 export class SlackAdapter implements Adapter {
   platform = "slack";
@@ -126,7 +141,15 @@ export class SlackAdapter implements Adapter {
   }
 
   private async render(db: Db, conn: Connection, msg: Message): Promise<[string, Record<string, string>]> {
-    let text = msg.content;
+    const base = settings().publicUrl.replace(/\/+$/, "");
+    // System notices are plain text; everything else is Markdown written for the console.
+    let text =
+      msg.authorType === "system"
+        ? msg.content
+            .split("\n")
+            .map((l) => (l.trim() ? `_${escapeSlack(l.trim())}_` : l))
+            .join("\n")
+        : toSlack(msg.content, { baseUrl: base, viewUrl: `${base}/topics/${msg.topicId}` });
     const extra: Record<string, string> = {};
     for (const m of msg.mentions ?? []) {
       if (m.type !== "user") continue;
@@ -139,8 +162,15 @@ export class SlackAdapter implements Adapter {
       if (ident && user) text = text.split(`@${user.name}`).join(`<@${ident.externalUserId}>`);
     }
     if (msg.attachments?.length) {
-      const base = settings().publicUrl.replace(/\/+$/, "");
-      text += `\n${msg.attachments.map((a) => `📎 ${base}/api/files/${a}`).join("\n")}`;
+      // Links into witden (signing in shows the file); pictures are marked so people know what to expect.
+      const files = await db.select().from(artifacts).where(inArray(artifacts.id, msg.attachments));
+      const byId = new Map(files.map((f) => [f.id, f]));
+      const links = msg.attachments.map((a) => {
+        const f = byId.get(a);
+        const icon = f?.mime.startsWith("image/") ? "🖼" : "📎";
+        return `${icon} <${base}/api/files/${a}|${escapeSlack(f?.name ?? "文件")}>`;
+      });
+      text += `${text ? "\n" : ""}${links.join("\n")}`;
     }
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
@@ -150,11 +180,11 @@ export class SlackAdapter implements Adapter {
         // Slack fetches the icon itself: uploaded avatars need the platform's public address.
         const icon = absoluteAvatarUrl(role?.avatarUrl);
         if (icon) extra.icon_url = icon;
-      } else text = `*${name}*: ${text}`;
+      } else text = signed(`*${escapeSlack(name)}*`, text);
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
-      text = `*${user?.name ?? "member"}* (witden): ${text}`;
-    } else text = `_${text}_`;
+      text = signed(`*${escapeSlack(user?.name ?? "member")}* (witden)`, text);
+    }
     return [text, extra];
   }
 
@@ -172,7 +202,8 @@ export class SlackAdapter implements Adapter {
         ["missing_scope", "not_allowed_token_type"].includes(err.error)
       ) {
         // No chat:write.customize: fall back to a visible name prefix rather than losing the identity.
-        return (await client.call("chat.postMessage", { ...params, text: `*${extra.username}*: ${text}` })).ts;
+        const text2 = signed(`*${escapeSlack(extra.username)}*`, text);
+        return (await client.call("chat.postMessage", { ...params, text: text2 })).ts;
       }
       throw err;
     }
@@ -249,7 +280,7 @@ export class SlackAdapter implements Adapter {
           connectionId: conn.id,
           conversationId: channel,
           ts: next.ts,
-          text: clean(conn, next.text ?? ""),
+          text: await clean(db, conn, next.text ?? ""),
         },
       ];
     }
@@ -277,7 +308,7 @@ export class SlackAdapter implements Adapter {
           messageTs: ts,
           userId: event.user,
           userName: null,
-          text: clean(conn, text),
+          text: await clean(db, conn, text),
           addressed,
           files: (event.files ?? []).map((f: any) => ({
             name: f.name,

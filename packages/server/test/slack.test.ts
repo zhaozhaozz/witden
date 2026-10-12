@@ -202,6 +202,28 @@ describe("slack", () => {
     expect(slack.posts.length).toBe(before);
   });
 
+  it("Markdown answers reach Slack as mrkdwn; Slack formatting arrives as Markdown", async () => {
+    w.scripts.dev = () =>
+      reply(
+        "## 结果\n\n**构建**通过，详见 [任务](/tasks)\n\n| 项 | 值 |\n|---|---|\n| a | 1 |\n\n```mermaid\nflowchart LR\n  A --> B\n```",
+      );
+    await send(event("<@UBOT> @dev 看看 *加粗* 和 <https://x.dev|链接>，抄送 <@UBOB>", { ts: "900.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    const topicId = (await allTasks())[0].topicId;
+    const asked = (await w.messages(topicId, w.alice)).find((m: any) => m.author_type === "user");
+    expect(asked.content).toBe("@dev 看看 **加粗** 和 [链接](https://x.dev)，抄送 @bob");
+
+    await w.drain();
+    await deliverPending();
+    const answer = slack.posts.find((p) => p.thread_ts === "900.1")!.text as string;
+    expect(answer.startsWith("*Dev (@dev)*:\n*结果*")).toBe(true);
+    expect(answer).toContain("*构建*\u200b通过，详见 <http://localhost:8320/tasks|任务>");
+    expect(answer).toContain("```\n项 | 值\n---|---\na  | 1\n```");
+    expect(answer).toContain(`<http://localhost:8320/topics/${topicId}|在 witden 中查看>`);
+    expect(answer).toContain("A --&gt; B");
+    expect(answer).not.toMatch(/\*\*|##/);
+  });
+
   it("unlinked people and bots cannot trigger work", async () => {
     await send(event("<@UBOT> @dev delete prod", { user: "UMALLORY", ts: "300.1" }));
     await w.waitFor(async () => slack.posts.some((p) => p.text.includes("not linked")));
