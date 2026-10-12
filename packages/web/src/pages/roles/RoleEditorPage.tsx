@@ -11,7 +11,7 @@ import type {
   RoleImpact,
   ToolGroup,
 } from "../../api/types";
-import { fmtNumber, fmtRelative, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
+import { fmtNumber, fmtRelative, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -19,6 +19,7 @@ import {
   Avatar,
   Capability,
   ColorPicker,
+  ComputerBadge,
   Empty,
   ErrorNote,
   Field,
@@ -36,6 +37,7 @@ import {
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { AgentSessionList } from "../sessionParts";
+import { PermissionList } from "./PermissionList";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
 interface Draft {
@@ -103,10 +105,11 @@ function toBody(d: Draft): Record<string, unknown> {
     model_config_id: d.model_config_id || null,
     model_params: modelParams,
     instance_id: d.instance_id || null,
-    allowed_tools: d.allowed_tools,
+    // Sorted (as the server stores them) so toggling back and forth does not count as a change.
+    allowed_tools: [...d.allowed_tools].sort(),
     allowed_contacts: d.any_contact ? ["*"] : d.allowed_contacts,
     knowledge_space_ids: d.knowledge_space_ids,
-    approval_required: d.approval_required,
+    approval_required: [...d.approval_required].sort(),
     response_mode: d.response_mode,
     max_steps: num(d.max_steps),
     max_tokens_per_task: num(d.max_tokens_per_task),
@@ -238,12 +241,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
   const groups = (toolGroups.data ?? []).filter((g) => g.group);
   const alwaysTools = (toolGroups.data ?? []).find((g) => !g.group)?.tools ?? [];
-  const approvalOptions = [
-    ...groups.map((g) => ({ value: g.group!, label: `整组：${TOOL_GROUP_LABEL[g.group!] ?? g.group}` })),
-    ...groups.flatMap((g) =>
-      g.tools.map((t) => ({ value: t, label: t, hint: TOOL_GROUP_LABEL[g.group!] ?? g.group! })),
-    ),
-  ];
+  const selectedInstance = (instances.data ?? []).find((i) => i.id === draft.instance_id) ?? null;
 
   return (
     <div className="page">
@@ -398,48 +396,33 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             </FieldGroup>
           </Section>
 
-          <Section title="模型与电脑">
-            <div className="form-row">
-              <Field
-                label="模型"
-                hint={
-                  selectedModel && "usable" in selectedModel && !selectedModel.usable
-                    ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
-                    : "按服务商分组；在「模型」页添加服务商和模型。"
-                }
-              >
-                <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
-                  <option value="">未配置</option>
-                  {modelGroups.map(([provider, list]) => (
-                    <optgroup key={provider} label={provider || "其他"}>
-                      {list.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                          {m.name !== m.model ? `（${m.model}）` : ""}
-                          {m.usable ? "" : " · 不可用"}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                  {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
-                    <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
-                  ) : null}
-                </select>
-              </Field>
-              <Field label="所属电脑" hint="角色执行任务时只能操作这台电脑">
-                <select value={draft.instance_id} onChange={(e) => set("instance_id", e.target.value)}>
-                  <option value="">未分配（只能对话）</option>
-                  {(instances.data ?? []).map((i) => (
-                    <option key={i.id} value={i.id}>
-                      {i.name}（{i.spec?.kind === "desktop" ? "桌面" : "命令行"} · {instanceStatus(i.status).label}）
-                    </option>
-                  ))}
-                  {role?.instance && !(instances.data ?? []).some((i) => i.id === role.instance!.id) ? (
-                    <option value={role.instance.id}>{role.instance.name}</option>
-                  ) : null}
-                </select>
-              </Field>
-            </div>
+          <Section title="模型">
+            <Field
+              label="模型"
+              hint={
+                selectedModel && "usable" in selectedModel && !selectedModel.usable
+                  ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
+                  : "按服务商分组；在「模型」页添加服务商和模型。"
+              }
+            >
+              <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
+                <option value="">未配置</option>
+                {modelGroups.map(([provider, list]) => (
+                  <optgroup key={provider} label={provider || "其他"}>
+                    {list.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                        {m.name !== m.model ? `（${m.model}）` : ""}
+                        {m.usable ? "" : " · 不可用"}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
+                  <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
+                ) : null}
+              </select>
+            </Field>
             {selectedModel ? (
               <div className="caps">
                 <Capability
@@ -460,11 +443,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 />
               </div>
             ) : null}
-            {role && draft.instance_id !== (role.instance_id ?? "") ? (
-              <div className="callout callout-wait">
-                更换电脑不会迁移文件、已安装的软件和登录状态。已固定在旧电脑上的任务需要等它们完成或取消。
-              </div>
-            ) : null}
             <Field label="模型参数（JSON，可选）" hint='例如 {"temperature": 0.2}'>
               <textarea
                 className="mono"
@@ -475,33 +453,56 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             </Field>
           </Section>
 
-          <Section title="能力范围">
+          <Section title="电脑">
+            <Field label="所属电脑" hint="角色执行任务时只能操作这台电脑；没有电脑时只能对话。">
+              <select value={draft.instance_id} onChange={(e) => set("instance_id", e.target.value)}>
+                <option value="">未分配（只能对话）</option>
+                {(instances.data ?? []).map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}（{i.spec?.kind === "desktop" ? "桌面" : "命令行"} · {instanceStatus(i.status).label}）
+                  </option>
+                ))}
+                {role?.instance && !(instances.data ?? []).some((i) => i.id === role.instance!.id) ? (
+                  <option value={role.instance.id}>{role.instance.name}</option>
+                ) : null}
+              </select>
+            </Field>
+            {selectedInstance ? (
+              <div className="computer-summary">
+                <ComputerBadge computer={selectedInstance} />
+                <span className="muted">{selectedInstance.spec?.kind === "desktop" ? "桌面电脑" : "命令行电脑"}</span>
+                <StatusChip meta={instanceStatus(selectedInstance.status)} compact />
+                <span className={selectedInstance.runner?.connected ? "text-ok" : "muted"}>
+                  {selectedInstance.runner?.connected ? "Runner 已连接" : "Runner 未连接"}
+                </span>
+                <Link to={`/computers/${selectedInstance.id}`}>打开电脑</Link>
+              </div>
+            ) : null}
+            {role && draft.instance_id !== (role.instance_id ?? "") ? (
+              <div className="callout callout-wait">
+                更换电脑不会迁移文件、已安装的软件和登录状态。已固定在旧电脑上的任务需要等它们完成或取消。
+              </div>
+            ) : null}
+          </Section>
+
+          <Section title="权限">
             <FieldGroup
-              label="允许使用的工具"
-              hint={alwaysTools.length ? `始终可用：${alwaysTools.join("、")}` : undefined}
+              label="工具"
+              hint="「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求。点左侧箭头可以逐个工具设置。"
             >
               <Loaded res={toolGroups}>
                 {() => (
-                  <MultiPick
-                    columns={2}
-                    options={groups.map((g) => ({
-                      value: g.group!,
-                      label: TOOL_GROUP_LABEL[g.group!] ?? g.group!,
-                      hint: g.tools.join("、"),
-                    }))}
-                    value={draft.allowed_tools}
-                    onChange={(v) => set("allowed_tools", v)}
+                  <PermissionList
+                    groups={groups}
+                    alwaysTools={alwaysTools}
+                    allowed={draft.allowed_tools}
+                    approval={draft.approval_required}
+                    onChange={(allowed, approval) =>
+                      setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
+                    }
                   />
                 )}
               </Loaded>
-            </FieldGroup>
-            <FieldGroup label="每次使用都需要人工批准" hint="角色不能批准自己的请求；审批人由「审批」权限决定。">
-              <MultiPick
-                columns={3}
-                options={approvalOptions}
-                value={draft.approval_required}
-                onChange={(v) => set("approval_required", v)}
-              />
             </FieldGroup>
             <FieldGroup label="可以联系、委托的角色">
               <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
@@ -624,7 +625,7 @@ const ALL_FIELD_ZH: Record<string, string> = {
   response_mode: "参与方式",
   allowed_contacts: "可联系角色",
   knowledge_space_ids: "知识空间",
-  approval_required: "审批要求",
+  approval_required: "询问设置",
   max_steps: "步数上限",
   max_tokens_per_task: "任务 token 上限",
   daily_token_limit: "每日 token 上限",

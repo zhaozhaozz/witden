@@ -2,6 +2,7 @@ import { type RefObject, useEffect, useLayoutEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { LiveHandler } from "../../api/events";
 import type { Task } from "../../api/types";
+import { TOOL_LABEL } from "../../lib/format";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 import { type Author, MessageText } from "./MessageItem";
 
@@ -22,33 +23,8 @@ interface Activity {
 
 type Activities = Map<string, Activity>;
 
-const TOOL_ACTIVITY: Record<string, string> = {
-  run_command: "执行命令",
-  terminal_start: "使用终端",
-  terminal_read: "使用终端",
-  terminal_input: "使用终端",
-  terminal_control: "使用终端",
-  read_file: "读取文件",
-  write_file: "写入文件",
-  move_file: "整理文件",
-  share_file: "分享文件",
-  screenshot: "查看屏幕",
-  mouse: "操作桌面",
-  keyboard: "操作桌面",
-  release_desktop: "交还桌面",
-  message_role: "联系其他角色",
-  delegate_task: "委派任务",
-  remember: "记录记忆",
-  recall: "回忆",
-  read_topic: "查阅话题",
-  ask_human: "提问",
-  post_progress: "汇报进度",
-  follow_up_later: "安排跟进",
-};
-
 function toolLabel(tool = ""): string {
-  if (tool.startsWith("browser_")) return "使用浏览器";
-  return TOOL_ACTIVITY[tool] ?? `使用工具 ${tool}`;
+  return TOOL_LABEL[tool] ?? `使用工具 ${tool}`;
 }
 
 const ACTIVE = new Set(["pending", "running"]);

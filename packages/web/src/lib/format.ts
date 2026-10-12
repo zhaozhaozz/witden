@@ -209,6 +209,51 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   topics: "跨话题引用",
 };
 
+/** What each tool group covers, in people's words. */
+export const TOOL_GROUP_HINT: Record<string, string> = {
+  shell: "在角色的电脑里执行命令",
+  terminal: "交互式或长时间运行的终端会话",
+  files: "读写和整理电脑里的文件，并分享到话题",
+  desktop: "查看屏幕，使用鼠标和键盘",
+  browser: "操作电脑里的浏览器（桌面上可见的或后台的）",
+  collaborate: "给其他角色发消息、委派任务（受「可以联系的角色」限制）",
+  memory: "记住和检索笔记与知识",
+  topics: "引用请求者能阅读的其他话题",
+};
+
+/** Tool names as actions ("正在" + label reads naturally too). */
+export const TOOL_LABEL: Record<string, string> = {
+  run_command: "执行命令",
+  terminal_start: "启动终端",
+  terminal_read: "读取终端输出",
+  terminal_input: "向终端输入",
+  terminal_control: "中断或结束终端",
+  read_file: "读取文件",
+  write_file: "写入文件",
+  list_directory: "查看目录",
+  move_file: "移动或重命名文件",
+  share_file: "分享文件到话题",
+  screenshot: "截取屏幕",
+  mouse: "操作鼠标",
+  keyboard: "操作键盘",
+  release_desktop: "交还桌面",
+  browser_open: "打开网页",
+  browser_snapshot: "读取网页内容",
+  browser_click: "点击网页元素",
+  browser_type: "在网页中输入",
+  browser_download: "下载文件",
+  browser_screenshot: "网页截图",
+  browser_close: "关闭浏览器",
+  message_role: "联系其他角色",
+  delegate_task: "委派任务",
+  remember: "记录记忆",
+  recall: "检索记忆",
+  read_topic: "查阅其他话题",
+  ask_human: "向人提问",
+  post_progress: "汇报进度",
+  follow_up_later: "稍后跟进",
+};
+
 export const RUNNER_VIA_LABEL: Record<string, string> = {
   websocket: "主动连入（WebSocket）",
   stdio: "管理通道（stdio）",
