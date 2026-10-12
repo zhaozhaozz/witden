@@ -174,6 +174,16 @@ export async function roleRoutes(app: FastifyInstance) {
       return roleOut(db, role, true);
     }),
   );
+  /** Store an image and return its URL without assigning it (editors save it with the role's other fields). */
+  app.post(
+    "/api/avatars",
+    authedNoTx(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.ROLE_MANAGE);
+      const file = await req.file({ limits: { fileSize: MAX_AVATAR_BYTES + 1 } });
+      if (!file) throw new BadRequest("file is required");
+      return { avatar_url: saveAvatar(await file.toBuffer()) };
+    }),
+  );
   app.get("/api/avatars/:file", async (req, reply) => {
     const found = avatarFile(params(req).file);
     if (!found) return reply.code(404).send({ error: { code: "not_found", message: "no such avatar", detail: {} } });

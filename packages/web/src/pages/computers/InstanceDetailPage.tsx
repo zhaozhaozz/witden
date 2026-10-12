@@ -17,6 +17,9 @@ import { useDebounced, useInterval, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
+  badgeColor,
+  ColorPicker,
+  ComputerBadge,
   Empty,
   Field,
   FormModal,
@@ -28,6 +31,7 @@ import {
   Loading,
   Modal,
   PageHeader,
+  RoleBadge,
   Section,
   Tabs,
   Tag,
@@ -80,7 +84,12 @@ export default function InstanceDetailPage() {
           return (
             <>
               <PageHeader
-                title={inst.name}
+                title={
+                  <span className="title-with-avatar">
+                    <span className="title-dot" style={{ background: badgeColor(inst.id, inst.color) }} aria-hidden />
+                    {inst.name}
+                  </span>
+                }
                 sub={
                   <span className="head-meta">
                     <Link to="/computers">电脑</Link>
@@ -410,6 +419,7 @@ function Overview({
                   `v${inst.template_version}`
                 ),
               ],
+              ["颜色", <InstanceColor key="color" inst={inst} onChanged={(i) => onChanged(i)} />],
               ["镜像", <code className="id">{String(inst.spec?.image ?? "—")}</code>],
               ["工作目录", <code className="id">{String(inst.spec?.workdir ?? "—")}</code>],
               [
@@ -633,8 +643,8 @@ function Overview({
                 inst.roles.length ? (
                   <span className="inline-list">
                     {inst.roles.map((r) => (
-                      <span key={r.id}>
-                        {r.name} <Handle handle={r.handle} />
+                      <span key={r.id} className="badge-row">
+                        <RoleBadge role={r} />
                         {r.status === "disabled" ? <Tag tone="off">已停用</Tag> : null}
                       </span>
                     ))}
@@ -1252,5 +1262,25 @@ function TasksTab({ inst }: { inst: Instance }) {
         }
       </Loaded>
     </Section>
+  );
+}
+
+/** The computer's badge colour; people who manage it change it in place. */
+function InstanceColor({ inst, onChanged }: { inst: Instance; onChanged: (i: Instance) => void }) {
+  const { can } = useAuth();
+  const { run, busy } = useAction();
+  if (!can("instance.manage")) return <ComputerBadge computer={inst} />;
+  return (
+    <span className="badge-row">
+      <ComputerBadge computer={inst} />
+      <ColorPicker
+        value={inst.color}
+        disabled={busy}
+        onChange={async (color) => {
+          const out = await run(() => api.patch<Instance>(`/api/instances/${inst.id}`, { color }), "已更新颜色");
+          if (out) onChanged(out);
+        }}
+      />
+    </span>
   );
 }

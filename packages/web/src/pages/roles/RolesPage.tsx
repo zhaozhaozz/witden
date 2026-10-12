@@ -3,7 +3,7 @@ import { api } from "../../api/client";
 import type { Role } from "../../api/types";
 import { fmtNumber, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
-import { Avatar, Empty, Handle, Loaded, PageHeader, StatusChip, Tag } from "../../ui/kit";
+import { Avatar, ComputerBadge, Empty, Handle, Loaded, PageHeader, StatusChip, Tag } from "../../ui/kit";
 import { translateWarning } from "./roleParts";
 
 export default function RolesPage() {
@@ -41,7 +41,7 @@ export default function RolesPage() {
                     <tr key={r.id} className="row-link" onClick={() => nav(`/roles/${r.id}`)}>
                       <td>
                         <div className="role-cell">
-                          <Avatar id={r.id} name={r.name} kind="role" size={30} src={r.avatar_url} />
+                          <Avatar id={r.id} name={r.name} kind="role" size={30} src={r.avatar_url} color={r.color} />
                           <div>
                             <div className="strong">
                               {r.name} <Handle handle={r.handle} />
@@ -63,7 +63,7 @@ export default function RolesPage() {
                       <td>
                         {r.instance ? (
                           <>
-                            {r.instance.name}
+                            <ComputerBadge computer={r.instance} />
                             <div>
                               <StatusChip meta={instanceStatus(r.instance.status)} compact />
                             </div>

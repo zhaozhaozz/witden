@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { ModelConfig, ModelProtocol, ModelProvider, RemoteModel } from "../api/types";
 import { fmtNumber, fmtRelative, genericStatus } from "../lib/format";
 import { useResource } from "../lib/hooks";
+import { useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
 import {
   Capability,
@@ -14,6 +15,7 @@ import {
   Loaded,
   Loading,
   PageHeader,
+  RoleBadge,
   StatusChip,
   Tag,
   Toggle,
@@ -254,6 +256,7 @@ function ModelRow({
 }) {
   const { confirm } = useFeedback();
   const { run, busy } = useAction();
+  const dir = useDirectory();
   const [checking, setChecking] = useState(false);
   const caps = m.capabilities ?? {};
   const errors = Object.entries(caps.errors ?? {});
@@ -290,7 +293,10 @@ function ModelRow({
       <td>
         <span className="inline-list">
           {m.used_by_roles?.length ? (
-            m.used_by_roles.map((h) => <Handle key={h} handle={h} />)
+            m.used_by_roles.map((h) => {
+              const r = dir.roles.find((x) => x.handle === h);
+              return r ? <RoleBadge key={h} role={r} compact /> : <Handle key={h} handle={h} />;
+            })
           ) : (
             <span className="muted">无</span>
           )}

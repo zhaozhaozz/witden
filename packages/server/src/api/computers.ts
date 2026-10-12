@@ -44,7 +44,14 @@ async function taskTitle(db: Db, user: User, task: Task): Promise<string> {
 async function instanceOut(db: Db, inst: ComputerInstance, opts: { detail?: boolean; user?: User } = {}) {
   const data: Record<string, any> = row(inst);
   const rs = await db.select().from(roles).where(eq(roles.instanceId, inst.id));
-  data.roles = rs.map((r) => ({ id: r.id, name: r.name, handle: r.handle, status: r.status }));
+  data.roles = rs.map((r) => ({
+    id: r.id,
+    name: r.name,
+    handle: r.handle,
+    status: r.status,
+    color: r.color,
+    avatar_url: r.avatarUrl,
+  }));
   const lease = await currentLease(db, inst.id);
   data.operator = lease
     ? {

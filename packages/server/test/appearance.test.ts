@@ -81,6 +81,15 @@ describe("appearance", () => {
       ).status,
     ).toBe(403);
     expect((await admin("DELETE", `/api/roles/${w.ids.dev}/avatar`)).body.avatar_url).toBeNull();
+    // editors upload first and save the URL with the rest of the form
+    const stored = await w.api("POST", "/api/avatars", {
+      token: w.adminToken,
+      ...multipart("me.png", png, "image/png"),
+    });
+    expect(stored.body.avatar_url).toBe(up.body.avatar_url);
+    expect(
+      (await admin("PATCH", `/api/roles/${w.ids.dev}`, { avatar_url: stored.body.avatar_url })).body.avatar_url,
+    ).toBe(up.body.avatar_url);
     // Slack fetches icons itself: uploaded avatars go out with the platform's address
     expect(absoluteAvatarUrl(up.body.avatar_url)).toBe(`http://localhost:8320${up.body.avatar_url}`);
     expect(absoluteAvatarUrl("https://img.example/a.png")).toBe("https://img.example/a.png");

@@ -6,7 +6,7 @@ import { CONVERSATION_KIND, PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
-import { Empty, ErrorNote, Loading, Tag } from "../../ui/kit";
+import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
 import { type Author, MessageItem } from "./MessageItem";
@@ -130,6 +130,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
         name: p?.name ?? r?.name ?? "已移除的角色",
         handle: p?.handle ?? r?.handle,
         avatarUrl: p?.avatar_url ?? r?.avatar_url,
+        color: p?.color ?? r?.color,
+        computer: p?.instance ?? r?.instance ?? null,
       };
     }
     if (m.author_type === "user") {
@@ -213,6 +215,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               )}
             </div>
             {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
+            <TopicCast participants={topic.participants ?? []} />
           </div>
           <button type="button" className="btn btn-sm" onClick={togglePanel} aria-pressed={panel}>
             {panel ? "收起侧栏" : "任务与参与者"}
@@ -341,6 +344,36 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             bumpTasks();
           }}
         />
+      ) : null}
+    </div>
+  );
+}
+
+/** The roles taking part in a topic and the computers they work on, as badges. */
+function TopicCast({ participants }: { participants: NonNullable<Topic["participants"]> }) {
+  const roles = participants.filter((p) => p.type === "role");
+  if (!roles.length) return null;
+  const computers = new Map<string, { id: string; name: string; color: string | null }>();
+  for (const r of roles) if (r.instance) computers.set(r.instance.id, r.instance);
+  return (
+    <div className="topic-cast">
+      <span className="badge-row">
+        {roles.map((r) => (
+          <span key={r.id} className={r.status === "disabled" ? "badge-off" : undefined}>
+            <RoleBadge
+              role={{ id: r.id, name: r.name, handle: r.handle, color: r.color, avatar_url: r.avatar_url }}
+              title={r.status === "disabled" ? `${r.name} @${r.handle}（已停用）` : undefined}
+            />
+          </span>
+        ))}
+      </span>
+      {computers.size ? (
+        <span className="badge-row" title="这些角色在各自的电脑里工作">
+          <span className="small muted">在</span>
+          {[...computers.values()].map((c) => (
+            <ComputerBadge key={c.id} computer={c} />
+          ))}
+        </span>
       ) : null}
     </div>
   );

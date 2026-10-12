@@ -39,19 +39,142 @@ export function Avatar({
   kind,
   size = 28,
   src,
+  color,
 }: {
   id: string;
   name: string;
   kind: "role" | "user" | "system";
   size?: number;
   src?: string | null;
+  /** A chosen badge colour (roles); otherwise a stable hue derived from the id. */
+  color?: string | null;
 }) {
-  const style = { width: size, height: size, fontSize: Math.round(size * 0.42), "--hue": hueOf(id) } as CSSProperties;
-  if (src) return <img className={`avatar avatar-${kind}`} style={style} src={src} alt="" />;
+  const style = {
+    width: size,
+    height: size,
+    fontSize: Math.round(size * 0.42),
+    "--hue": hueOf(id),
+    ...(color ? { "--avatar-color": color } : {}),
+  } as CSSProperties;
+  const cls = `avatar avatar-${kind}${color ? " avatar-colored" : ""}`;
+  if (src) return <img className={cls} style={style} src={src} alt="" />;
   return (
-    <span className={`avatar avatar-${kind}`} style={style} aria-hidden>
+    <span className={cls} style={style} aria-hidden>
       {initials(name)}
     </span>
+  );
+}
+
+/** Colour of a role or computer badge: the chosen one, or a stable colour derived from the id. */
+export function badgeColor(id: string, color?: string | null): string {
+  return color || `hsl(${hueOf(id)} 46% 42%)`;
+}
+
+export interface RoleLike {
+  id: string;
+  name: string;
+  handle?: string | null;
+  color?: string | null;
+  avatar_url?: string | null;
+}
+
+/** A role wherever it appears: avatar, name and @handle in the role's colour. */
+export function RoleBadge({ role, compact, title }: { role: RoleLike; compact?: boolean; title?: string }) {
+  return (
+    <span
+      className="badge badge-role"
+      style={{ "--badge": badgeColor(role.id, role.color) } as CSSProperties}
+      title={title ?? (role.handle ? `${role.name} @${role.handle}` : role.name)}
+    >
+      <Avatar id={role.id} name={role.name} kind="role" size={16} src={role.avatar_url} color={role.color} />
+      {compact && role.handle ? null : <span className="badge-name">{role.name}</span>}
+      {role.handle ? <span className="badge-handle">@{role.handle}</span> : null}
+    </span>
+  );
+}
+
+export interface ComputerLike {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+/** A computer wherever it appears: a screen icon and its name in the computer's colour. */
+export function ComputerBadge({ computer, title }: { computer: ComputerLike; title?: string }) {
+  return (
+    <span
+      className="badge badge-computer"
+      style={{ "--badge": badgeColor(computer.id, computer.color) } as CSSProperties}
+      title={title ?? `电脑 ${computer.name}`}
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
+        <rect x="1.5" y="2.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M5.5 14h5M8 11.5V14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      </svg>
+      <span className="badge-name">{computer.name}</span>
+    </span>
+  );
+}
+
+export const BADGE_COLORS = [
+  "#1e6fd9",
+  "#0b7285",
+  "#0f9d58",
+  "#5c940d",
+  "#b7791f",
+  "#d9480f",
+  "#c92a2a",
+  "#c2255c",
+  "#9c36b5",
+  "#6741d9",
+  "#495057",
+];
+
+/** Preset swatches, a custom colour, or automatic (null: derived from the id). */
+export function ColorPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | null | undefined;
+  onChange: (color: string | null) => void;
+  disabled?: boolean;
+}) {
+  const current = value?.toLowerCase() ?? null;
+  return (
+    <div className="color-picker" role="radiogroup" aria-label="颜色">
+      <button
+        type="button"
+        className={`swatch swatch-auto${current ? "" : " swatch-on"}`}
+        disabled={disabled}
+        aria-pressed={!current}
+        title="自动：按名称生成固定的颜色"
+        onClick={() => onChange(null)}
+      >
+        自动
+      </button>
+      {BADGE_COLORS.map((c) => (
+        <button
+          type="button"
+          key={c}
+          className={`swatch${current === c ? " swatch-on" : ""}`}
+          style={{ background: c }}
+          disabled={disabled}
+          aria-pressed={current === c}
+          title={c}
+          onClick={() => onChange(c)}
+        />
+      ))}
+      <label className="swatch-custom" title="自定义颜色">
+        <input
+          type="color"
+          value={current ?? "#1e6fd9"}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <span className="small">自定义</span>
+      </label>
+    </div>
   );
 }
 

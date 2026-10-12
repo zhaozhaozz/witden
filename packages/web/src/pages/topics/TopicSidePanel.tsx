@@ -6,7 +6,19 @@ import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted } from "../.
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
-import { Avatar, Empty, Field, Guarded, Handle, Loaded, Tabs, Tag, Toggle } from "../../ui/kit";
+import {
+  Avatar,
+  ComputerBadge,
+  Empty,
+  Field,
+  Guarded,
+  Handle,
+  Loaded,
+  RoleBadge,
+  Tabs,
+  Tag,
+  Toggle,
+} from "../../ui/kit";
 import { ApprovalCard } from "../approvalParts";
 import { AgentSessionList } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
@@ -130,8 +142,8 @@ function TasksTab({ res }: { res: Resource<Task[]> }) {
                     <div className="small task-progress">{t.progress}</div>
                   ) : null}
                   <div className="task-card-meta small muted">
-                    {t.owner ? <Handle handle={t.owner.handle} /> : null}
-                    {t.instance ? <span>电脑 {t.instance.name}</span> : <span>无电脑</span>}
+                    {t.owner ? <RoleBadge role={t.owner} compact /> : null}
+                    {t.instance ? <ComputerBadge computer={t.instance} /> : <span>无电脑</span>}
                     {t.requester ? <span>{t.requester.name} 发起</span> : null}
                     <span title={fmtTime(t.updated_at)}>{fmtRelative(t.updated_at)}</span>
                   </div>
@@ -201,11 +213,12 @@ function PeopleTab({
       <ul className="people">
         {participants.map((p) => (
           <li key={`${p.type}:${p.id}`} className="person">
-            <Avatar id={p.id} name={p.name} kind={p.type} size={28} src={p.avatar_url} />
+            <Avatar id={p.id} name={p.name} kind={p.type} size={28} src={p.avatar_url} color={p.color} />
             <div className="person-main">
               <div className="person-name">
                 <span>{p.name}</span>
                 {p.type === "role" && p.handle ? <Handle handle={p.handle} /> : null}
+                {p.type === "role" && p.instance ? <ComputerBadge computer={p.instance} /> : null}
                 {p.is_owner ? <Tag tone="accent">负责人</Tag> : null}
                 {p.type === "role" && p.status === "disabled" ? <Tag tone="off">已停用</Tag> : null}
               </div>

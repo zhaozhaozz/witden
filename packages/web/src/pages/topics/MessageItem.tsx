@@ -4,7 +4,7 @@ import { downloadFile } from "../../api/client";
 import type { Artifact, Message } from "../../api/types";
 import { fmtBytes, fmtDateTime, fmtTime, PLATFORM_LABEL } from "../../lib/format";
 import { useAction } from "../../ui/feedback";
-import { Avatar, Handle } from "../../ui/kit";
+import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 
 export interface Author {
   kind: "user" | "role" | "system" | "external";
@@ -12,6 +12,9 @@ export interface Author {
   name: string;
   handle?: string | null;
   avatarUrl?: string | null;
+  /** Roles: badge colour and the computer the role works on. */
+  color?: string | null;
+  computer?: { id: string; name: string; color?: string | null } | null;
   isMe?: boolean;
 }
 
@@ -114,15 +117,30 @@ export function MessageItem({
             kind={author.kind === "role" ? "role" : "user"}
             size={32}
             src={author.avatarUrl}
+            color={author.color}
           />
         )}
       </div>
       <div className="msg-main">
         {!compact ? (
           <div className="msg-head">
-            <span className="msg-author">{author.name}</span>
-            {author.kind === "role" && author.handle ? <Handle handle={author.handle} /> : null}
-            {author.kind === "role" ? <span className="ai-mark">AI 员工</span> : null}
+            {author.kind === "role" ? (
+              <>
+                <RoleBadge
+                  role={{
+                    id: author.id,
+                    name: author.name,
+                    handle: author.handle,
+                    color: author.color,
+                    avatar_url: author.avatarUrl,
+                  }}
+                />
+                {author.computer ? <ComputerBadge computer={author.computer} /> : null}
+                <span className="ai-mark">AI 员工</span>
+              </>
+            ) : (
+              <span className="msg-author">{author.name}</span>
+            )}
             {author.kind === "external" || (msg.source && msg.source !== "web" && msg.source !== "internal") ? (
               <span className="tag">来自 {PLATFORM_LABEL[msg.source] ?? msg.source}</span>
             ) : null}

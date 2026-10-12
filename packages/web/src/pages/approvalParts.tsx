@@ -6,7 +6,7 @@ import { APPROVALS_EVENT } from "../Layout";
 import { fmtRelative, fmtTime, genericStatus, isRestricted } from "../lib/format";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
-import { Handle, JsonBlock, StatusChip } from "../ui/kit";
+import { JsonBlock, RoleBadge, StatusChip } from "../ui/kit";
 
 function actionLabel(a: Approval): string {
   if (a.action === "disclose") return "发送含受限资料的消息";
@@ -54,7 +54,11 @@ export function ApprovalCard({
     <article className={`approval approval-${a.status}`}>
       <header className="approval-head">
         <div className="approval-title">
-          {a.role ? <Handle handle={a.role.handle} /> : <span className="muted">未知角色</span>}
+          {a.role ? (
+            <RoleBadge role={{ ...a.role, name: a.role.name ?? a.role.handle }} />
+          ) : (
+            <span className="muted">未知角色</span>
+          )}
           <strong>{actionLabel(a)}</strong>
         </div>
         <StatusChip meta={genericStatus(a.status)} compact />

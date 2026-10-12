@@ -7,7 +7,18 @@ import { fmtRelative } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
-import { Empty, Field, FormModal, Handle, Loaded, PageHeader, Tag } from "../../ui/kit";
+import {
+  ColorPicker,
+  ComputerBadge,
+  Empty,
+  Field,
+  FieldGroup,
+  FormModal,
+  Loaded,
+  PageHeader,
+  RoleBadge,
+  Tag,
+} from "../../ui/kit";
 import {
   ComputersNav,
   fromDraft,
@@ -67,8 +78,8 @@ export default function InstancesPage() {
                   {rows.map((i) => (
                     <tr key={i.id} className="row-link" onClick={() => nav(`/computers/${i.id}`)}>
                       <td>
-                        <Link to={`/computers/${i.id}`} className="strong" onClick={(e) => e.stopPropagation()}>
-                          {i.name}
+                        <Link to={`/computers/${i.id}`} onClick={(e) => e.stopPropagation()}>
+                          <ComputerBadge computer={i} />
                         </Link>
                         <div className="small muted">{i.spec?.kind === "desktop" ? "桌面电脑" : "命令行电脑"}</div>
                       </td>
@@ -86,9 +97,9 @@ export default function InstancesPage() {
                       <td className="small">{resourceSummary(i.resources)}</td>
                       <td>
                         {i.roles.length ? (
-                          <span className="inline-list">
+                          <span className="badge-row">
                             {i.roles.map((r) => (
-                              <Handle key={r.id} handle={r.handle} />
+                              <RoleBadge key={r.id} role={r} compact />
                             ))}
                           </span>
                         ) : (
@@ -163,6 +174,7 @@ function CreateInstanceDialog({
   const { run, busy } = useAction();
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [name, setName] = useState("");
+  const [color, setColor] = useState<string | null>(null);
   const [draft, setDraft] = useState<ResourceDraft>(toDraft(templates[0]?.default_resources));
   const tpl = templates.find((t) => t.id === templateId);
 
@@ -182,7 +194,8 @@ function CreateInstanceDialog({
       onClose={onClose}
       onSubmit={async () => {
         const i = await run(
-          () => api.post<Instance>("/api/instances", { template_id: templateId, name, resources: fromDraft(draft) }),
+          () =>
+            api.post<Instance>("/api/instances", { template_id: templateId, name, color, resources: fromDraft(draft) }),
           "电脑正在创建，完成后会自动启动",
         );
         if (i) onCreated(i);
@@ -209,6 +222,12 @@ function CreateInstanceDialog({
       <Field label="名称" hint="2–63 个字符：小写字母、数字和短横线，例如 dev-01。创建后不能修改。">
         <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="dev-01" />
       </Field>
+      <FieldGroup label="颜色" hint="话题、任务等处的电脑徽章使用这个颜色">
+        <ColorPicker value={color} onChange={setColor} />
+        <div className="badge-row">
+          <ComputerBadge computer={{ id: name || "new-computer", name: name || "电脑名称", color }} />
+        </div>
+      </FieldGroup>
       <ResourceFields value={draft} onChange={setDraft} />
       <p className="small muted">电脑创建后按模板快照固定配置；之后修改模板不会静默改变已有电脑。</p>
     </FormModal>

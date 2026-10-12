@@ -6,7 +6,7 @@ import type { Task } from "../../api/types";
 import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, taskStatus } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
-import { Empty, Guarded, Handle, Loaded, PageHeader } from "../../ui/kit";
+import { ComputerBadge, Empty, Guarded, Loaded, PageHeader, RoleBadge } from "../../ui/kit";
 import { TaskStatusChip } from "./taskParts";
 
 const FILTERS: { key: string; label: string; statuses: string[] }[] = [
@@ -122,8 +122,10 @@ export default function TasksPage() {
                           <div className={`reason reason-${taskStatus(t.status).tone}`}>{t.status_reason}</div>
                         ) : null}
                       </td>
-                      <td>{t.owner ? <Handle handle={t.owner.handle} /> : <span className="muted">—</span>}</td>
-                      <td className="nowrap">{t.instance ? t.instance.name : <span className="muted">无</span>}</td>
+                      <td>{t.owner ? <RoleBadge role={t.owner} /> : <span className="muted">—</span>}</td>
+                      <td className="nowrap">
+                        {t.instance ? <ComputerBadge computer={t.instance} /> : <span className="muted">无</span>}
+                      </td>
                       <td>
                         {t.topic ? (
                           <Link to={`/topics/${t.topic.id}`} onClick={(e) => e.stopPropagation()}>

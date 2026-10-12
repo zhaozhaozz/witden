@@ -31,6 +31,9 @@ export interface Participant {
   history_from: string | null;
   handle?: string | null;
   avatar_url?: string | null;
+  /** Roles: badge colour and the computer the role works on. */
+  color?: string | null;
+  instance?: { id: string; name: string; color: string | null } | null;
   status?: string | null;
 }
 
@@ -189,8 +192,8 @@ export interface Task {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
-  owner: { id: string; handle: string; name: string } | null;
-  instance: { id: string; name: string; status: string } | null;
+  owner: { id: string; handle: string; name: string; color?: string | null; avatar_url?: string | null } | null;
+  instance: { id: string; name: string; status: string; color?: string | null } | null;
   topic: { id: string; title: string; kind: string } | null;
   requester: { id: string; name: string } | null;
   children?: { id: string; title: string; status: TaskStatus; owner_role_id: string }[];
@@ -267,7 +270,7 @@ export interface Approval {
   can_decide?: boolean;
   /** Approving needs sight of the held material; deciders without it may only reject. */
   can_approve?: boolean;
-  role?: { id: string; handle: string } | null;
+  role?: { id: string; handle: string; name?: string; color?: string | null; avatar_url?: string | null } | null;
 }
 
 export interface Template {
@@ -335,6 +338,8 @@ export interface RunnerStatus {
 export interface Instance {
   id: string;
   name: string;
+  /** Badge colour (#rrggbb); null = derived from the id. */
+  color: string | null;
   template_id: string;
   template_version: number;
   spec: Dict & { kind?: string; image?: string; user?: string; workdir?: string; desktop?: Dict | null };
@@ -353,7 +358,14 @@ export interface Instance {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  roles: { id: string; name: string; handle: string; status: string }[];
+  roles: {
+    id: string;
+    name: string;
+    handle: string;
+    status: string;
+    color?: string | null;
+    avatar_url?: string | null;
+  }[];
   operator: InstanceOperator | null;
   active_tasks?: { id: string; title: string; status: TaskStatus; owner_role_id: string }[];
   waiting_tasks?: string[];
@@ -438,6 +450,8 @@ export interface Role {
   name: string;
   handle: string;
   avatar_url: string | null;
+  /** Badge colour (#rrggbb); null = derived from the id. */
+  color: string | null;
   description: string;
   system_prompt?: string;
   model_config_id: string | null;
@@ -456,7 +470,7 @@ export interface Role {
   created_by?: string | null;
   created_at: string;
   updated_at: string;
-  instance: { id: string; name: string; status: string; kind?: string } | null;
+  instance: { id: string; name: string; status: string; kind?: string; color?: string | null } | null;
   model: {
     id: string;
     name: string;

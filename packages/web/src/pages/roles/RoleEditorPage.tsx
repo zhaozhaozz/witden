@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type {
@@ -18,6 +18,7 @@ import { useAction, useFeedback } from "../../ui/feedback";
 import {
   Avatar,
   Capability,
+  ColorPicker,
   Empty,
   ErrorNote,
   Field,
@@ -28,6 +29,7 @@ import {
   Loading,
   MultiPick,
   PageHeader,
+  RoleBadge,
   Section,
   StatusChip,
   Toggle,
@@ -40,6 +42,7 @@ interface Draft {
   name: string;
   handle: string;
   avatar_url: string;
+  color: string | null;
   description: string;
   system_prompt: string;
   model_config_id: string;
@@ -61,6 +64,7 @@ function toDraft(r: Role | null): Draft {
     name: r?.name ?? "",
     handle: r?.handle ?? "",
     avatar_url: r?.avatar_url ?? "",
+    color: r?.color ?? null,
     description: r?.description ?? "",
     system_prompt: r?.system_prompt ?? "",
     model_config_id: r?.model_config_id ?? "",
@@ -93,6 +97,7 @@ function toBody(d: Draft): Record<string, unknown> {
     name: d.name.trim(),
     handle: d.handle.trim().toLowerCase(),
     avatar_url: d.avatar_url.trim() || null,
+    color: d.color,
     description: d.description,
     system_prompt: d.system_prompt,
     model_config_id: d.model_config_id || null,
@@ -246,7 +251,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
         title={
           role ? (
             <span className="title-with-avatar">
-              <Avatar id={role.id} name={role.name} kind="role" size={30} src={role.avatar_url} />
+              <Avatar id={role.id} name={role.name} kind="role" size={30} src={role.avatar_url} color={role.color} />
               {role.name} <Handle handle={role.handle} />
             </span>
           ) : (
@@ -331,9 +336,31 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   placeholder="dev"
                 />
               </Field>
-              <Field label="头像地址" hint="可选">
-                <input value={draft.avatar_url} onChange={(e) => set("avatar_url", e.target.value)} />
-              </Field>
+            </div>
+            <div className="form-row">
+              <FieldGroup label="头像" hint="PNG、JPEG、GIF 或 WebP，最大 1 MB；也可以填写图片地址">
+                <AvatarEditor
+                  id={role?.id ?? (draft.handle || "new-role")}
+                  name={draft.name || draft.handle || "?"}
+                  color={draft.color}
+                  value={draft.avatar_url}
+                  onChange={(url) => set("avatar_url", url)}
+                />
+              </FieldGroup>
+              <FieldGroup label="颜色" hint="话题、任务、审批等处的角色徽章使用这个颜色">
+                <ColorPicker value={draft.color} onChange={(c) => set("color", c)} />
+                <div className="badge-row">
+                  <RoleBadge
+                    role={{
+                      id: role?.id ?? (draft.handle || "new-role"),
+                      name: draft.name || "角色名称",
+                      handle: draft.handle || "handle",
+                      color: draft.color,
+                      avatar_url: draft.avatar_url || null,
+                    }}
+                  />
+                </div>
+              </FieldGroup>
             </div>
             <Field label="职责说明" hint="成员在邀请、私信时看到的介绍">
               <textarea rows={2} value={draft.description} onChange={(e) => set("description", e.target.value)} />
@@ -592,6 +619,7 @@ const ALL_FIELD_ZH: Record<string, string> = {
   name: "名称",
   handle: "@ 名称",
   avatar_url: "头像",
+  color: "颜色",
   description: "职责说明",
   response_mode: "参与方式",
   allowed_contacts: "可联系角色",
@@ -801,5 +829,61 @@ function RoleMemories({ role }: { role: Role }) {
         }
       </Loaded>
     </Section>
+  );
+}
+
+/** Upload an image (stored by the server, saved with the role) or type an image URL. */
+function AvatarEditor({
+  id,
+  name,
+  color,
+  value,
+  onChange,
+}: {
+  id: string;
+  name: string;
+  color: string | null;
+  value: string;
+  onChange: (url: string) => void;
+}) {
+  const { run, busy } = useAction();
+  const input = useRef<HTMLInputElement>(null);
+  return (
+    <div className="avatar-edit">
+      <Avatar id={id} name={name} kind="role" size={48} src={value || null} color={color} />
+      <div className="avatar-edit-controls">
+        <div className="btn-row">
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => input.current?.click()}>
+            {busy ? "上传中…" : "上传图片"}
+          </button>
+          {value ? (
+            <button type="button" className="btn btn-sm btn-danger-ghost" onClick={() => onChange("")}>
+              移除
+            </button>
+          ) : null}
+          <input
+            ref={input}
+            type="file"
+            hidden
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) return;
+              const form = new FormData();
+              form.append("file", file);
+              const out = await run(() => api.upload<{ avatar_url: string }>("/api/avatars", form));
+              if (out) onChange(out.avatar_url);
+            }}
+          />
+        </div>
+        <input
+          className="mono"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="或填写图片地址 https://…"
+        />
+      </div>
+    </div>
   );
 }

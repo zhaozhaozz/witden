@@ -2,7 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { AgentSession } from "../api/types";
 import { fmtDateTime, fmtRelative } from "../lib/format";
-import { Empty, Handle, Tag } from "../ui/kit";
+import { useDirectory } from "../lib/session";
+import { Empty, RoleBadge, Tag } from "../ui/kit";
 
 /**
  * Agent sessions: one per role × topic, so a role working in several topics never mixes their contexts.
@@ -33,6 +34,7 @@ export function AgentSessionList({ sessions, by }: { sessions: AgentSession[]; b
 }
 
 function SessionItem({ session: s, by }: { session: AgentSession; by: "topic" | "role" }) {
+  const dir = useDirectory();
   const [open, setOpen] = useState(false);
   const notes = [...(s.notes ?? [])].reverse();
   return (
@@ -45,9 +47,7 @@ function SessionItem({ session: s, by }: { session: AgentSession; by: "topic" | 
             <span className="muted">未知话题</span>
           )
         ) : s.role ? (
-          <span>
-            {s.role.name} <Handle handle={s.role.handle} />
-          </span>
+          <RoleBadge role={{ ...s.role, ...(dir.roleById.get(s.role.id) ?? {}) }} />
         ) : (
           <span className="muted">已删除的角色</span>
         )}{" "}

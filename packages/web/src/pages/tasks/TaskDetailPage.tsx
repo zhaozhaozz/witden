@@ -18,7 +18,20 @@ import {
 import { useDebounced, useResource } from "../../lib/hooks";
 import { COMPUTER_PERMS } from "../../lib/perms";
 import { useAuth, useDirectory } from "../../lib/session";
-import { Empty, Guarded, Handle, IdText, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag } from "../../ui/kit";
+import {
+  ComputerBadge,
+  Empty,
+  Guarded,
+  IdText,
+  KV,
+  Loaded,
+  PageHeader,
+  RoleBadge,
+  Section,
+  StatusChip,
+  Tabs,
+  Tag,
+} from "../../ui/kit";
 import { AssignmentTrace, type Stop, TraceRail } from "../../ui/trace";
 import { TaskControls, TaskStatusChip } from "./taskParts";
 
@@ -220,16 +233,7 @@ function TaskSummary({ task: t }: { task: Task }) {
       <Section title="概要">
         <KV
           items={[
-            [
-              "负责角色",
-              t.owner ? (
-                <span>
-                  {t.owner.name} <Handle handle={t.owner.handle} />
-                </span>
-              ) : (
-                "—"
-              ),
-            ],
+            ["负责角色", t.owner ? <RoleBadge role={t.owner} /> : "—"],
             [
               "请求人",
               t.requester ? (
@@ -255,9 +259,11 @@ function TaskSummary({ task: t }: { task: Task }) {
               t.instance ? (
                 <span className="inline-list">
                   {COMPUTER_PERMS.some(can) ? (
-                    <Link to={`/computers/${t.instance.id}`}>{t.instance.name}</Link>
+                    <Link to={`/computers/${t.instance.id}`}>
+                      <ComputerBadge computer={t.instance} />
+                    </Link>
                   ) : (
-                    t.instance.name
+                    <ComputerBadge computer={t.instance} />
                   )}
                   <StatusChip meta={instanceStatus(t.instance.status)} compact />
                 </span>
@@ -605,7 +611,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
               ["通讯接入", source.connection_id ? <IdText id={source.connection_id as string} /> : null],
               ["外部会话", source.conversation_id ? <IdText id={source.conversation_id as string} /> : null],
               ["Thread", source.thread_key ? <code className="id">{String(source.thread_key)}</code> : null],
-              ["执行电脑", t.instance?.name ?? "—"],
+              ["执行电脑", t.instance ? <ComputerBadge computer={t.instance} /> : "—"],
               ["角色会话", trace.session_id ? <IdText id={trace.session_id} /> : null],
             ]}
           />

@@ -4,7 +4,7 @@ import type { Artifact, Mention, Participant, PostMessageResult } from "../../ap
 import { fmtBytes } from "../../lib/format";
 import { useAuth } from "../../lib/session";
 import { useFeedback } from "../../ui/feedback";
-import { Avatar } from "../../ui/kit";
+import { Avatar, ComputerBadge } from "../../ui/kit";
 
 interface Candidate {
   type: "role" | "user";
@@ -13,6 +13,9 @@ interface Candidate {
   /** Text inserted after "@" */
   token: string;
   handle?: string | null;
+  avatarUrl?: string | null;
+  color?: string | null;
+  computer?: { id: string; name: string; color: string | null } | null;
 }
 
 // "@query" right before the caret, at the start of input or after whitespace / opening bracket.
@@ -50,7 +53,16 @@ export function Composer({
     () =>
       participants
         .filter((p) => !(p.type === "user" && p.id === me?.id))
-        .map((p) => ({ type: p.type, id: p.id, name: p.name, token: tokenFor(p), handle: p.handle })),
+        .map((p) => ({
+          type: p.type,
+          id: p.id,
+          name: p.name,
+          token: tokenFor(p),
+          handle: p.handle,
+          avatarUrl: p.avatar_url,
+          color: p.color,
+          computer: p.instance,
+        })),
     [participants, me?.id],
   );
 
@@ -192,9 +204,10 @@ export function Composer({
               }}
               onMouseEnter={() => setActive(i)}
             >
-              <Avatar id={c.id} name={c.name} kind={c.type} size={22} />
+              <Avatar id={c.id} name={c.name} kind={c.type} size={22} src={c.avatarUrl} color={c.color} />
               <span>{c.name}</span>
               <span className="muted small">{c.type === "role" ? `@${c.handle}` : "成员"}</span>
+              {c.computer ? <ComputerBadge computer={c.computer} /> : null}
             </li>
           ))}
         </ul>

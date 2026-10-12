@@ -1259,6 +1259,131 @@ textarea.prompt {
   color: hsl(var(--hue) 45% 26%);
   box-shadow: inset 0 0 0 1px hsl(var(--hue) 35% 76%);
 }
+/* A chosen colour overrides the derived hue. */
+.avatar-role.avatar-colored {
+  background: color-mix(in srgb, var(--avatar-color) 20%, #fff);
+  color: color-mix(in srgb, var(--avatar-color) 78%, #000);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--avatar-color) 40%, #fff);
+}
+img.avatar-role.avatar-colored {
+  box-shadow: 0 0 0 1.5px var(--avatar-color);
+}
+
+/* Role and computer badges: the same element wherever a role or computer is referenced. */
+.badge {
+  --badge: var(--harbor);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  height: 22px;
+  padding: 0 8px 0 3px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--badge) 32%, transparent);
+  background: color-mix(in srgb, var(--badge) 10%, var(--surface));
+  color: color-mix(in srgb, var(--badge) 80%, var(--ink));
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.badge .avatar {
+  font-size: 9px !important;
+}
+.badge-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.badge-handle {
+  opacity: 0.8;
+}
+.badge-computer {
+  padding-left: 6px;
+  border-radius: 5px;
+}
+.badge-computer svg {
+  flex: none;
+}
+.badge-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.badge-off {
+  opacity: 0.5;
+}
+.topic-cast {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 6px;
+}
+
+.title-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.avatar-edit {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.avatar-edit-controls {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+  cursor: pointer;
+}
+.swatch-on {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+.swatch-auto {
+  width: auto;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: var(--paper-2);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.swatch-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.swatch-custom input[type="color"] {
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
 .handle {
   display: inline-flex;
   align-items: center;
