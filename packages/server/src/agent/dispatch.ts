@@ -137,7 +137,6 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
     spaces: [...new Set(role.knowledgeSpaceIds)].sort(),
     approval_required: [...role.approvalRequired],
   };
-  if (role.runtime === "external") env.tools = [...new Set([...env.tools, "external"])].sort();
   if (parent) {
     const p = parent.envelope ?? {};
     // Delegated work can never do more than the delegating task could.
@@ -154,7 +153,6 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
 export async function preflight(db: Db, topic: Topic, role: Role): Promise<string[]> {
   const reasons: string[] = [];
   if (topic.status !== "active") reasons.push("the topic is archived");
-  if (role.runtime === "external") return reasons; // external agents bring their own model inside the computer
   if (!role.modelConfigId) reasons.push(`@${role.handle} has no model configured`);
   else {
     const found = await models.modelWithProvider(db, role.modelConfigId);
@@ -278,7 +276,6 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       sourceMessageId: o.sourceMessage?.id ?? null,
       ownerRoleId: role.id,
       instanceId: role.instanceId,
-      runtime: role.runtime,
       parentTaskId: parent && o.waitsForResult ? parent.id : null,
       spawnedByTaskId: parent?.id ?? null,
       depth: parent ? parent.depth + 1 : 0,
@@ -292,8 +289,6 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
         system_prompt: role.systemPrompt,
         model_params: role.modelParams,
         instance_id: role.instanceId,
-        runtime: role.runtime,
-        runtime_config: role.runtimeConfig,
       },
       assignment: o.assignment ?? {},
       budget,

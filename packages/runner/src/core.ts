@@ -1,5 +1,4 @@
 import os from "node:os";
-import path from "node:path";
 import {
   type HelloMessage,
   READ_ONLY_OPS,
@@ -13,7 +12,6 @@ import { createEnv, type Env, type OpContext, type OpHandler } from "./context.j
 import { abortError, OpError, toRunnerError } from "./errors.js";
 import { Journal } from "./journal.js";
 import type { Logger } from "./log.js";
-import { Agents } from "./ops/agents.js";
 import { Browsers } from "./ops/browser.js";
 import { Desktop } from "./ops/desktop.js";
 import { execRun } from "./ops/exec.js";
@@ -76,7 +74,6 @@ export class RunnerCore {
   readonly files: Files;
   readonly desktop: Desktop;
   readonly browsers: Browsers;
-  readonly agents: Agents;
   readonly streams: StreamManager;
   private transport: RunnerTransport | null = null;
   private readonly inflight = new Map<string, Inflight>();
@@ -105,9 +102,6 @@ export class RunnerCore {
       downloadsDir: options.downloadsDir,
       stateDir: options.stateDir,
     });
-    this.agents = new Agents(this.env, path.join(options.stateDir, "agents"), (event, data, sessionId, requestId) =>
-      this.send({ type: "event", event, sessionId, requestId, data }),
-    );
     this.streams = new StreamManager(
       options.streamPorts,
       {
@@ -122,7 +116,6 @@ export class RunnerCore {
     const f = this.files;
     const d = this.desktop;
     const b = this.browsers;
-    const a = this.agents;
     this.handlers = {
       "system.info": async () => ({
         ...(await this.info()),
@@ -157,19 +150,14 @@ export class RunnerCore {
       "browser.list": async () => b.list(),
       "process.list": async () => processList(),
       "journal.get": async (p) => this.journal.get(reqString(p, "requestId", 256)),
-      "agent.start": (p, ctx) => a.start(p, ctx),
-      "agent.input": async (p) => a.input(p),
-      "agent.read": async (p) => a.read(p),
-      "agent.stop": async (p) => a.stop(p),
     };
   }
 
-  /** Loads the journal and re-adopts agent processes left by a previous runner process. Idempotent. */
+  /** Loads the journal left by a previous runner process. Idempotent. */
   start(): this {
     if (this.started) return this;
     this.started = true;
     this.journal.load();
-    this.agents.restore();
     return this;
   }
 
@@ -208,7 +196,7 @@ export class RunnerCore {
     }
     const desktop = await this.desktop.describe();
     const browser = await this.browsers.available();
-    const tools = ["exec", "file", "process", "agent", "journal"];
+    const tools = ["exec", "file", "process", "journal"];
     if (this.options.streamPorts.length) tools.push("stream");
     if (which("tmux")) tools.push("terminal");
     if (desktop && which("import")) tools.push("screen");
@@ -387,14 +375,13 @@ export class RunnerCore {
 
   /**
    * Stops accepting requests, aborts running ones (exec trees are killed and journaled as killed), closes
-   * streams and browser connections. Terminals, agents and the desktop browser keep running.
+   * streams and browser connections. Terminals and the desktop browser keep running.
    */
   async shutdown(): Promise<void> {
     this.closing = true;
     for (const entry of this.inflight.values()) entry.controller.abort("shutdown");
     await Promise.race([this.drain(), new Promise((r) => setTimeout(r, ABORT_GRACE_MS + 1000))]);
     this.streams.closeAll();
-    this.agents.dispose();
     await this.browsers.dispose();
   }
 }

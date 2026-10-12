@@ -154,9 +154,7 @@ export class Worker {
         }
         if (inst.status === "running" && !inst.pausedAi) {
           // The gateway re-checks everything when the call is retried.
-          const keep = Object.fromEntries(
-            Object.entries(task.wait ?? {}).filter(([k]) => ["retry_call", "external_session"].includes(k)),
-          );
+          const keep = Object.fromEntries(Object.entries(task.wait ?? {}).filter(([k]) => ["retry_call"].includes(k)));
           await setStatus(tx, task, "pending", `computer ${inst.name} is available again`, {
             wait: Object.keys(keep).length ? keep : null,
           });

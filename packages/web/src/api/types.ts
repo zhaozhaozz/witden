@@ -130,8 +130,6 @@ export interface Ref {
   kind?: string;
 }
 
-export type Runtime = "witden" | "external";
-
 /**
  * Why a task is not running (`task.wait`), as written by the server. Fields depend on `type`; a paused task
  * keeps the wait it had plus `resume_to` / `paused_by`. Viewers without access to the task's material only
@@ -144,8 +142,6 @@ export interface TaskWait {
   since?: string;
   /** instance: the computer operation that will be retried when the computer is back. */
   retry_call?: { id: string; name: string; arguments?: unknown };
-  /** external runtime: the agent process session inside the computer. */
-  external_session?: string;
   approval_id?: string;
   child_ids?: string[];
   user_ids?: string[];
@@ -174,8 +170,6 @@ export interface Task {
   owner_role_id: string;
   collaborator_role_ids: string[];
   instance_id: string | null;
-  /** Fixed at creation from the role's runtime. */
-  runtime: Runtime | string;
   /** Parent that waits for this task's result (delegation). */
   parent_task_id: string | null;
   /** Task that started this one, whether or not it waits for it. */
@@ -400,7 +394,7 @@ export interface ActionPreview {
 export interface ExecSession {
   id: string;
   instance_id: string;
-  kind: "terminal" | "browser" | "agent" | string;
+  kind: "terminal" | "browser" | string;
   runner_session_id: string;
   /** desktop: the visible desktop people can watch and take over; background: a separate, unseen session. */
   mode: "desktop" | "background" | string;
@@ -439,16 +433,6 @@ export interface RoleImpact {
   notes: string[];
 }
 
-/** How an external runtime starts its agent inside the role's computer (read by the server's external runner). */
-export interface RuntimeConfig {
-  command?: string;
-  cwd?: string;
-  env?: Record<string, string>;
-  /** Stop the agent after this long (server default 60). */
-  timeout_minutes?: number;
-  [key: string]: unknown;
-}
-
 export interface Role {
   id: string;
   name: string;
@@ -459,10 +443,6 @@ export interface Role {
   model_config_id: string | null;
   model_params?: Dict;
   instance_id: string | null;
-  /** witden: the platform's agent loop (outside the computer); external: a third-party agent CLI inside it. */
-  runtime: Runtime;
-  /** Only returned to role managers. */
-  runtime_config?: RuntimeConfig;
   allowed_tools: string[];
   allowed_contacts?: string[];
   knowledge_space_ids?: string[];

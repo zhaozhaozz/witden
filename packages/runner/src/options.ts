@@ -10,7 +10,7 @@ export interface RunnerOptions {
   /** Default cwd for commands and base for relative paths. */
   workdir: string;
   home: string;
-  /** Journal and agent state; survives runner restarts. */
+  /** Journal and other runner state; survives runner restarts. */
   stateDir: string;
   /** X11 display of the desktop, or null when the computer has none. */
   display: string | null;

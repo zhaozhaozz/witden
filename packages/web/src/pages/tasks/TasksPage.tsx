@@ -3,10 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
 import type { Task } from "../../api/types";
-import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, RUNTIME_LABEL, taskStatus } from "../../lib/format";
+import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, taskStatus } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
-import { Empty, Guarded, Handle, Loaded, PageHeader, Tag } from "../../ui/kit";
+import { Empty, Guarded, Handle, Loaded, PageHeader } from "../../ui/kit";
 import { TaskStatusChip } from "./taskParts";
 
 const FILTERS: { key: string; label: string; statuses: string[] }[] = [
@@ -112,11 +112,6 @@ export default function TasksPage() {
                           <Guarded text={t.title} label="受限任务" />
                         </Link>
                         {t.parent_task_id ? <div className="small muted">委托的子任务 · 第 {t.depth} 层</div> : null}
-                        {t.runtime === "external" ? (
-                          <div>
-                            <Tag tone="accent">{RUNTIME_LABEL.external}</Tag>
-                          </div>
-                        ) : null}
                         {t.progress && !isRestricted(t.progress) ? (
                           <div className="small task-progress">{t.progress}</div>
                         ) : null}

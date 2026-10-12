@@ -260,22 +260,12 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
       expect(passwd.startsWith("root:x:0:0")).toBe(true);
     });
 
-    it("keeps agents, terminals and the journal across a runner restart", async () => {
-      const agent = await conn.ok("agent.start", { command: "sleep 3; echo agent-done; exit 5" });
+    it("keeps terminals and the journal across a runner restart", async () => {
       const { sessionId } = await conn.ok("terminal.create", { command: "export KEEP=yes" });
       const written = await conn.request("file.write", { path: "restart.txt", contentBase64: b64("1") });
       const index = hub.count(instanceId);
       execFileSync("docker", ["exec", name, "pkill", "-TERM", "-f", "witden-runner.mjs"]);
       const fresh = await hub.connection(instanceId, index);
-
-      let read: Record<string, any> = {};
-      for (let i = 0; i < 40; i++) {
-        read = await fresh.ok("agent.read", { sessionId: agent.sessionId });
-        if (!read.running) break;
-        await new Promise((r) => setTimeout(r, 250));
-      }
-      expect(read).toMatchObject({ running: false, exitCode: 5 });
-      expect(read.output).toContain("agent-done");
 
       await fresh.ok("terminal.input", { sessionId, text: 'echo "keep=$KEEP"' });
       let output = "";

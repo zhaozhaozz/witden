@@ -22,6 +22,13 @@
       "when": 1791775065366,
       "tag": "0002_model_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791786880642,
+      "tag": "0003_drop_external_runtime",
+      "breakpoints": true
     }
   ]
 }

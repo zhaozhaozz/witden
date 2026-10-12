@@ -29,13 +29,10 @@ export function roleWarnings(
   const out: string[] = [];
   const caps = cfg?.capabilities ?? {};
   const unusable = cfg ? unusableReason(cfg, provider) : null;
-  if (role.runtime === "external") {
-    if (!role.runtimeConfig?.command) out.push("external runtime without a command: tasks will fail");
-  } else if (!cfg) out.push("no model configured: the role cannot work");
+  if (!cfg) out.push("no model configured: the role cannot work");
   else if (unusable) out.push(`${unusable}: the role cannot work`);
   else if (cfg.status === "unchecked") out.push(`model ${modelLabel(cfg, provider)} has not been checked yet`);
-  if (role.runtime !== "external" && role.allowedTools.length && caps.tools === false)
-    out.push("the model cannot call tools: the role can only chat");
+  if (role.allowedTools.length && caps.tools === false) out.push("the model cannot call tools: the role can only chat");
   if ((role.allowedTools.includes("desktop") || role.allowedTools.includes("browser")) && caps.vision === false) {
     out.push("the model cannot understand images: screenshots will be refused");
   }
@@ -74,7 +71,6 @@ async function roleOut(db: Db, role: Role, full: boolean) {
       "knowledge_space_ids",
       "approval_required",
       "created_by",
-      "runtime_config",
     ])
       delete data[k];
   } else {
@@ -154,7 +150,7 @@ export async function roleRoutes(app: FastifyInstance) {
         resourceType: "role",
         resourceId: role.id,
         roleId: role.id,
-        detail: { handle: role.handle, instance: role.instanceId, model: role.modelConfigId, runtime: role.runtime },
+        detail: { handle: role.handle, instance: role.instanceId, model: role.modelConfigId },
       });
       return roleOut(db, role, true);
     }),

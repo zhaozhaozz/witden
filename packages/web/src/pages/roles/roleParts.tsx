@@ -6,9 +6,9 @@ import { TaskStatusChip } from "../tasks/taskParts";
 
 // Backend warnings are English sentences with a few fixed shapes; show them in Chinese when recognised.
 const WARNING_PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
-  [/^external runtime without a command/, () => "外部运行方式没有填写启动命令：任务会失败"],
   [/^no model configured/, () => "未配置模型：角色无法工作"],
-  [/^model (.+) has been revoked$/, (m) => `模型 ${m[1]} 的密钥已撤销`],
+  [/^the key of (.+) has been revoked: the role cannot work$/, (m) => `服务商 ${m[1]} 的密钥已撤销：角色无法工作`],
+  [/^model (.+) is disabled: the role cannot work$/, (m) => `模型 ${m[1]} 已停用：角色无法工作`],
   [/^model (.+) has not been checked yet$/, (m) => `模型 ${m[1]} 还没有做能力检测`],
   [/^the model cannot call tools/, () => "模型不支持工具调用：角色只能对话"],
   [/^the model cannot understand images/, () => "模型不支持图像理解：桌面操作会被拒绝"],
@@ -40,8 +40,6 @@ const FIELD_ZH: Record<string, string> = {
   model_params: "模型参数",
   instance_id: "电脑",
   allowed_tools: "工具",
-  runtime: "运行方式",
-  runtime_config: "外部智能体配置",
 };
 
 /** Field names are snake_case (server `changes` and the editor); camelCase is accepted too. */

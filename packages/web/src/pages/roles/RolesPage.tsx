@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Role } from "../../api/types";
-import { fmtNumber, genericStatus, instanceStatus, RUNTIME_LABEL, TOOL_GROUP_LABEL } from "../../lib/format";
+import { fmtNumber, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { Avatar, Empty, Handle, Loaded, PageHeader, StatusChip, Tag } from "../../ui/kit";
 import { translateWarning } from "./roleParts";
@@ -73,11 +73,7 @@ export default function RolesPage() {
                         )}
                       </td>
                       <td>
-                        {r.runtime === "external" ? (
-                          <Tag tone="accent" title="在电脑里运行的第三方智能体，自带模型">
-                            {RUNTIME_LABEL.external}
-                          </Tag>
-                        ) : r.model ? (
+                        {r.model ? (
                           <>
                             {r.model.label ?? r.model.name}
                             <div>
@@ -91,9 +87,7 @@ export default function RolesPage() {
                       <td>{r.response_mode === "active" ? "持续参与" : "被 @ 时响应"}</td>
                       <td>
                         <span className="inline-list">
-                          {r.runtime === "external" ? (
-                            <span className="muted small">由外部智能体自行决定</span>
-                          ) : r.allowed_tools.length ? (
+                          {r.allowed_tools.length ? (
                             r.allowed_tools.map((g) => <Tag key={g}>{TOOL_GROUP_LABEL[g] ?? g}</Tag>)
                           ) : (
                             <span className="muted">仅对话</span>

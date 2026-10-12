@@ -1,14 +1,8 @@
 import { PassThrough } from "node:stream";
-import {
-  type EventMessage,
-  encodeStdioFrame,
-  type HelloMessage,
-  type ResponseMessage,
-  StdioFrameDecoder,
-} from "@witden/shared";
+import { encodeStdioFrame, type HelloMessage, type ResponseMessage, StdioFrameDecoder } from "@witden/shared";
 import { afterAll, describe, expect, it } from "vitest";
 import { WebSocketServer } from "ws";
-import { createRunnerCore, MemoryTransport, serveStdio, silentLogger, WebSocketClient } from "../src/index.js";
+import { serveStdio, WebSocketClient } from "../src/index.js";
 import { errorCode, makeRunner, ok, waitUntil } from "./helpers.js";
 
 const runner = makeRunner("core");
@@ -75,57 +69,6 @@ describe("core", () => {
     expect(errorCode(await limited.hub.request("process.list"))).toBe("busy");
     expect(ok(await slow).exitCode).toBe(0);
     await limited.core.shutdown();
-  });
-});
-
-describe("agents", () => {
-  const events = (sessionId: string, event: string) =>
-    hub.messages.filter((m): m is EventMessage => m.type === "event" && m.event === event && m.sessionId === sessionId);
-
-  it("feeds the prompt on stdin and reports output and exit", async () => {
-    const { sessionId, pid } = ok(
-      await hub.request("agent.start", { command: "cat; echo; echo bye; exit 4", prompt: "hello agent" }),
-    );
-    expect(pid).toBeGreaterThan(0);
-    const exit = await hub.waitFor<EventMessage>(
-      (m) => m.type === "event" && m.event === "agent.exit" && m.sessionId === sessionId,
-    );
-    expect(exit.data.exitCode).toBe(4);
-    const output = events(sessionId, "agent.output")
-      .map((e) => e.data.text)
-      .join("");
-    expect(output).toBe("hello agent\nbye\n");
-    const read = ok(await hub.request("agent.read", { sessionId }));
-    expect(read).toEqual({ sessionId, output: "hello agent\nbye\n", running: false, exitCode: 4 });
-  });
-
-  it("accepts input when stdin is kept open and can be stopped", async () => {
-    const a = ok(await hub.request("agent.start", { command: "cat", prompt: "one\n", keepStdin: true }));
-    ok(await hub.request("agent.input", { sessionId: a.sessionId, text: "two\n", close: true }));
-    await hub.waitFor((m) => m.type === "event" && m.event === "agent.exit" && m.sessionId === a.sessionId);
-    expect(ok(await hub.request("agent.read", { sessionId: a.sessionId })).output).toBe("one\ntwo\n");
-
-    const b = ok(await hub.request("agent.start", { command: "sleep 30" }));
-    expect(errorCode(await hub.request("agent.input", { sessionId: b.sessionId, text: "x" }))).toBe("invalid");
-    const stopped = ok(await hub.request("agent.stop", { sessionId: b.sessionId }));
-    expect(stopped.killed).toBeGreaterThanOrEqual(1);
-    await hub.waitFor((m) => m.type === "event" && m.event === "agent.exit" && m.sessionId === b.sessionId);
-    expect(ok(await hub.request("agent.read", { sessionId: b.sessionId })).running).toBe(false);
-  });
-
-  it("re-adopts agents after a runner restart", async () => {
-    const a = ok(await hub.request("agent.start", { command: "echo started; sleep 1; echo finished; exit 7" }));
-    await waitUntil(async () =>
-      ok(await hub.request("agent.read", { sessionId: a.sessionId })).output.includes("started"),
-    );
-    const restarted = createRunnerCore({ ...core.options, logger: silentLogger });
-    const hub2 = new MemoryTransport(restarted);
-    const exit = await hub2.waitFor<EventMessage>(
-      (m) => m.type === "event" && m.event === "agent.exit" && m.sessionId === a.sessionId,
-    );
-    expect(exit.data.exitCode).toBe(7);
-    expect(ok(await hub2.request("agent.read", { sessionId: a.sessionId })).output).toBe("started\nfinished\n");
-    await restarted.shutdown();
   });
 });
 

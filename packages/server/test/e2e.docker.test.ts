@@ -169,25 +169,4 @@ describe.skipIf(!enabled)("end to end with Docker", () => {
     const read = await api("POST", `/api/instances/${instanceId}/exec`, { command: "cat ~/hello.txt" });
     expect(read.output).toContain("witden-e2e");
   }, 120_000);
-
-  it("an external agent runs inside the computer and its output is delivered", async () => {
-    const role = await api("POST", "/api/roles", {
-      name: "Coder",
-      handle: `coder${suffix}`,
-      instance_id: instanceId,
-      runtime: "external",
-      runtime_config: { command: 'cat > brief.txt; echo "brief bytes: $(wc -c < brief.txt) as $(whoami)"' },
-      allowed_tools: ["shell"],
-    });
-    const topic = await api("POST", "/api/topics", { title: "e2e ext", role_ids: [role.id] });
-    const posted = await api("POST", `/api/topics/${topic.id}/messages`, { content: `@coder${suffix} fix the bug` });
-    const taskId = posted.tasks[0].id;
-    const task = await waitFor(async () => {
-      const t = await api("GET", `/api/tasks/${taskId}`);
-      return ["completed", "failed"].includes(t.status) && t;
-    });
-    expect(task.status, task.error ?? "").toBe("completed");
-    const answer = (await api("GET", `/api/topics/${topic.id}/messages`)).find((m: any) => m.author_type === "role");
-    expect(answer.content).toMatch(/brief bytes: \d+ as witden/);
-  }, 120_000);
 });

@@ -12,7 +12,6 @@ import {
   genericStatus,
   instanceStatus,
   isRestricted,
-  RUNTIME_LABEL,
   TOOL_GROUP_LABEL,
   taskStatus,
 } from "../../lib/format";
@@ -192,7 +191,6 @@ function waitParts(task: Task, userName: (id: string) => string): ReactNode[] {
     const next = wait.resume_to === "running" || wait.resume_to === "paused" ? "pending" : wait.resume_to;
     if (next) parts.push(`继续后回到「${taskStatus(next).label}」`);
   }
-  if (wait.external_session) parts.push(`外部智能体会话 ${wait.external_session}`);
   return parts;
 }
 
@@ -230,17 +228,6 @@ function TaskSummary({ task: t }: { task: Task }) {
                 </span>
               ) : (
                 "—"
-              ),
-            ],
-            [
-              "运行方式",
-              t.runtime === "external" ? (
-                <span>
-                  <Tag tone="accent">{RUNTIME_LABEL.external}</Tag>{" "}
-                  <span className="small muted">在电脑里运行的第三方智能体，输出作为结果</span>
-                </span>
-              ) : (
-                (RUNTIME_LABEL[t.runtime] ?? t.runtime)
               ),
             ],
             [
@@ -417,6 +404,7 @@ const EVENT_LABEL: Record<string, string> = {
   wait: "等待",
   instance_wait: "等待电脑",
   transcript_removed: "记录已删除",
+  // events of older tasks
   external_agent_started: "启动外部智能体",
   external_agent_exited: "外部智能体退出",
 };
@@ -487,29 +475,12 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
           const type = String(p.type ?? "event");
           label = EVENT_LABEL[type] ?? type;
           const note = (p.note ?? p.reason ?? "") as string;
-          if (type === "external_agent_started") {
-            body = (
-              <div className="step-text">
-                <pre className="mono-block">{String(p.command ?? "")}</pre>
-                {p.session ? <span className="small muted">会话 {String(p.session)}</span> : null}
-              </div>
-            );
-          } else if (type === "external_agent_exited") {
-            const code = p.exit_code as number | null | undefined;
-            flag = code === 0 ? <Tag tone="ok">退出码 0</Tag> : <Tag tone="bad">退出码 {code ?? "未知"}</Tag>;
-            body = (
-              <div className="step-text small muted">
-                {code === 0 ? "外部智能体正常结束，输出作为任务结果。" : "外部智能体异常退出，任务标记为失败。"}
-              </div>
-            );
-          } else {
-            body = (
-              <div className="step-text">
-                {p.tool ? <code>{String(p.tool)}</code> : null} {note}
-                {p.args ? <pre className="mono-block">{prettyArgs(p.args)}</pre> : null}
-              </div>
-            );
-          }
+          body = (
+            <div className="step-text">
+              {p.tool ? <code>{String(p.tool)}</code> : null} {note}
+              {p.args ? <pre className="mono-block">{prettyArgs(p.args)}</pre> : null}
+            </div>
+          );
         }
         return (
           <li key={s.seq} id={`step-${s.seq}`} className={`step step-${s.kind}`}>
@@ -635,7 +606,6 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
               ["外部会话", source.conversation_id ? <IdText id={source.conversation_id as string} /> : null],
               ["Thread", source.thread_key ? <code className="id">{String(source.thread_key)}</code> : null],
               ["执行电脑", t.instance?.name ?? "—"],
-              ["运行方式", RUNTIME_LABEL[t.runtime] ?? t.runtime],
               ["角色会话", trace.session_id ? <IdText id={trace.session_id} /> : null],
             ]}
           />

@@ -207,13 +207,6 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   collaborate: "协作委托",
   memory: "记忆",
   topics: "跨话题引用",
-  // Added to the task envelope by the server for roles with the external runtime.
-  external: "外部智能体",
-};
-
-export const RUNTIME_LABEL: Record<string, string> = {
-  witden: "平台智能体",
-  external: "外部智能体",
 };
 
 export const RUNNER_VIA_LABEL: Record<string, string> = {
@@ -225,7 +218,6 @@ export const RUNNER_VIA_LABEL: Record<string, string> = {
 export const EXEC_SESSION_KIND: Record<string, string> = {
   terminal: "终端",
   browser: "浏览器",
-  agent: "外部智能体",
 };
 
 export const PERMISSION_LABEL: Record<string, string> = {

@@ -58,3 +58,34 @@ describe("0002_model_providers", () => {
     await db.close();
   });
 });
+
+describe("0003_drop_external_runtime", () => {
+  it("disables external-agent roles and cancels their unfinished tasks", async () => {
+    const db = new PGlite();
+    for (const tag of ["0000_init", "0001_inbound_queue", "0002_model_providers"]) await apply(db, tag);
+    await db.exec(`
+      insert into roles (id, name, handle, runtime, runtime_config)
+        values ('role_ext', 'Coder', 'coder', 'external', '{"command":"agent"}'), ('role_own', 'Dev', 'dev', 'witden', '{}');
+      insert into topics (id, title) values ('top_1', 't');
+      insert into tasks (id, topic_id, title, owner_role_id, runtime, status)
+        values ('task_1', 'top_1', 'a', 'role_ext', 'external', 'running'),
+               ('task_2', 'top_1', 'b', 'role_ext', 'external', 'completed'),
+               ('task_3', 'top_1', 'c', 'role_own', 'witden', 'running');
+    `);
+    await apply(db, "0003_drop_external_runtime");
+    expect((await db.query("select handle, status from roles order by handle")).rows).toEqual([
+      { handle: "coder", status: "disabled" },
+      { handle: "dev", status: "active" },
+    ]);
+    expect((await db.query("select id, status from tasks order by id")).rows).toEqual([
+      { id: "task_1", status: "cancelled" },
+      { id: "task_2", status: "completed" },
+      { id: "task_3", status: "running" },
+    ]);
+    const cols = await db.query(
+      "select table_name, column_name from information_schema.columns where table_name in ('roles', 'tasks') and column_name in ('runtime', 'runtime_config')",
+    );
+    expect(cols.rows).toEqual([]);
+    await db.close();
+  });
+});

@@ -41,12 +41,6 @@ export class TaskRunner {
       // Emergency stops and revoked permissions are checked before anything runs, including a call that was
       // approved or interrupted earlier.
       if (!(await this.gateOnly(taskId))) return;
-      const task = await getTask(getDb(), taskId);
-      if (task?.runtime === "external") {
-        const { runExternal } = await import("./external.js");
-        await runExternal(this.gateway, taskId);
-        return;
-      }
       if (!(await this.recoverInterrupted(taskId))) return;
       const retry = await this.takeRetry(taskId);
       if (retry && !(await this.execute(taskId, retry))) return;

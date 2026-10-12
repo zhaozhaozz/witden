@@ -19,16 +19,7 @@ import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
-const BEHAVIOUR_FIELDS = new Set([
-  "systemPrompt",
-  "modelConfigId",
-  "modelParams",
-  "instanceId",
-  "allowedTools",
-  "runtime",
-  "runtimeConfig",
-]);
-export const RUNTIMES = new Set(["witden", "external"]);
+const BEHAVIOUR_FIELDS = new Set(["systemPrompt", "modelConfigId", "modelParams", "instanceId", "allowedTools"]);
 /** Field names as the REST API spells them. */
 const apiName = (field: string) => field.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
@@ -62,17 +53,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   }
   if (!["mention", "active"].includes(out.responseMode ?? "mention"))
     throw new BadRequest("response_mode must be mention or active");
-  if ("runtime" in data) {
-    if (!RUNTIMES.has(data.runtime)) throw new BadRequest("runtime must be witden or external");
-    out.runtime = data.runtime;
-  }
-  if ("runtimeConfig" in data) {
-    const cfg = data.runtimeConfig ?? {};
-    if (typeof cfg !== "object" || Array.isArray(cfg)) throw new BadRequest("runtime_config must be an object");
-    if (cfg.command !== undefined && typeof cfg.command !== "string")
-      throw new BadRequest("runtime_config.command must be a string");
-    out.runtimeConfig = cfg;
-  }
   if ("modelConfigId" in data) {
     if (data.modelConfigId) {
       const [cfg] = await db.select().from(modelConfigs).where(eq(modelConfigs.id, data.modelConfigId)).limit(1);
@@ -235,8 +215,6 @@ export async function copyRole(
     modelConfigId: role.modelConfigId,
     modelParams: role.modelParams,
     instanceId,
-    runtime: role.runtime,
-    runtimeConfig: role.runtimeConfig,
     allowedTools: role.allowedTools,
     allowedContacts: role.allowedContacts,
     knowledgeSpaceIds: role.knowledgeSpaceIds,

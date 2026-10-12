@@ -67,7 +67,7 @@ export interface RunnerError {
   message: string;
 }
 
-/** Unsolicited progress from the runner (terminal output, external agent output, browser downloads...). */
+/** Unsolicited progress from the runner (terminal output, browser downloads...). */
 export interface EventMessage {
   type: "event";
   event: string;
@@ -148,11 +148,7 @@ export type RunnerOp =
   | "browser.close"
   | "browser.list"
   | "process.list"
-  | "journal.get"
-  | "agent.start"
-  | "agent.input"
-  | "agent.read"
-  | "agent.stop";
+  | "journal.get";
 
 // --- params / results ---------------------------------------------------------------------------------
 
@@ -320,27 +316,6 @@ export interface JournalGetResult {
   response?: ResponseMessage;
 }
 
-/** Third-party agents with their own local tools run *inside* the computer (e.g. a coding CLI). */
-export interface AgentStartParams {
-  /** Shell command line that starts the agent process. */
-  command: string;
-  /** Written to the process's stdin, then stdin is closed unless keepStdin is set. */
-  prompt: string;
-  cwd?: string;
-  env?: Record<string, string>;
-  keepStdin?: boolean;
-}
-export interface AgentStartResult {
-  sessionId: string;
-  pid: number;
-}
-export interface AgentReadResult {
-  sessionId: string;
-  output: string;
-  running: boolean;
-  exitCode: number | null;
-}
-
 /** Frames for binary stream data: [uint32 streamId][payload]. */
 export function encodeStreamFrame(streamId: number, payload: Uint8Array): Uint8Array {
   const out = new Uint8Array(4 + payload.length);
@@ -369,7 +344,6 @@ export const READ_ONLY_OPS: ReadonlySet<RunnerOp> = new Set<RunnerOp>([
   "browser.list",
   "process.list",
   "journal.get",
-  "agent.read",
 ]);
 
 // --- stdio transport ----------------------------------------------------------------------------------

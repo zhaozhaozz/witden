@@ -55,16 +55,10 @@ export function opGroup(op: RunnerOp): string {
   if (op.startsWith("file.")) return "files";
   if (op.startsWith("screen.") || op.startsWith("input.")) return "desktop";
   if (op.startsWith("browser.")) return "browser";
-  if (op.startsWith("agent.")) return "external";
   return "system";
 }
 
 const DESKTOP_INPUT = new Set<RunnerOp>(["input.mouse", "input.keyboard"]);
-/**
- * Operations that only wind work down. They must still reach the computer after the task was cancelled or
- * paused, during a takeover or an emergency stop, or after its role moved: that is when they are needed.
- */
-const STOP_OPS = new Set<RunnerOp>(["agent.stop"]);
 const BROWSER_SESSION_OPS = new Set<RunnerOp>(["browser.click", "browser.type", "browser.download", "browser.close"]);
 
 export class ExecutionGateway implements GatewayClient {
@@ -73,12 +67,11 @@ export class ExecutionGateway implements GatewayClient {
     const target = await transaction(async (tx) => {
       const [task] = await tx.select().from(tasks).where(eq(tasks.id, req.taskId)).limit(1);
       if (!task) throw new NotFound("task not found");
-      const stopping = STOP_OPS.has(req.op);
-      if (!stopping && task.status !== "running") throw new Forbidden(`task is ${task.status}, not running`);
+      if (task.status !== "running") throw new Forbidden(`task is ${task.status}, not running`);
       if (!task.instanceId) throw new InstanceUnavailable("this task has no computer assigned");
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       if (!role) throw new NotFound("role not found");
-      if (!stopping && role.instanceId !== task.instanceId) {
+      if (role.instanceId !== task.instanceId) {
         // Never follow the role silently to its new computer: files and credentials differ.
         throw new InstanceUnavailable(
           "the role was moved to another computer after this task started; a person must reassign or restart the task",
@@ -90,15 +83,13 @@ export class ExecutionGateway implements GatewayClient {
         .where(eq(computerInstances.id, task.instanceId))
         .limit(1);
       if (!inst || inst.status === "deleted") throw new InstanceUnavailable("the task's computer no longer exists");
-      if (inst.pausedAi && !stopping)
-        throw new InstanceBusy(`a person has taken over computer ${inst.name}; AI work is paused`);
+      if (inst.pausedAi) throw new InstanceBusy(`a person has taken over computer ${inst.name}; AI work is paused`);
       const group = opGroup(req.op);
       const tools: string[] = task.envelope.tools ?? [];
-      const allowed =
-        group === "system" || tools.includes(group) || (group === "external" && task.runtime === "external");
+      const allowed = group === "system" || tools.includes(group);
       if (!allowed) throw new Forbidden(`operation ${req.op} is outside this task's permissions`);
       const { activeKillSwitch } = await import("../agent/revocation.js");
-      const ks = stopping ? null : await activeKillSwitch(tx, task);
+      const ks = await activeKillSwitch(tx, task);
       if (ks) throw new Forbidden(`emergency stop in effect: ${ks.reason || ks.scope}`);
       if (await needsDesktop(tx, req)) {
         const got = await acquire(tx, inst.id, "role", role.id, { taskId: task.id, reason: "desktop work" });
@@ -214,7 +205,7 @@ async function needsDesktop(tx: import("../db/client.js").Db, req: GatewayReques
   return false;
 }
 
-/** Keep a record of terminals, browser sessions and external agents living in each computer. */
+/** Keep a record of the terminals and browser sessions living in each computer. */
 async function trackSession(
   tx: import("../db/client.js").Db,
   req: GatewayRequest,
@@ -253,10 +244,6 @@ async function trackSession(
     await open("browser", result.sessionId, String(req.params.mode ?? "desktop"), String(result.url ?? req.params.url));
   }
   if (req.op === "browser.close") await close("browser", String(req.params.sessionId));
-  if (req.op === "agent.start" && result?.sessionId)
-    await open("agent", result.sessionId, "background", String(req.params.command));
-  if (req.op === "agent.stop") await close("agent", String(req.params.sessionId));
-  if (req.op === "agent.read" && result && result.running === false) await close("agent", String(req.params.sessionId));
 }
 
 // --- HTTP transport for workers running in their own process -----------------------------------------------

@@ -213,7 +213,7 @@ export const instanceBackups = pgTable("instance_backups", {
   createdAt: created(),
 });
 
-/** Terminal, browser and external-agent sessions living inside a computer (tracked for observability). */
+/** Terminal and browser sessions living inside a computer (tracked for observability). */
 export const execSessions = pgTable(
   "exec_sessions",
   {
@@ -221,7 +221,7 @@ export const execSessions = pgTable(
     instanceId: text("instance_id")
       .notNull()
       .references(() => computerInstances.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull(), // terminal | browser | agent
+    kind: text("kind").notNull(), // terminal | browser
     runnerSessionId: text("runner_session_id").notNull(),
     // desktop: drives what people see and can take over; background: separate session, labelled as such
     mode: text("mode").notNull().default("desktop"),
@@ -247,9 +247,6 @@ export const roles = pgTable("roles", {
   modelConfigId: text("model_config_id").references(() => modelConfigs.id),
   modelParams: json<Json>("model_params").notNull().default({}),
   instanceId: text("instance_id").references(() => computerInstances.id),
-  // witden: platform agent loop (outside the computer); external: a third-party agent process inside it
-  runtime: text("runtime").notNull().default("witden"),
-  runtimeConfig: json<Json>("runtime_config").notNull().default({}),
   allowedTools: json<string[]>("allowed_tools").notNull().default([]),
   allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
   knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
@@ -383,7 +380,6 @@ export const tasks = pgTable(
     collaboratorRoleIds: json<string[]>("collaborator_role_ids").notNull().default([]),
     /** Fixed at creation; a task never moves to another computer implicitly. */
     instanceId: text("instance_id"),
-    runtime: text("runtime").notNull().default("witden"),
     parentTaskId: text("parent_task_id"),
     spawnedByTaskId: text("spawned_by_task_id"),
     depth: integer("depth").notNull().default(0),

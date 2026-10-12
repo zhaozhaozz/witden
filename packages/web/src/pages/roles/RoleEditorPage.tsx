@@ -9,19 +9,9 @@ import type {
   ModelConfig,
   Role,
   RoleImpact,
-  Runtime,
-  RuntimeConfig,
   ToolGroup,
 } from "../../api/types";
-import {
-  fmtNumber,
-  fmtRelative,
-  genericStatus,
-  instanceStatus,
-  linesToList,
-  RUNTIME_LABEL,
-  TOOL_GROUP_LABEL,
-} from "../../lib/format";
+import { fmtNumber, fmtRelative, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -40,7 +30,6 @@ import {
   PageHeader,
   Section,
   StatusChip,
-  Tag,
   Toggle,
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
@@ -56,13 +45,6 @@ interface Draft {
   model_config_id: string;
   model_params: string;
   instance_id: string;
-  runtime: Runtime;
-  // External runtime: runtime_config split into fields; keys the editor does not know are kept as-is.
-  rt_command: string;
-  rt_cwd: string;
-  rt_env: string;
-  rt_timeout: string;
-  rt_extra: Record<string, unknown>;
   allowed_tools: string[];
   any_contact: boolean;
   allowed_contacts: string[];
@@ -75,7 +57,6 @@ interface Draft {
 }
 
 function toDraft(r: Role | null): Draft {
-  const { command, cwd, env, timeout_minutes, ...extra } = r?.runtime_config ?? {};
   return {
     name: r?.name ?? "",
     handle: r?.handle ?? "",
@@ -85,14 +66,6 @@ function toDraft(r: Role | null): Draft {
     model_config_id: r?.model_config_id ?? "",
     model_params: r?.model_params && Object.keys(r.model_params).length ? JSON.stringify(r.model_params, null, 2) : "",
     instance_id: r?.instance_id ?? "",
-    runtime: r?.runtime === "external" ? "external" : "witden",
-    rt_command: typeof command === "string" ? command : "",
-    rt_cwd: typeof cwd === "string" ? cwd : "",
-    rt_env: Object.entries(env ?? {})
-      .map(([k, v]) => `${k}=${v}`)
-      .join("\n"),
-    rt_timeout: timeout_minutes != null ? String(timeout_minutes) : "",
-    rt_extra: extra,
     allowed_tools: r?.allowed_tools ?? [],
     any_contact: (r?.allowed_contacts ?? []).includes("*"),
     allowed_contacts: (r?.allowed_contacts ?? []).filter((c) => c !== "*"),
@@ -106,24 +79,6 @@ function toDraft(r: Role | null): Draft {
 }
 
 const num = (s: string) => (s.trim() ? Number(s) : null);
-const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-function runtimeConfig(d: Draft): RuntimeConfig {
-  const env: Record<string, string> = {};
-  for (const line of linesToList(d.rt_env)) {
-    const i = line.indexOf("=");
-    const key = i > 0 ? line.slice(0, i).trim() : "";
-    if (!ENV_KEY.test(key)) throw new Error(`环境变量格式应为 KEY=VALUE：${line}`);
-    env[key] = line.slice(i + 1);
-  }
-  const out: RuntimeConfig = { ...d.rt_extra };
-  if (d.rt_command.trim()) out.command = d.rt_command.trim();
-  if (d.rt_cwd.trim()) out.cwd = d.rt_cwd.trim();
-  if (Object.keys(env).length) out.env = env;
-  if (d.rt_timeout.trim()) out.timeout_minutes = Number(d.rt_timeout);
-  return out;
-}
-
 /** Throws an Error with a readable message when a free-form field does not parse. */
 function toBody(d: Draft): Record<string, unknown> {
   let modelParams: unknown = {};
@@ -143,8 +98,6 @@ function toBody(d: Draft): Record<string, unknown> {
     model_config_id: d.model_config_id || null,
     model_params: modelParams,
     instance_id: d.instance_id || null,
-    runtime: d.runtime,
-    runtime_config: runtimeConfig(d),
     allowed_tools: d.allowed_tools,
     allowed_contacts: d.any_contact ? ["*"] : d.allowed_contacts,
     knowledge_space_ids: d.knowledge_space_ids,
@@ -219,7 +172,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     models.data?.find((m) => m.id === draft.model_config_id) ??
     (role?.model && role.model.id === draft.model_config_id ? role.model : null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const external = draft.runtime === "external";
 
   const save = async () => {
     if (!body) return;
@@ -308,9 +260,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               <>
                 <span>/</span>
                 <StatusChip meta={genericStatus(role.status)} compact />
-                <Tag tone={role.runtime === "external" ? "accent" : undefined}>
-                  {RUNTIME_LABEL[role.runtime] ?? role.runtime}
-                </Tag>
                 <span className="muted">配置版本 {role.config_version}</span>
                 <span className="muted">今日 {fmtNumber(role.tokens_today ?? 0)} tokens</span>
               </>
@@ -422,100 +371,14 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             </FieldGroup>
           </Section>
 
-          <Section title="运行方式">
-            <div
-              className="pick"
-              role="radiogroup"
-              aria-label="运行方式"
-              style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", maxHeight: "none" }}
-            >
-              {(
-                [
-                  [
-                    "witden",
-                    "平台智能体",
-                    "平台在电脑之外运行智能体循环：用下面选定的模型思考，再通过工具在所属电脑里执行命令、读写文件、操作桌面和浏览器。每一步都受工具范围和审批约束，并记录在任务日志里。",
-                  ],
-                  [
-                    "external",
-                    "外部智能体",
-                    "在角色的电脑里启动一个第三方智能体命令行程序，由它自己完成任务。它使用自己的模型和凭据，平台负责启动、记录输出、超时和停止。",
-                  ],
-                ] as const
-              ).map(([value, label, hint]) => (
-                <label key={value} className={`pick-item${draft.runtime === value ? " pick-on" : ""}`}>
-                  <input
-                    type="radio"
-                    name="runtime"
-                    checked={draft.runtime === value}
-                    onChange={() => set("runtime", value)}
-                  />
-                  <span className="pick-text">
-                    <strong>{label}</strong>
-                    <span className="pick-hint">{hint}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            {external ? (
-              <>
-                <div className="callout callout-wait">
-                  命令在所属电脑里以电脑的非特权用户身份通过 <code>/bin/sh -c</code>{" "}
-                  执行。任务说明（角色提示词和这次的要求）写入它的标准输入；输出的结尾部分作为结果发回话题，退出码不为 0
-                  时任务失败。下方的工具范围和逐项审批不约束外部程序在电脑内的操作，它能做的事以这台电脑本身的边界为准。
-                </div>
-                <Field label="启动命令" hint="必填。从标准输入读取任务说明，结果输出到标准输出。">
-                  <textarea
-                    className="mono"
-                    rows={2}
-                    value={draft.rt_command}
-                    onChange={(e) => set("rt_command", e.target.value)}
-                    placeholder="my-agent --non-interactive"
-                  />
-                </Field>
-                <div className="form-row">
-                  <Field label="工作目录" hint="可选；默认是电脑的工作目录，可用 ~/ 开头">
-                    <input
-                      className="mono"
-                      value={draft.rt_cwd}
-                      onChange={(e) => set("rt_cwd", e.target.value)}
-                      placeholder="~/project"
-                    />
-                  </Field>
-                  <Field label="超时（分钟）" hint="可选；默认 60 分钟，超时后停止并标记失败">
-                    <input
-                      type="number"
-                      min={1}
-                      value={draft.rt_timeout}
-                      onChange={(e) => set("rt_timeout", e.target.value)}
-                    />
-                  </Field>
-                </div>
-                <Field
-                  label="环境变量"
-                  hint="可选；每行 KEY=VALUE。会以明文保存在角色配置中，密钥更适合放在电脑的凭据目录里。"
-                >
-                  <textarea
-                    className="mono"
-                    rows={3}
-                    value={draft.rt_env}
-                    onChange={(e) => set("rt_env", e.target.value)}
-                  />
-                </Field>
-              </>
-            ) : null}
-          </Section>
-
           <Section title="模型与电脑">
             <div className="form-row">
               <Field
                 label="模型"
                 hint={
-                  external
-                    ? "外部智能体不使用这里的模型；切回平台智能体时才会用到。"
-                    : selectedModel && "usable" in selectedModel && !selectedModel.usable
-                      ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
-                      : "按服务商分组；在「模型」页添加服务商和模型。"
+                  selectedModel && "usable" in selectedModel && !selectedModel.usable
+                    ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
+                    : "按服务商分组；在「模型」页添加服务商和模型。"
                 }
               >
                 <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
@@ -550,7 +413,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 </select>
               </Field>
             </div>
-            {selectedModel && !external ? (
+            {selectedModel ? (
               <div className="caps">
                 <Capability
                   label="对话"
@@ -586,11 +449,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           </Section>
 
           <Section title="能力范围">
-            {external ? (
-              <p className="small muted">
-                以下设置作用于平台智能体；角色使用外部智能体时，它们不限制外部程序在电脑内的操作。
-              </p>
-            ) : null}
             <FieldGroup
               label="允许使用的工具"
               hint={alwaysTools.length ? `始终可用：${alwaysTools.join("、")}` : undefined}

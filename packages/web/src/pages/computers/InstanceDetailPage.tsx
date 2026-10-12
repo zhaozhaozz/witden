@@ -969,18 +969,15 @@ function SessionsTab({ inst }: { inst: Instance }) {
       }
     >
       <p className="small muted">
-        桌面浏览器开在这台电脑的桌面上，实时画面里能看到，接管后可以直接操作；后台浏览器是单独的会话，屏幕上看不到。终端和外部智能体都在后台运行。
-        状态来自平台的记录：电脑重启、重置或恢复后，记录里仍为“打开”的会话实际上可能已经结束。
+        桌面浏览器开在这台电脑的桌面上，实时画面里能看到，接管后可以直接操作；后台浏览器是单独的会话，屏幕上看不到。终端在后台运行。
+        电脑停止、重启、重置或恢复后，其中的会话都会标记为已关闭。
       </p>
       <Loaded res={res}>
         {(all) => {
           const rows = openOnly ? all.filter((s) => s.status === "open") : all;
           if (!rows.length)
             return (
-              <Empty
-                title={openOnly ? "没有打开的会话" : "还没有会话"}
-                hint="角色打开终端、浏览器或启动外部智能体后会出现在这里。"
-              />
+              <Empty title={openOnly ? "没有打开的会话" : "还没有会话"} hint="角色打开终端或浏览器后会出现在这里。" />
             );
           return (
             <table className="table">
