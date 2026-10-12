@@ -535,6 +535,19 @@ export interface ModelProvider {
   created_at?: string;
 }
 
+/** A computer's model access: a local endpoint inside it, relayed and checked by the platform. */
+export interface ModelProxyInfo {
+  enabled: boolean;
+  model_ids: string[];
+  models: { id: string; alias: string; label: string; protocol: ModelProtocol; usable: boolean }[];
+  /** Only for people who manage the computer; useless outside it. */
+  key: string | null;
+  key_issued_at: string | null;
+  endpoints: { openai: string; anthropic: string };
+  env_file: string;
+  runner_connected: boolean;
+}
+
 /** A model listed by the provider's own API. */
 export interface RemoteModel {
   id: string;

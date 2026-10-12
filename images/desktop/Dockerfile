@@ -37,6 +37,9 @@ RUN apt-get update \
 
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=runner /opt/witden/runner /opt/witden/runner
+# Login and interactive shells load the computer's model proxy settings when the platform enabled it.
+COPY images/common/model-proxy.sh /etc/profile.d/witden-model-proxy.sh
+RUN echo '. /etc/profile.d/witden-model-proxy.sh' >> /etc/bash.bashrc
 
 COPY images/desktop/supervisord.conf /etc/witden/supervisord.conf
 COPY images/desktop/fluxbox-startup /home/witden/.fluxbox/startup

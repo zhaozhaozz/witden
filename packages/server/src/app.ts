@@ -27,6 +27,7 @@ import { taskRoutes } from "./api/tasks.js";
 import { topicRoutes } from "./api/topics.js";
 import { ExecutionGateway, type GatewayClient, HttpGatewayClient } from "./compute/gateway.js";
 import { RunnerHub, stdioTransport } from "./compute/hub.js";
+import { handleProxyMessage } from "./compute/model-proxy.js";
 import { type Settings, setSettings } from "./config.js";
 import { openDatabase, setDatabase, transaction } from "./db/client.js";
 import { WitdenError } from "./errors.js";
@@ -36,6 +37,7 @@ import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
 import { EventBus } from "./services/events.js";
 import { reconcile } from "./services/instances.js";
+import { proxyConfigFor } from "./services/model-proxy.js";
 import { bootstrap } from "./services/users.js";
 
 export interface StartOptions {
@@ -147,6 +149,9 @@ export async function start(opts: StartOptions): Promise<Witden> {
   if (hostsApi) {
     rt.hub = new RunnerHub(async (containerId) => stdioTransport(await manager.openRunnerChannel(containerId)));
     rt.gateway = new ExecutionGateway();
+    // Computers' model proxies are relayed here, next to the runner connections.
+    rt.hub.proxyHandler = handleProxyMessage;
+    rt.hub.welcomeExtras = async (instanceId) => ({ modelProxy: await proxyConfigFor(instanceId) });
     if (opts.listenHub !== false) await rt.hub.listen(settings.hubPort, settings.hubHost);
     app = await buildApp(rt);
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).

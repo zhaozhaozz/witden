@@ -175,6 +175,13 @@ export const computerInstances = pgTable("computer_instances", {
   runnerTokenHash: text("runner_token_hash"),
   runnerConnectedAt: ts("runner_connected_at"),
   runnerInfo: json<Json | null>("runner_info"),
+  // Optional local model endpoint inside the computer, relayed through the runner (see compute/model-proxy.ts).
+  modelProxyEnabled: boolean("model_proxy_enabled").notNull().default(false),
+  /** Models programs in this computer may use through the proxy (model_configs ids). */
+  modelProxyModelIds: json<string[]>("model_proxy_model_ids").notNull().default([]),
+  /** Issued by the platform for this computer; only accepted through this computer's runner connection. */
+  modelProxyKeyEncrypted: text("model_proxy_key_encrypted"),
+  modelProxyKeyIssuedAt: ts("model_proxy_key_issued_at"),
   lastStartedAt: ts("last_started_at"),
   createdBy: text("created_by"),
   createdAt: created(),

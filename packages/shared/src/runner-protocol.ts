@@ -41,6 +41,65 @@ export interface WelcomeMessage {
   type: "welcome";
   /** Server time, informational. */
   serverTime: string;
+  /** The computer's model proxy (absent / null: off). Changes later arrive as `configure`. */
+  modelProxy?: ModelProxyConfig | null;
+}
+
+/**
+ * Optional model proxy: the runner serves an OpenAI- / Anthropic-compatible endpoint on 127.0.0.1 inside the
+ * computer and relays every request to the platform over this connection. The platform checks the key and the
+ * allowed models and calls the real provider with the real key, which never enters the computer.
+ */
+export interface ModelProxyConfig {
+  /** Loopback port inside the computer. */
+  port: number;
+  /** Issued by the platform for this computer; only valid through this computer's own runner connection. */
+  key: string;
+  /** Model names clients may ask for (the platform enforces the list). */
+  models: string[];
+}
+
+export interface ConfigureMessage {
+  type: "configure";
+  modelProxy: ModelProxyConfig | null;
+}
+
+/** One HTTP request a program inside the computer sent to the local model proxy. */
+export interface ProxyRequestMessage {
+  type: "proxy.request";
+  id: string;
+  method: string;
+  /** Path and query, e.g. /v1/chat/completions */
+  path: string;
+  headers: Record<string, string>;
+  bodyBase64: string;
+}
+
+/** The client went away: stop the upstream call. */
+export interface ProxyCancelMessage {
+  type: "proxy.cancel";
+  id: string;
+}
+
+/** Start of the answer to a proxy request; the body follows as chunks (streamed responses stay streamed). */
+export interface ProxyResponseMessage {
+  type: "proxy.response";
+  id: string;
+  status: number;
+  headers: Record<string, string>;
+}
+
+export interface ProxyChunkMessage {
+  type: "proxy.chunk";
+  id: string;
+  dataBase64: string;
+}
+
+export interface ProxyEndMessage {
+  type: "proxy.end";
+  id: string;
+  /** Set when the answer broke off midway. */
+  error?: string;
 }
 
 export interface RequestMessage {
@@ -107,10 +166,14 @@ export interface PingMessage {
 
 export type HubToRunner =
   | WelcomeMessage
+  | ConfigureMessage
   | RequestMessage
   | CancelMessage
   | StreamOpenMessage
   | StreamCloseMessage
+  | ProxyResponseMessage
+  | ProxyChunkMessage
+  | ProxyEndMessage
   | PingMessage;
 export type RunnerToHub =
   | HelloMessage
@@ -118,6 +181,8 @@ export type RunnerToHub =
   | EventMessage
   | StreamOpenedMessage
   | StreamCloseMessage
+  | ProxyRequestMessage
+  | ProxyCancelMessage
   | PingMessage;
 
 /** Operations understood by the runner. Params / results are documented per op below. */

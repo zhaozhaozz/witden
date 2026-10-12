@@ -1,6 +1,7 @@
 import os from "node:os";
 import {
   type HelloMessage,
+  type ModelProxyConfig,
   READ_ONLY_OPS,
   type ResponseMessage,
   RUNNER_PROTOCOL_VERSION,
@@ -12,6 +13,7 @@ import { createEnv, type Env, type OpContext, type OpHandler } from "./context.j
 import { abortError, OpError, toRunnerError } from "./errors.js";
 import { Journal } from "./journal.js";
 import type { Logger } from "./log.js";
+import { ModelProxy } from "./model-proxy.js";
 import { Browsers } from "./ops/browser.js";
 import { Desktop } from "./ops/desktop.js";
 import { execRun } from "./ops/exec.js";
@@ -75,6 +77,7 @@ export class RunnerCore {
   readonly desktop: Desktop;
   readonly browsers: Browsers;
   readonly streams: StreamManager;
+  readonly modelProxy: ModelProxy;
   private transport: RunnerTransport | null = null;
   private readonly inflight = new Map<string, Inflight>();
   private readonly handlers: Record<RunnerOp, OpHandler>;
@@ -102,6 +105,7 @@ export class RunnerCore {
       downloadsDir: options.downloadsDir,
       stateDir: options.stateDir,
     });
+    this.modelProxy = new ModelProxy(options.home, this.log, (m) => this.send(m));
     this.streams = new StreamManager(
       options.streamPorts,
       {
@@ -170,6 +174,7 @@ export class RunnerCore {
     if (this.transport !== transport) return;
     this.transport = null;
     this.streams.closeAll();
+    this.modelProxy.disconnected();
   }
 
   get inflightCount(): number {
@@ -258,6 +263,15 @@ export class RunnerCore {
           break;
         case "welcome":
           this.log.info("hub accepted the runner", { serverTime: message.serverTime });
+          this.applyModelProxy(message.modelProxy);
+          break;
+        case "configure":
+          this.applyModelProxy(message.modelProxy);
+          break;
+        case "proxy.response":
+        case "proxy.chunk":
+        case "proxy.end":
+          this.modelProxy.onMessage(message as any);
           break;
         default:
           this.log.warn("ignoring an unknown message type", { type: String(message.type) });
@@ -265,6 +279,11 @@ export class RunnerCore {
     } catch (err) {
       this.log.error("failed to handle a message", { error: String(err) });
     }
+  }
+
+  private applyModelProxy(config: unknown): void {
+    const cfg = isRecord(config) ? (config as unknown as ModelProxyConfig) : null;
+    this.modelProxy.configure(cfg).catch((err) => this.log.error("model proxy not applied", { error: String(err) }));
   }
 
   cancel(id: unknown): void {
@@ -350,12 +369,15 @@ export class RunnerCore {
     return { type: "response", id, ok: false, error: toRunnerError(err) };
   }
 
-  private send(message: RunnerToHub): void {
-    if (!this.transport) return;
+  /** False when no connection is attached or sending failed. */
+  private send(message: RunnerToHub): boolean {
+    if (!this.transport) return false;
     try {
       this.transport.sendMessage(message);
+      return true;
     } catch (err) {
       this.log.warn("cannot send to the hub", { error: String(err) });
+      return false;
     }
   }
 
@@ -382,6 +404,7 @@ export class RunnerCore {
     for (const entry of this.inflight.values()) entry.controller.abort("shutdown");
     await Promise.race([this.drain(), new Promise((r) => setTimeout(r, ABORT_GRACE_MS + 1000))]);
     this.streams.closeAll();
+    await this.modelProxy.dispose();
     await this.browsers.dispose();
   }
 }

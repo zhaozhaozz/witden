@@ -16,6 +16,8 @@ export interface Settings {
   hubHost: string;
   /** URL computers use to reach the hub (resolved inside the computer). */
   hubUrlForComputers: string;
+  /** Loopback port of the model proxy inside computers. */
+  modelProxyPort: number;
   /** Remote Docker Manager; empty = run the manager in-process (single-host deployments). */
   managerUrl: string | null;
   managerToken: string | null;
@@ -71,6 +73,7 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     hubPort: int("HUB_PORT", 8330),
     hubHost: env("HUB_HOST") ?? "0.0.0.0",
     hubUrlForComputers: env("HUB_URL_FOR_COMPUTERS") ?? "ws://witden-hub:8330/runner",
+    modelProxyPort: int("MODEL_PROXY_PORT", 8686),
     managerUrl: env("MANAGER_URL") ?? null,
     managerToken: env("MANAGER_TOKEN") ?? null,
     internalToken: env("INTERNAL_TOKEN") ?? null,

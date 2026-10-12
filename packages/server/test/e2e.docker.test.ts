@@ -169,4 +169,37 @@ describe.skipIf(!enabled)("end to end with Docker", () => {
     const read = await api("POST", `/api/instances/${instanceId}/exec`, { command: "cat ~/hello.txt" });
     expect(read.output).toContain("witden-e2e");
   }, 120_000);
+
+  it("programs inside the computer reach allowed models through the local proxy only", async () => {
+    const provider = await api("POST", "/api/model-providers", {
+      name: `proxy-${suffix}`,
+      base_url: model.url,
+      api_key: "sk-host-only-secret-123456",
+      models: ["scripted"],
+    });
+    await api("PUT", `/api/instances/${instanceId}/model-proxy`, { enabled: true, model_ids: [provider.models[0].id] });
+    const run = async (command: string) =>
+      (await api("POST", `/api/instances/${instanceId}/exec`, { command })).output as string;
+    const env = await waitFor(async () => {
+      const out = await run("cat ~/.config/witden/model-proxy.env 2>/dev/null");
+      return out.includes("OPENAI_BASE_URL") && out;
+    }, 30_000);
+    expect(env).toContain("OPENAI_BASE_URL=http://127.0.0.1:8686/v1");
+    expect(env).not.toContain("sk-host-only");
+    expect(env).not.toContain(model.url);
+    // a login shell picks the settings up, as an agent installed in the computer would
+    const body = JSON.stringify({ model: "scripted", messages: [{ role: "user", content: "hi" }] });
+    const answer = await run(
+      `bash -lc 'curl -s "$OPENAI_BASE_URL/chat/completions" -H "Authorization: Bearer $OPENAI_API_KEY" -H "content-type: application/json" -d '"'"'${body}'"'"''`,
+    );
+    expect(answer).toContain("tool_calls");
+    const listed = await run(`bash -lc 'curl -s "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"'`);
+    expect(JSON.parse(listed.slice(listed.indexOf("{"))).data.map((m: any) => m.id)).toEqual(["scripted"]);
+    const refused = await run(
+      `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8686/v1/models -H "Authorization: Bearer nope"`,
+    );
+    expect(refused).toContain("401");
+    await api("PUT", `/api/instances/${instanceId}/model-proxy`, { enabled: false });
+    await waitFor(async () => !(await run("ls ~/.config/witden/ 2>/dev/null")).includes("model-proxy.env"), 30_000);
+  }, 120_000);
 });

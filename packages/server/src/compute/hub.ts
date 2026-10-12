@@ -13,11 +13,14 @@ import {
   encodeStreamFrame,
   type HelloMessage,
   type HubToRunner,
+  type ProxyCancelMessage,
+  type ProxyRequestMessage,
   RUNNER_PROTOCOL_VERSION,
   type RunnerInfo,
   type RunnerOp,
   type RunnerToHub,
   StdioFrameDecoder,
+  type WelcomeMessage,
 } from "@witden/shared";
 import { eq } from "drizzle-orm";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -134,6 +137,20 @@ export class RunnerConnection {
     this.transport.sendText(JSON.stringify(msg));
   }
 
+  /** Fire-and-forget message; false when the connection is gone. */
+  post(msg: HubToRunner): boolean {
+    if (this.closed) return false;
+    try {
+      this.transport.sendText(JSON.stringify(msg));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Set by the hub: handles the computer's model proxy traffic. */
+  onProxy: ((conn: RunnerConnection, msg: ProxyRequestMessage | ProxyCancelMessage) => void) | null = null;
+
   private handleText(text: string): void {
     let msg: RunnerToHub;
     try {
@@ -161,6 +178,8 @@ export class RunnerConnection {
       }
       this.streams.get(msg.streamId)?.close(msg.reason ?? "closed");
       this.streams.delete(msg.streamId);
+    } else if (msg.type === "proxy.request" || msg.type === "proxy.cancel") {
+      this.onProxy?.(this, msg);
     } else if (msg.type === "ping") {
       this.transport.sendText(JSON.stringify({ type: "pong", at: msg.at }));
     }
@@ -248,6 +267,11 @@ export class RunnerHub {
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
 
+  /** Model proxy relay for runner connections (set by the API process). */
+  proxyHandler: RunnerConnection["onProxy"] = null;
+  /** Extra welcome fields for a computer, e.g. its model proxy settings. */
+  welcomeExtras: ((instanceId: string) => Promise<Partial<WelcomeMessage>>) | null = null;
+
   constructor(private readonly openStdioChannel?: (containerId: string) => Promise<HubTransport>) {}
 
   connected(instanceId: string): RunnerConnection | undefined {
@@ -281,9 +305,15 @@ export class RunnerHub {
       const conn = new RunnerConnection(hello.instanceId, hello.info, transport, via, (c, reason) =>
         this.gone(c, reason),
       );
+      conn.onProxy = this.proxyHandler;
       this.connections.set(hello.instanceId, conn);
       if (old && old !== conn) old.shutdown("replaced by a new runner connection");
-      transport.sendText(JSON.stringify({ type: "welcome", serverTime: new Date().toISOString() }));
+      const extras = await this.welcomeExtras?.(hello.instanceId).catch((err) => {
+        console.error("[witden] welcome settings unavailable", err);
+        return {};
+      });
+      const welcome: WelcomeMessage = { type: "welcome", serverTime: new Date().toISOString(), ...extras };
+      transport.sendText(JSON.stringify(welcome));
       for (const fn of this.waiters.get(hello.instanceId) ?? []) fn(conn);
       this.waiters.delete(hello.instanceId);
     });

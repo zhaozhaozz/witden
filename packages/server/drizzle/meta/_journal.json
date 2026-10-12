@@ -29,6 +29,13 @@
       "when": 1791786880642,
       "tag": "0003_drop_external_runtime",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791787291419,
+      "tag": "0004_model_proxy",
+      "breakpoints": true
     }
   ]
 }

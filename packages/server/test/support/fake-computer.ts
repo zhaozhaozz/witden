@@ -10,6 +10,7 @@ import type {
   ContainerStats,
   CreateComputerResult,
   ManagerApi,
+  ModelProxyConfig,
   RemoveComputerRequest,
   RequestMessage,
   RestoreRequest,
@@ -35,6 +36,13 @@ export class FakeComputer {
   dropOn: string | null = null;
   /** Run the next request with this op, journal its result, then drop the connection and reconnect shortly. */
   dropAfter: string | null = null;
+  /** Model proxy settings the platform sent (welcome / configure). */
+  modelProxy: ModelProxyConfig | null = null;
+  private proxyCalls = new Map<
+    string,
+    { status: number; headers: Record<string, string>; chunks: Buffer[]; done: (error?: string) => void }
+  >();
+  private proxySeq = 0;
   private transport: HubTransport | null = null;
   private hub: RunnerHub | null = null;
   private sessions = 0;
@@ -92,7 +100,56 @@ export class FakeComputer {
     this.transport?.sendText(JSON.stringify(msg));
   }
 
+  /** What a program in the computer would get from the local model endpoint (relayed like the real runner). */
+  proxy(
+    method: string,
+    path: string,
+    opts: { headers?: Record<string, string>; body?: unknown } = {},
+  ): Promise<{ status: number; headers: Record<string, string>; text: string; json: () => any; error?: string }> {
+    const id = `px-${++this.proxySeq}`;
+    return new Promise((resolve) => {
+      const call = {
+        status: 0,
+        headers: {} as Record<string, string>,
+        chunks: [] as Buffer[],
+        done: (error?: string) => {
+          const text = Buffer.concat(call.chunks).toString("utf8");
+          resolve({ status: call.status, headers: call.headers, text, json: () => JSON.parse(text), error });
+        },
+      };
+      this.proxyCalls.set(id, call);
+      const body = opts.body === undefined ? "" : typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body);
+      this.transport?.sendText(
+        JSON.stringify({
+          type: "proxy.request",
+          id,
+          method,
+          path,
+          headers: { "content-type": "application/json", ...(opts.headers ?? {}) },
+          bodyBase64: Buffer.from(body).toString("base64"),
+        }),
+      );
+    });
+  }
+
   private async handle(msg: any): Promise<void> {
+    if (msg.type === "welcome" || msg.type === "configure") {
+      this.modelProxy = msg.modelProxy ?? null;
+      return;
+    }
+    if (msg.type === "proxy.response" || msg.type === "proxy.chunk" || msg.type === "proxy.end") {
+      const call = this.proxyCalls.get(msg.id);
+      if (!call) return;
+      if (msg.type === "proxy.response") {
+        call.status = msg.status;
+        call.headers = msg.headers;
+      } else if (msg.type === "proxy.chunk") call.chunks.push(Buffer.from(msg.dataBase64, "base64"));
+      else {
+        this.proxyCalls.delete(msg.id);
+        call.done(msg.error);
+      }
+      return;
+    }
     if (msg.type === "stream.open") {
       this.transport?.sendText(JSON.stringify({ type: "stream.opened", streamId: msg.streamId }));
       this.transport?.sendBinary(encodeStreamFrame(msg.streamId, new TextEncoder().encode("RFB 003.008\n")));

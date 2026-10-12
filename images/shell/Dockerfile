@@ -42,6 +42,9 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
 
 COPY --from=runner /opt/witden/runner /opt/witden/runner
+# Login and interactive shells load the computer's model proxy settings when the platform enabled it.
+COPY images/common/model-proxy.sh /etc/profile.d/witden-model-proxy.sh
+RUN echo '. /etc/profile.d/witden-model-proxy.sh' >> /etc/bash.bashrc
 COPY --chmod=755 images/shell/runner-loop.sh /opt/witden/runner/runner-loop.sh
 
 # Roles are not root: global npm / pip installs go to ~/.local.

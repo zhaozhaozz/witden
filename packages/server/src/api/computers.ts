@@ -18,10 +18,14 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
+import { secretBox } from "../security/crypto.js";
 import { userCanRead } from "../security/labels.js";
-import { Perm, requirePerm } from "../security/permissions.js";
+import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import * as svc from "../services/instances.js";
 import { currentLease, handBack, takeOver } from "../services/leases.js";
+import { modelLabel, unusableReason } from "../services/model-configs.js";
+import * as proxySvc from "../services/model-proxy.js";
+import { proxyModels } from "../services/model-proxy.js";
 import * as tpl from "../services/templates.js";
 import { canView } from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
@@ -317,6 +321,52 @@ export async function computerRoutes(app: FastifyInstance) {
         .orderBy(desc(execSessions.createdAt))
         .limit(200);
       return rows.map((s) => row(s));
+    }),
+  );
+  // --- model proxy: a local model endpoint inside the computer, relayed and checked by the platform ---
+  const proxyOut = async (db: Db, user: User, inst: ComputerInstance) => {
+    const manage = await hasPermission(db, user, Perm.INSTANCE_MANAGE, inst.id);
+    const port = settings().modelProxyPort;
+    return {
+      enabled: inst.modelProxyEnabled,
+      model_ids: inst.modelProxyModelIds,
+      models: (await proxyModels(db, inst.modelProxyModelIds)).map((m) => ({
+        id: m.model.id,
+        alias: m.alias,
+        label: modelLabel(m.model, m.provider),
+        protocol: m.provider.protocol,
+        usable: !unusableReason(m.model, m.provider),
+      })),
+      // The key is only accepted through this computer's own runner, so its managers may see it.
+      key: manage && inst.modelProxyKeyEncrypted ? secretBox().decrypt(inst.modelProxyKeyEncrypted) : null,
+      key_issued_at: inst.modelProxyKeyIssuedAt?.toISOString() ?? null,
+      endpoints: { openai: `http://127.0.0.1:${port}/v1`, anthropic: `http://127.0.0.1:${port}` },
+      env_file: "~/.config/witden/model-proxy.env",
+      runner_connected: !!runtime().hub?.connected(inst.id),
+    };
+  };
+  app.get(
+    "/api/instances/:id/model-proxy",
+    authed(async ({ db, user, req }) => {
+      const inst = await svc.getInstance(db, params(req).id);
+      if (!(await canSee(db, user, inst))) await requirePerm(db, user, Perm.INSTANCE_OBSERVE, inst.id);
+      return proxyOut(db, user, inst);
+    }),
+  );
+  app.put(
+    "/api/instances/:id/model-proxy",
+    authed(async ({ db, user, req, after }) => {
+      const inst = await proxySvc.updateProxy(db, user, await svc.getInstance(db, params(req).id), body(req));
+      after(() => proxySvc.pushProxyConfig(inst.id));
+      return proxyOut(db, user, inst);
+    }),
+  );
+  app.post(
+    "/api/instances/:id/model-proxy/rotate-key",
+    authed(async ({ db, user, req, after }) => {
+      const inst = await proxySvc.rotateProxyKey(db, user, await svc.getInstance(db, params(req).id));
+      after(() => proxySvc.pushProxyConfig(inst.id));
+      return proxyOut(db, user, inst);
     }),
   );
   app.get(

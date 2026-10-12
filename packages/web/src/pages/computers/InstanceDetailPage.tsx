@@ -44,6 +44,7 @@ import {
   toDraft,
 } from "./computerParts";
 import { OperatorLabel } from "./InstancesPage";
+import { ModelAccessTab } from "./ModelAccessTab";
 
 // noVNC is large; load it only when a desktop screen is actually opened.
 const LiveDesktop = lazy(() => import("./LiveDesktop").then((m) => ({ default: m.LiveDesktop })));
@@ -116,6 +117,7 @@ export default function InstanceDetailPage() {
                   { key: "screen", label: "屏幕", hidden: !desktop },
                   { key: "console", label: "控制台", hidden: !can("instance.control") },
                   { key: "sessions", label: "会话" },
+                  { key: "models", label: "模型访问" },
                   { key: "backups", label: "备份与复制", hidden: !can("instance.manage") },
                   { key: "tasks", label: "任务", badge: inst.active_tasks?.length },
                 ]}
@@ -126,6 +128,7 @@ export default function InstanceDetailPage() {
               {tab === "screen" && desktop ? <ScreenTab inst={inst} reload={() => void res.reload()} /> : null}
               {tab === "console" ? <ConsoleTab inst={inst} /> : null}
               {tab === "sessions" ? <SessionsTab inst={inst} /> : null}
+              {tab === "models" ? <ModelAccessTab inst={inst} /> : null}
               {tab === "backups" ? <BackupsTab inst={inst} reload={() => void res.reload()} /> : null}
               {tab === "tasks" ? <TasksTab inst={inst} /> : null}
             </>
