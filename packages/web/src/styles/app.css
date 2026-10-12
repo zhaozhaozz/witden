@@ -3900,46 +3900,85 @@ body.resizing {
     transparent 85%
   );
 }
-/* Semi-transparent button that brings the conversation back. */
+/* The button that brings the conversation back: high contrast so it stands out on any screen, draggable. */
 .chat-fab {
   position: fixed;
-  right: 28px;
-  bottom: 28px;
   z-index: 60;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 52px;
+  gap: 8px;
+  width: 116px;
   height: 52px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: 50%;
-  background: rgba(34, 70, 106, 0.5);
+  padding: 0 18px 0 16px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 26px;
+  background: rgba(31, 111, 235, 0.92);
   color: #fff;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  box-shadow:
+    0 0 0 1px rgba(23, 33, 43, 0.35),
+    0 10px 28px rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(6px);
-  cursor: pointer;
-  opacity: 0.85;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   transition:
-    opacity 0.15s,
-    background 0.15s;
+    background 0.15s,
+    transform 0.15s;
 }
 .chat-fab:hover,
 .chat-fab:focus-visible {
-  background: rgba(34, 70, 106, 0.85);
-  opacity: 1;
+  background: rgba(22, 94, 210, 0.98);
+  transform: translateY(-1px);
+}
+.chat-fab-dragging {
+  cursor: grabbing;
+  transform: scale(1.04);
+  transition: none;
+}
+/* New messages: a ring pulses around the button until it is opened. */
+.chat-fab-unread::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border: 3px solid rgba(80, 160, 255, 0.85);
+  border-radius: 32px;
+  animation: chat-fab-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes chat-fab-pulse {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.18);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-fab-unread::after {
+    animation: none;
+    opacity: 0.8;
+  }
 }
 .chat-fab-badge {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 20px;
-  height: 20px;
+  top: -8px;
+  right: -8px;
+  min-width: 22px;
+  height: 22px;
+  border: 2px solid #fff;
   padding: 0 5px;
-  border-radius: 10px;
+  border-radius: 11px;
   background: var(--bad);
   color: #fff;
   font-size: 11.5px;
-  font-weight: 600;
-  line-height: 20px;
+  font-weight: 700;
+  line-height: 18px;
   text-align: center;
 }

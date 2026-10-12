@@ -107,3 +107,83 @@ export function ResizeGrips({ handle }: { handle: ReturnType<typeof useFloatingW
     </>
   );
 }
+
+/**
+ * A small element (e.g. a button) that can be dragged anywhere in the viewport. A press that moves less
+ * than a few pixels is a click; a drag never triggers ``onClick``. The position is kept under ``storageKey``.
+ */
+export function useDraggable(
+  storageKey: string,
+  size: { w: number; h: number },
+  fallback: () => { x: number; y: number },
+) {
+  const place = useCallback(
+    (p: { x: number; y: number }) => ({
+      x: Math.min(Math.max(p.x, 8), window.innerWidth - size.w - 8),
+      y: Math.min(Math.max(p.y, 8), window.innerHeight - size.h - 8),
+    }),
+    [size.w, size.h],
+  );
+  const [pos, setPos] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+      if (saved && typeof saved.x === "number" && typeof saved.y === "number") return place(saved);
+    } catch {
+      // ignore a broken entry
+    }
+    return place(fallback());
+  });
+  const [dragging, setDragging] = useState(false);
+  const drag = useRef<{ sx: number; sy: number; start: { x: number; y: number }; moved: boolean } | null>(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(pos));
+    } catch {
+      // storage unavailable
+    }
+  }, [pos, storageKey]);
+  useEffect(() => {
+    const onResize = () => setPos((p) => place(p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [place]);
+
+  const bind = (onClick: () => void) => ({
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => {
+      if (e.button !== 0) return;
+      e.currentTarget.setPointerCapture(e.pointerId);
+      drag.current = { sx: e.clientX, sy: e.clientY, start: pos, moved: false };
+    },
+    onPointerMove: (e: ReactPointerEvent<HTMLElement>) => {
+      const d = drag.current;
+      if (!d) return;
+      const dx = e.clientX - d.sx;
+      const dy = e.clientY - d.sy;
+      if (!d.moved && Math.hypot(dx, dy) < 5) return;
+      if (!d.moved) setDragging(true);
+      d.moved = true;
+      setPos(place({ x: d.start.x + dx, y: d.start.y + dy }));
+    },
+    onPointerUp: (e: ReactPointerEvent<HTMLElement>) => {
+      const d = drag.current;
+      drag.current = null;
+      setDragging(false);
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+      if (d && !d.moved) onClick();
+    },
+    onPointerCancel: () => {
+      drag.current = null;
+      setDragging(false);
+    },
+    // Keyboard users still open it with Enter / Space.
+    onKeyDown: (e: { key: string; preventDefault: () => void }) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    },
+  });
+
+  return { style: { left: pos.x, top: pos.y }, dragging, bind };
+}

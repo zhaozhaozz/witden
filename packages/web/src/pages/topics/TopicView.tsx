@@ -6,7 +6,7 @@ import { CONVERSATION_KIND, PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
-import { ResizeGrips, useFloatingWindow } from "../../ui/floating";
+import { ResizeGrips, useDraggable, useFloatingWindow } from "../../ui/floating";
 import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
@@ -36,6 +36,11 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const [computerMax, setComputerMax] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [unseen, setUnseen] = useState(0);
+  // The button that brings the conversation back; draggable so it never hides what you are looking at.
+  const fab = useDraggable("witden.chatButton", { w: 116, h: 52 }, () => ({
+    x: window.innerWidth - 116 - 28,
+    y: window.innerHeight - 52 - 28,
+  }));
   const chat = useFloatingWindow("witden.chatWindow", () => {
     const h = Math.min(620, window.innerHeight - 140);
     return { w: 420, h, x: window.innerWidth - 444, y: window.innerHeight - h - 96 };
@@ -392,16 +397,25 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
         )}
       </div>
       {computerMax && !chatOpen ? (
-        <button type="button" className="chat-fab" onClick={openChat} title="打开对话" aria-label="打开对话">
+        <button
+          type="button"
+          className={`chat-fab${unseen ? " chat-fab-unread" : ""}${fab.dragging ? " chat-fab-dragging" : ""}`}
+          style={fab.style}
+          title="点击打开对话，拖动可移动位置"
+          aria-label={unseen ? `打开对话（${unseen} 条新消息）` : "打开对话"}
+          {...fab.bind(openChat)}
+        >
           <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden>
             <path
               d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5Z"
-              fill="none"
+              fill="currentColor"
+              fillOpacity="0.2"
               stroke="currentColor"
-              strokeWidth="1.8"
+              strokeWidth="1.9"
               strokeLinejoin="round"
             />
           </svg>
+          <span>对话</span>
           {unseen ? <span className="chat-fab-badge">{unseen > 99 ? "99+" : unseen}</span> : null}
         </button>
       ) : null}
