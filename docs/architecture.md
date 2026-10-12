@@ -49,7 +49,9 @@ Slack webhook ─验签─► processed_events（queued，去重）─► 200 �
                          agent/output.deliver（信息流检查，必要时暂扣审批）─► 话题消息 ─► 出站队列 ─► Slack
 ```
 
-事件（任务进度、消息、状态）在事务内 `pg_notify('witden_events')`，提交后才送达；SSE 接口对每个事件重新鉴权。
+事件（任务进度、消息、状态）在事务内 `pg_notify('witden_events')`，提交后才送达；SSE 接口对每个事件重新鉴权。NOTIFY 负载上限是 8000 字节（按字节算，中文每字 3 字节），超长事件会截短并标记 `truncated`，控制台收到后再取完整消息。
+
+角色工作时，TaskRunner 在话题频道上发布不落库的 `task.live` 事件（`agent/live.ts`）：每次模型调用开始发 `thinking`；模型流式输出时按约 120 ms 一批发 `writing`（带 `offset` 和 `delta`，迟到的观看者能发现缺口）；执行工具前发 `tool`（只有工具名，不含参数）。流式文本与最终回答遵循同一条信息流规则：任务读过的材料不能在这个话题展示时（`textRestricted`），只发“思考中/正在使用工具”，不发文本。模型适配器在有人订阅文本时请求流式输出（OpenAI 兼容 `stream` + `stream_options.include_usage`，Anthropic `stream`），服务端拒绝流式（400/422）时对该模型退回普通请求。
 
 ## 执行边界
 

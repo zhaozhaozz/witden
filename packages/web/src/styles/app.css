@@ -2039,6 +2039,126 @@ img.avatar-role.avatar-colored {
 .msg-edit textarea {
   margin: 4px 0 6px;
 }
+
+/* People on the right as bubbles; roles on the left as plain text. */
+.msg-human {
+  grid-template-columns: minmax(0, 1fr) 36px;
+}
+.msg-human .msg-gutter {
+  order: 2;
+}
+.msg-human .msg-main {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.msg-human .msg-head {
+  flex-direction: row-reverse;
+}
+.msg-human .msg-text {
+  max-width: min(78%, 72ch);
+  padding: 7px 12px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: 14px 4px 14px 14px;
+}
+.msg-human.msg-compact .msg-text {
+  border-radius: 14px;
+}
+.msg-human.msg-mine .msg-text {
+  background: var(--harbor-tint);
+  border-color: #c9d8e7;
+}
+.msg-human .msg-text.muted {
+  background: transparent;
+}
+.msg-human .msg-edit {
+  align-self: stretch;
+}
+.msg-human .msg-attachments {
+  justify-content: flex-end;
+}
+.msg-human .msg-actions {
+  right: auto;
+  left: 16px;
+}
+
+/* A role at work: thinking dots, the tool in use, or the answer streaming in with a caret. */
+.msg-live:hover {
+  background: none;
+}
+.live-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.live-tool {
+  color: var(--harbor-2);
+}
+.live-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.live-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.3;
+  animation: live-dot 1.2s infinite ease-in-out;
+}
+.live-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.live-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes live-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+.live-note {
+  font-size: 13.5px;
+  color: var(--ink-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 4.6em;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, #000 55%, transparent);
+}
+.live-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--harbor-2);
+  border-radius: 1px;
+  animation: live-caret 1s steps(1) infinite;
+}
+@keyframes live-caret {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-dots i,
+  .live-caret {
+    animation: none;
+    opacity: 0.7;
+  }
+}
 .msg-system {
   display: flex;
   align-items: center;
@@ -3233,4 +3353,7 @@ body.resizing {
     animation: none !important;
     transition: none !important;
   }
+}
+.msg-human.msg-mine .mention {
+  background: #cfdcea;
 }

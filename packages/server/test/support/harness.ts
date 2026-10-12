@@ -1,6 +1,6 @@
 /** Test harness: a full witden in one process on embedded PostgreSQL, with simulated computers. */
 
-import type { ChatMessage, LLMResponse, ToolCall, ToolSchema } from "../../src/agent/llm.js";
+import type { ChatMessage, LLMResponse, OnDelta, ToolCall, ToolSchema } from "../../src/agent/llm.js";
 import { setFetch } from "../../src/agent/llm.js";
 import { Worker } from "../../src/agent/worker.js";
 import { start, type Witden } from "../../src/app.js";
@@ -117,10 +117,13 @@ export async function startHarness(overrides: Partial<Settings> = {}): Promise<H
 
 export function useScripts(scriptFor: (handle: string) => Script | undefined): void {
   setModelFactory(() => ({
-    async complete(messages: ChatMessage[], tools?: ToolSchema[]) {
+    async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta) {
       const m = /\(@([a-z0-9_.-]+)\)/.exec(String(messages[0]?.content ?? ""));
       const script = m ? scriptFor(m[1]) : undefined;
-      return script ? script(messages, tools) : reply(`${m?.[1] ?? "?"} has nothing to say`);
+      const out = script ? script(messages, tools) : reply(`${m?.[1] ?? "?"} has nothing to say`);
+      // Stream the answer in a few pieces, like a real endpoint.
+      if (onDelta) for (const piece of out.content.match(/[\s\S]{1,8}/g) ?? []) onDelta(piece);
+      return out;
     },
   }));
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
-import { useLiveEvents } from "../../api/events";
+import { type LiveHandler, useLiveEvents } from "../../api/events";
 import type { Artifact, Message, PostMessageResult, Topic } from "../../api/types";
 import { CONVERSATION_KIND, PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
@@ -10,6 +10,7 @@ import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
 import { type Author, MessageItem } from "./MessageItem";
+import { RoleActivity } from "./RoleActivity";
 import { TopicSidePanel } from "./TopicSidePanel";
 
 const PAGE = 100;
@@ -98,11 +99,28 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     [files],
   );
 
+  // Long messages arrive cut short (event size limit): fetch the latest ones in full.
+  const refreshRecent = useDebounced(() => {
+    void api
+      .get<Message[]>(`/api/topics/${topicId}/messages`, { limit: 20 })
+      .then((rows) => rows.forEach(appendMessage))
+      .catch(() => {});
+  }, 200);
+
+  const activityFeed = useRef<LiveHandler | null>(null);
+  const keepAtBottom = useCallback(() => {
+    const el = scroller.current;
+    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
+  }, []);
+
   const live = useLiveEvents(viewable ? { topic_id: topicId } : null, (type, data) => {
+    activityFeed.current?.(type, data);
+    if (type === "task.live") return;
     if (type === "message.created") {
       const m = data as unknown as Message;
       if (m.topic_id !== topicId) return;
       appendMessage(m);
+      if (data.truncated) refreshRecent();
       // Participant changes and archive notices arrive as system messages.
       if (m.author_type === "system") reloadTopic();
       if (m.task_id) bumpTasks();
@@ -119,21 +137,23 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   }, [topic]);
   const fileMap = useMemo(() => new Map((files.data ?? []).map((f) => [f.id, f])), [files.data]);
 
+  const roleAuthor = (id: string): Author => {
+    const p = participantMap.get(`role:${id}`);
+    const r = dir.roleById.get(id);
+    return {
+      kind: "role",
+      id,
+      name: p?.name ?? r?.name ?? "已移除的角色",
+      handle: p?.handle ?? r?.handle,
+      avatarUrl: p?.avatar_url ?? r?.avatar_url,
+      color: p?.color ?? r?.color,
+      computer: p?.instance ?? r?.instance ?? null,
+    };
+  };
+
   const authorOf = (m: Message): Author => {
     const id = m.author_id ?? m.id;
-    if (m.author_type === "role") {
-      const p = participantMap.get(`role:${id}`);
-      const r = dir.roleById.get(id);
-      return {
-        kind: "role",
-        id,
-        name: p?.name ?? r?.name ?? "已移除的角色",
-        handle: p?.handle ?? r?.handle,
-        avatarUrl: p?.avatar_url ?? r?.avatar_url,
-        color: p?.color ?? r?.color,
-        computer: p?.instance ?? r?.instance ?? null,
-      };
-    }
+    if (m.author_type === "role") return roleAuthor(id);
     if (m.author_type === "user") {
       const p = participantMap.get(`user:${id}`);
       return { kind: "user", id, name: p?.name ?? dir.userName(id), isMe: id === me?.id };
@@ -318,6 +338,13 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                     />
                   );
                 })}
+                <RoleActivity
+                  topicId={topic.id}
+                  connected={live}
+                  feed={activityFeed}
+                  authorOf={roleAuthor}
+                  onGrow={keepAtBottom}
+                />
               </>
             )}
           </div>

@@ -20,6 +20,7 @@ import * as models from "../services/model-configs.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL, textRestricted } from "./control.js";
 import { systemMessage } from "./dispatch.js";
+import { LiveFeed, type LiveTarget } from "./live.js";
 import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
 import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
@@ -31,6 +32,9 @@ interface Prepared {
   messages: ChatMessage[];
   tools: { name: string; description: string; parameters: Record<string, any> }[];
   modelConfigId: string;
+  live: LiveTarget;
+  /** Whether the answer may be streamed into the topic while it is written (see textRestricted). */
+  showText: boolean;
 }
 
 export class TaskRunner {
@@ -47,26 +51,34 @@ export class TaskRunner {
       for (;;) {
         const prepared = await this.prepare(taskId);
         if (!prepared) return;
+        const feed = new LiveFeed(prepared.live, prepared.showText);
+        feed.thinking();
         let response: LLMResponse;
         try {
           response = await prepared.model.complete(
             prepared.messages,
             prepared.tools.length ? prepared.tools : undefined,
+            feed.showText ? (text) => feed.write(text) : undefined,
           );
         } catch (err) {
           if (err instanceof WitdenError) {
+            await feed.close();
             await this.fail(taskId, `model error: ${err.message}`);
             return;
           }
           throw err;
         }
+        await feed.close();
         const calls = await this.record(taskId, prepared, response);
         if (calls === null) return;
         if (!calls.length) {
           await this.finish(taskId, response.content);
           return;
         }
-        for (const call of calls) if (!(await this.execute(taskId, call))) return;
+        for (const call of calls) {
+          await feed.tool(call.name);
+          if (!(await this.execute(taskId, call))) return;
+        }
       }
     } catch (err) {
       // An unexpected bug must be visible instead of leaving the task hanging.
@@ -207,6 +219,8 @@ export class TaskRunner {
         messages: [initial[0], ...transcript],
         tools: specs.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
         modelConfigId: cfg.id,
+        live: { task_id: task.id, role_id: task.ownerRoleId, topic_id: task.topicId },
+        showText: !(await textRestricted(tx, task)),
       };
     });
   }

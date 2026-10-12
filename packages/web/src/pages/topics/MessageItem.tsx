@@ -32,20 +32,28 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
   );
 }
 
-/** Message body: fenced code blocks as monospace blocks, `@handles` highlighted, everything else as text. */
-export function MessageText({ content }: { content: string }) {
-  const parts = content.split(/```[^\n]*\n?([\s\S]*?)```/g);
+/**
+ * Message body: fenced code blocks as monospace blocks, `@handles` highlighted, everything else as text.
+ * ``trailing`` is rendered inline after the text (the caret of an answer that is still being written).
+ */
+export function MessageText({ content, trailing }: { content: string; trailing?: ReactNode }) {
+  // An unterminated fence (still streaming) is shown as code up to the end.
+  const closed = (content.match(/```/g)?.length ?? 0) % 2 === 0 ? content : `${content}\n${"```"}`;
+  const parts = closed.split(/```[^\n]*\n?([\s\S]*?)```/g);
   return (
     <div className="msg-text">
-      {parts.map((p, i) =>
-        i % 2 === 1 ? (
-          <pre key={i} className="mono-block">
-            {p.replace(/\n$/, "")}
-          </pre>
-        ) : p ? (
-          <span key={i}>{renderInline(p, String(i))}</span>
-        ) : null,
-      )}
+      {parts.map((p, i) => {
+        if (i % 2 === 1)
+          return (
+            <pre key={i} className="mono-block">
+              {p.replace(/\n$/, "")}
+            </pre>
+          );
+        // The line break right after a code block is already implied by the block.
+        const text = i > 0 ? p.replace(/^\n/, "") : p;
+        return text ? <span key={i}>{renderInline(text, String(i))}</span> : null;
+      })}
+      {trailing}
     </div>
   );
 }
@@ -104,9 +112,13 @@ export function MessageItem({
   }
 
   const canEdit = author.isMe && msg.author_type === "user" && !msg.deleted;
+  // People's messages sit on the right as bubbles; roles' answers stay on the left as plain text.
+  const human = author.kind === "user" || author.kind === "external";
 
   return (
-    <div className={`msg msg-${author.kind}${compact ? " msg-compact" : ""}${author.isMe ? " msg-mine" : ""}`}>
+    <div
+      className={`msg msg-${author.kind}${human ? " msg-human" : ""}${compact ? " msg-compact" : ""}${author.isMe ? " msg-mine" : ""}`}
+    >
       <div className="msg-gutter">
         {compact ? (
           <time className="msg-hover-time">{fmtTime(msg.created_at)}</time>
@@ -138,7 +150,7 @@ export function MessageItem({
                 {author.computer ? <ComputerBadge computer={author.computer} /> : null}
                 <span className="ai-mark">AI 员工</span>
               </>
-            ) : (
+            ) : author.isMe ? null : (
               <span className="msg-author">{author.name}</span>
             )}
             {author.kind === "external" || (msg.source && msg.source !== "web" && msg.source !== "internal") ? (

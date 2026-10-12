@@ -35,8 +35,12 @@ export interface ToolSchema {
   parameters: Record<string, any>;
 }
 
+/** Receives the answer text as it is generated (streaming); tool-call arguments are not passed on. */
+export type OnDelta = (text: string) => void;
+
 export interface ChatModel {
-  complete(messages: ChatMessage[], tools?: ToolSchema[]): Promise<LLMResponse>;
+  /** With ``onDelta`` the adapter streams the answer when the endpoint supports it; the result is the same. */
+  complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta): Promise<LLMResponse>;
 }
 
 /** Tests replace this to intercept HTTP. */
@@ -56,19 +60,33 @@ function parseArgs(raw: unknown): Record<string, any> {
   }
 }
 
-async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<any> {
-  return request(url, { method: "POST", headers, body: JSON.stringify(body) }, timeoutMs);
+async function request(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
+  return parseJson(await send(url, init, timeoutMs));
 }
 
-async function request(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
+async function send(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
   let res: Response;
   try {
     res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     throw new ModelError(`model endpoint unreachable: ${(err as Error).message}`);
   }
-  const text = await res.text();
-  if (res.status >= 400) throw new ModelError(`model returned HTTP ${res.status}: ${text.slice(0, 500)}`);
+  if (res.status >= 400) {
+    const text = await res.text().catch(() => "");
+    throw new ModelError(`model returned HTTP ${res.status}: ${text.slice(0, 500)}`, {
+      detail: { upstream_status: res.status },
+    });
+  }
+  return res;
+}
+
+async function parseJson(res: Response): Promise<any> {
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (err) {
+    throw new ModelError(`model endpoint unreachable: ${(err as Error).message}`);
+  }
   try {
     return JSON.parse(text);
   } catch {
@@ -76,10 +94,74 @@ async function request(url: string, init: RequestInit, timeoutMs: number): Promi
   }
 }
 
+const isEventStream = (res: Response) => (res.headers.get("content-type") ?? "").includes("text/event-stream");
+
+/** The JSON ``data:`` payloads of a server-sent event stream, as they arrive. */
+async function* sseData(res: Response): AsyncGenerator<any> {
+  if (!res.body) return;
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+      buffer += decoder.decode(chunk, { stream: true });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        const line = buffer.slice(0, nl).replace(/\r$/, "");
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let data: any;
+        try {
+          data = JSON.parse(payload);
+        } catch {
+          continue; // keep-alive comments and partial vendor extensions
+        }
+        if (data?.error)
+          throw new ModelError(`model stream error: ${data.error.message ?? JSON.stringify(data.error)}`);
+        yield data;
+      }
+    }
+  } catch (err) {
+    if (err instanceof ModelError) throw err;
+    throw new ModelError(`model stream interrupted: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * POST with streaming when someone listens for text. An endpoint that rejects streaming (some gateways
+ * refuse ``stream_options``) is asked again without it, and the adapter stops trying for that model.
+ */
+async function postMaybeStreaming(
+  model: { streaming: boolean },
+  url: string,
+  headers: Record<string, string>,
+  body: Record<string, any>,
+  streamFields: Record<string, any>,
+  timeoutMs: number,
+  onDelta: OnDelta | undefined,
+): Promise<Response> {
+  if (onDelta && model.streaming) {
+    try {
+      return await send(
+        url,
+        { method: "POST", headers, body: JSON.stringify({ ...body, ...streamFields }) },
+        timeoutMs,
+      );
+    } catch (err) {
+      if (!(err instanceof ModelError) || ![400, 422].includes(err.detail.upstream_status as number)) throw err;
+      model.streaming = false;
+    }
+  }
+  return send(url, { method: "POST", headers, body: JSON.stringify(body) }, timeoutMs);
+}
+
 /** Any endpoint speaking the OpenAI /chat/completions protocol (vLLM, Ollama, DeepSeek, ...). */
 export class OpenAICompatibleModel implements ChatModel {
   private readonly url: string;
   private readonly headers: Record<string, string>;
+  streaming = true;
 
   constructor(
     baseUrl: string,
@@ -92,10 +174,50 @@ export class OpenAICompatibleModel implements ChatModel {
     this.headers = { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   }
 
-  async complete(messages: ChatMessage[], tools?: ToolSchema[]): Promise<LLMResponse> {
+  async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta): Promise<LLMResponse> {
     const body: Record<string, any> = { model: this.model, messages, ...this.params };
     if (tools?.length) body.tools = tools.map((t) => ({ type: "function", function: t }));
-    const data = await post(this.url, this.headers, body, this.timeoutMs);
+    const stream = { stream: true, stream_options: { include_usage: true } };
+    const res = await postMaybeStreaming(this, this.url, this.headers, body, stream, this.timeoutMs, onDelta);
+    if (!isEventStream(res)) return OpenAICompatibleModel.parse(await parseJson(res));
+    // Streamed: text arrives in delta.content; tool calls arrive in pieces keyed by index.
+    let content = "";
+    const calls: { id?: string; name: string; args: string }[] = [];
+    let usage: any = null;
+    let finishReason: string | null = null;
+    for await (const chunk of sseData(res)) {
+      if (chunk.usage) usage = chunk.usage;
+      const choice = chunk.choices?.[0];
+      if (!choice) continue;
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+      const delta = choice.delta ?? {};
+      if (typeof delta.content === "string" && delta.content) {
+        content += delta.content;
+        onDelta?.(delta.content);
+      }
+      for (const part of delta.tool_calls ?? []) {
+        const at = typeof part.index === "number" ? part.index : calls.length;
+        calls[at] ??= { name: "", args: "" };
+        if (part.id) calls[at].id = part.id;
+        if (part.function?.name) calls[at].name += part.function.name;
+        if (part.function?.arguments) calls[at].args += part.function.arguments;
+      }
+    }
+    return OpenAICompatibleModel.parse({
+      choices: [
+        {
+          finish_reason: finishReason,
+          message: {
+            content,
+            tool_calls: calls.filter(Boolean).map((c) => ({ id: c.id, function: { name: c.name, arguments: c.args } })),
+          },
+        },
+      ],
+      usage,
+    });
+  }
+
+  private static parse(data: any): LLMResponse {
     const choice = data.choices?.[0] ?? {};
     const msg = choice.message ?? {};
     const toolCalls: ToolCall[] = (msg.tool_calls ?? []).map((c: any) => {
@@ -123,6 +245,7 @@ export class AnthropicModel implements ChatModel {
   private readonly url: string;
   private readonly headers: Record<string, string>;
   private readonly params: Record<string, any>;
+  streaming = true;
 
   constructor(
     baseUrl: string,
@@ -182,13 +305,40 @@ export class AnthropicModel implements ChatModel {
     return { system, messages: out };
   }
 
-  async complete(messages: ChatMessage[], tools?: ToolSchema[]): Promise<LLMResponse> {
+  async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta): Promise<LLMResponse> {
     const { system, messages: converted } = this.convert(messages);
     const body: Record<string, any> = { model: this.model, messages: converted, ...this.params };
     if (system) body.system = system;
     if (tools?.length)
       body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
-    const data = await post(this.url, this.headers, body, this.timeoutMs);
+    const res = await postMaybeStreaming(this, this.url, this.headers, body, { stream: true }, this.timeoutMs, onDelta);
+    if (!isEventStream(res)) return AnthropicModel.parse(await parseJson(res));
+    // Streamed: content blocks open, grow by deltas (text or partial tool-input JSON), then close.
+    const blocks: any[] = [];
+    const usage = { input_tokens: 0, output_tokens: 0 };
+    let stopReason: string | null = null;
+    for await (const ev of sseData(res)) {
+      if (ev.type === "message_start") Object.assign(usage, ev.message?.usage ?? {});
+      else if (ev.type === "content_block_start") blocks[ev.index] = { ...ev.content_block, json: "" };
+      else if (ev.type === "content_block_delta") {
+        const block = blocks[ev.index];
+        if (!block) continue;
+        if (ev.delta?.type === "text_delta" && ev.delta.text) {
+          block.text = (block.text ?? "") + ev.delta.text;
+          onDelta?.(ev.delta.text);
+        } else if (ev.delta?.type === "input_json_delta") block.json += ev.delta.partial_json ?? "";
+      } else if (ev.type === "message_delta") {
+        if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+        if (ev.usage?.output_tokens !== undefined) usage.output_tokens = ev.usage.output_tokens;
+      }
+    }
+    for (const b of blocks) {
+      if (b?.type === "tool_use" && b.json) b.input = parseArgs(b.json);
+    }
+    return AnthropicModel.parse({ content: blocks.filter(Boolean), usage, stop_reason: stopReason });
+  }
+
+  private static parse(data: any): LLMResponse {
     const blocks: any[] = data.content ?? [];
     return {
       content: blocks

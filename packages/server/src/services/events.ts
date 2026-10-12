@@ -10,7 +10,9 @@ import type { Database, Db } from "../db/client.js";
 
 export const EVENTS_CHANNEL = "witden_events";
 export const WAKE_CHANNEL = "witden_wake";
-const MAX_PAYLOAD = 7000;
+/** PostgreSQL caps NOTIFY payloads at 8000 bytes (not characters: CJK text takes three bytes each). */
+const MAX_PAYLOAD_BYTES = 7500;
+const fits = (payload: string) => Buffer.byteLength(payload) <= MAX_PAYLOAD_BYTES;
 
 export interface BusEvent {
   type: string;
@@ -31,10 +33,10 @@ function shrink(value: unknown, budget: number): unknown {
 function encode(event: BusEvent): string {
   let payload = JSON.stringify(event);
   for (const budget of [2000, 500, 100]) {
-    if (payload.length <= MAX_PAYLOAD) break;
+    if (fits(payload)) break;
     payload = JSON.stringify({ ...event, data: { ...(shrink(event.data, budget) as object), truncated: true } });
   }
-  return payload.length <= MAX_PAYLOAD
+  return fits(payload)
     ? payload
     : JSON.stringify({ type: event.type, data: { truncated: true }, channels: event.channels });
 }

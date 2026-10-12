@@ -389,4 +389,113 @@ describe("model protocols", () => {
     expect(res.content).toBe("looking");
     expect(res.toolCalls[0].arguments).toEqual({ command: "ls" });
   });
+
+  /** An event-stream response delivered in awkward pieces (split mid-line and mid-character). */
+  const streamed = (events: unknown[], requests: any[]) =>
+    setFetch(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      if (!body.stream) return new Response(JSON.stringify({ choices: [{ message: { content: "plain" } }] }));
+      const text = events.map((e) => `data: ${typeof e === "string" ? e : JSON.stringify(e)}\r\n\r\n`).join("");
+      const bytes = new TextEncoder().encode(text);
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            for (let i = 0; i < bytes.length; i += 7) c.enqueue(bytes.slice(i, i + 7));
+            c.close();
+          },
+        }),
+        { headers: { "content-type": "text/event-stream; charset=utf-8" } },
+      );
+    });
+
+  it("OpenAI-compatible streaming: text deltas, tool calls in pieces, usage from the last chunk", async () => {
+    const requests: any[] = [];
+    streamed(
+      [
+        { choices: [{ delta: { role: "assistant", content: "先看" } }] },
+        { choices: [{ delta: { content: "一下目录" } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "run_", arguments: "" } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { name: "command", arguments: '{"comm' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'and": "ls"}' } }] } }] },
+        { choices: [{ delta: {}, finish_reason: "tool_calls" }] },
+        { choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
+        "[DONE]",
+      ],
+      requests,
+    );
+    const pieces: string[] = [];
+    const model = new OpenAICompatibleModel("http://llm/v1", "m", null, {});
+    const res = await model.complete([{ role: "user", content: "hi" }], TOOLS, (t) => pieces.push(t));
+    expect(requests[0]).toMatchObject({ stream: true, stream_options: { include_usage: true } });
+    expect(pieces).toEqual(["先看", "一下目录"]);
+    expect(res.content).toBe("先看一下目录");
+    expect(res.toolCalls).toMatchObject([{ id: "c1", name: "run_command", arguments: { command: "ls" } }]);
+    expect([res.promptTokens, res.completionTokens, res.finishReason]).toEqual([9, 4, "tool_calls"]);
+    // Nobody listening: a plain request, as before.
+    expect((await model.complete([{ role: "user", content: "hi" }])).content).toBe("plain");
+    expect(requests[1].stream).toBeUndefined();
+  });
+
+  it("an endpoint that refuses streaming is asked again without it", async () => {
+    const requests: any[] = [];
+    setFetch(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      return body.stream
+        ? new Response("unknown field stream_options", { status: 400 })
+        : new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }));
+    });
+    const model = new OpenAICompatibleModel("http://llm/v1", "m", null, {});
+    expect((await model.complete([{ role: "user", content: "x" }], undefined, () => {})).content).toBe("ok");
+    expect((await model.complete([{ role: "user", content: "x" }], undefined, () => {})).content).toBe("ok");
+    expect(requests.map((r) => !!r.stream)).toEqual([true, false, false]);
+  });
+
+  it("a stream that reports an error fails the call", async () => {
+    streamed([{ error: { message: "context too long" } }], []);
+    await expect(
+      new OpenAICompatibleModel("http://llm/v1", "m", null, {}).complete(
+        [{ role: "user", content: "x" }],
+        undefined,
+        () => {},
+      ),
+    ).rejects.toThrow(/context too long/);
+  });
+
+  it("Anthropic streaming: text and tool-input deltas per content block", async () => {
+    const requests: any[] = [];
+    streamed(
+      [
+        { type: "message_start", message: { usage: { input_tokens: 12, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Let me " } },
+        { type: "ping" },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "check." } },
+        { type: "content_block_stop", index: 0 },
+        {
+          type: "content_block_start",
+          index: 1,
+          content_block: { type: "tool_use", id: "tu1", name: "run_command", input: {} },
+        },
+        { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"command":' } },
+        { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: ' "pwd"}' } },
+        { type: "content_block_stop", index: 1 },
+        { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 20 } },
+        { type: "message_stop" },
+      ],
+      requests,
+    );
+    const pieces: string[] = [];
+    const res = await new AnthropicModel("https://api.anthropic.com", "x", "k", {}).complete(
+      [{ role: "user", content: "hi" }],
+      TOOLS,
+      (t) => pieces.push(t),
+    );
+    expect(requests[0].stream).toBe(true);
+    expect(pieces.join("")).toBe("Let me check.");
+    expect(res.content).toBe("Let me check.");
+    expect(res.toolCalls).toEqual([{ id: "tu1", name: "run_command", arguments: { command: "pwd" } }]);
+    expect([res.promptTokens, res.completionTokens, res.finishReason]).toEqual([12, 20, "tool_use"]);
+  });
 });
