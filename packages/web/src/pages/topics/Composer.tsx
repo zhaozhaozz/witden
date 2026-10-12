@@ -231,7 +231,7 @@ export function Composer({
           ref={area}
           rows={Math.min(8, Math.max(2, text.split("\n").length))}
           value={text}
-          placeholder="输入消息，用 @ 提及角色或成员。Enter 发送，Shift+Enter 换行"
+          placeholder="输入消息（支持 Markdown、```mermaid 流程图），用 @ 提及角色或成员。Enter 发送，Shift+Enter 换行"
           onChange={(e) => {
             setText(e.target.value);
             syncQuery(e.target.value, e.target.selectionStart);

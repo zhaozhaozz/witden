@@ -1,10 +1,11 @@
-import { Fragment, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 import { downloadFile } from "../../api/client";
 import type { Artifact, Message } from "../../api/types";
 import { fmtBytes, fmtDateTime, fmtTime, PLATFORM_LABEL } from "../../lib/format";
 import { useAction } from "../../ui/feedback";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
+import { isPreviewableImage, Markdown, MessageImage } from "../../ui/Markdown";
 
 export interface Author {
   kind: "user" | "role" | "system" | "external";
@@ -18,43 +19,48 @@ export interface Author {
   isMe?: boolean;
 }
 
-const MENTION = /(@[A-Za-z0-9一-鿿][A-Za-z0-9_.\-一-鿿]*)/g;
-
-function renderInline(text: string, keyBase: string): ReactNode[] {
-  return text.split(MENTION).map((part, i) =>
-    i % 2 === 1 ? (
-      <span key={`${keyBase}-${i}`} className="mention">
-        {part}
-      </span>
-    ) : (
-      <Fragment key={`${keyBase}-${i}`}>{part}</Fragment>
-    ),
-  );
+/**
+ * Message body rendered as Markdown (see ui/Markdown). ``streaming`` marks an answer still being written;
+ * ``trailing`` follows the text (its caret).
+ */
+export function MessageText({
+  content,
+  streaming,
+  trailing,
+}: {
+  content: string;
+  streaming?: boolean;
+  trailing?: ReactNode;
+}) {
+  return <Markdown content={content} streaming={streaming} trailing={trailing} />;
 }
 
-/**
- * Message body: fenced code blocks as monospace blocks, `@handles` highlighted, everything else as text.
- * ``trailing`` is rendered inline after the text (the caret of an answer that is still being written).
- */
-export function MessageText({ content, trailing }: { content: string; trailing?: ReactNode }) {
-  // An unterminated fence (still streaming) is shown as code up to the end.
-  const closed = (content.match(/```/g)?.length ?? 0) % 2 === 0 ? content : `${content}\n${"```"}`;
-  const parts = closed.split(/```[^\n]*\n?([\s\S]*?)```/g);
+/** Pictures are shown in the message; other files are chips that download to the reader's own computer. */
+function MessageAttachments({ ids, files }: { ids: string[]; files: Map<string, Artifact> }) {
+  const images = ids.filter((id) => isPreviewableImage(files.get(id)?.mime));
+  const others = ids.filter((id) => !images.includes(id));
   return (
-    <div className="msg-text">
-      {parts.map((p, i) => {
-        if (i % 2 === 1)
-          return (
-            <pre key={i} className="mono-block">
-              {p.replace(/\n$/, "")}
-            </pre>
-          );
-        // The line break right after a code block is already implied by the block.
-        const text = i > 0 ? p.replace(/^\n/, "") : p;
-        return text ? <span key={i}>{renderInline(text, String(i))}</span> : null;
-      })}
-      {trailing}
-    </div>
+    <>
+      {images.length ? (
+        <div className="msg-images">
+          {images.map((id) => (
+            <figure key={id}>
+              <MessageImage fileId={id} alt={files.get(id)?.name} />
+              <figcaption>
+                <AttachmentChip id={id} file={files.get(id)} />
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : null}
+      {others.length ? (
+        <div className="msg-attachments">
+          {others.map((id) => (
+            <AttachmentChip key={id} id={id} file={files.get(id)} />
+          ))}
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -187,13 +193,7 @@ export function MessageItem({
         ) : (
           <MessageText content={msg.content} />
         )}
-        {msg.attachments?.length ? (
-          <div className="msg-attachments">
-            {msg.attachments.map((id) => (
-              <AttachmentChip key={id} id={id} file={files.get(id)} />
-            ))}
-          </div>
-        ) : null}
+        {msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
         <div className="msg-foot">
           {msg.edited_at ? <span className="small muted">已编辑</span> : null}
           {msg.task_id ? (

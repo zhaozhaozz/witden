@@ -18,5 +18,8 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
+    // Mermaid's diagram engines (elk, cytoscape, ...) are big but only load when a message contains a
+    // diagram; the console's own entry stays under 500 kB.
+    chunkSizeWarningLimit: 1600,
   },
 });

@@ -262,7 +262,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
     budget.max_tokens = Math.max(0, Math.min(budget.max_tokens ?? left, left));
   }
   const session = await sessionFor(db, role.id, topic.id);
-  const firstLine = o.instruction.trim().split("\n")[0] || "task";
+  const firstLine = plainTitle(o.instruction) || "task";
   const [task] = await db
     .insert(tasks)
     .values({
@@ -555,7 +555,7 @@ export async function delegate(
     requesterUserId: parent.requesterUserId,
     requesterRoleId: sender.id,
     instruction: brief,
-    title: instruction.slice(0, 120),
+    title: plainTitle(instruction).slice(0, 120) || "task",
     parent,
     assignment: allowed[0][1],
     round: parent.round + 1,
@@ -564,3 +564,18 @@ export async function delegate(
 }
 
 export { users as usersTable };
+
+/** First meaningful line of a (Markdown) message as a plain task title: no heading, quote, list or emphasis marks. */
+export function plainTitle(text: string): string {
+  const line =
+    text
+      .trim()
+      .split("\n")
+      .find((l) => l.trim() && !/^\s*(```|~~~)/.test(l)) ?? "";
+  return line
+    .replace(/^\s*(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+)/, "")
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|`)/g, "")
+    .trim();
+}

@@ -1,6 +1,7 @@
 /** Security primitives, information-flow labels, model configurations and the model wire protocols. */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { plainTitle } from "../src/agent/dispatch.js";
 import { AnthropicModel, type ChatMessage, imagePart, OpenAICompatibleModel, setFetch } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
@@ -497,5 +498,15 @@ describe("model protocols", () => {
     expect(res.content).toBe("Let me check.");
     expect(res.toolCalls).toEqual([{ id: "tu1", name: "run_command", arguments: { command: "pwd" } }]);
     expect([res.promptTokens, res.completionTokens, res.finishReason]).toEqual([12, 20, "tool_use"]);
+  });
+});
+
+describe("task titles from Markdown messages", () => {
+  it("take the first meaningful line without Markdown marks", () => {
+    expect(plainTitle("## 发布清单\n\n请看一下")).toBe("发布清单");
+    expect(plainTitle("- [ ] 更新 **CHANGELOG**")).toBe("更新 CHANGELOG");
+    expect(plainTitle("> 引用 [任务](/tasks) 和 `npm test`")).toBe("引用 任务 和 npm test");
+    expect(plainTitle("```bash\nnpm ci\n```")).toBe("npm ci");
+    expect(plainTitle("@dev 看看 ![图](x.png)")).toBe("@dev 看看 图");
   });
 });
