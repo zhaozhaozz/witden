@@ -1,9 +1,9 @@
 /** Controls shared by the virtual computer page and a topic's side panel: live screen, takeover, console. */
 import { lazy, useEffect, useRef, useState } from "react";
-import { api, errorMessage } from "../../api/client";
+import { api, buildUrl, errorMessage, getToken } from "../../api/client";
 import type { ExecResult, Instance } from "../../api/types";
 import { fmtRelative } from "../../lib/format";
-import { useDirectory } from "../../lib/session";
+import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Section, Tag } from "../../ui/kit";
 
@@ -38,6 +38,88 @@ export function useTakeover() {
     );
   };
   return { takeOver, busy };
+}
+
+/** No mouse or keyboard input for this long ends a takeover. */
+const IDLE_MS = 5 * 60_000;
+/** The page in a background tab for this long ends a takeover. */
+const HIDDEN_MS = 30_000;
+/** Must stay well under the server's TAKEOVER_MS (3 minutes), after which an unconfirmed takeover lapses. */
+const KEEPALIVE_MS = 60_000;
+
+/**
+ * While the signed-in person holds a takeover of ``inst``: confirm it to the server every minute while they
+ * are active, and hand it back when they leave — ``active`` turns false, the view unmounts (another page,
+ * another panel tab), the browser tab stays in the background — or stop using mouse and keyboard for a
+ * while. If the browser simply disappears, the server lets the takeover lapse on its own.
+ */
+export function useTakeoverSession(inst: Instance | undefined, active: boolean, onReleased: () => void) {
+  const { me } = useAuth();
+  const { toast } = useFeedback();
+  const held = !!inst && inst.operator?.holder_type === "user" && inst.operator.holder_id === me?.id;
+  const id = inst?.id;
+  // Read in the cleanup, where they already hold the values of the render that triggered it.
+  const now = useRef({ held, id, onReleased, toast });
+  now.current = { held, id, onReleased, toast };
+
+  useEffect(() => {
+    if (!held || !id || !active) return;
+    let done = false;
+    let lastInput = Date.now();
+    let hiddenSince: number | null = document.hidden ? Date.now() : null;
+    const handBack = (notice: string | null, closing = false) => {
+      if (done) return;
+      done = true;
+      if (closing) {
+        // The page is going away: a keepalive request still reaches the server.
+        const token = getToken();
+        void fetch(buildUrl(`/api/instances/${id}/handback`), {
+          method: "POST",
+          keepalive: true,
+          headers: token ? { authorization: `Bearer ${token}` } : {},
+        }).catch(() => {});
+        return;
+      }
+      void api
+        .post(`/api/instances/${id}/handback`)
+        .then(() => {
+          if (notice) now.current.toast(notice, "info");
+          now.current.onReleased();
+        })
+        .catch(() => now.current.onReleased());
+    };
+    const onInput = () => {
+      lastInput = Date.now();
+    };
+    const onVisibility = () => {
+      hiddenSince = document.hidden ? Date.now() : null;
+    };
+    const onPageHide = () => handBack(null, true);
+    // Capture phase: the remote screen consumes its own mouse and key events.
+    const inputs = ["pointerdown", "pointermove", "keydown", "wheel"] as const;
+    for (const ev of inputs) window.addEventListener(ev, onInput, { capture: true, passive: true });
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    const check = window.setInterval(() => {
+      if (hiddenSince !== null && Date.now() - hiddenSince > HIDDEN_MS)
+        handBack("你离开了页面，已自动交还控制，AI 工作恢复");
+      else if (Date.now() - lastInput > IDLE_MS) handBack("长时间没有操作，已自动交还控制，AI 工作恢复");
+    }, 5000);
+    const keep = window.setInterval(() => {
+      if (document.hidden || Date.now() - lastInput > IDLE_MS) return;
+      void api.post(`/api/instances/${id}/takeover/keepalive`).catch(() => now.current.onReleased());
+    }, KEEPALIVE_MS);
+    return () => {
+      for (const ev of inputs) window.removeEventListener(ev, onInput, { capture: true });
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      window.clearInterval(check);
+      window.clearInterval(keep);
+      // Handed back on purpose (or taken away): nothing left to release.
+      if (!now.current.held && now.current.id === id) return;
+      handBack("已自动交还控制，AI 工作恢复");
+    };
+  }, [held, id, active]);
 }
 
 interface ConsoleEntry {

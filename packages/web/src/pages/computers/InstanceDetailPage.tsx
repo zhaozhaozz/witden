@@ -29,7 +29,7 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { TaskStatusChip } from "../tasks/taskParts";
-import { LiveDesktop, OperatorConsole, OperatorLabel, useTakeover } from "./computerControls";
+import { LiveDesktop, OperatorConsole, OperatorLabel, useTakeover, useTakeoverSession } from "./computerControls";
 import {
   fromDraft,
   InstanceStatusChip,
@@ -56,6 +56,8 @@ export default function InstanceDetailPage() {
   const { can } = useAuth();
   const [tab, setTab] = useState("overview");
   const res = useResource(() => api.get<Instance>(`/api/instances/${instanceId}`), [instanceId]);
+  // A takeover made on this page ends when the person leaves it or stops working (any tab of the page counts).
+  useTakeoverSession(res.data, true, () => void res.reload());
   const refresh = useDebounced(() => void res.reload(), 300);
   useLiveEvents(can("audit.view") || can("instance.manage") ? { admin: true } : null, (type, data) => {
     if (type.startsWith("instance.") && data.id === instanceId) refresh();
@@ -685,53 +687,45 @@ function ScreenTab({ inst, reload }: { inst: Instance; reload: () => void }) {
   const heldByMe = inst.operator?.holder_type === "user" && inst.operator.holder_id === me?.id;
   const mode: "view" | "control" = heldByMe && can("instance.control") ? "control" : "view";
   const running = inst.status === "running";
+  const control = can("instance.control") ? (
+    heldByMe ? (
+      <button
+        type="button"
+        className="btn btn-xs btn-primary"
+        disabled={busy}
+        onClick={async () => {
+          if (await run(() => api.post(`/api/instances/${inst.id}/handback`), "已交还控制，AI 工作恢复")) reload();
+        }}
+      >
+        交还控制
+      </button>
+    ) : (
+      <button
+        type="button"
+        className="btn btn-xs"
+        disabled={taking || !running}
+        onClick={async () => {
+          if (await takeOver(inst)) reload();
+        }}
+      >
+        接管并操作
+      </button>
+    )
+  ) : null;
 
   return (
     <div className="screen-tab">
-      <Section
-        title="实时画面"
-        actions={
-          can("instance.control") ? (
-            heldByMe ? (
-              <button
-                type="button"
-                className="btn btn-sm btn-primary"
-                disabled={busy}
-                onClick={async () => {
-                  const out = await run(
-                    () => api.post(`/api/instances/${inst.id}/handback`),
-                    "已交还控制，AI 工作恢复",
-                  );
-                  if (out) reload();
-                }}
-              >
-                交还控制
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-sm"
-                disabled={busy || taking || !running}
-                onClick={async () => {
-                  if (await takeOver(inst)) reload();
-                }}
-              >
-                接管并操作
-              </button>
-            )
-          ) : null
-        }
-      >
+      <Section title="实时画面">
         <p className="small muted">
           {mode === "control"
-            ? "你已接管这台虚拟电脑，画面可操作，AI 工作已暂停。完成后请交还控制。"
+            ? "你已接管这台虚拟电脑，画面可操作，AI 工作已暂停。完成后请交还控制；离开页面、切到别的浏览器标签超过 30 秒或 5 分钟没有操作，会自动交还。"
             : inst.operator?.holder_type === "user" && !heldByMe
               ? `只读画面：${dir.userName(inst.operator.holder_id)} 正在接管这台虚拟电脑，只有接管人可以操作。`
               : "只读画面：可以观察 AI 的操作。只有接管虚拟电脑的人才能使用鼠标和键盘，接管会暂停这台虚拟电脑上的 AI 工作。"}
         </p>
         {running ? (
           <Suspense fallback={<Loading label="正在加载实时画面组件" />}>
-            <LiveDesktop key={mode} instanceId={inst.id} mode={mode} />
+            <LiveDesktop key={mode} instanceId={inst.id} mode={mode} actions={control} />
           </Suspense>
         ) : (
           <Empty title="虚拟电脑未运行" hint="启动虚拟电脑后可以查看实时画面。" />

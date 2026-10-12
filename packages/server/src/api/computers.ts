@@ -23,7 +23,7 @@ import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseColor } from "../services/appearance.js";
 import * as svc from "../services/instances.js";
-import { currentLease, handBack, takeOver } from "../services/leases.js";
+import { currentLease, handBack, keepTakeover, takeOver } from "../services/leases.js";
 import { modelLabel, unusableReason } from "../services/model-configs.js";
 import * as proxySvc from "../services/model-proxy.js";
 import { proxyModels } from "../services/model-proxy.js";
@@ -422,6 +422,15 @@ export async function computerRoutes(app: FastifyInstance) {
       const { publish } = await import("../services/events.js");
       await publish(db, "instance.operator", { id: inst.id, holder: user.id }, `instance:${inst.id}`, "admin");
       return instanceOut(db, await svc.getInstance(db, inst.id), { detail: true, user });
+    }),
+  );
+  app.post(
+    "/api/instances/:id/takeover/keepalive",
+    authed(async ({ db, user, req }) => {
+      // The console confirms every minute that the person in control is still there (see TAKEOVER_MS).
+      const inst = await svc.getInstance(db, params(req).id);
+      if (!(await keepTakeover(db, inst, user.id))) throw new Conflict("you are not in control of this computer");
+      return { ok: true };
     }),
   );
   app.post(

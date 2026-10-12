@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ExecutionGateway } from "../src/compute/gateway.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { roles, tasks, topics } from "../src/db/schema.js";
+import { computerInstances, instanceLeases, roles, tasks, topics } from "../src/db/schema.js";
 import { InstanceBusy, InstanceUnavailable } from "../src/errors.js";
 import { type Harness, startHarness } from "./support/harness.js";
 
@@ -253,6 +253,34 @@ describe("execution gateway", () => {
       }),
     ).rejects.toThrow("not running");
     expect(h.manager.computer(a.id).commands).toEqual([]);
+  });
+
+  it("a takeover the browser stops confirming lapses, and the paused work resumes", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { expireTakeovers } = await import("../src/agent/control.js");
+    const { a, t1 } = await setup();
+    await h.api("POST", `/api/instances/${a.id}/takeover`, { token: h.adminToken, json: {} });
+    const [lease] = await db().select().from(instanceLeases).where(eq(instanceLeases.instanceId, a.id));
+    expect(lease.expiresAt.getTime() - Date.now()).toBeLessThanOrEqual(3 * 60_000 + 1000); // minutes, not a day
+    // the console confirms while the person is there
+    const kept = await h.api("POST", `/api/instances/${a.id}/takeover/keepalive`, { token: h.adminToken });
+    expect(kept.status, kept.raw).toBe(200);
+    expect(await expireTakeovers(db())).toBe(0);
+    // ...and stops when the browser is gone
+    await db()
+      .update(instanceLeases)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(instanceLeases.id, lease.id));
+    expect(await expireTakeovers(db())).toBe(1);
+    const [inst] = await db().select().from(computerInstances).where(eq(computerInstances.id, a.id));
+    expect(inst.pausedAi).toBe(false);
+    const [resumed] = await db().select().from(tasks).where(eq(tasks.id, t1.id));
+    expect(resumed.status).not.toBe("paused");
+    expect((await h.api("POST", `/api/instances/${a.id}/takeover/keepalive`, { token: h.adminToken })).status).toBe(
+      409,
+    );
+    const audit = (await h.api("GET", "/api/audit?action=instance.handback", { token: h.adminToken })).body;
+    expect(audit[0].detail.automatic).toBeTruthy();
   });
 });
 

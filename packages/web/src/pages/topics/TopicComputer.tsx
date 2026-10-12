@@ -7,7 +7,13 @@ import { useInterval, useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
 import { ComputerBadge, Empty, Loaded, Loading, StatusChip } from "../../ui/kit";
-import { LiveDesktop, OperatorConsole, OperatorLabel, useTakeover } from "../computers/computerControls";
+import {
+  LiveDesktop,
+  OperatorConsole,
+  OperatorLabel,
+  useTakeover,
+  useTakeoverSession,
+} from "../computers/computerControls";
 
 type Computer = { id: string; name: string; color: string | null };
 
@@ -57,6 +63,11 @@ export function TopicComputer({
           <ComputerBadge computer={computers[0]} />
         )}
         {res.data ? <StatusChip meta={instanceStatus(res.data.status)} compact /> : null}
+        {res.data ? (
+          <span className="small">
+            <OperatorLabel inst={res.data} />
+          </span>
+        ) : null}
         <span className="tc-spacer" />
         <Link to={`/computers/${current}`} className="small">
           详情
@@ -70,12 +81,31 @@ export function TopicComputer({
           {maximized ? "还原" : "放大"}
         </button>
       </div>
-      <Loaded res={res}>{(inst) => <ComputerView inst={inst} reload={() => void res.reload()} />}</Loaded>
+      <Loaded res={res}>
+        {(inst) => (
+          <ComputerView inst={inst} maximized={maximized} onMaximize={onToggleMax} reload={() => void res.reload()} />
+        )}
+      </Loaded>
     </div>
   );
 }
 
-function ComputerView({ inst, reload }: { inst: Instance; reload: () => void }) {
+/**
+ * Small, the screen is a read-only thumbnail (hover shows a zoom icon that maximises it). Taking over is
+ * offered only maximised, in the screen's status bar; restoring the layout or leaving hands control back
+ * (see useTakeoverSession).
+ */
+function ComputerView({
+  inst,
+  maximized,
+  onMaximize,
+  reload,
+}: {
+  inst: Instance;
+  maximized: boolean;
+  onMaximize: () => void;
+  reload: () => void;
+}) {
   const { can, me } = useAuth();
   const { run, busy } = useAction();
   const { takeOver, busy: taking } = useTakeover();
@@ -83,52 +113,66 @@ function ComputerView({ inst, reload }: { inst: Instance; reload: () => void }) 
   const running = inst.status === "running";
   const canControl = can("instance.control");
   const heldByMe = inst.operator?.holder_type === "user" && inst.operator.holder_id === me?.id;
-  const mode: "view" | "control" = heldByMe && canControl ? "control" : "view";
+  const mode: "view" | "control" = heldByMe && canControl && maximized ? "control" : "view";
+  useTakeoverSession(inst, maximized, reload);
 
-  return (
-    <div className="tc-body">
-      <div className="tc-status small">
-        <OperatorLabel inst={inst} />
-        {desktop && canControl ? (
-          heldByMe ? (
-            <button
-              type="button"
-              className="btn btn-xs btn-primary"
-              disabled={busy}
-              onClick={async () => {
-                if (await run(() => api.post(`/api/instances/${inst.id}/handback`), "已交还控制，AI 工作恢复"))
-                  reload();
-              }}
-            >
-              交还控制
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-xs"
-              disabled={busy || taking || !running}
-              onClick={async () => {
-                if (await takeOver(inst)) reload();
-              }}
-            >
-              接管并操作
-            </button>
-          )
-        ) : null}
-      </div>
-      {!running ? (
-        <Empty title="虚拟电脑未运行" hint="启动后可以在这里看到它的画面。" />
-      ) : desktop ? (
-        <Suspense fallback={<Loading label="正在加载实时画面组件" />}>
-          <LiveDesktop key={mode} instanceId={inst.id} mode={mode} />
-        </Suspense>
-      ) : canControl ? (
-        <OperatorConsole inst={inst} />
+  const control =
+    maximized && desktop && canControl ? (
+      heldByMe ? (
+        <button
+          type="button"
+          className="btn btn-xs btn-primary"
+          disabled={busy}
+          onClick={async () => {
+            if (await run(() => api.post(`/api/instances/${inst.id}/handback`), "已交还控制，AI 工作恢复")) reload();
+          }}
+        >
+          交还控制
+        </button>
       ) : (
-        <Empty
-          title="命令行虚拟电脑没有桌面画面"
-          hint="有「接管虚拟电脑」权限的人可以在这里直接执行命令；角色的操作记录见任务详情。"
-        />
+        <button
+          type="button"
+          className="btn btn-xs"
+          disabled={taking || !running}
+          onClick={async () => {
+            if (await takeOver(inst)) reload();
+          }}
+        >
+          接管并操作
+        </button>
+      )
+    ) : null;
+
+  if (!running) return <Empty title="虚拟电脑未运行" hint="启动后可以在这里看到它的画面。" />;
+  if (!desktop) {
+    return canControl ? (
+      <OperatorConsole inst={inst} />
+    ) : (
+      <Empty
+        title="命令行虚拟电脑没有桌面画面"
+        hint="有「接管虚拟电脑」权限的人可以在这里直接执行命令；角色的操作记录见任务详情。"
+      />
+    );
+  }
+  return (
+    <div className="tc-screen">
+      <Suspense fallback={<Loading label="正在加载实时画面组件" />}>
+        <LiveDesktop key={mode} instanceId={inst.id} mode={mode} actions={control} />
+      </Suspense>
+      {maximized ? null : (
+        <button type="button" className="tc-zoom" onClick={onMaximize} title="放大查看" aria-label="放大查看">
+          <span>
+            <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden>
+              <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
+              <path
+                d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+        </button>
       )}
     </div>
   );

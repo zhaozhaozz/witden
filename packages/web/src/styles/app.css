@@ -3716,8 +3716,7 @@ body.resizing {
   flex-direction: column;
   gap: 8px;
 }
-.tc-bar,
-.tc-status {
+.tc-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -3730,14 +3729,46 @@ body.resizing {
 .tc-spacer {
   flex: 1;
 }
-.tc-status {
-  justify-content: space-between;
+/* Small: a read-only thumbnail; hovering shows a zoom icon that maximises it. */
+.tc-screen {
+  position: relative;
 }
-.tc-body {
+.tc-zoom {
+  position: absolute;
+  inset: 32px 0 0;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: transparent;
+  color: var(--harbor);
+  cursor: zoom-in;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+.tc-screen:hover .tc-zoom,
+.tc-zoom:focus-visible {
+  background: rgba(10, 15, 20, 0.38);
+  opacity: 1;
+}
+.tc-zoom > span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.desktop-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .topic-computer .desktop-screen {
   height: auto;
@@ -3764,8 +3795,10 @@ body.resizing {
   overflow: hidden;
 }
 .topic-computer-max,
-.topic-computer-max .tc-body {
+.topic-computer-max .tc-screen {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
 }
 .topic-computer-max .desktop {
@@ -3779,7 +3812,7 @@ body.resizing {
   min-height: 0;
   aspect-ratio: auto;
 }
-.topic-computer-max .tc-body > .section {
+.topic-computer-max > .section {
   display: flex;
   flex: 1;
   flex-direction: column;

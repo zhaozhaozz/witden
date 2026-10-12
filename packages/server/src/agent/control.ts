@@ -1,10 +1,11 @@
 /** Task state transitions shared by the API, the worker and the integrations. */
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type Task, tasks } from "../db/schema.js";
+import { computerInstances, type Task, tasks } from "../db/schema.js";
 import { checkFlow, topicReaders } from "../security/labels.js";
+import { audit } from "../services/audit.js";
 import { publish, wake } from "../services/events.js";
-import { releaseTask } from "../services/leases.js";
+import { currentLease, releaseTask } from "../services/leases.js";
 
 export const TERMINAL = new Set(["completed", "failed", "cancelled"]);
 export const ACTIVE = new Set([
@@ -132,6 +133,29 @@ export async function pauseInstanceTasks(db: Db, instanceId: string, reason: str
     .from(tasks)
     .where(and(eq(tasks.instanceId, instanceId), inArray(tasks.status, ["pending", "running", "waiting_resource"])));
   for (const t of rows) await pause(db, t, reason, `takeover:${instanceId}`);
+}
+
+/**
+ * Takeovers nobody is confirming any more (the browser closed or went offline): hand the computer back and
+ * resume what the takeover paused, as an explicit hand-back would.
+ */
+export async function expireTakeovers(db: Db): Promise<number> {
+  let n = 0;
+  for (const inst of await db.select().from(computerInstances).where(eq(computerInstances.pausedAi, true))) {
+    const lease = await currentLease(db, inst.id); // drops it when expired
+    if (lease?.holderType === "user") continue;
+    await db.update(computerInstances).set({ pausedAi: false }).where(eq(computerInstances.id, inst.id));
+    await resumeInstanceTasks(db, inst.id);
+    await audit(db, "instance.handback", {
+      instanceId: inst.id,
+      resourceType: "instance",
+      resourceId: inst.id,
+      detail: { automatic: "takeover no longer confirmed by the browser" },
+    });
+    await publish(db, "instance.operator", { id: inst.id, holder: null }, `instance:${inst.id}`, "admin");
+    n++;
+  }
+  return n;
 }
 
 /** Hand-back resumes only what the takeover paused; emergency stops and manual pauses stay. */

@@ -11,7 +11,7 @@ import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
 import { computerInstances, tasks } from "../db/schema.js";
 import { WAKE_CHANNEL } from "../services/events.js";
-import { getTask, publishTaskStatus, setStatus } from "./control.js";
+import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./control.js";
 import { claimNext, collectChildren, TaskRunner } from "./runner.js";
 import { appendStep } from "./transcript.js";
 
@@ -66,6 +66,7 @@ export class Worker {
 
   /** One scheduling round (also used synchronously by tests via ``drain``). */
   async tick(): Promise<void> {
+    await transaction((tx) => expireTakeovers(tx));
     await this.checkWaits();
     await this.recoverOrphans(false);
     const free = (this.opts.concurrency ?? settings().workerConcurrency) - this.running.size;

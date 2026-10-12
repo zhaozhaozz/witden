@@ -14,6 +14,11 @@ import { type ComputerInstance, computerInstances, instanceLeases } from "../db/
 import { Forbidden } from "../errors.js";
 
 export const LEASE_MS = 120_000;
+/**
+ * A person's takeover lasts while their browser keeps confirming it (every minute while they are active);
+ * if it stops (closed, offline, idle), the takeover lapses after this long and AI work resumes.
+ */
+export const TAKEOVER_MS = 3 * 60_000;
 
 export interface LeaseResult {
   ok: boolean;
@@ -95,8 +100,19 @@ export async function releaseTask(db: Db, taskId: string): Promise<void> {
 }
 
 export async function takeOver(db: Db, inst: ComputerInstance, userId: string, reason: string | null): Promise<void> {
-  await acquire(db, inst.id, "user", userId, { reason: reason ?? "human takeover", ms: 24 * 3600_000, preempt: true });
+  await acquire(db, inst.id, "user", userId, { reason, ms: TAKEOVER_MS, preempt: true });
   await db.update(computerInstances).set({ pausedAi: true }).where(eq(computerInstances.id, inst.id));
+}
+
+/** The person in control is still there: extend the takeover. False when they no longer hold it. */
+export async function keepTakeover(db: Db, inst: ComputerInstance, userId: string): Promise<boolean> {
+  const lease = await currentLease(db, inst.id);
+  if (!(lease?.holderType === "user" && lease.holderId === userId)) return false;
+  await db
+    .update(instanceLeases)
+    .set({ expiresAt: new Date(Date.now() + TAKEOVER_MS) })
+    .where(eq(instanceLeases.id, lease.id));
+  return true;
 }
 
 /** Only the person in control returns it (administrators may force it). */

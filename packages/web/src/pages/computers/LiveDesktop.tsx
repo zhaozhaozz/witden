@@ -1,5 +1,5 @@
 import RFB from "@novnc/novnc";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { buildUrl, getToken } from "../../api/client";
 
 type Phase = "connecting" | "connected" | "closed";
@@ -22,10 +22,13 @@ export function LiveDesktop({
   instanceId,
   mode,
   fallbackHint,
+  actions,
 }: {
   instanceId: string;
   mode: "view" | "control";
   fallbackHint?: string;
+  /** Shown at the end of the status bar (e.g. take over / hand back). */
+  actions?: ReactNode;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [phase, setPhase] = useState<Phase>("connecting");
@@ -103,11 +106,14 @@ export function LiveDesktop({
               ? "连接中"
               : "未连接"}
         </span>
-        {phase === "closed" ? (
-          <button type="button" className="btn btn-xs" onClick={() => setAttempt((a) => a + 1)}>
-            重新连接
-          </button>
-        ) : null}
+        <span className="desktop-actions">
+          {phase === "closed" ? (
+            <button type="button" className="btn btn-xs" onClick={() => setAttempt((a) => a + 1)}>
+              重新连接
+            </button>
+          ) : null}
+          {actions}
+        </span>
       </div>
       <div className="desktop-screen" ref={container} />
       {message ? <div className="desktop-message">{message}</div> : null}
