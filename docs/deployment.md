@@ -30,7 +30,7 @@ node packages/server/dist/cli.js serve
 
 ### 2.2 Docker Compose
 
-Compose 部署包含四个服务：
+Compose 部署包含四个服务，另有一个可选服务：
 
 | 服务 | 作用 | 说明 |
 |---|---|---|
@@ -38,6 +38,7 @@ Compose 部署包含四个服务：
 | `manager` | Docker Manager | 唯一挂载 Docker socket 的服务，按白名单创建和管理虚拟电脑。 |
 | `api` | 控制台、API、虚拟电脑连接入口 | 对外发布 8320（控制台）和 8330（虚拟电脑连接）端口。 |
 | `worker` | 运行 AI 角色、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
+| `laya`（可选） | 开源的 Laya 决策模型，用作话题调度模型 | 默认不启动，见 2.3。只在内部网络中可访问，不对外发布端口。 |
 
 部署步骤：
 
@@ -69,10 +70,28 @@ Compose 部署包含四个服务：
 
 生产环境建议在控制台前放置 HTTPS 反向代理，并把 8330 端口只绑定到 Docker 网桥地址（设置 `WITDEN_HUB_BIND`，例如 `172.17.0.1`）。
 
+### 2.3 可选：Laya 调度模型
+
+话题设为“自动”且有多个角色时，需要一个 System 1 模型作为调度模型（见[使用指南](user-guide.md#8-话题调度)）。如果不使用 TypeSafe Jev 等外部服务，可以随 Compose 一起部署开源的 Laya 模型。它在 CPU 上运行，不需要 GPU，一次判断通常不到 1 秒。
+
+在 `.env` 中加入：
+
+```bash
+COMPOSE_PROFILES=laya
+WITDEN_LAYA_URL=http://laya:8000
+WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
+```
+
+然后执行 `docker compose up -d`。首次启动时 `laya` 服务会下载约 700 MB 的模型文件，保存在数据卷 `witden-laya-cache` 中，之后启动不再下载。平台启动时会把它添加到“设置 → 模型”中（服务商“Laya”，模型 `multilingual`）；如果尚未设置调度模型，同时把它设为调度模型。这一步对同一地址只做一次：之后删除这个服务商或更换调度模型，重启后不会被恢复。
+
+不再需要时，从 `.env` 中删除这三行，执行 `docker compose rm -sf laya` 停止并删除该服务，再在控制台中删除该服务商、重新选择调度模型。
+
+单进程部署也可以使用 Laya：自行运行 Laya 服务（`pip install "laya[serve]"` 后执行 `laya-serve`），并把 `WITDEN_LAYA_URL` 设为它的地址，例如 `http://127.0.0.1:8000`。
+
 ## 3. 首次配置
 
 1. **模型**：在“设置 → 模型”中添加服务商（地址、协议、密钥），从服务商获取模型列表并选择，或手动填写模型名称；对模型点击“检测能力”。
-2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多个角色，需要一个 System 1 模型（TypeSafe Jev，或自行部署的开源模型 Laya）。在“设置 → 模型”中添加接口协议为“System One”的服务商和模型，再在“设置 → 系统管理 → 话题调度”中选择它。详见[使用指南](user-guide.md#8-话题调度)。
+2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多个角色，需要一个 System 1 模型（TypeSafe Jev，或开源模型 Laya）。启用 Compose 中的 Laya 服务（见 2.3）后，它会被自动添加并设为调度模型；使用其他服务时，在“设置 → 模型”中添加接口协议为“System One”的服务商和模型，再在“设置 → 系统管理 → 话题调度”中选择它。详见[使用指南](user-guide.md#8-话题调度)。
 3. **虚拟电脑**：在“设置 → 虚拟电脑 → 模板”中点击“导入内置模板”（命令行模板 `dev-shell` 和桌面模板 `desktop-browser`），然后从模板创建虚拟电脑，等待状态变为运行中。
 4. **角色**：在“设置 → 角色管理”中创建角色，选择模型和虚拟电脑。
 5. **成员与授权**：在“设置 → 系统管理”中添加成员，并授予“使用角色”“邀请角色进话题”“创建话题”等权限。
@@ -107,9 +126,19 @@ Compose 部署包含四个服务：
 | `WITDEN_TOOL_OUTPUT_LIMIT` | `12000` | 单次工具输出交给模型的最大字符数。 |
 | `WITDEN_ALLOWED_RUNTIMES` | `runc,runsc,sysbox-runc,kata-runtime` | 模板可以选择的容器运行时。 |
 | `WITDEN_MODEL_PROXY_PORT` | `8686` | 虚拟电脑内模型访问接口的端口。 |
+| `WITDEN_LAYA_URL` | — | Laya 服务的地址。设置后，平台启动时把它添加为 System 1 模型（见 2.3）。 |
+| `WITDEN_LAYA_API_KEY` | — | Laya 服务的密钥。Compose 部署中 `laya` 服务也使用这个值。 |
 | `WITDEN_CORS_ORIGINS` | 空 | 允许跨域访问 API 的来源，逗号分隔。 |
 
-### 4.2 Docker Manager
+### 4.2 Laya 服务（Compose）
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `COMPOSE_PROFILES` | 空 | 包含 `laya` 时启动 `laya` 服务。 |
+| `LAYA_MODELS` | `multilingual` | 启动时加载的模型。`multilingual` 支持中文等多种语言；`english` 只适合英文。 |
+| `LAYA_THREADS` | `4` | 推理使用的 CPU 线程数，不要超过物理核数。 |
+
+### 4.3 Docker Manager
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
@@ -134,7 +163,7 @@ witden gen-key                                     生成新的主密钥
 
 ## 6. 升级
 
-1. 更新代码，重新构建镜像：`make images platform`。
+1. 更新代码，重新构建镜像：`make images platform`（启用了 Laya 时再执行 `make laya`）。
 2. 重新启动服务：`docker compose up -d`。
 
 平台启动时会自动执行数据库迁移。升级前请先备份数据库。
@@ -147,3 +176,4 @@ witden gen-key                                     生成新的主密钥
 | 主密钥 | 离线保存 `WITDEN_SECRET_KEY`；没有它，备份中的模型密钥和通讯凭据无法解密。 |
 | 平台数据卷 | `witden-data`（话题文件和头像），与数据库一起备份。 |
 | 虚拟电脑 | 在虚拟电脑页面的“备份与复制”中创建备份，备份文件保存在 Docker Manager 的数据卷 `witden-manager` 中。 |
+| Laya 模型文件 | 数据卷 `witden-laya-cache` 无需备份，丢失后会重新下载。 |

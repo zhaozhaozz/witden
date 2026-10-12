@@ -201,7 +201,7 @@
 | 模型 | 说明 | API 地址 | API 密钥 | 模型名称 |
 |---|---|---|---|---|
 | TypeSafe Jev | 托管服务，也可以通过 OpenRouter 使用 | `https://api.typesafe.ai`；通过 OpenRouter 时为 `https://openrouter.ai/api` | TypeSafe 或 OpenRouter 的密钥 | 一般为 `jev-latest`，可以从接口获取列表；OpenRouter 上为 `typesafe/jev-1.13` 等 |
-| Laya | 开源（Apache-2.0），自行部署：`pip install "laya[serve]"` 后运行 `laya-serve`，默认端口 8000 | `http://<主机>:8000` | 部署时设置的 `LAYA_API_KEY`；未设置时留空 | 需要手动填写：中文对话用 `multilingual`，纯英文可用 `english` |
+| Laya | 开源（Apache-2.0），自行部署。Docker Compose 部署可以直接启用随附的 `laya` 服务，平台会自动添加，见[部署与配置](deployment.md#23-可选laya-调度模型)；也可以 `pip install "laya[serve]"` 后运行 `laya-serve`，默认端口 8000 | `http://<主机>:8000` | 部署时设置的 `LAYA_API_KEY`；未设置时留空 | 需要手动填写：中文对话用 `multilingual`，纯英文可用 `english` |
 
 Laya 对中文对话的判断明显弱于 Jev：在 Laya 项目公开的中文办公对话测试（64 例）中，Laya 多语言模型判断正确 20 例，Jev 全部正确。对调度准确度要求较高时，建议使用 Jev。
 

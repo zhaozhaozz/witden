@@ -39,7 +39,7 @@ witden 定位为团队成员，而不是个人助手：同一个角色可以为�
 **模型**
 - 按“服务商 → 模型”管理：对话模型支持 OpenAI 兼容接口（如 vLLM、Ollama、DeepSeek）和 Anthropic 接口；模型可以从服务商获取列表后选择，也可以手动填写。
 - 可检测模型的对话、工具调用和图像理解能力以及响应时间；按角色和模型设置每日 token 额度，并统计用量。
-- 支持 System 1 决策模型（System One 接口）：TypeSafe Jev 和开源的 Laya。它们针对给定内容回答选择题并给出概率，响应快，用作话题调度模型。
+- 支持 System 1 决策模型（System One 接口）：TypeSafe Jev 和开源的 Laya。它们针对给定内容回答选择题并给出概率，响应快，用作话题调度模型；Laya 可以作为 Docker Compose 的可选服务一起部署。
 
 ## 系统组成
 
