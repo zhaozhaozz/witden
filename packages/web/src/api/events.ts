@@ -9,7 +9,8 @@ export type LiveEventType =
   | "instance.status"
   | "instance.operator"
   | "instance.runner"
-  | "emergency.stop";
+  | "emergency.stop"
+  | "topic.activity";
 
 const EVENT_TYPES: LiveEventType[] = [
   "message.created",
@@ -20,12 +21,15 @@ const EVENT_TYPES: LiveEventType[] = [
   "instance.operator",
   "instance.runner",
   "emergency.stop",
+  "topic.activity",
 ];
 
 export interface StreamScope {
   topic_id?: string;
   task_id?: string;
   admin?: boolean;
+  /** New-message activity in every topic the user can view (no content): drives unread markers. */
+  inbox?: boolean;
 }
 
 export type LiveHandler = (type: LiveEventType, data: Record<string, unknown>) => void;
@@ -41,7 +45,9 @@ export function useLiveEvents(scope: StreamScope | null, handler: LiveHandler): 
   const handlerRef = useRef(handler);
   handlerRef.current = handler;
   const [connected, setConnected] = useState(false);
-  const key = scope ? `${scope.topic_id ?? ""}|${scope.task_id ?? ""}|${scope.admin ? 1 : 0}` : "";
+  const key = scope
+    ? `${scope.topic_id ?? ""}|${scope.task_id ?? ""}|${scope.admin ? 1 : 0}|${scope.inbox ? 1 : 0}`
+    : "";
 
   useEffect(() => {
     if (!scope) return;
@@ -57,6 +63,7 @@ export function useLiveEvents(scope: StreamScope | null, handler: LiveHandler): 
         topic_id: scope.topic_id,
         task_id: scope.task_id,
         admin: scope.admin ? "true" : undefined,
+        inbox: scope.inbox ? "true" : undefined,
         access_token: token,
       });
       const es = new EventSource(url);

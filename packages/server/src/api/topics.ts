@@ -75,6 +75,8 @@ async function topicOut(db: Db, topic: Topic, user: User, detail = false) {
   data.can_post = await svc.canPost(db, user, topic);
   data.can_view = await svc.canView(db, user, topic);
   data.can_administer = await svc.canAdminister(db, user, topic);
+  // A DM is "the conversation with this role" in sidebars.
+  if (topic.kind === "dm") data.dm_role_id = (await svc.participants(db, topic.id, "role"))[0]?.participantId ?? null;
   if (detail) {
     data.participants = await participantsOut(db, topic);
     const ext = await externalContext(db, topic.id);

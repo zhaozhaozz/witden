@@ -184,7 +184,11 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       <div className="conversation">
         <header className="topic-head">
           <div className="topic-head-main">
-            <h2>{topic.title}</h2>
+            <h2>
+              {topic.kind === "dm"
+                ? (topic.participants?.find((p) => p.type === "role")?.name ?? topic.title)
+                : topic.title}
+            </h2>
             <div className="topic-tags">
               <Tag>{topic.kind === "dm" ? "私信" : "群组话题"}</Tag>
               {topic.kind === "group" ? (

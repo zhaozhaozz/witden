@@ -1,142 +1,121 @@
-import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Topic } from "../../api/types";
 import { fmtRelative, PLATFORM_LABEL } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
-import { useAuth } from "../../lib/session";
-import { Empty, ErrorNote, Loading } from "../../ui/kit";
-import { ResizeHandle } from "../../ui/resize";
+import { useAuth, useDirectory } from "../../lib/session";
+import { useTopics } from "../../lib/topics";
+import { Empty, Loaded, PageHeader, RoleBadge, Tag } from "../../ui/kit";
 import { TopicView } from "./TopicView";
-import { NewTopicDialog, OpenDmDialog } from "./topicDialogs";
 
+/** One topic, full width (topics and roles are listed in the main sidebar), or the list of all topics. */
 export default function TopicsPage() {
   const { topicId } = useParams();
-  const nav = useNavigate();
+  const topics = useTopics();
+  const { setActive } = topics;
+  useEffect(() => {
+    setActive(topicId ?? null);
+    return () => setActive(null);
+  }, [topicId, setActive]);
+  if (topicId) return <TopicView key={topicId} topicId={topicId} onTopicUpdated={() => void topics.reload()} />;
+  return <AllTopics />;
+}
+
+/** Every topic you can see, with search and archived ones: what the sidebar shows, and more. */
+function AllTopics() {
   const { can } = useAuth();
+  const dir = useDirectory();
+  const t = useTopics();
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
-  const [dialog, setDialog] = useState<null | "new" | "dm">(null);
   const applyQuery = useDebounced(() => setQuery(q.trim()), 250);
-  const list = useResource(
+  useEffect(applyQuery, [q, applyQuery]);
+  const res = useResource(
     () => api.get<Topic[]>("/api/topics", { q: query, include_archived: archived }),
     [query, archived],
   );
 
-  useEffect(applyQuery, [q, applyQuery]);
-
-  // A topic opened from elsewhere (new DM, link) may be missing from the list: refresh once.
-  const refreshedFor = useRef<string | null>(null);
-  useEffect(() => {
-    if (!topicId || !list.data || refreshedFor.current === topicId) return;
-    if (!list.data.some((t) => t.id === topicId)) {
-      refreshedFor.current = topicId;
-      void list.reload();
-    }
-  }, [topicId, list]);
-
-  const topics = list.data ?? [];
-  const groups = topics.filter((t) => t.kind === "group");
-  const dms = topics.filter((t) => t.kind === "dm");
-
-  const item = (t: Topic) => (
-    <li key={t.id}>
-      <Link to={`/topics/${t.id}`} className={`topic-item${t.id === topicId ? " topic-on" : ""}`}>
-        <span className="topic-item-title">
-          {t.title}
-          {t.status === "archived" ? <span className="small muted">（已归档）</span> : null}
-        </span>
-        <span className="topic-item-meta">
-          {t.kind === "group" ? (t.visibility === "internal" ? "公开" : "私密") : "私信"}
-          {t.source !== "internal" ? ` · ${PLATFORM_LABEL[t.source] ?? t.source}` : ""}
-          {t.can_view === false ? " · 仅可管理" : !t.can_post && t.status === "active" ? " · 只读" : ""}
-          <span className="topic-item-time">{t.last_message_at ? fmtRelative(t.last_message_at) : "无消息"}</span>
-        </span>
-      </Link>
-    </li>
-  );
-
   return (
-    <div className="workspace">
-      <ResizeHandle name="topic-list" side="start" min={180} max={480} />
-      <aside className="topic-list">
-        <div className="topic-list-head">
-          <input
-            type="search"
-            placeholder="搜索标题或目标"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            aria-label="搜索话题"
-          />
+    <div className="page">
+      <PageHeader
+        title="话题"
+        sub="话题是围绕一件具体事情的协作空间：成员和 AI 角色在这里讨论、分派任务、交付结果。常用的话题和角色也在左侧边栏里。"
+        actions={
           <div className="btn-row">
+            <button type="button" className="btn btn-sm" onClick={t.pickDm}>
+              与角色私信
+            </button>
             {can("topic.create") ? (
-              <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog("new")}>
+              <button type="button" className="btn btn-sm btn-primary" onClick={t.newTopic}>
                 新建话题
               </button>
             ) : null}
-            <button type="button" className="btn btn-sm" onClick={() => setDialog("dm")}>
-              私信角色
-            </button>
           </div>
-          <label className="check small">
-            <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
-            包含已归档
-          </label>
-        </div>
-        <div className="topic-list-body">
-          {list.error ? <ErrorNote error={list.error} onRetry={list.reload} /> : null}
-          {list.data === undefined && !list.error ? <Loading /> : null}
-          {list.data && !topics.length ? (
+        }
+      />
+      <div className="toolbar">
+        <input
+          type="search"
+          placeholder="搜索标题或目标"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="搜索话题"
+        />
+        <label className="check small">
+          <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
+          包含已归档
+        </label>
+      </div>
+      <Loaded res={res}>
+        {(rows) =>
+          rows.length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>话题</th>
+                    <th>类型</th>
+                    <th>最近消息</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((x) => {
+                    const dmRole = x.dm_role_id ? dir.roleById.get(x.dm_role_id) : undefined;
+                    return (
+                      <tr key={x.id}>
+                        <td>
+                          <Link to={`/topics/${x.id}`} className={t.unread(x) ? "strong" : undefined}>
+                            {dmRole ? <RoleBadge role={dmRole} /> : x.title}
+                          </Link>
+                          {x.goal ? <div className="small muted clamp-1">{x.goal}</div> : null}
+                        </td>
+                        <td className="nowrap">
+                          {x.kind === "dm" ? "私信" : x.visibility === "internal" ? "团队内公开" : "私密"}
+                          {x.source !== "internal" ? (
+                            <Tag tone="accent">{PLATFORM_LABEL[x.source] ?? x.source}</Tag>
+                          ) : null}
+                          {x.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
+                          {x.can_view === false ? <Tag tone="wait">仅可管理</Tag> : null}
+                        </td>
+                        <td className="nowrap muted">
+                          {x.last_message_at ? fmtRelative(x.last_message_at) : "无消息"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
             <Empty
               title={query ? "没有匹配的话题" : "还没有话题"}
-              hint={query ? undefined : "新建一个话题，邀请同事和角色一起推进一件事。"}
+              hint={query ? undefined : "新建一个话题，邀请同事和角色一起推进一件事；或者直接在左侧选一个角色私信。"}
             />
-          ) : null}
-          {groups.length ? (
-            <>
-              <div className="list-label">话题</div>
-              <ul>{groups.map(item)}</ul>
-            </>
-          ) : null}
-          {dms.length ? (
-            <>
-              <div className="list-label">私信</div>
-              <ul>{dms.map(item)}</ul>
-            </>
-          ) : null}
-        </div>
-      </aside>
-
-      {topicId ? (
-        <TopicView key={topicId} topicId={topicId} onTopicUpdated={() => void list.reload()} />
-      ) : (
-        <div className="topic-view topic-none">
-          <Empty
-            title="选择一个话题"
-            hint="话题是围绕一件具体事情的协作空间：成员和 AI 角色在这里讨论、分派任务、交付结果。"
-            action={
-              can("topic.create") ? (
-                <button type="button" className="btn btn-primary" onClick={() => setDialog("new")}>
-                  新建话题
-                </button>
-              ) : undefined
-            }
-          />
-        </div>
-      )}
-
-      {dialog === "new" ? (
-        <NewTopicDialog
-          onClose={() => setDialog(null)}
-          onCreated={(t) => {
-            setDialog(null);
-            void list.reload();
-            nav(`/topics/${t.id}`);
-          }}
-        />
-      ) : null}
-      {dialog === "dm" ? <OpenDmDialog onClose={() => setDialog(null)} /> : null}
+          )
+        }
+      </Loaded>
     </div>
   );
 }

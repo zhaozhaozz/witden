@@ -72,6 +72,16 @@ export async function eventRoutes(app: FastifyInstance) {
       if (!(await adminOk(user))) throw new Forbidden("admin stream requires audit.view or instance.manage");
       channels.add("admin");
     }
+    // Inbox: which topics the person can view got new messages (for unread markers); never message content.
+    const inbox = q.inbox === "true";
+    const viewable = new Map<string, { ok: boolean; until: number }>();
+    const canViewTopic = async (topicId: string) => {
+      const hit = viewable.get(topicId);
+      if (hit && hit.until > Date.now()) return hit.ok;
+      const ok = await topicOk(user, topicId).catch(() => false);
+      viewable.set(topicId, { ok, until: Date.now() + 30_000 });
+      return ok;
+    };
     reply.hijack();
     const res = reply.raw;
     res.writeHead(200, {
@@ -83,6 +93,16 @@ export async function eventRoutes(app: FastifyInstance) {
     res.write("retry: 3000\n\n");
     let queue = Promise.resolve();
     const unsubscribe = runtime().bus.subscribe((event) => {
+      if (inbox && event.type === "message.created") {
+        const topicId = event.channels.find((c) => c.startsWith("topic:"))?.slice("topic:".length);
+        if (topicId) {
+          queue = queue.then(async () => {
+            if (res.writableEnded || !(await canViewTopic(topicId))) return;
+            const data = { topic_id: topicId, at: event.data.created_at, author_type: event.data.author_type };
+            res.write(`event: topic.activity\ndata: ${JSON.stringify(data)}\n\n`);
+          });
+        }
+      }
       const matched = event.channels.filter((c) => channels.has(c));
       if (!matched.length) return;
       // Serialise per connection so events keep their order.

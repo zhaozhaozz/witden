@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
 import { api } from "./api/client";
 import type { Approval, KillSwitch } from "./api/types";
 import { useInterval } from "./lib/hooks";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { useAuth, useDirectory } from "./lib/session";
-import { Avatar } from "./ui/kit";
+import { useTopics } from "./lib/topics";
+import { useAction } from "./ui/feedback";
+import { Avatar, Loading } from "./ui/kit";
 import { ResizeHandle } from "./ui/resize";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
@@ -80,32 +82,14 @@ export default function Layout() {
   const kills = useKillSwitches(can("emergency.stop"));
   const approvals = usePendingApprovals();
 
-  const groups: { title: string; items: NavItem[] }[] = [
-    {
-      title: "工作",
-      items: [
-        { to: "/topics", label: "话题" },
-        { to: "/tasks", label: "任务" },
-        { to: "/approvals", label: "审批", badge: approvals },
-      ],
-    },
-    {
-      title: "资源",
-      items: [
-        { to: "/computers", label: "电脑", any: COMPUTER_PERMS },
-        { to: "/roles", label: "角色", any: ["role.manage"] },
-        { to: "/models", label: "模型", any: ["secrets.manage"] },
-      ],
-    },
-    {
-      title: "治理",
-      items: [
-        { to: "/rules", label: "分配规则", any: ["rules.manage"] },
-        { to: "/connections", label: "通讯接入", any: ["connection.manage"] },
-        { to: "/admin", label: "管理", any: ADMIN_PERMS },
-      ],
-    },
-  ];
+  const settings: NavItem[] = [
+    { to: "/computers", label: "电脑", any: COMPUTER_PERMS },
+    { to: "/roles", label: "角色管理", any: ["role.manage"] },
+    { to: "/models", label: "模型", any: ["secrets.manage"] },
+    { to: "/rules", label: "分配规则", any: ["rules.manage"] },
+    { to: "/connections", label: "通讯接入", any: ["connection.manage"] },
+    { to: "/admin", label: "系统管理", any: ADMIN_PERMS },
+  ].filter((i) => !i.any || i.any.some(can));
 
   const globalStop = kills.find((k) => k.scope === "global");
 
@@ -118,25 +102,26 @@ export default function Layout() {
           <span>witden</span>
         </Link>
         <nav className="nav">
-          {groups.map((g) => {
-            const items = g.items.filter((i) => !i.any || i.any.some(can));
-            if (!items.length) return null;
-            return (
-              <div key={g.title} className="nav-group">
-                <div className="nav-group-title">{g.title}</div>
-                {items.map((i) => (
-                  <NavLink
-                    key={i.to}
-                    to={i.to}
-                    className={({ isActive }) => (isActive ? "nav-item nav-on" : "nav-item")}
-                  >
-                    <span>{i.label}</span>
-                    {i.badge ? <span className="nav-badge">{i.badge}</span> : null}
-                  </NavLink>
-                ))}
-              </div>
-            );
-          })}
+          <div className="nav-group">
+            <NavLink to="/tasks" className={navClass}>
+              <span>任务</span>
+            </NavLink>
+            <NavLink to="/approvals" className={navClass}>
+              <span>审批</span>
+              {approvals ? <span className="nav-badge">{approvals}</span> : null}
+            </NavLink>
+          </div>
+          <TopicList />
+          <RoleList />
+          {settings.length ? (
+            <SideSection id="settings" title="设置">
+              {settings.map((i) => (
+                <NavLink key={i.to} to={i.to} className={navClass}>
+                  <span>{i.label}</span>
+                </NavLink>
+              ))}
+            </SideSection>
+          ) : null}
         </nav>
         <div className="sidebar-foot">
           <NavLink to="/me" className={({ isActive }) => (isActive ? "me-link nav-on" : "me-link")}>
@@ -175,8 +160,172 @@ export default function Layout() {
             </Link>
           </div>
         ) : null}
-        <Outlet />
+        <Suspense fallback={<Loading />}>
+          <Outlet />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? "nav-item nav-on" : "nav-item");
+
+const COLLAPSED_KEY = "witden.sidebar.collapsed";
+
+/** A collapsible sidebar section (remembered per section), with an optional action such as "new". */
+function SideSection({
+  id,
+  title,
+  to,
+  action,
+  children,
+}: {
+  id: string;
+  title: string;
+  /** The title also links to a page listing everything (e.g. all topics). */
+  to?: string;
+  action?: { label: string; title: string; onClick: () => void };
+  children: ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return !!JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}")[id];
+    } catch {
+      return false;
+    }
+  });
+  const toggle = () => {
+    setCollapsed((c) => {
+      try {
+        const all = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "{}");
+        localStorage.setItem(COLLAPSED_KEY, JSON.stringify({ ...all, [id]: !c }));
+      } catch {
+        // not remembered
+      }
+      return !c;
+    });
+  };
+  return (
+    <div className={`side-section${collapsed ? " side-collapsed" : ""}`}>
+      <div className="side-head">
+        <button
+          type="button"
+          className="side-toggle"
+          onClick={toggle}
+          aria-expanded={!collapsed}
+          title={collapsed ? "展开" : "收起"}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+            <path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          </svg>
+        </button>
+        {to ? (
+          <Link to={to} className="side-title" title={`查看全部${title}`}>
+            {title}
+          </Link>
+        ) : (
+          <button type="button" className="side-title" onClick={toggle}>
+            {title}
+          </button>
+        )}
+        {action ? (
+          <button
+            type="button"
+            className="side-action"
+            title={action.title}
+            aria-label={action.title}
+            onClick={action.onClick}
+          >
+            +
+          </button>
+        ) : null}
+      </div>
+      {collapsed ? null : <div className="side-body">{children}</div>}
+    </div>
+  );
+}
+
+const MAX_TOPICS = 40;
+
+/** Group topics, most recent activity first; unread ones in bold. */
+function TopicList() {
+  const { can } = useAuth();
+  const t = useTopics();
+  const topics = t.topics.filter((x) => x.kind === "group" && x.status === "active" && x.can_view !== false);
+  return (
+    <SideSection
+      id="topics"
+      title="话题"
+      to="/topics"
+      action={can("topic.create") ? { label: "+", title: "新建话题", onClick: t.newTopic } : undefined}
+    >
+      {topics.slice(0, MAX_TOPICS).map((x) => (
+        <NavLink
+          key={x.id}
+          to={`/topics/${x.id}`}
+          className={({ isActive }) =>
+            `nav-item side-item${isActive ? " nav-on" : ""}${t.unread(x) ? " side-unread" : ""}`
+          }
+          title={x.title}
+        >
+          <span className="side-icon" aria-hidden>
+            {x.visibility === "internal" ? "#" : <LockIcon />}
+          </span>
+          <span className="side-label">{x.title}</span>
+          {t.unread(x) ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+        </NavLink>
+      ))}
+      {t.loaded && !topics.length ? <div className="side-empty">还没有话题</div> : null}
+      {topics.length > MAX_TOPICS ? (
+        <Link to="/topics" className="nav-item side-item side-more">
+          查看全部 {topics.length} 个话题
+        </Link>
+      ) : null}
+    </SideSection>
+  );
+}
+
+/** The roles you can talk to: one click opens (or starts) your DM with the role. */
+function RoleList() {
+  const dir = useDirectory();
+  const t = useTopics();
+  const { run } = useAction();
+  const dmOf = new Map(t.topics.filter((x) => x.kind === "dm" && x.dm_role_id).map((x) => [x.dm_role_id as string, x]));
+  const roles = dir.roles.filter((r) => r.status === "active").sort((a, b) => a.name.localeCompare(b.name, "zh"));
+  return (
+    <SideSection id="roles" title="角色" action={{ label: "+", title: "与角色私信", onClick: t.pickDm }}>
+      {roles.map((r) => {
+        const dm = dmOf.get(r.id);
+        const on = !!dm && dm.id === t.activeId;
+        const unread = !!dm && t.unread(dm);
+        const online = r.instance?.status === "running";
+        return (
+          <button
+            type="button"
+            key={r.id}
+            className={`nav-item side-item${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
+            title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
+            onClick={() => void run(() => t.openDm(r.id))}
+          >
+            <span className="side-avatar">
+              <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
+              <span className={`side-presence${online ? " side-online" : ""}`} aria-hidden />
+            </span>
+            <span className="side-label">{r.name}</span>
+            {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+          </button>
+        );
+      })}
+      {!roles.length ? <div className="side-empty">没有可用的角色</div> : null}
+    </SideSection>
+  );
+}
+
+function LockIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden>
+      <rect x="2" y="5.5" width="8" height="5.5" rx="1.2" fill="currentColor" />
+      <path d="M3.8 5.5V4a2.2 2.2 0 0 1 4.4 0v1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    </svg>
   );
 }

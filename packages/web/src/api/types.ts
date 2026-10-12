@@ -50,6 +50,8 @@ export interface Topic {
   source: string;
   created_by: string | null;
   last_message_at: string | null;
+  /** DMs: the role on the other side. */
+  dm_role_id?: string | null;
   created_at: string;
   updated_at: string;
   is_owner: boolean;
