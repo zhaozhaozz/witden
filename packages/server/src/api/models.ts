@@ -56,7 +56,7 @@ export async function modelRoutes(app: FastifyInstance) {
       return {
         model_config_id: found ? found.model.id : null,
         model: found ? { id: found.model.id, label: svc.modelLabel(found.model, found.provider) } : null,
-        usable: !!found && !svc.unusableReason(found.model, found.provider),
+        usable: !!found && found.model.system1 && !svc.unusableReason(found.model, found.provider),
       };
     }),
   );
@@ -65,7 +65,12 @@ export async function modelRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.SECRETS_MANAGE);
       const id = body(req).modelConfigId ?? null;
-      if (id && !(await svc.modelWithProvider(db, String(id)))) throw new BadRequest("model not found");
+      if (id) {
+        const found = await svc.modelWithProvider(db, String(id));
+        if (!found) throw new BadRequest("model not found");
+        // Routing must be quick: only models marked as fast ("System 1") are accepted.
+        if (!found.model.system1) throw new BadRequest("the dispatcher must be a model marked as System 1");
+      }
       await putSetting(db, DISPATCHER, { model_config_id: id }, user.id);
       await audit(db, "settings.dispatcher", { actorType: "user", actorId: user.id, detail: { model_config_id: id } });
       return { model_config_id: id };
@@ -179,7 +184,7 @@ export async function modelRoutes(app: FastifyInstance) {
       const provider = await svc.getProvider(db, params(req).id);
       const b = body(req);
       const source = b.source === "api" ? "api" : "manual";
-      const added = await svc.addModels(db, provider, b.models, source, user.id);
+      const added = await svc.addModels(db, provider, b.models, source, user.id, { system1: !!b.system1 });
       await audit(db, "model.add", {
         actorType: "user",
         actorId: user.id,

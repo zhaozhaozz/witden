@@ -173,6 +173,7 @@ export async function addModels(
   items: unknown,
   source: "api" | "manual",
   createdBy: string | null,
+  opts: { system1?: boolean } = {},
 ): Promise<ModelConfig[]> {
   if (!Array.isArray(items) || !items.length) throw new BadRequest("models must be a non-empty list");
   const wanted = new Map<string, string>();
@@ -187,7 +188,7 @@ export async function addModels(
   for (const [model, name] of wanted) {
     const rows = await db
       .insert(modelConfigs)
-      .values({ id: newId("mdl"), providerId: p.id, model, name, source, createdBy })
+      .values({ id: newId("mdl"), providerId: p.id, model, name, source, createdBy, system1: !!opts.system1 })
       .onConflictDoNothing()
       .returning();
     added.push(...rows);
@@ -214,6 +215,7 @@ export async function updateModel(db: Db, m: ModelConfig, data: Record<string, a
     update.dailyTokenLimit = v;
   }
   if (data.enabled !== undefined) update.enabled = !!data.enabled;
+  if (data.system1 !== undefined) update.system1 = !!data.system1;
   if (!Object.keys(update).length) return m;
   const [row] = await db.update(modelConfigs).set(update).where(eq(modelConfigs.id, m.id)).returning();
   return row;

@@ -20,6 +20,8 @@ export interface LLMResponse {
   promptTokens: number;
   completionTokens: number;
   finishReason?: string | null;
+  /** The model reasoned before answering (reasoning text, a <think> block or thinking content blocks). */
+  reasoned?: boolean;
 }
 
 export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -185,12 +187,14 @@ export class OpenAICompatibleModel implements ChatModel {
     const calls: { id?: string; name: string; args: string }[] = [];
     let usage: any = null;
     let finishReason: string | null = null;
+    let reasoning = "";
     for await (const chunk of sseData(res)) {
       if (chunk.usage) usage = chunk.usage;
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       if (choice.finish_reason) finishReason = choice.finish_reason;
       const delta = choice.delta ?? {};
+      reasoning += delta.reasoning_content ?? delta.reasoning ?? "";
       if (typeof delta.content === "string" && delta.content) {
         content += delta.content;
         onDelta?.(delta.content);
@@ -209,6 +213,7 @@ export class OpenAICompatibleModel implements ChatModel {
           finish_reason: finishReason,
           message: {
             content,
+            reasoning_content: reasoning,
             tool_calls: calls.filter(Boolean).map((c) => ({ id: c.id, function: { name: c.name, arguments: c.args } })),
           },
         },
@@ -230,12 +235,14 @@ export class OpenAICompatibleModel implements ChatModel {
         rawArguments: typeof raw === "string" ? raw : JSON.stringify(raw ?? {}),
       };
     });
+    const reasoning = msg.reasoning_content ?? msg.reasoning;
     return {
       content: msg.content ?? "",
       toolCalls,
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       finishReason: choice.finish_reason,
+      reasoned: (typeof reasoning === "string" && !!reasoning.trim()) || /<think>/i.test(msg.content ?? ""),
     };
   }
 }
@@ -351,6 +358,7 @@ export class AnthropicModel implements ChatModel {
       promptTokens: data.usage?.input_tokens ?? 0,
       completionTokens: data.usage?.output_tokens ?? 0,
       finishReason: data.stop_reason,
+      reasoned: blocks.some((b) => b.type === "thinking" || b.type === "redacted_thinking"),
     };
   }
 }
@@ -457,7 +465,11 @@ export const imagePart = (png: Buffer | string): ContentPart => ({
 export async function probeCapabilities(model: ChatModel): Promise<Record<string, any>> {
   const caps: Record<string, any> = { checked_at: new Date().toISOString(), errors: {} };
   try {
-    await model.complete([{ role: "user", content: "Reply with the single word OK." }]);
+    // Response time and whether it reasons first tell whether the model suits quick decisions (System 1).
+    const started = Date.now();
+    const res = await model.complete([{ role: "user", content: "Reply with the single word OK." }]);
+    caps.latency_ms = Date.now() - started;
+    caps.thinks = !!res.reasoned;
     caps.chat = true;
   } catch (err) {
     caps.chat = false;

@@ -92,6 +92,7 @@ describe("auto mode", () => {
   });
 
   it("with several roles, the dispatcher hands a message to none, one or several", async () => {
+    await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: true } });
     await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: w.ids.model } });
     await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
     const prompts: string[] = [];
@@ -146,15 +147,37 @@ describe("auto mode", () => {
     expect(notes[0].content).toContain("no dispatcher model");
   });
 
-  it("the dispatcher model is a platform setting", async () => {
+  it("the dispatcher model is a platform setting, and only System 1 models qualify", async () => {
+    const put = (token: string) =>
+      w.api("PUT", "/api/settings/dispatcher", { token, json: { model_config_id: w.ids.model } });
     expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBeNull();
-    const denied = await w.api("PUT", "/api/settings/dispatcher", {
-      token: w.bob,
-      json: { model_config_id: w.ids.model },
+    expect((await put(w.bob)).status).toBe(403);
+    const notFast = await put(w.adminToken);
+    expect([notFast.status, notFast.raw.includes("System 1")]).toEqual([400, true]);
+
+    const marked = await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: true } });
+    expect(marked.body.system1).toBe(true);
+    expect((await put(w.adminToken)).status).toBe(200);
+    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body).toMatchObject({
+      model_config_id: w.ids.model,
+      usable: true,
     });
-    expect(denied.status).toBe(403);
-    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: w.ids.model } });
-    const got = (await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body;
-    expect(got).toMatchObject({ model_config_id: w.ids.model, usable: true });
+    // unmarked later: no longer used for routing, and people are told why
+    await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: false } });
+    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.usable).toBe(false);
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    await say(w.alice, w.ids.topic, "有人在吗");
+    await w.drain();
+    const note = (await w.messages(w.ids.topic)).find((m: any) => m.author_type === "system");
+    expect(note.content).toContain("no longer marked as System 1");
+  });
+
+  it("models can be added as System 1 directly", async () => {
+    const provider = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body[0];
+    const added = await w.api("POST", `/api/model-providers/${provider.id}/models`, {
+      token: w.adminToken,
+      json: { models: ["fast-mini"], source: "manual", system1: true },
+    });
+    expect(added.body.added[0]).toMatchObject({ model: "fast-mini", system1: true });
   });
 });

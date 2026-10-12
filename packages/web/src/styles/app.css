@@ -4058,3 +4058,14 @@ body.resizing {
 .form-narrow {
   max-width: 560px;
 }
+
+/* Model editor: helpers for marking a model as System 1. */
+.system1-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.system1-presets select {
+  max-width: 360px;
+}

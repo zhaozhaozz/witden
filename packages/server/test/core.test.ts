@@ -453,6 +453,40 @@ describe("model protocols", () => {
     expect(requests.map((r) => !!r.stream)).toEqual([true, false, false]);
   });
 
+  it("reasoning is noticed: reasoning text, <think> blocks, streamed reasoning, Anthropic thinking", async () => {
+    const model = new OpenAICompatibleModel("http://llm/v1", "m", null, {});
+    respond(200, { choices: [{ message: { content: "OK", reasoning_content: "the user wants OK" } }] });
+    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(true);
+    respond(200, { choices: [{ message: { content: "<think>hmm</think>OK" } }] });
+    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(true);
+    respond(200, { choices: [{ message: { content: "OK" } }] });
+    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(false);
+    streamed(
+      [{ choices: [{ delta: { reasoning_content: "thinking" } }] }, { choices: [{ delta: { content: "OK" } }] }],
+      [],
+    );
+    expect((await model.complete([{ role: "user", content: "x" }], undefined, () => {})).reasoned).toBe(true);
+    respond(200, {
+      content: [
+        { type: "thinking", thinking: "…" },
+        { type: "text", text: "OK" },
+      ],
+      usage: {},
+    });
+    expect(
+      (await new AnthropicModel("https://a", "x", "k", {}).complete([{ role: "user", content: "x" }])).reasoned,
+    ).toBe(true);
+  });
+
+  it("the capability check records response time and whether the model thinks", async () => {
+    const { probeCapabilities } = await import("../src/agent/llm.js");
+    respond(200, { choices: [{ message: { content: "OK", reasoning_content: "…" } }] });
+    const caps = await probeCapabilities(new OpenAICompatibleModel("http://llm/v1", "m", null, {}));
+    expect(caps.chat).toBe(true);
+    expect(caps.thinks).toBe(true);
+    expect(typeof caps.latency_ms).toBe("number");
+  });
+
   it("a stream that reports an error fails the call", async () => {
     streamed([{ error: { message: "context too long" } }], []);
     await expect(

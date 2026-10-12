@@ -505,6 +505,10 @@ export interface Capabilities {
   checked_at?: string;
   errors?: Record<string, string>;
   error?: string | null;
+  /** Response time of the chat check. */
+  latency_ms?: number;
+  /** The model reasoned before answering during the check. */
+  thinks?: boolean;
 }
 
 /** One model offered by a provider (roles, grants and usage refer to these). */
@@ -522,6 +526,8 @@ export interface ModelConfig {
   /** False when the model is disabled or its provider's key was revoked. */
   usable: boolean;
   params: Dict;
+  /** Fast, no long reasoning: may serve as the topic dispatcher. */
+  system1: boolean;
   capabilities: Capabilities;
   status: "unchecked" | "ok" | "error";
   daily_token_limit: number | null;

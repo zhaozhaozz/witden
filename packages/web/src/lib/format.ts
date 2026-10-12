@@ -267,6 +267,26 @@ export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; hint: st
   },
 };
 
+/** Models marked "System 1": fast, no long reasoning. Only they may serve as the topic dispatcher. */
+export const SYSTEM1_HINT =
+  "System 1 模型：响应快、不先进行长时间思考的模型，适合话题调度这类需要即时判断的工作。只有标记为 System 1 的模型才能被选为话题调度模型。";
+
+/** Request parameters that switch reasoning off, for models that think by default. */
+export const THINKING_OFF_PRESETS: { key: string; label: string; params: Record<string, unknown> }[] = [
+  {
+    key: "template",
+    label: "Qwen3 等开源模型（vLLM、SGLang 部署）",
+    params: { chat_template_kwargs: { enable_thinking: false } },
+  },
+  { key: "dashscope", label: "通义千问（阿里云百炼 OpenAI 兼容接口）", params: { enable_thinking: false } },
+  { key: "openai", label: "OpenAI GPT-5 系列", params: { reasoning_effort: "minimal" } },
+];
+
+export function fmtLatency(ms: number | undefined): string | null {
+  if (ms === undefined || ms === null) return null;
+  return ms < 1000 ? `${ms} 毫秒` : `${(ms / 1000).toFixed(1)} 秒`;
+}
+
 export const RUNNER_VIA_LABEL: Record<string, string> = {
   websocket: "主动连入（WebSocket）",
   stdio: "管理通道（stdio）",

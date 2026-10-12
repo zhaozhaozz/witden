@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { ModelConfig, ModelProtocol, ModelProvider, RemoteModel } from "../api/types";
-import { fmtNumber, fmtRelative, genericStatus } from "../lib/format";
+import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM1_HINT, THINKING_OFF_PRESETS } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
@@ -10,6 +10,7 @@ import {
   Empty,
   ErrorNote,
   Field,
+  FieldGroup,
   FormModal,
   Handle,
   Loaded,
@@ -268,6 +269,11 @@ function ModelRow({
           <Tag title={m.source === "api" ? "从服务商的模型列表中选择" : "手动填写"}>
             {m.source === "api" ? "接口" : "手动"}
           </Tag>
+          {m.system1 ? (
+            <Tag tone="accent" title={SYSTEM1_HINT}>
+              System 1
+            </Tag>
+          ) : null}
         </div>
         {m.name !== m.model ? <code className="id small">{m.model}</code> : null}
         {Object.keys(m.params ?? {}).length ? <div className="small muted mono">{JSON.stringify(m.params)}</div> : null}
@@ -281,6 +287,20 @@ function ModelRow({
         {errors.length ? (
           <div className="small text-bad" title={errors.map(([k, v]) => `${k}: ${v}`).join("\n")}>
             {caps.chat === false ? "连接失败" : "部分能力不可用"}（悬停查看原因）
+          </div>
+        ) : null}
+        {caps.chat && caps.latency_ms !== undefined ? (
+          <div className="small muted">
+            响应 {fmtLatency(caps.latency_ms)}
+            {caps.thinks ? (
+              <span
+                className="text-wait"
+                title="检测时模型先输出了思考过程。作为 System 1 使用时，请在参数中关闭思考，或换用不思考的模型。"
+              >
+                {" "}
+                · 会先思考
+              </span>
+            ) : null}
           </div>
         ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
@@ -457,6 +477,7 @@ function RemoteModelsDialog({
   );
   const [filter, setFilter] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [system1, setSystem1] = useState(false);
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
     return (res.data?.models ?? []).filter(
@@ -480,7 +501,7 @@ function RemoteModelsDialog({
       ...(byId.get(id)?.name ? { name: byId.get(id)?.name } : {}),
     }));
     const out = await run(
-      () => api.post(`/api/model-providers/${provider.id}/models`, { models, source: "api" }),
+      () => api.post(`/api/model-providers/${provider.id}/models`, { models, source: "api", system1 }),
       `已添加 ${models.length} 个模型`,
     );
     if (out) onSaved();
@@ -521,6 +542,11 @@ function RemoteModelsDialog({
               }}
             />
           </div>
+          <Toggle
+            checked={system1}
+            onChange={setSystem1}
+            label="把所选模型标记为 System 1（快速、不先进行长时间思考）"
+          />
           {shown.length ? (
             <ul className="remote-models">
               {shown.map((m) => (
@@ -561,12 +587,14 @@ function ManualModelsDialog({
 }) {
   const { run, busy } = useAction();
   const [text, setText] = useState("");
+  const [system1, setSystem1] = useState(false);
   const list = parseModelLines(text);
   const submit = async () => {
     const out = await run(
       () =>
         api.post<{ added: ModelConfig[]; skipped: number }>(`/api/model-providers/${provider.id}/models`, {
           models: list,
+          system1,
         }),
       "已添加（已存在的模型会跳过）",
     );
@@ -594,6 +622,8 @@ function ManualModelsDialog({
           placeholder={"qwen2.5-72b-instruct\ndeepseek-chat | DeepSeek V3"}
         />
       </Field>
+      <Toggle checked={system1} onChange={setSystem1} label="标记为 System 1 模型（快速、不先进行长时间思考）" />
+      <p className="small muted">{SYSTEM1_HINT}</p>
     </FormModal>
   );
 }
@@ -606,7 +636,23 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
   );
   const [limit, setLimit] = useState(model.daily_token_limit?.toString() ?? "");
   const [enabled, setEnabled] = useState(model.enabled);
+  const [system1, setSystem1] = useState(model.system1);
   const [error, setError] = useState<string | null>(null);
+
+  /** Merge a "thinking off" preset into the parameters being edited. */
+  const applyPreset = (key: string) => {
+    const preset = THINKING_OFF_PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    let current: Record<string, unknown> = {};
+    try {
+      current = params.trim() ? JSON.parse(params) : {};
+    } catch {
+      setError("当前参数不是有效的 JSON，先修正后再套用");
+      return;
+    }
+    setError(null);
+    setParams(JSON.stringify({ ...current, ...preset.params }, null, 2));
+  };
 
   const submit = async () => {
     let parsed: unknown = {};
@@ -625,6 +671,7 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
           params: parsed,
           daily_token_limit: limit.trim() ? Number(limit) : null,
           enabled,
+          system1,
         }),
       "已保存",
     );
@@ -659,6 +706,26 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
         onChange={setEnabled}
         label={enabled ? "启用：角色可以使用这个模型" : "停用：使用它的角色会无法工作，直到重新启用"}
       />
+      <FieldGroup label="System 1" hint={SYSTEM1_HINT}>
+        <Toggle checked={system1} onChange={setSystem1} label="标记为 System 1 模型（快速、不先进行长时间思考）" />
+        {system1 ? (
+          <div className="system1-presets">
+            <select value="" onChange={(e) => applyPreset(e.target.value)} aria-label="关闭思考的参数">
+              <option value="">为推理模型关闭思考：插入对应参数…</option>
+              {THINKING_OFF_PRESETS.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+            <p className="small muted">
+              默认会先思考的模型需要关闭思考才适合作为 System 1。DeepSeek 请使用 deepseek-chat（deepseek-reasoner
+              无法关闭思考）；Anthropic
+              模型默认不开启思考，无需设置。保存后点击“检测能力”，可以看到响应时间以及是否仍会先思考。
+            </p>
+          </div>
+        ) : null}
+      </FieldGroup>
     </FormModal>
   );
 }

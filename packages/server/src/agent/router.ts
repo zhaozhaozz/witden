@@ -127,6 +127,7 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
   const found = setting?.model_config_id ? await models.modelWithProvider(db, setting.model_config_id) : null;
   let problem: string | null = null;
   if (!found) problem = "no dispatcher model is set (System administration → dispatcher)";
+  else if (!found.model.system1) problem = "the dispatcher model is no longer marked as System 1";
   else if (models.unusableReason(found.model, found.provider))
     problem = `the dispatcher model is unavailable: ${models.unusableReason(found.model, found.provider)}`;
   else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(found.model.id))

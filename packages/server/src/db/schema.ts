@@ -120,6 +120,8 @@ export const modelConfigs = pgTable(
     source: text("source").notNull().default("manual"), // api (picked from the provider's list) | manual
     enabled: boolean("enabled").notNull().default(true),
     params: json<Json>("params").notNull().default({}),
+    /** Fast, no long reasoning ("System 1"): may serve as the dispatcher of auto topics. */
+    system1: boolean("system1").notNull().default(false),
     capabilities: json<Json>("capabilities").notNull().default({}),
     status: text("status").notNull().default("unchecked"), // unchecked | ok | error (capability check)
     dailyTokenLimit: integer("daily_token_limit"),
