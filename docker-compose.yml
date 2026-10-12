@@ -77,6 +77,22 @@ services:
       api: { condition: service_started }
     networks: [control]
 
+  # Optional: the open-source Laya decision model (a System 1 model) for the topic dispatcher, on CPU.
+  # Turned on by COMPOSE_PROFILES=laya in .env; with WITDEN_LAYA_URL=http://laya:8000 the platform adds it
+  # under Models (and as the dispatcher when none is set). Reachable only on the control network.
+  laya:
+    build: { context: images/laya }
+    image: witden/laya:latest
+    profiles: ["laya"]
+    restart: unless-stopped
+    environment:
+      LAYA_API_KEY: ${WITDEN_LAYA_API_KEY:-}
+      LAYA_MODELS: ${LAYA_MODELS:-multilingual}
+      LAYA_THREADS: ${LAYA_THREADS:-4}
+    volumes:
+      - witden-laya-cache:/home/laya/.cache/huggingface
+    networks: [control]
+
   # Build-only services for the computer images used by the built-in templates.
   computer-shell:
     build: { context: ., dockerfile: images/shell/Dockerfile }
@@ -94,3 +110,4 @@ volumes:
   witden-db:
   witden-data:
   witden-manager:
+  witden-laya-cache:

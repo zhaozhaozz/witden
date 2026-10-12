@@ -37,6 +37,7 @@ import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
 import { EventBus } from "./services/events.js";
 import { reconcile } from "./services/instances.js";
+import { bootstrapLaya } from "./services/model-configs.js";
 import { proxyConfigFor } from "./services/model-proxy.js";
 import { bootstrap } from "./services/users.js";
 
@@ -137,6 +138,11 @@ export async function start(opts: StartOptions): Promise<Witden> {
   setDatabase(database);
   initSecretBox(settings);
   await transaction((tx) => bootstrap(tx, settings));
+  // Once, by the process that serves the API (api and worker start together).
+  if (settings.layaUrl && settings.processRole !== "worker") {
+    const { layaUrl, layaApiKey } = settings;
+    await transaction((tx) => bootstrapLaya(tx, layaUrl, layaApiKey));
+  }
   const bus = new EventBus();
   await bus.attach(database);
   const manager = opts.manager ?? (await makeManager(settings));

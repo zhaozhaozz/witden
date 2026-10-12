@@ -21,6 +21,8 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, type ModelError, NotFound } from "../errors.js";
 import { secretBox } from "../security/crypto.js";
+import { audit } from "./audit.js";
+import { DISPATCHER, type DispatcherSetting, getSetting, LAYA_BOOTSTRAP, putSetting } from "./platform-settings.js";
 
 export const PROTOCOLS = new Set(["openai", "anthropic", "systemone"]);
 const MODEL_ID = /^\S{1,200}$/;
@@ -301,6 +303,40 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
     .where(eq(modelConfigs.id, m.id))
     .returning();
   return row;
+}
+
+/**
+ * WITDEN_LAYA_URL (for example the optional "laya" compose service): add that Laya server as a System One
+ * provider with its multilingual model, and make it the dispatcher when none is set. Done once per address,
+ * so a provider deleted or a dispatcher changed afterwards stays that way.
+ */
+export async function bootstrapLaya(db: Db, url: string, apiKey: string | null): Promise<void> {
+  const done = await getSetting<{ base_url: string }>(db, LAYA_BOOTSTRAP);
+  if (done?.base_url === url) return;
+  const [existing] = await db
+    .select()
+    .from(modelProviders)
+    .where(and(eq(modelProviders.protocol, "systemone"), eq(modelProviders.baseUrl, url)))
+    .limit(1);
+  if (!existing) {
+    const name = (await providerNameTaken(db, "Laya")) ? `Laya ${url}` : "Laya";
+    const { provider, models } = await createProvider(
+      db,
+      { name, protocol: "systemone", baseUrl: url, apiKey, models: [{ model: "multilingual", name: "Laya 多语言" }] },
+      null,
+    );
+    await audit(db, "model_provider.create", {
+      resourceType: "model_provider",
+      resourceId: provider.id,
+      detail: { name, protocol: "systemone", base_url: url, models: 1, from: "WITDEN_LAYA_URL" },
+    });
+    const dispatcher = await getSetting<DispatcherSetting>(db, DISPATCHER);
+    if (!dispatcher?.model_config_id) {
+      await putSetting(db, DISPATCHER, { model_config_id: models[0].id }, null);
+      await audit(db, "settings.dispatcher", { detail: { model_config_id: models[0].id, from: "WITDEN_LAYA_URL" } });
+    }
+  }
+  await putSetting(db, LAYA_BOOTSTRAP, { base_url: url }, null);
 }
 
 // --- usage -------------------------------------------------------------------------------------------------

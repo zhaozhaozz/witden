@@ -18,6 +18,9 @@ export interface Settings {
   hubUrlForComputers: string;
   /** Loopback port of the model proxy inside computers. */
   modelProxyPort: number;
+  /** A Laya decision server (e.g. the optional "laya" compose service) to add as a System 1 model on start. */
+  layaUrl: string | null;
+  layaApiKey: string | null;
   /** Remote Docker Manager; empty = run the manager in-process (single-host deployments). */
   managerUrl: string | null;
   managerToken: string | null;
@@ -74,6 +77,8 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     hubHost: env("HUB_HOST") ?? "0.0.0.0",
     hubUrlForComputers: env("HUB_URL_FOR_COMPUTERS") ?? "ws://witden-hub:8330/runner",
     modelProxyPort: int("MODEL_PROXY_PORT", 8686),
+    layaUrl: env("LAYA_URL") ?? null,
+    layaApiKey: env("LAYA_API_KEY") ?? null,
     managerUrl: env("MANAGER_URL") ?? null,
     managerToken: env("MANAGER_TOKEN") ?? null,
     internalToken: env("INTERNAL_TOKEN") ?? null,

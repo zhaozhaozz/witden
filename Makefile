@@ -1,4 +1,4 @@
-.PHONY: install build dev test test-docker lint images platform
+.PHONY: install build dev test test-docker lint images platform laya
 
 install:
 	npm ci
@@ -31,3 +31,7 @@ images:
 # Platform image (api, worker and manager processes).
 platform:
 	docker build -t witden/platform:latest .
+
+# Optional Laya decision model for the topic dispatcher (the "laya" compose service).
+laya:
+	docker build -t witden/laya:latest images/laya

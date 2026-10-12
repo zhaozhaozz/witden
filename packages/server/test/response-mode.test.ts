@@ -205,6 +205,35 @@ describe("auto mode", () => {
     expect(note.content).toContain("not a System One decision model");
   });
 
+  it("WITDEN_LAYA_URL adds that Laya server once, as the dispatcher when none is set", async () => {
+    const { bootstrapLaya } = await import("../src/services/model-configs.js");
+    const decisionProviders = async () =>
+      ((await w.api("GET", "/api/model-providers", { token: w.adminToken })).body as any[]).filter(
+        (p) => p.protocol === "systemone",
+      );
+    await bootstrapLaya(db(), "http://laya:8000", "laya-key");
+    await bootstrapLaya(db(), "http://laya:8000", "laya-key"); // every start calls it
+    let providers = await decisionProviders();
+    expect(providers).toHaveLength(1);
+    expect(providers[0]).toMatchObject({ name: "Laya", base_url: "http://laya:8000", has_api_key: true });
+    expect(providers[0].models.map((m: any) => m.model)).toEqual(["multilingual"]);
+    const laya = providers[0].models[0].id;
+    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBe(laya);
+
+    // deleted by an administrator: the next start leaves it deleted
+    await w.api("DELETE", `/api/model-providers/${providers[0].id}`, { token: w.adminToken });
+    await bootstrapLaya(db(), "http://laya:8000", "laya-key");
+    expect(await decisionProviders()).toHaveLength(0);
+
+    // a new address is added, but a dispatcher chosen meanwhile stays
+    const chosen = await decisionService();
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: chosen.id } });
+    await bootstrapLaya(db(), "http://laya-2:8000", null);
+    providers = await decisionProviders();
+    expect(providers.map((p: any) => p.base_url).sort()).toEqual(["http://laya-2:8000", LAYA].sort());
+    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBe(chosen.id);
+  });
+
   it("System One models are checked with a question, and cannot be a role's model", async () => {
     const laya = await decisionService();
     const checked = await w.api("POST", `/api/models/${laya.id}/check`, { token: w.adminToken });

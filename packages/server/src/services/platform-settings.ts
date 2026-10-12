@@ -8,7 +8,12 @@ export async function getSetting<T extends Record<string, any>>(db: Db, key: str
   return (row?.value as T) ?? null;
 }
 
-export async function putSetting(db: Db, key: string, value: Record<string, any>, userId: string): Promise<void> {
+export async function putSetting(
+  db: Db,
+  key: string,
+  value: Record<string, any>,
+  userId: string | null,
+): Promise<void> {
   await db
     .insert(platformSettings)
     .values({ key, value, updatedBy: userId })
@@ -23,3 +28,6 @@ export const DISPATCHER = "dispatcher";
 export interface DispatcherSetting {
   model_config_id: string | null;
 }
+
+/** The address WITDEN_LAYA_URL was last added from (services/model-configs.ts, bootstrapLaya). */
+export const LAYA_BOOTSTRAP = "bootstrap.laya";
