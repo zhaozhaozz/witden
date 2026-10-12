@@ -190,7 +190,12 @@ function ActivityItem({ activity: a, author }: { activity: Activity; author: Aut
           <span className="ai-mark">AI 员工</span>
         </div>
         {a.phase === "writing" ? (
-          <MessageText content={a.text} streaming trailing={<span className="live-caret" aria-hidden />} />
+          <MessageText
+            content={a.text}
+            streaming
+            mentions={[]}
+            trailing={<span className="live-caret" aria-hidden />}
+          />
         ) : (
           <>
             {a.note ? <div className="live-note">{a.note}</div> : null}

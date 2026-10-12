@@ -68,7 +68,11 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
           empty="团队里还没有其他成员"
         />
       </FieldGroup>
-      <FieldGroup label="邀请角色" hint="被邀请的角色默认只在被 @ 时响应（取决于角色的参与方式）。" wide>
+      <FieldGroup
+        label="邀请角色"
+        hint="角色默认只在被 @ 时回应；话题建好后可以在顶部或「设置」里切换成自动模式。"
+        wide
+      >
         <MultiPick
           columns={2}
           options={dir.roles

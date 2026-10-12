@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../../api/types";
-import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted } from "../../lib/format";
+import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -11,6 +11,7 @@ import {
   ComputerBadge,
   Empty,
   Field,
+  FieldGroup,
   Guarded,
   Handle,
   Loaded,
@@ -419,6 +420,7 @@ function SettingsTab({
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
   const [visibility, setVisibility] = useState(topic.visibility);
+  const [responseMode, setResponseMode] = useState(topic.response_mode);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
   const [publishing, setPublishing] = useState(false);
   const [clean, setClean] = useState({ messages: true, memories: true, files: true });
@@ -427,6 +429,7 @@ function SettingsTab({
     setTitle(topic.title);
     setGoal(topic.goal);
     setVisibility(topic.visibility);
+    setResponseMode(topic.response_mode);
     setRounds(topic.max_auto_rounds?.toString() ?? "");
   }, [topic]);
 
@@ -459,7 +462,7 @@ function SettingsTab({
               {
                 title: title.trim(),
                 goal,
-                ...(topic.kind === "group" ? { visibility } : {}),
+                ...(topic.kind === "group" ? { visibility, response_mode: responseMode } : {}),
                 max_auto_rounds: rounds ? Number(rounds) : null,
               },
               "设置已保存",
@@ -479,6 +482,21 @@ function SettingsTab({
                 <option value="internal">团队内公开：所有成员可阅读</option>
               </select>
             </Field>
+          ) : null}
+          {topic.kind === "group" ? (
+            <FieldGroup label="角色响应方式">
+              <div className="mode-options">
+                {(["mention", "auto"] as const).map((m) => (
+                  <label key={m} className="check mode-option" title={RESPONSE_MODE[m].hint}>
+                    <input type="radio" checked={responseMode === m} onChange={() => setResponseMode(m)} />
+                    <span>
+                      <strong>{RESPONSE_MODE[m].label}</strong>
+                      <span className="small muted">{RESPONSE_MODE[m].hint.replace(/^[^：]*：/, "")}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </FieldGroup>
           ) : null}
           <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
             <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />

@@ -43,6 +43,8 @@ export interface Topic {
   kind: "group" | "dm";
   status: "active" | "archived";
   visibility: "private" | "internal";
+  /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */
+  response_mode: "mention" | "auto";
   max_auto_rounds: number | null;
   allowed_model_config_ids: string[] | null;
   source: string;
@@ -461,7 +463,6 @@ export interface Role {
   allowed_contacts?: string[];
   knowledge_space_ids?: string[];
   approval_required?: string[];
-  response_mode: "mention" | "active";
   max_steps: number | null;
   max_tokens_per_task: number | null;
   daily_token_limit: number | null;

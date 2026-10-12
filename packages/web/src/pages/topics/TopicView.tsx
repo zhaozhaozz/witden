@@ -11,6 +11,7 @@ import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
 import { type Author, MessageItem } from "./MessageItem";
+import { DispatcherWarning, ResponseModeSwitch } from "./ResponseMode";
 import { RoleActivity } from "./RoleActivity";
 import { TopicSidePanel } from "./TopicSidePanel";
 
@@ -167,6 +168,14 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     };
   };
 
+  /** What this message really mentions, as the "@" tokens the composer inserts (handle / name without spaces). */
+  const mentionTokens = (m: Message): string[] =>
+    (m.mentions ?? []).flatMap((x) => {
+      const p = participantMap.get(`${x.type}:${x.id}`);
+      if (x.type === "role") return [p?.handle ?? dir.roleById.get(x.id)?.handle ?? ""].filter(Boolean);
+      return [(p?.name ?? dir.userName(x.id)).replace(/\s+/g, "")];
+    });
+
   const authorOf = (m: Message): Author => {
     const id = m.author_id ?? m.id;
     if (m.author_type === "role") return roleAuthor(id);
@@ -259,6 +268,14 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                   {topic.visibility === "internal" ? "团队内公开" : "私密"}
                 </Tag>
               ) : null}
+              <ResponseModeSwitch
+                topic={topic}
+                onChange={(t) => {
+                  topicRes.setData(t);
+                  onTopicUpdated();
+                }}
+              />
+              <DispatcherWarning topic={topic} />
               {topic.source !== "internal" ? (
                 <Tag tone="accent">来自 {PLATFORM_LABEL[topic.source] ?? topic.source}</Tag>
               ) : null}
@@ -344,6 +361,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                       key={m.id}
                       msg={m}
                       author={author}
+                      mentionTokens={mentionTokens(m)}
                       compact={compact}
                       files={fileMap}
                       canDelete={(m.author_type === "user" && m.author_id === me?.id) || canAdmin}

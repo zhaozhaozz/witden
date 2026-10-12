@@ -55,7 +55,6 @@ interface Draft {
   allowed_contacts: string[];
   knowledge_space_ids: string[];
   approval_required: string[];
-  response_mode: "mention" | "active";
   max_steps: string;
   max_tokens_per_task: string;
   daily_token_limit: string;
@@ -77,7 +76,6 @@ function toDraft(r: Role | null): Draft {
     allowed_contacts: (r?.allowed_contacts ?? []).filter((c) => c !== "*"),
     knowledge_space_ids: r?.knowledge_space_ids ?? [],
     approval_required: r?.approval_required ?? [],
-    response_mode: r?.response_mode ?? "mention",
     max_steps: r?.max_steps?.toString() ?? "",
     max_tokens_per_task: r?.max_tokens_per_task?.toString() ?? "",
     daily_token_limit: r?.daily_token_limit?.toString() ?? "",
@@ -110,7 +108,6 @@ function toBody(d: Draft): Record<string, unknown> {
     allowed_contacts: d.any_contact ? ["*"] : d.allowed_contacts,
     knowledge_space_ids: d.knowledge_space_ids,
     approval_required: [...d.approval_required].sort(),
-    response_mode: d.response_mode,
     max_steps: num(d.max_steps),
     max_tokens_per_task: num(d.max_tokens_per_task),
     daily_token_limit: num(d.daily_token_limit),
@@ -393,26 +390,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 onChange={(e) => set("system_prompt", e.target.value)}
               />
             </Field>
-            <FieldGroup label="在话题中的参与方式">
-              <div className="radio-row">
-                <label className="check">
-                  <input
-                    type="radio"
-                    checked={draft.response_mode === "mention"}
-                    onChange={() => set("response_mode", "mention")}
-                  />
-                  只在被 @ 时响应
-                </label>
-                <label className="check">
-                  <input
-                    type="radio"
-                    checked={draft.response_mode === "active"}
-                    onChange={() => set("response_mode", "active")}
-                  />
-                  在加入的话题中持续参与
-                </label>
-              </div>
-            </FieldGroup>
           </Section>
 
           <Section title="模型">
@@ -644,7 +621,6 @@ const ALL_FIELD_ZH: Record<string, string> = {
   avatar_url: "头像",
   color: "颜色",
   description: "职责说明",
-  response_mode: "参与方式",
   allowed_contacts: "可联系角色",
   knowledge_space_ids: "知识空间",
   approval_required: "询问设置",

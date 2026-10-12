@@ -6,7 +6,7 @@
  * Images under /api/files/<id> are platform files: they are fetched with the signed-in session and shown
  * from an object URL, since <img> cannot send the Authorization header.
  */
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link } from "react-router-dom";
 import remarkBreaks from "remark-breaks";
@@ -22,8 +22,12 @@ interface MdNode {
   data?: Record<string, unknown>;
 }
 
-/** `@handle` in ordinary text becomes <span class="mention"> (code and links are left alone). */
-function remarkMentions() {
+/**
+ * `@handle` in ordinary text becomes <span class="mention"> (code and links are left alone). With ``tokens``
+ * only those (the people and roles the message really mentions) are highlighted; other "@…" stay text.
+ */
+function remarkMentions(opts: { tokens?: string[] } = {}) {
+  const only = opts.tokens ? new Set(opts.tokens.map((t) => t.toLowerCase())) : null;
   const walk = (node: MdNode) => {
     if (!node.children || node.type === "link" || node.type === "linkReference") return;
     node.children = node.children.flatMap((child) => {
@@ -36,6 +40,7 @@ function remarkMentions() {
       for (const m of child.value.matchAll(MENTION)) {
         const at = m.index ?? 0;
         if (at > 0 && /[A-Za-z0-9._-]/.test(child.value[at - 1])) continue; // an e-mail address, not a mention
+        if (only && !only.has(m[0].slice(1).toLowerCase())) continue;
         if (at > last) out.push({ type: "text", value: child.value.slice(last, at) });
         out.push({
           type: "mention",
@@ -237,22 +242,33 @@ function components(streaming: boolean): Components {
   };
 }
 
-// Chat habit: a single line break in a message is a line break, not a space.
-const PLUGINS = [remarkGfm, remarkBreaks, remarkMentions];
-
 export function Markdown({
   content,
   streaming = false,
   trailing,
+  mentions,
 }: {
   content: string;
+  /** Tokens (handle or name, without "@") of what the message really mentions; others are not highlighted. */
+  mentions?: string[];
   /** The text is still being written: diagrams stay as source and ``trailing`` (a caret) follows the text. */
   streaming?: boolean;
   trailing?: ReactNode;
 }) {
+  const key = mentions?.join("\u0000");
+  // Rebuilt when the mentioned tokens change (compared by content, not array identity).
+  const plugins = useMemo(
+    // Chat habit: a single line break in a message is a line break, not a space.
+    () => [
+      remarkGfm,
+      remarkBreaks,
+      [remarkMentions, { tokens: mentions }] as [typeof remarkMentions, { tokens?: string[] }],
+    ],
+    [key],
+  );
   return (
     <div className={`msg-text md${streaming ? " md-streaming" : ""}`}>
-      <ReactMarkdown remarkPlugins={PLUGINS} components={components(streaming)} urlTransform={urlTransform}>
+      <ReactMarkdown remarkPlugins={plugins} components={components(streaming)} urlTransform={urlTransform}>
         {content}
       </ReactMarkdown>
       {trailing}

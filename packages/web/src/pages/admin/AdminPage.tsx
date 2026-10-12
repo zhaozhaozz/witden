@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { useAuth } from "../../lib/session";
 import { PageHeader, Tabs } from "../../ui/kit";
 import { AuditTab, UsageTab } from "./auditTabs";
+import { DispatcherTab } from "./DispatcherTab";
 import { EmergencyTab } from "./EmergencyTab";
 import { KnowledgeTab } from "./KnowledgeTab";
 import { GrantsTab, MembersTab } from "./membersTabs";
@@ -16,6 +17,7 @@ export default function AdminPage() {
     { key: "audit", label: "审计", hidden: !can("audit.view") },
     { key: "usage", label: "用量", hidden: !can("audit.view") },
     { key: "emergency", label: "紧急停止", hidden: !can("emergency.stop") },
+    { key: "dispatcher", label: "话题调度", hidden: !can("secrets.manage") },
   ];
   const visible = tabs.filter((t) => !t.hidden);
   const requested = params.get("tab");
@@ -25,7 +27,7 @@ export default function AdminPage() {
     <div className="page">
       <PageHeader
         title="管理"
-        sub="成员与授权、团队知识、审计记录、模型用量和紧急停止。所有权限默认不授予，按需逐项开放。"
+        sub="成员与授权、团队知识、审计记录、模型用量、紧急停止和话题调度。所有权限默认不授予，按需逐项开放。"
       />
       <Tabs tabs={tabs} value={tab} onChange={(k) => setParams({ tab: k }, { replace: true })} />
       {tab === "members" ? <MembersTab /> : null}
@@ -34,6 +36,7 @@ export default function AdminPage() {
       {tab === "audit" ? <AuditTab /> : null}
       {tab === "usage" ? <UsageTab /> : null}
       {tab === "emergency" ? <EmergencyTab /> : null}
+      {tab === "dispatcher" ? <DispatcherTab /> : null}
     </div>
   );
 }

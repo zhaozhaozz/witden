@@ -31,7 +31,6 @@ export default function RolesPage() {
                     <th>状态</th>
                     <th>虚拟电脑</th>
                     <th>模型 / 运行方式</th>
-                    <th>参与方式</th>
                     <th>工具</th>
                     <th>今日用量</th>
                   </tr>
@@ -84,7 +83,6 @@ export default function RolesPage() {
                           <span className="text-bad">未配置</span>
                         )}
                       </td>
-                      <td>{r.response_mode === "active" ? "持续参与" : "被 @ 时响应"}</td>
                       <td>
                         <span className="inline-list">
                           {r.allowed_tools.length ? (

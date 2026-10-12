@@ -4015,3 +4015,46 @@ body.resizing {
   line-height: 18px;
   text-align: center;
 }
+
+/* A topic's response mode: a small switch in the header, explained on hover; options in settings. */
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mode-switch .segmented {
+  padding: 1px;
+}
+.mode-switch .seg {
+  padding: 1px 9px;
+  font-size: 12px;
+}
+.seg-readonly {
+  cursor: help;
+}
+.seg-readonly:not(.seg-on) {
+  opacity: 0.55;
+}
+.mode-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.mode-option {
+  align-items: flex-start;
+  white-space: normal;
+}
+.mode-option > input {
+  margin-top: 3px;
+}
+.mode-option > span {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.5;
+}
+.form-narrow {
+  max-width: 560px;
+}

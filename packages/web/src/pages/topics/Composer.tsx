@@ -1,4 +1,4 @@
-import { type ChangeEvent, type KeyboardEvent, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, errorMessage } from "../../api/client";
 import type { Artifact, Mention, Participant, PostMessageResult } from "../../api/types";
 import { fmtBytes } from "../../lib/format";
@@ -26,8 +26,9 @@ function tokenFor(p: Participant): string {
 }
 
 /**
- * Message composer. `@` opens an autocomplete over topic participants; on send, every `@token`
- * that matches a participant is sent as a structured mention so routing does not depend on text parsing.
+ * Message composer. `@` opens an autocomplete over topic participants. Only people and roles picked from
+ * that list are mentions: they are sent as a structured list (empty when nobody was picked), so an "@name"
+ * that was pasted or typed is just text and never starts work.
  */
 export function Composer({
   topicId,
@@ -46,7 +47,11 @@ export function Composer({
   const [pending, setPending] = useState<Artifact[]>([]);
   const [uploading, setUploading] = useState(0);
   const [sending, setSending] = useState(false);
+  // Picked from the autocomplete; a pick counts only while its "@token" is still in the text.
+  const [picked, setPicked] = useState<Candidate[]>([]);
   const area = useRef<HTMLTextAreaElement>(null);
+  // Where the caret goes after a pick; applied right after the text renders, before the next keystroke.
+  const caretAfterPick = useRef<number | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const candidates: Candidate[] = useMemo(
@@ -87,28 +92,22 @@ export function Composer({
     const before = text.slice(0, caret).replace(/@([^\s@]*)$/, `@${c.token} `);
     const next = before + text.slice(caret);
     setText(next);
+    setPicked((p) => (p.some((x) => x.type === c.type && x.id === c.id) ? p : [...p, c]));
     setQuery(null);
-    requestAnimationFrame(() => {
-      if (el) {
-        el.focus();
-        el.setSelectionRange(before.length, before.length);
-      }
-    });
+    caretAfterPick.current = before.length;
   };
 
-  const structuredMentions = (content: string): Mention[] | undefined => {
-    const found: Mention[] = [];
-    const seen = new Set<string>();
-    for (const m of content.matchAll(/@([^\s@，。,.!?！？:：;；()（）]+)/g)) {
-      const token = m[1].toLowerCase();
-      const c = candidates.find((x) => x.token.toLowerCase() === token);
-      if (c && !seen.has(`${c.type}:${c.id}`)) {
-        seen.add(`${c.type}:${c.id}`);
-        found.push({ type: c.type, id: c.id });
-      }
-    }
-    return found.length ? found : undefined;
-  };
+  useLayoutEffect(() => {
+    const el = area.current;
+    const at = caretAfterPick.current;
+    if (!el || at === null) return;
+    caretAfterPick.current = null;
+    el.focus();
+    el.setSelectionRange(at, at);
+  }, [text]);
+
+  const structuredMentions = (content: string): Mention[] =>
+    picked.filter((c) => content.includes(`@${c.token}`)).map((c) => ({ type: c.type, id: c.id }));
 
   const send = async () => {
     const content = text.trim();
@@ -121,6 +120,7 @@ export function Composer({
         attachments: pending.map((a) => a.id),
       });
       setText("");
+      setPicked([]);
       setPending([]);
       onSent(msg);
     } catch (err) {
@@ -231,7 +231,7 @@ export function Composer({
           ref={area}
           rows={Math.min(8, Math.max(2, text.split("\n").length))}
           value={text}
-          placeholder="输入消息（支持 Markdown、```mermaid 流程图），用 @ 提及角色或成员。Enter 发送，Shift+Enter 换行"
+          placeholder="输入消息（支持 Markdown、```mermaid 流程图）。输入 @ 后从列表里点选角色或成员才算 @；Enter 发送，Shift+Enter 换行"
           onChange={(e) => {
             setText(e.target.value);
             syncQuery(e.target.value, e.target.selectionStart);

@@ -27,12 +27,14 @@ export function MessageText({
   content,
   streaming,
   trailing,
+  mentions,
 }: {
   content: string;
   streaming?: boolean;
   trailing?: ReactNode;
+  mentions?: string[];
 }) {
-  return <Markdown content={content} streaming={streaming} trailing={trailing} />;
+  return <Markdown content={content} streaming={streaming} trailing={trailing} mentions={mentions} />;
 }
 
 /** Pictures are shown in the message; other files are chips that download to the reader's own computer. */
@@ -91,11 +93,14 @@ export function MessageItem({
   canDelete,
   onEdit,
   onDelete,
+  mentionTokens,
 }: {
   msg: Message;
   author: Author;
   compact: boolean;
   files: Map<string, Artifact>;
+  /** "@" tokens of the participants this message really mentions (highlighted; other "@…" are text). */
+  mentionTokens?: string[];
   canDelete: boolean;
   onEdit: (content: string) => Promise<boolean>;
   onDelete: () => void;
@@ -191,7 +196,7 @@ export function MessageItem({
             </div>
           </div>
         ) : (
-          <MessageText content={msg.content} />
+          <MessageText content={msg.content} mentions={mentionTokens} />
         )}
         {msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
         <div className="msg-foot">
