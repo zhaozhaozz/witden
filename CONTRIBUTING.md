@@ -18,11 +18,12 @@
 
 ## 必须保持的不变量
 
-修改以下模块时，请同时补充或更新对应测试（`packages/server/test/` 下的 `agent-flow`、`isolation`、`computers`、`slack`、`core`）：
+修改以下模块时，请同时补充或更新对应测试（`packages/server/test/` 下的 `agent-flow`、`isolation`、`computers`、`slack`、`core`、`model-proxy`、`migrations`）：
 
 1. **执行边界**：AI 工具只能通过执行网关（`compute/gateway.ts`）访问电脑，且只访问任务固定的实例。不要新增在平台宿主机上执行的代码路径，也不要在实例不可用时“换一台”。新的 Runner 操作必须在 `opGroup` 中归入某个工具组。
 2. **Docker 权限只在 Manager**：API 只通过 `ManagerApi` 请求白名单操作；Worker 不得持有 Docker 或 Runner 连接。Manager 的入参全部经 `validate.ts` 校验（未知字段拒绝）。
 3. **非 root 与无 socket**：电脑不能以 root 运行、不能挂宿主机路径或 Docker socket；Runner 拒绝 root。
+   真实的模型服务地址和密钥绝不进入电脑：电脑内的模型访问只能经 Runner 的模型代理，用平台为这台电脑签发的密钥。
 4. **不盲目重试**：有副作用的操作结果不确定时，先查 Runner 请求日志，再如实告诉模型；不要自动重放。
 5. **权限由系统执行**：新工具必须归入某个工具组（`agent/tools.ts`），由运行器按任务信封检查；新接口必须显式检查权限（默认拒绝）。
 6. **信息流**：任何由角色产生、会被其他人看到的内容（消息、文件、进度、预览、外部同步）都要经过 `security/labels.ts` 的 `checkFlow`；工具读取新来源的数据时要返回对应标签。
