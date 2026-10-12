@@ -61,6 +61,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                   items={[
                     ["OpenAI 兼容地址", <CopyText key="o" text={p.endpoints.openai} />],
                     ["Anthropic 地址", <CopyText key="a" text={p.endpoints.anthropic} />],
+                    ["System One 地址（Jev、Laya）", <CopyText key="s" text={p.endpoints.systemone} />],
                     [
                       "密钥",
                       p.key ? (
@@ -157,7 +158,11 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                           {m.usable ? null : <span className="small text-bad">（已停用或密钥已撤销）</span>}
                         </td>
                         <td className="small">
-                          {m.protocol === "anthropic" ? "/v1/messages" : "/v1/chat/completions 等"}
+                          {m.protocol === "anthropic"
+                            ? "/v1/messages"
+                            : m.protocol === "systemone"
+                              ? "/v1/systemone"
+                              : "/v1/chat/completions 等"}
                         </td>
                       </tr>
                     ))}

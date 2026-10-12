@@ -1,5 +1,5 @@
 /**
- * Per-computer model access. When enabled, the computer's runner serves a local OpenAI- / Anthropic-compatible
+ * Per-computer model access. When enabled, the computer's runner serves a local OpenAI- / Anthropic- / System One-compatible
  * endpoint and relays requests to the platform (compute/model-proxy.ts). Programs inside the computer get a
  * key the platform issued for this computer and a list of allowed models; real provider addresses and keys
  * never enter the computer.

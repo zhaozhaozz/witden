@@ -2,9 +2,13 @@
  * Model services. A provider is one endpoint, protocol and key; it offers any number of models, picked from
  * the provider's own model list or entered by hand. Roles, grants, usage records and topic restrictions refer
  * to models (rows of model_configs), never to providers.
+ *
+ * Chat models (OpenAI-compatible and Anthropic protocols) do the roles' work. System One decision models
+ * (protocol "systemone": TypeSafe Jev, Laya) answer typed questions only; the topic dispatcher uses them.
  */
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { buildModel, type ChatModel, listModels, probeCapabilities, type RemoteModel } from "../agent/llm.js";
+import { type DecisionModel, probeDecisionModel, SystemOneModel } from "../agent/systemone.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -15,10 +19,10 @@ import {
   roles,
   usageRecords,
 } from "../db/schema.js";
-import { BadRequest, Conflict, NotFound } from "../errors.js";
+import { BadRequest, Conflict, type ModelError, NotFound } from "../errors.js";
 import { secretBox } from "../security/crypto.js";
 
-export const PROTOCOLS = new Set(["openai", "anthropic"]);
+export const PROTOCOLS = new Set(["openai", "anthropic", "systemone"]);
 const MODEL_ID = /^\S{1,200}$/;
 
 /** Replaced in tests to plug in scripted models. */
@@ -30,6 +34,17 @@ export let modelFactory: (model: ModelConfig, provider: ModelProvider, apiKey: s
 export function setModelFactory(fn: typeof modelFactory): void {
   modelFactory = fn;
 }
+export let decisionFactory: (model: ModelConfig, provider: ModelProvider, apiKey: string | null) => DecisionModel = (
+  model,
+  provider,
+  key,
+) => new SystemOneModel(provider.baseUrl, model.model, key, model.params);
+export function setDecisionFactory(fn: typeof decisionFactory): void {
+  decisionFactory = fn;
+}
+
+/** A System One decision model: answers typed questions, cannot chat. */
+export const isSystemOne = (p: ModelProvider | null | undefined) => p?.protocol === "systemone";
 
 /** "provider / model" as people see it in messages and warnings. */
 export const modelLabel = (model: ModelConfig, provider?: ModelProvider | null) =>
@@ -150,10 +165,13 @@ export async function fetchRemoteModels(db: Db, p: ModelProvider): Promise<Remot
       .where(eq(modelProviders.id, p.id));
     return models;
   } catch (err) {
-    await db
-      .update(modelProviders)
-      .set({ status: "error", statusDetail: (err as Error).message.slice(0, 500) })
-      .where(eq(modelProviders.id, p.id));
+    // A self-hosted Laya server simply has no model list: not a fault of the provider.
+    const noList = isSystemOne(p) && (err as ModelError).detail?.upstream_status === 404;
+    if (!noList)
+      await db
+        .update(modelProviders)
+        .set({ status: "error", statusDetail: (err as Error).message.slice(0, 500) })
+        .where(eq(modelProviders.id, p.id));
     throw err;
   }
 }
@@ -173,7 +191,6 @@ export async function addModels(
   items: unknown,
   source: "api" | "manual",
   createdBy: string | null,
-  opts: { system1?: boolean } = {},
 ): Promise<ModelConfig[]> {
   if (!Array.isArray(items) || !items.length) throw new BadRequest("models must be a non-empty list");
   const wanted = new Map<string, string>();
@@ -188,7 +205,7 @@ export async function addModels(
   for (const [model, name] of wanted) {
     const rows = await db
       .insert(modelConfigs)
-      .values({ id: newId("mdl"), providerId: p.id, model, name, source, createdBy, system1: !!opts.system1 })
+      .values({ id: newId("mdl"), providerId: p.id, model, name, source, createdBy })
       .onConflictDoNothing()
       .returning();
     added.push(...rows);
@@ -215,7 +232,6 @@ export async function updateModel(db: Db, m: ModelConfig, data: Record<string, a
     update.dailyTokenLimit = v;
   }
   if (data.enabled !== undefined) update.enabled = !!data.enabled;
-  if (data.system1 !== undefined) update.system1 = !!data.system1;
   if (!Object.keys(update).length) return m;
   const [row] = await db.update(modelConfigs).set(update).where(eq(modelConfigs.id, m.id)).returning();
   return row;
@@ -250,19 +266,38 @@ export async function modelWithProvider(
   return row ?? null;
 }
 
-export async function chatModelFor(db: Db, m: ModelConfig): Promise<ChatModel> {
+async function usableProvider(db: Db, m: ModelConfig): Promise<ModelProvider> {
   const provider = await getProvider(db, m.providerId);
   const reason = unusableReason(m, provider);
   if (reason) throw new BadRequest(reason);
+  return provider;
+}
+
+export async function chatModelFor(db: Db, m: ModelConfig): Promise<ChatModel> {
+  const provider = await usableProvider(db, m);
+  if (isSystemOne(provider))
+    throw new BadRequest(`${modelLabel(m, provider)} is a System One decision model: it cannot chat`);
   return modelFactory(m, provider, apiKeyOf(provider));
 }
 
-/** Probe chat, tool calling and vision. Calls the model: run it outside a transaction. */
+export async function decisionModelFor(db: Db, m: ModelConfig): Promise<DecisionModel> {
+  const provider = await usableProvider(db, m);
+  if (!isSystemOne(provider)) throw new BadRequest(`${modelLabel(m, provider)} is not a System One decision model`);
+  return decisionFactory(m, provider, apiKeyOf(provider));
+}
+
+/**
+ * Chat models: chat, tool calling and vision. Decision models: one question with an obvious answer.
+ * Calls the model: run it outside a transaction.
+ */
 export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
-  const caps = await probeCapabilities(await chatModelFor(db, m));
+  const provider = await getProvider(db, m.providerId);
+  const caps = isSystemOne(provider)
+    ? await probeDecisionModel(await decisionModelFor(db, m))
+    : await probeCapabilities(await chatModelFor(db, m));
   const [row] = await db
     .update(modelConfigs)
-    .set({ capabilities: caps, status: caps.chat ? "ok" : "error" })
+    .set({ capabilities: caps, status: (caps.chat ?? caps.decide) ? "ok" : "error" })
     .where(eq(modelConfigs.id, m.id))
     .returning();
   return row;

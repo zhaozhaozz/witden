@@ -370,7 +370,11 @@ export async function computerRoutes(app: FastifyInstance) {
       // The key is only accepted through this computer's own runner, so its managers may see it.
       key: manage && inst.modelProxyKeyEncrypted ? secretBox().decrypt(inst.modelProxyKeyEncrypted) : null,
       key_issued_at: inst.modelProxyKeyIssuedAt?.toISOString() ?? null,
-      endpoints: { openai: `http://127.0.0.1:${port}/v1`, anthropic: `http://127.0.0.1:${port}` },
+      endpoints: {
+        openai: `http://127.0.0.1:${port}/v1`,
+        anthropic: `http://127.0.0.1:${port}`,
+        systemone: `http://127.0.0.1:${port}`,
+      },
       env_file: "~/.config/witden/model-proxy.env",
       runner_connected: !!runtime().hub?.connected(inst.id),
     };

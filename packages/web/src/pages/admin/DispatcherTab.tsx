@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ModelConfig } from "../../api/types";
-import { fmtLatency } from "../../lib/format";
+import { fmtLatency, SYSTEM_ONE_HINT } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAction } from "../../ui/feedback";
 import { Empty, Field, Loaded, Section, Tag } from "../../ui/kit";
@@ -22,8 +22,8 @@ export function DispatcherTab() {
   useEffect(() => {
     setPicked(setting.data?.model_config_id ?? "");
   }, [setting.data]);
-  // Only models marked as System 1 can route messages.
-  const fast = useMemo(() => (models.data ?? []).filter((m) => m.system1), [models.data]);
+  // Only System One decision models (TypeSafe Jev, Laya) can route messages.
+  const fast = useMemo(() => (models.data ?? []).filter((m) => m.provider?.protocol === "systemone"), [models.data]);
   const groups = useMemo(() => {
     const out = new Map<string, ModelConfig[]>();
     for (const m of fast) {
@@ -40,18 +40,21 @@ export function DispatcherTab() {
         任何角色的消息由这个模型决定交给哪几个角色，也可以一个都不交（比如闲聊、人和人之间的对话）。只有一个角色的话题不经过调度，由角色自己决定是否回复。
       </p>
       <p className="small muted">
-        调度只需要阅读最近的一段对话并给出简短结果，因此只能选择标记为 System 1
-        的模型，即响应快、不先进行长时间思考的模型。在
-        <Link to="/models">模型</Link>
-        页添加模型时勾选“标记为 System 1”，或编辑已有模型开启；会先思考的模型需要同时关闭思考。调度的 token
-        用量计入所选模型。
+        调度模型必须是 System 1 模型。{SYSTEM_ONE_HINT}
+        调度时它只看这条消息本身，从“各个角色”和“不需要角色”中选出最可能的一项；选中某个角色时，概率不低于 30%
+        的其他角色也会一起接手。它不看之前的对话，所以回答某个角色的提问时，请 @ 这个角色。
+      </p>
+      <p className="small muted">
+        添加方法：在<Link to="/models">模型</Link>页添加服务商，接口协议选“System One（TypeSafe
+        Jev、Laya）”，再添加模型（Jev 一般为 jev-latest；自部署的 Laya 中文对话用
+        multilingual），点击“检测能力”后回到这里选择。调度的 token 用量计入所选模型。
       </p>
       <Loaded res={setting}>
         {(s) =>
           !fast.length && !s.model_config_id && models.data ? (
             <Empty
               title="还没有 System 1 模型"
-              hint="在「模型」页添加模型时勾选“标记为 System 1”，或编辑已有模型开启，然后回到这里选择。"
+              hint="在「模型」页添加接口协议为“System One（TypeSafe Jev、Laya）”的服务商和模型，然后回到这里选择。"
             />
           ) : (
             <form
@@ -69,8 +72,8 @@ export function DispatcherTab() {
                 label="调度模型"
                 hint={
                   s.model_config_id && !s.usable
-                    ? "当前的调度模型已停用、服务商不可用，或不再标记为 System 1；自动模式的多角色话题暂时不会把消息交给角色。"
-                    : "只列出标记为 System 1 的模型，按服务商分组；括号中是最近一次检测的响应时间。"
+                    ? "当前的调度模型已停用、服务商不可用，或不是 System 1 模型；自动模式的多角色话题暂时不会把消息交给角色。"
+                    : "只列出 System 1 模型（System One 协议的服务商下的模型），按服务商分组，并附最近一次检测的响应时间。"
                 }
               >
                 <select value={picked} onChange={(e) => setPicked(e.target.value)}>
@@ -84,7 +87,6 @@ export function DispatcherTab() {
                           {m.capabilities?.latency_ms !== undefined
                             ? ` · 响应 ${fmtLatency(m.capabilities.latency_ms)}`
                             : ""}
-                          {m.capabilities?.thinks ? " · 会先思考" : ""}
                           {m.usable ? "" : " · 不可用"}
                         </option>
                       ))}

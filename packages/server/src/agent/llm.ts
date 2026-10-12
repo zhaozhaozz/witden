@@ -20,8 +20,6 @@ export interface LLMResponse {
   promptTokens: number;
   completionTokens: number;
   finishReason?: string | null;
-  /** The model reasoned before answering (reasoning text, a <think> block or thinking content blocks). */
-  reasoned?: boolean;
 }
 
 export type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
@@ -62,7 +60,7 @@ function parseArgs(raw: unknown): Record<string, any> {
   }
 }
 
-async function request(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
+export async function request(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
   return parseJson(await send(url, init, timeoutMs));
 }
 
@@ -187,14 +185,12 @@ export class OpenAICompatibleModel implements ChatModel {
     const calls: { id?: string; name: string; args: string }[] = [];
     let usage: any = null;
     let finishReason: string | null = null;
-    let reasoning = "";
     for await (const chunk of sseData(res)) {
       if (chunk.usage) usage = chunk.usage;
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       if (choice.finish_reason) finishReason = choice.finish_reason;
       const delta = choice.delta ?? {};
-      reasoning += delta.reasoning_content ?? delta.reasoning ?? "";
       if (typeof delta.content === "string" && delta.content) {
         content += delta.content;
         onDelta?.(delta.content);
@@ -213,7 +209,6 @@ export class OpenAICompatibleModel implements ChatModel {
           finish_reason: finishReason,
           message: {
             content,
-            reasoning_content: reasoning,
             tool_calls: calls.filter(Boolean).map((c) => ({ id: c.id, function: { name: c.name, arguments: c.args } })),
           },
         },
@@ -235,14 +230,12 @@ export class OpenAICompatibleModel implements ChatModel {
         rawArguments: typeof raw === "string" ? raw : JSON.stringify(raw ?? {}),
       };
     });
-    const reasoning = msg.reasoning_content ?? msg.reasoning;
     return {
       content: msg.content ?? "",
       toolCalls,
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
       finishReason: choice.finish_reason,
-      reasoned: (typeof reasoning === "string" && !!reasoning.trim()) || /<think>/i.test(msg.content ?? ""),
     };
   }
 }
@@ -358,7 +351,6 @@ export class AnthropicModel implements ChatModel {
       promptTokens: data.usage?.input_tokens ?? 0,
       completionTokens: data.usage?.output_tokens ?? 0,
       finishReason: data.stop_reason,
-      reasoned: blocks.some((b) => b.type === "thinking" || b.type === "redacted_thinking"),
     };
   }
 }
@@ -385,12 +377,30 @@ export interface RemoteModel {
 
 /**
  * The models a provider offers, from its own API: OpenAI-compatible `GET {base}/models` (OpenAI, vLLM,
- * Ollama, DeepSeek, ...) or Anthropic `GET {base}/v1/models` (paged).
+ * Ollama, DeepSeek, ...), Anthropic `GET {base}/v1/models` (paged) or System One `GET {base}/v1/models` (Jev).
  */
 export async function listModels(protocol: string, baseUrl: string, apiKey: string | null): Promise<RemoteModel[]> {
   const base = baseUrl.replace(/\/+$/, "");
   const found = new Map<string, RemoteModel>();
-  if (protocol === "anthropic") {
+  if (protocol === "systemone") {
+    const headers: Record<string, string> = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+    let data: any;
+    try {
+      data = await request(`${base.replace(/\/v1$/, "")}/v1/models`, { headers }, 30_000);
+    } catch (err) {
+      // A self-hosted Laya server has no model list; its models are added by name.
+      if (err instanceof ModelError && err.detail.upstream_status === 404)
+        throw new ModelError(
+          "this service does not list its models (a self-hosted Laya server does not): add them by name, e.g. multilingual",
+          { detail: { upstream_status: 404 } },
+        );
+      throw err;
+    }
+    for (const m of data?.models ?? data?.data ?? []) {
+      const id = String(m?.name ?? m?.id ?? "");
+      if (id) found.set(id, { id, name: null });
+    }
+  } else if (protocol === "anthropic") {
     const headers = { "anthropic-version": "2023-06-01", ...(apiKey ? { "x-api-key": apiKey } : {}) };
     let after: string | null = null;
     for (let page = 0; page < 20; page++) {
@@ -465,11 +475,9 @@ export const imagePart = (png: Buffer | string): ContentPart => ({
 export async function probeCapabilities(model: ChatModel): Promise<Record<string, any>> {
   const caps: Record<string, any> = { checked_at: new Date().toISOString(), errors: {} };
   try {
-    // Response time and whether it reasons first tell whether the model suits quick decisions (System 1).
     const started = Date.now();
-    const res = await model.complete([{ role: "user", content: "Reply with the single word OK." }]);
+    await model.complete([{ role: "user", content: "Reply with the single word OK." }]);
     caps.latency_ms = Date.now() - started;
-    caps.thinks = !!res.reasoned;
     caps.chat = true;
   } catch (err) {
     caps.chat = false;

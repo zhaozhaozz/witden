@@ -17,6 +17,7 @@ import {
 import { BadRequest, Conflict, NotFound } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
+import { getProvider, isSystemOne } from "./model-configs.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
@@ -56,6 +57,10 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     if (data.modelConfigId) {
       const [cfg] = await db.select().from(modelConfigs).where(eq(modelConfigs.id, data.modelConfigId)).limit(1);
       if (!cfg) throw new NotFound("model config not found");
+      if (isSystemOne(await getProvider(db, cfg.providerId)))
+        throw new BadRequest(
+          `${cfg.name} is a System One decision model: it cannot chat or use tools, so no role can work with it`,
+        );
       if (
         !(await hasPermission(db, user, Perm.SECRETS_MANAGE)) &&
         !(await hasPermission(db, user, Perm.MODEL_USE, cfg.id))

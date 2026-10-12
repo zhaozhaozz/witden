@@ -505,10 +505,10 @@ export interface Capabilities {
   checked_at?: string;
   errors?: Record<string, string>;
   error?: string | null;
-  /** Response time of the chat check. */
+  /** Response time of the first check request. */
   latency_ms?: number;
-  /** The model reasoned before answering during the check. */
-  thinks?: boolean;
+  /** System One models: answered the check question correctly. */
+  decide?: boolean | null;
 }
 
 /** One model offered by a provider (roles, grants and usage refer to these). */
@@ -526,8 +526,6 @@ export interface ModelConfig {
   /** False when the model is disabled or its provider's key was revoked. */
   usable: boolean;
   params: Dict;
-  /** Fast, no long reasoning: may serve as the topic dispatcher. */
-  system1: boolean;
   capabilities: Capabilities;
   status: "unchecked" | "ok" | "error";
   daily_token_limit: number | null;
@@ -540,7 +538,8 @@ export interface ModelConfig {
   provider?: { id: string; name: string; protocol: ModelProtocol; status: ModelProvider["status"] };
 }
 
-export type ModelProtocol = "openai" | "anthropic";
+/** openai / anthropic: chat models; systemone: decision models (TypeSafe Jev, Laya). */
+export type ModelProtocol = "openai" | "anthropic" | "systemone";
 
 /** A model service: one endpoint, protocol and key, offering any number of models. */
 export interface ModelProvider {
@@ -567,7 +566,7 @@ export interface ModelProxyInfo {
   /** Only for people who manage the computer; useless outside it. */
   key: string | null;
   key_issued_at: string | null;
-  endpoints: { openai: string; anthropic: string };
+  endpoints: { openai: string; anthropic: string; systemone: string };
   env_file: string;
   runner_connected: boolean;
 }

@@ -27,6 +27,12 @@ beforeEach(async () => {
   setFetch(async (input, init) => {
     const body = JSON.parse(String(init?.body ?? "{}"));
     calls.push({ url: String(input), headers: Object.fromEntries(new Headers(init?.headers).entries()), body });
+    if (String(input).endsWith("/v1/systemone"))
+      return Response.json({
+        model: "jev-1.13.0",
+        answers: { q: { type: "noul", noul: 0.9 } },
+        usage: { input_tokens: 12, output_tokens: 0 },
+      });
     if (body.stream) {
       const events = String(input).endsWith("/v1/messages")
         ? [
@@ -158,6 +164,29 @@ describe("model proxy", () => {
     expect(missing.status).toBe(404);
     expect(missing.json().error.message).toContain("allowed: claude-x, gpt-x");
     expect((await pc.proxy("POST", "/v1/images/generations", { headers: auth(key), body: {} })).status).toBe(404);
+  });
+
+  it("relays System One decisions (Jev, Laya) to /v1/systemone", async () => {
+    const j = await provider("jev", "systemone", "https://api.typesafe.example/v1", ["jev-latest"]);
+    const o = await provider("openai", "openai", "https://api.openai.example/v1", ["gpt-x"]);
+    const { key } = await enable([j.models[0].id, o.models[0].id]);
+    const res = await pc.proxy("POST", "/v1/systemone", {
+      headers: auth(key),
+      body: { model: "jev-latest", state: "charged twice", questions: { q: { type: "noul" } } },
+    });
+    expect(res.status).toBe(200);
+    expect(res.json().answers.q.noul).toBe(0.9);
+    expect(calls[0].url).toBe("https://api.typesafe.example/v1/systemone");
+    expect(calls[0].headers.authorization).toBe("Bearer sk-jev-real-secret-123456");
+    expect(calls[0].body).toMatchObject({ model: "jev-latest", state: "charged twice" });
+    await w.waitFor(async () => (await db().select().from(usageRecords)).length === 1);
+    const [usage] = await db().select().from(usageRecords);
+    expect([usage.promptTokens, usage.completionTokens, usage.modelConfigId]).toEqual([12, 0, j.models[0].id]);
+
+    const wrong = await pc.proxy("POST", "/v1/chat/completions", { headers: auth(key), body: { model: "jev-latest" } });
+    expect([wrong.status, wrong.json().error.message.includes("/v1/systemone")]).toEqual([400, true]);
+    const chat = await pc.proxy("POST", "/v1/systemone", { headers: auth(key), body: { model: "gpt-x" } });
+    expect([chat.status, chat.json().error.message.includes("/v1/chat/completions")]).toEqual([400, true]);
   });
 
   it("names clashing models provider/model; limits and disabled models are enforced", async () => {

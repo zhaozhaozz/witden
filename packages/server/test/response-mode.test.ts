@@ -4,8 +4,10 @@
  */
 import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { setFetch } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { messageRoutes, usageRecords } from "../src/db/schema.js";
+import { DISPATCHER, putSetting } from "../src/services/platform-settings.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -21,8 +23,40 @@ const say = (token: string, topicId: string, content: string, mentions?: { type:
   w.api("POST", `/api/topics/${topicId}/messages`, { token, json: mentions ? { content, mentions } : { content } });
 const tasksIn = async (topicId: string) =>
   (await w.api("GET", `/api/tasks?topic_id=${topicId}`, { token: w.alice })).body as any[];
-/** The message the dispatcher is asked about (its prompt also quotes recent history). */
-const latest = (prompt: string) => prompt.split("Latest message, from").pop() ?? "";
+const LAYA = "http://laya.test:8000";
+
+/**
+ * A System One service (as a self-hosted Laya serves it). The dispatcher's "who" question goes to the handles
+ * ``pick`` names — the first most likely, the others less so — or to nobody; other choice questions get their
+ * first option. Returns the new model's id and the requests it received.
+ */
+async function decisionService(pick: (latest: string) => string[] = () => []) {
+  const requests: { body: any; headers: Headers }[] = [];
+  setFetch(async (input, init) => {
+    if (String(input) !== `${LAYA}/v1/systemone`) return new Response('{"detail":"Not Found"}', { status: 404 });
+    const body = JSON.parse(String(init?.body));
+    requests.push({ body, headers: new Headers(init?.headers) });
+    const answers: Record<string, unknown> = {};
+    for (const [name, q] of Object.entries<any>(body.questions)) {
+      if (name !== "who") {
+        answers[name] = { type: "choice", choice: Object.keys(q.criteria)[0], probabilities: {}, confidence: 0.8 };
+        continue;
+      }
+      const [top, ...also] = pick(String(body.state));
+      const probabilities: Record<string, number> = Object.fromEntries(Object.keys(q.criteria).map((k) => [k, 0.02]));
+      if (top) probabilities[top] = 0.6;
+      else probabilities.nobody = 0.9;
+      for (const h of also) probabilities[h] = 0.35;
+      answers.who = { type: "choice", choice: top ?? "nobody", probabilities, confidence: 0.7 };
+    }
+    return Response.json({ model: "laya-rl-agent", answers, usage: { input_tokens: 40, output_tokens: 0 } });
+  });
+  const provider = await w.api("POST", "/api/model-providers", {
+    token: w.adminToken,
+    json: { name: "Laya", protocol: "systemone", base_url: LAYA, api_key: "laya-key", models: ["multilingual"] },
+  });
+  return { id: provider.body.models[0].id as string, requests };
+}
 
 describe("mention mode (default)", () => {
   it("only a real @ starts work: picked in the composer, or sent by a role's message_role", async () => {
@@ -92,18 +126,11 @@ describe("auto mode", () => {
   });
 
   it("with several roles, the dispatcher hands a message to none, one or several", async () => {
-    await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: true } });
-    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: w.ids.model } });
+    const laya = await decisionService((text) =>
+      text.includes("回归") ? ["test"] : text.includes("一起") ? ["dev", "analyst"] : [],
+    );
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: laya.id } });
     await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
-    const prompts: string[] = [];
-    w.scripts.__dispatcher = (m) => {
-      const asked = latest(String(m[1].content));
-      prompts.push(`${m[0].content}\n${m[1].content}`);
-      if (asked.includes("回归")) return reply('{"roles": ["test"], "reason": "回归是测试的职责"}');
-      if (asked.includes("一起"))
-        return reply('<think>两个人</think>{"roles": ["@dev", "analyst"], "reason": "需要开发和分析"}');
-      return reply('{"roles": [], "reason": "闲聊"}');
-    };
     w.scripts.dev = () => reply("dev 在");
     w.scripts.test = () => reply("回归开始");
     w.scripts.analyst = () => reply("analyst 在");
@@ -112,10 +139,15 @@ describe("auto mode", () => {
     await w.drain();
     let tasks = await tasksIn(w.ids.topic);
     expect(tasks.map((t) => t.owner_role_id)).toEqual([w.ids.test]);
-    const detail = await w.task(tasks[0].id);
-    expect(JSON.stringify(detail.assignment)).toContain("回归是测试的职责");
-    expect(prompts[0]).toContain("@dev");
-    expect(prompts[0]).toContain("今天的回归能跑吗？");
+    expect(JSON.stringify((await w.task(tasks[0].id)).assignment)).toContain("@test 0.60");
+    // one question: which role (or nobody) should handle the message, which leads the state
+    const first = laya.requests[0];
+    expect(first.headers.get("authorization")).toBe("Bearer laya-key");
+    expect(first.body.model).toBe("multilingual");
+    expect(Object.keys(first.body.questions)).toEqual(["who"]);
+    expect(first.body.questions.who.type).toBe("choice");
+    expect(Object.keys(first.body.questions.who.criteria).sort()).toEqual(["analyst", "dev", "nobody", "test"]);
+    expect(first.body.state).toMatch(/: 今天的回归能跑吗？$/);
 
     await say(w.bob, w.ids.topic, "哈哈，辛苦了");
     await w.drain();
@@ -125,6 +157,8 @@ describe("auto mode", () => {
     await w.drain();
     tasks = await tasksIn(w.ids.topic);
     expect(tasks.map((t) => t.owner_role_id).sort()).toEqual([w.ids.test, w.ids.dev, w.ids.analyst].sort());
+    // only the message itself is judged: earlier replies would draw it to whoever spoke last
+    expect(laya.requests[2].body.state).toMatch(/: 这个问题需要你们一起看看$/);
 
     const routes = await db().select().from(messageRoutes);
     expect(routes.every((r) => r.status === "done")).toBe(true);
@@ -132,8 +166,8 @@ describe("auto mode", () => {
     const usage = await db()
       .select()
       .from(usageRecords)
-      .where(and(isNull(usageRecords.taskId), eq(usageRecords.modelConfigId, w.ids.model)));
-    expect(usage).toHaveLength(3);
+      .where(and(isNull(usageRecords.taskId), eq(usageRecords.modelConfigId, laya.id)));
+    expect(usage.map((u) => u.promptTokens)).toEqual([40, 40, 40]);
   });
 
   it("without a dispatcher model nobody answers, and people are told once", async () => {
@@ -147,37 +181,54 @@ describe("auto mode", () => {
     expect(notes[0].content).toContain("no dispatcher model");
   });
 
-  it("the dispatcher model is a platform setting, and only System 1 models qualify", async () => {
-    const put = (token: string) =>
-      w.api("PUT", "/api/settings/dispatcher", { token, json: { model_config_id: w.ids.model } });
+  it("the dispatcher model is a platform setting, and only System One decision models qualify", async () => {
+    const laya = await decisionService();
+    const put = (token: string, id: string) =>
+      w.api("PUT", "/api/settings/dispatcher", { token, json: { model_config_id: id } });
     expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBeNull();
-    expect((await put(w.bob)).status).toBe(403);
-    const notFast = await put(w.adminToken);
-    expect([notFast.status, notFast.raw.includes("System 1")]).toEqual([400, true]);
-
-    const marked = await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: true } });
-    expect(marked.body.system1).toBe(true);
-    expect((await put(w.adminToken)).status).toBe(200);
+    expect((await put(w.bob, laya.id)).status).toBe(403);
+    const chat = await put(w.adminToken, w.ids.model);
+    expect([chat.status, chat.raw.includes("System One")]).toEqual([400, true]);
+    expect((await put(w.adminToken, laya.id)).status).toBe(200);
     expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body).toMatchObject({
-      model_config_id: w.ids.model,
+      model_config_id: laya.id,
       usable: true,
     });
-    // unmarked later: no longer used for routing, and people are told why
-    await w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json: { system1: false } });
+
+    // a chat model left over from an older setting is not used, and people are told why
+    await putSetting(db(), DISPATCHER, { model_config_id: w.ids.model }, w.ids.alice);
     expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.usable).toBe(false);
     await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
     await say(w.alice, w.ids.topic, "有人在吗");
     await w.drain();
     const note = (await w.messages(w.ids.topic)).find((m: any) => m.author_type === "system");
-    expect(note.content).toContain("no longer marked as System 1");
+    expect(note.content).toContain("not a System One decision model");
   });
 
-  it("models can be added as System 1 directly", async () => {
-    const provider = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body[0];
-    const added = await w.api("POST", `/api/model-providers/${provider.id}/models`, {
+  it("System One models are checked with a question, and cannot be a role's model", async () => {
+    const laya = await decisionService();
+    const checked = await w.api("POST", `/api/models/${laya.id}/check`, { token: w.adminToken });
+    expect(checked.body.status).toBe("ok");
+    expect(checked.body.capabilities).toMatchObject({ decide: true, latency_ms: expect.any(Number) });
+    expect(checked.body.capabilities.chat).toBeUndefined();
+
+    const assign = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
       token: w.adminToken,
-      json: { models: ["fast-mini"], source: "manual", system1: true },
+      json: { model_config_id: laya.id },
     });
-    expect(added.body.added[0]).toMatchObject({ model: "fast-mini", system1: true });
+    expect([assign.status, assign.raw.includes("System One")]).toEqual([400, true]);
+    // a self-hosted Laya has no model list: the error says to add models by name
+    const providers = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
+    const remote = await w.api(
+      "GET",
+      `/api/model-providers/${providers.find((p: any) => p.name === "Laya").id}/remote-models`,
+      {
+        token: w.adminToken,
+      },
+    );
+    expect([remote.status, remote.raw.includes("add them by name")]).toEqual([503, true]);
+    // ...which is normal for Laya, so the provider is not marked as failing
+    const after = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
+    expect(after.find((p: any) => p.name === "Laya").status).toBe("unchecked");
   });
 });

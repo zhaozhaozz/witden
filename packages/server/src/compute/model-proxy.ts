@@ -7,6 +7,7 @@
 import type { ProxyCancelMessage, ProxyRequestMessage } from "@witden/shared";
 import { eq } from "drizzle-orm";
 import { fetchImpl } from "../agent/llm.js";
+import { systemOneBase } from "../agent/systemone.js";
 import { db as getDb } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { computerInstances, usageRecords } from "../db/schema.js";
@@ -17,6 +18,13 @@ import type { RunnerConnection } from "./hub.js";
 
 const OPENAI_PATHS = new Set(["/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/responses"]);
 const ANTHROPIC_PATHS = new Set(["/v1/messages", "/v1/messages/count_tokens"]);
+const SYSTEMONE_PATHS = new Set(["/v1/systemone", "/v1/systemone/batch"]);
+/** Where each protocol's models are called, for error messages. */
+const CALL_PATH: Record<string, string> = {
+  openai: "/v1/chat/completions",
+  anthropic: "/v1/messages",
+  systemone: "/v1/systemone",
+};
 const RESPONSE_HEADERS = ["content-type", "cache-control", "x-request-id", "request-id"];
 /** Enough to find token counts at both ends of a long stream. */
 const USAGE_SCAN_BYTES = 8 * 1024 * 1024;
@@ -84,7 +92,13 @@ async function relay(conn: RunnerConnection, msg: ProxyRequestMessage, signal: A
       has_more: false,
     });
   }
-  const protocol = OPENAI_PATHS.has(path) ? "openai" : ANTHROPIC_PATHS.has(path) ? "anthropic" : null;
+  const protocol = OPENAI_PATHS.has(path)
+    ? "openai"
+    : ANTHROPIC_PATHS.has(path)
+      ? "anthropic"
+      : SYSTEMONE_PATHS.has(path)
+        ? "systemone"
+        : null;
   if (!protocol || msg.method !== "POST")
     return error(404, "not_found_error", `${msg.method} ${path} is not offered by this computer's model access`);
 
@@ -103,7 +117,7 @@ async function relay(conn: RunnerConnection, msg: ProxyRequestMessage, signal: A
   const unusable = unusableReason(target.model, target.provider);
   if (unusable) return error(403, "permission_error", unusable);
   if (target.provider.protocol !== protocol) {
-    const use = target.provider.protocol === "anthropic" ? "/v1/messages" : "/v1/chat/completions";
+    const use = CALL_PATH[target.provider.protocol] ?? "/v1/chat/completions";
     return error(
       400,
       "invalid_request_error",
@@ -119,11 +133,16 @@ async function relay(conn: RunnerConnection, msg: ProxyRequestMessage, signal: A
     );
 
   const base = target.provider.baseUrl.replace(/\/+$/, "");
-  // OpenAI-compatible base URLs already end in /v1; Anthropic's do not.
-  const upstream = (protocol === "openai" ? base + path.replace(/^\/v1/, "") : base + path) + url.search;
+  // OpenAI-compatible base URLs already end in /v1; Anthropic's do not; System One ones may (agent/systemone.ts).
+  const upstream =
+    (protocol === "openai"
+      ? base + path.replace(/^\/v1/, "")
+      : protocol === "systemone"
+        ? systemOneBase(base) + path
+        : base + path) + url.search;
   const apiKey = target.provider.apiKeyEncrypted ? secretBox().decrypt(target.provider.apiKeyEncrypted) : null;
   const upstreamHeaders: Record<string, string> = { "content-type": "application/json" };
-  if (protocol === "openai") {
+  if (protocol !== "anthropic") {
     if (apiKey) upstreamHeaders.authorization = `Bearer ${apiKey}`;
   } else {
     if (apiKey) upstreamHeaders["x-api-key"] = apiKey;
@@ -181,9 +200,10 @@ function bearer(header: string | undefined): string | null {
 }
 
 /**
- * Token counts from a JSON answer or an SSE stream, in either dialect: OpenAI `usage.prompt_tokens /
+ * Token counts from a JSON answer or an SSE stream, in any dialect: OpenAI `usage.prompt_tokens /
  * completion_tokens` (Responses API: `input_tokens / output_tokens`, also under `response`), Anthropic
- * `message_start.message.usage.input_tokens` and `message_delta.usage.output_tokens`.
+ * `message_start.message.usage.input_tokens` and `message_delta.usage.output_tokens`, System One
+ * `usage.input_tokens / output_tokens` (batch: `total_usage`).
  */
 export class UsageScanner {
   private parts: Buffer[] = [];
@@ -200,7 +220,7 @@ export class UsageScanner {
     let input = 0;
     let output = 0;
     const take = (o: any) => {
-      for (const u of [o?.usage, o?.message?.usage, o?.response?.usage]) {
+      for (const u of [o?.usage, o?.message?.usage, o?.response?.usage, o?.total_usage]) {
         if (!u || typeof u !== "object") continue;
         input = Math.max(input, Number(u.prompt_tokens ?? u.input_tokens ?? 0) || 0);
         output = Math.max(output, Number(u.completion_tokens ?? u.output_tokens ?? 0) || 0);

@@ -267,20 +267,9 @@ export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; hint: st
   },
 };
 
-/** Models marked "System 1": fast, no long reasoning. Only they may serve as the topic dispatcher. */
-export const SYSTEM1_HINT =
-  "System 1 模型：响应快、不先进行长时间思考的模型，适合话题调度这类需要即时判断的工作。只有标记为 System 1 的模型才能被选为话题调度模型。";
-
-/** Request parameters that switch reasoning off, for models that think by default. */
-export const THINKING_OFF_PRESETS: { key: string; label: string; params: Record<string, unknown> }[] = [
-  {
-    key: "template",
-    label: "Qwen3 等开源模型（vLLM、SGLang 部署）",
-    params: { chat_template_kwargs: { enable_thinking: false } },
-  },
-  { key: "dashscope", label: "通义千问（阿里云百炼 OpenAI 兼容接口）", params: { enable_thinking: false } },
-  { key: "openai", label: "OpenAI GPT-5 系列", params: { reasoning_effort: "minimal" } },
-];
+/** System One decision models (provider protocol "systemone"): the only kind the topic dispatcher uses. */
+export const SYSTEM_ONE_HINT =
+  "System 1 模型（如 TypeSafe Jev、开源的 Laya）不生成文字，而是针对给定内容回答选择、是否、打分等问题并给出概率，一次判断通常只需几十到几百毫秒。witden 用它做话题调度；它不能对话、不能调用工具，因此不能用作角色的模型。";
 
 export function fmtLatency(ms: number | undefined): string | null {
   if (ms === undefined || ms === null) return null;

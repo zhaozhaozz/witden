@@ -94,7 +94,7 @@ export const externalIdentities = pgTable(
 export const modelProviders = pgTable("model_providers", {
   id: id(),
   name: text("name").notNull().unique(),
-  protocol: text("protocol").notNull().default("openai"), // openai (OpenAI-compatible) | anthropic
+  protocol: text("protocol").notNull().default("openai"), // openai (OpenAI-compatible) | anthropic | systemone
   baseUrl: text("base_url").notNull(),
   apiKeyEncrypted: text("api_key_encrypted"),
   keyUpdatedAt: ts("key_updated_at"),
@@ -120,8 +120,6 @@ export const modelConfigs = pgTable(
     source: text("source").notNull().default("manual"), // api (picked from the provider's list) | manual
     enabled: boolean("enabled").notNull().default(true),
     params: json<Json>("params").notNull().default({}),
-    /** Fast, no long reasoning ("System 1"): may serve as the dispatcher of auto topics. */
-    system1: boolean("system1").notNull().default(false),
     capabilities: json<Json>("capabilities").notNull().default({}),
     status: text("status").notNull().default("unchecked"), // unchecked | ok | error (capability check)
     dailyTokenLimit: integer("daily_token_limit"),

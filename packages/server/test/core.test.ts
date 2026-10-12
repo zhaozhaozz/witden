@@ -453,38 +453,63 @@ describe("model protocols", () => {
     expect(requests.map((r) => !!r.stream)).toEqual([true, false, false]);
   });
 
-  it("reasoning is noticed: reasoning text, <think> blocks, streamed reasoning, Anthropic thinking", async () => {
-    const model = new OpenAICompatibleModel("http://llm/v1", "m", null, {});
-    respond(200, { choices: [{ message: { content: "OK", reasoning_content: "the user wants OK" } }] });
-    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(true);
-    respond(200, { choices: [{ message: { content: "<think>hmm</think>OK" } }] });
-    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(true);
-    respond(200, { choices: [{ message: { content: "OK" } }] });
-    expect((await model.complete([{ role: "user", content: "x" }])).reasoned).toBe(false);
-    streamed(
-      [{ choices: [{ delta: { reasoning_content: "thinking" } }] }, { choices: [{ delta: { content: "OK" } }] }],
-      [],
-    );
-    expect((await model.complete([{ role: "user", content: "x" }], undefined, () => {})).reasoned).toBe(true);
-    respond(200, {
-      content: [
-        { type: "thinking", thinking: "…" },
-        { type: "text", text: "OK" },
-      ],
-      usage: {},
-    });
-    expect(
-      (await new AnthropicModel("https://a", "x", "k", {}).complete([{ role: "user", content: "x" }])).reasoned,
-    ).toBe(true);
-  });
-
-  it("the capability check records response time and whether the model thinks", async () => {
+  it("the capability check records the response time", async () => {
     const { probeCapabilities } = await import("../src/agent/llm.js");
-    respond(200, { choices: [{ message: { content: "OK", reasoning_content: "…" } }] });
+    respond(200, { choices: [{ message: { content: "OK" } }] });
     const caps = await probeCapabilities(new OpenAICompatibleModel("http://llm/v1", "m", null, {}));
     expect(caps.chat).toBe(true);
-    expect(caps.thinks).toBe(true);
     expect(typeof caps.latency_ms).toBe("number");
+  });
+
+  it("System One (Jev, Laya): typed questions about a state; a key only when one is set", async () => {
+    const { SystemOneModel, probeDecisionModel } = await import("../src/agent/systemone.js");
+    respond(200, {
+      model: "jev-1.13.0",
+      answers: {
+        team: { type: "choice", choice: "billing", probabilities: { billing: 0.95, tech: 0.05 }, confidence: 0.9 },
+      },
+      usage: { input_tokens: 42, output_tokens: 0 },
+    });
+    const jev = new SystemOneModel("https://api.typesafe.ai/v1/", "jev-latest", "k", {});
+    const res = await jev.decide("charged twice", {
+      team: { type: "choice", criteria: { billing: "refunds", tech: "bugs" } },
+    });
+    expect(seen.url).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(seen.headers.authorization).toBe("Bearer k");
+    expect(seen.body).toMatchObject({
+      model: "jev-latest",
+      state: "charged twice",
+      questions: { team: { type: "choice" } },
+    });
+    expect(res).toMatchObject({ model: "jev-1.13.0", inputTokens: 42, outputTokens: 0 });
+    expect(res.answers.team.choice).toBe("billing");
+
+    // a self-hosted Laya without LAYA_API_KEY takes no key; params such as max_len go into the body
+    const laya = new SystemOneModel("http://laya:8000", "multilingual", null, { max_len: 2048 });
+    const caps = await probeDecisionModel(laya);
+    expect(seen.url).toBe("http://laya:8000/v1/systemone");
+    expect(seen.headers.authorization).toBeUndefined();
+    expect(seen.body.max_len).toBe(2048);
+    expect(caps.decide).toBe(true);
+    expect(typeof caps.latency_ms).toBe("number");
+
+    respond(200, { model: "x", answers: {}, usage: {} });
+    await expect(laya.decide("s", { q: { type: "noul" } })).rejects.toThrow(/did not answer "q"/);
+  });
+
+  it("System One model lists: Jev offers one, a Laya server has none", async () => {
+    const { listModels } = await import("../src/agent/llm.js");
+    const urls: string[] = [];
+    setFetch(async (input) => {
+      urls.push(String(input));
+      return String(input).startsWith("https://api.typesafe.ai")
+        ? Response.json({ models: [{ name: "jev-latest", description: "flagship" }, { name: "jev-1.13.0" }] })
+        : new Response('{"detail":"Not Found"}', { status: 404 });
+    });
+    const listed = await listModels("systemone", "https://api.typesafe.ai", "k");
+    expect(listed.map((m) => m.id)).toEqual(["jev-1.13.0", "jev-latest"]);
+    await expect(listModels("systemone", "http://laya:8000/v1", null)).rejects.toThrow(/add them by name/);
+    expect(urls).toEqual(["https://api.typesafe.ai/v1/models", "http://laya:8000/v1/models"]);
   });
 
   it("a stream that reports an error fails the call", async () => {

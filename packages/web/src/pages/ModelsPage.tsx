@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { ModelConfig, ModelProtocol, ModelProvider, RemoteModel } from "../api/types";
-import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM1_HINT, THINKING_OFF_PRESETS } from "../lib/format";
+import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
@@ -10,7 +10,6 @@ import {
   Empty,
   ErrorNote,
   Field,
-  FieldGroup,
   FormModal,
   Handle,
   Loaded,
@@ -22,7 +21,11 @@ import {
   Toggle,
 } from "../ui/kit";
 
-const PROTOCOL_LABEL: Record<ModelProtocol, string> = { openai: "OpenAI 兼容协议", anthropic: "Anthropic 协议" };
+const PROTOCOL_LABEL: Record<ModelProtocol, string> = {
+  openai: "OpenAI 兼容协议",
+  anthropic: "Anthropic 协议",
+  systemone: "System One 协议（Jev、Laya）",
+};
 const PROVIDER_STATUS: Record<ModelProvider["status"], { label: string; tone: "ok" | "bad" | "info" }> = {
   unchecked: { label: "未获取模型列表", tone: "info" },
   ok: { label: "连接正常", tone: "ok" },
@@ -34,7 +37,7 @@ type Dialog =
   | { kind: "provider"; provider: ModelProvider | null }
   | { kind: "remote"; provider: ModelProvider }
   | { kind: "manual"; provider: ModelProvider }
-  | { kind: "model"; model: ModelConfig };
+  | { kind: "model"; model: ModelConfig; systemOne: boolean };
 
 export default function ModelsPage() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
@@ -70,7 +73,7 @@ export default function ModelsPage() {
           ) : (
             <Empty
               title="还没有模型服务商"
-              hint="添加自有或第三方模型服务（OpenAI 兼容接口或 Anthropic 接口）的地址和密钥，再从它的模型列表里选择模型，或手动填写模型名称。"
+              hint="添加自有或第三方模型服务（OpenAI 兼容接口、Anthropic 接口，或 TypeSafe Jev、Laya 等 System One 接口）的地址和密钥，再从它的模型列表里选择模型，或手动填写模型名称。"
               action={
                 <button
                   type="button"
@@ -94,7 +97,7 @@ export default function ModelsPage() {
         <ManualModelsDialog provider={dialog.provider} onClose={() => setDialog(null)} onSaved={done} />
       ) : null}
       {dialog?.kind === "model" ? (
-        <ModelEditor model={dialog.model} onClose={() => setDialog(null)} onSaved={done} />
+        <ModelEditor model={dialog.model} systemOne={dialog.systemOne} onClose={() => setDialog(null)} onSaved={done} />
       ) : null}
     </div>
   );
@@ -151,6 +154,7 @@ function ProviderCard({
         </div>
       ) : null}
       {p.status === "error" && p.status_detail ? <p className="small text-bad">{p.status_detail}</p> : null}
+      {p.protocol === "systemone" ? <p className="small muted">{SYSTEM_ONE_HINT}</p> : null}
 
       {p.models.length ? (
         <div className="table-wrap">
@@ -170,8 +174,9 @@ function ProviderCard({
                 <ModelRow
                   key={m.id}
                   model={m}
+                  systemOne={p.protocol === "systemone"}
                   manage={manage}
-                  onEdit={() => onDialog({ kind: "model", model: m })}
+                  onEdit={() => onDialog({ kind: "model", model: m, systemOne: p.protocol === "systemone" })}
                   onChanged={onChanged}
                 />
               ))}
@@ -246,11 +251,14 @@ function ProviderCard({
 
 function ModelRow({
   model: m,
+  systemOne,
   manage,
   onEdit,
   onChanged,
 }: {
   model: ModelConfig;
+  /** A System One decision model: checked with one question, no chat, tools or images. */
+  systemOne: boolean;
   manage: boolean;
   onEdit: () => void;
   onChanged: () => void;
@@ -269,39 +277,29 @@ function ModelRow({
           <Tag title={m.source === "api" ? "从服务商的模型列表中选择" : "手动填写"}>
             {m.source === "api" ? "接口" : "手动"}
           </Tag>
-          {m.system1 ? (
-            <Tag tone="accent" title={SYSTEM1_HINT}>
-              System 1
-            </Tag>
-          ) : null}
         </div>
         {m.name !== m.model ? <code className="id small">{m.model}</code> : null}
         {Object.keys(m.params ?? {}).length ? <div className="small muted mono">{JSON.stringify(m.params)}</div> : null}
       </td>
       <td>
         <div className="caps">
-          <Capability label="对话" value={caps.chat} error={caps.errors?.chat} falseLabel="不可用" />
-          <Capability label="工具" value={caps.tools} error={caps.errors?.tools} />
-          <Capability label="图像" value={caps.vision} error={caps.errors?.vision} />
+          {systemOne ? (
+            <Capability label="决策" value={caps.decide} error={caps.errors?.decide} falseLabel="不可用" />
+          ) : (
+            <>
+              <Capability label="对话" value={caps.chat} error={caps.errors?.chat} falseLabel="不可用" />
+              <Capability label="工具" value={caps.tools} error={caps.errors?.tools} />
+              <Capability label="图像" value={caps.vision} error={caps.errors?.vision} />
+            </>
+          )}
         </div>
         {errors.length ? (
           <div className="small text-bad" title={errors.map(([k, v]) => `${k}: ${v}`).join("\n")}>
-            {caps.chat === false ? "连接失败" : "部分能力不可用"}（悬停查看原因）
+            {systemOne || caps.chat === false ? "检测未通过" : "部分能力不可用"}（悬停查看原因）
           </div>
         ) : null}
-        {caps.chat && caps.latency_ms !== undefined ? (
-          <div className="small muted">
-            响应 {fmtLatency(caps.latency_ms)}
-            {caps.thinks ? (
-              <span
-                className="text-wait"
-                title="检测时模型先输出了思考过程。作为 System 1 使用时，请在参数中关闭思考，或换用不思考的模型。"
-              >
-                {" "}
-                · 会先思考
-              </span>
-            ) : null}
-          </div>
+        {caps.latency_ms !== undefined && (caps.chat || caps.decide) ? (
+          <div className="small muted">响应 {fmtLatency(caps.latency_ms)}</div>
         ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
       </td>
@@ -329,7 +327,13 @@ function ModelRow({
               type="button"
               className="btn btn-xs"
               disabled={checking || !m.usable}
-              title={m.usable ? "用三个小请求检测对话、工具调用和图像理解" : "模型已停用或服务商密钥已撤销"}
+              title={
+                !m.usable
+                  ? "模型已停用或服务商密钥已撤销"
+                  : systemOne
+                    ? "用一个答案明确的问题检测连接、回答是否正确和响应时间"
+                    : "用三个小请求检测对话、工具调用和图像理解"
+              }
               onClick={async () => {
                 setChecking(true);
                 const out = await run(() => api.post<ModelConfig>(`/api/models/${m.id}/check`));
@@ -412,6 +416,7 @@ function ProviderEditor({
           <select value={protocol} onChange={(e) => setProtocol(e.target.value as ModelProtocol)}>
             <option value="openai">OpenAI 兼容</option>
             <option value="anthropic">Anthropic</option>
+            <option value="systemone">System One（TypeSafe Jev、Laya）</option>
           </select>
         </Field>
       </div>
@@ -420,7 +425,9 @@ function ProviderEditor({
         hint={
           protocol === "anthropic"
             ? "例如 https://api.anthropic.com（不含 /v1）"
-            : "例如 https://llm.internal.example.com/v1（模型列表取自 {地址}/models）"
+            : protocol === "systemone"
+              ? "TypeSafe Jev：https://api.typesafe.ai；通过 OpenRouter：https://openrouter.ai/api；自部署的 Laya：http://主机:8000"
+              : "例如 https://llm.internal.example.com/v1（模型列表取自 {地址}/models）"
         }
       >
         <input className="mono" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
@@ -432,7 +439,9 @@ function ProviderEditor({
             ? "地址或协议变了：已保存的密钥不会发往新地址，请重新填写"
             : provider?.has_api_key
               ? "已设置密钥；留空保持不变"
-              : "可选；自部署服务不需要时留空"
+              : protocol === "systemone"
+                ? "Jev 填 TypeSafe 或 OpenRouter 的密钥；自部署的 Laya 填它的 LAYA_API_KEY，未设置时留空"
+                : "可选；自部署服务不需要时留空"
         }
       >
         <input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
@@ -440,13 +449,23 @@ function ProviderEditor({
       {provider ? (
         <p className="small muted">更换地址或密钥后，这个服务商下的模型需要重新检测能力。</p>
       ) : (
-        <Field label="模型（可选）" hint="每行一个模型名称，可写成「模型名称 | 显示名」；也可以保存后从接口获取">
+        <Field
+          label="模型（可选）"
+          hint={
+            protocol === "systemone"
+              ? `每行一个模型名称，可写成「模型名称 | 显示名」。${SYSTEM_ONE_MODELS}`
+              : "每行一个模型名称，可写成「模型名称 | 显示名」；也可以保存后从接口获取"
+          }
+        >
           <textarea className="mono" rows={3} value={models} onChange={(e) => setModels(e.target.value)} />
         </Field>
       )}
     </FormModal>
   );
 }
+
+const SYSTEM_ONE_MODELS =
+  "Jev 一般填 jev-latest（也可以保存后从接口获取）；自部署的 Laya 没有模型列表，中文对话填 multilingual，纯英文可填 english。";
 
 /** "model-id" or "model-id | display name" per line. */
 function parseModelLines(text: string): { model: string; name?: string }[] {
@@ -477,7 +496,6 @@ function RemoteModelsDialog({
   );
   const [filter, setFilter] = useState("");
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [system1, setSystem1] = useState(false);
   const shown = useMemo(() => {
     const q = filter.trim().toLowerCase();
     return (res.data?.models ?? []).filter(
@@ -501,7 +519,7 @@ function RemoteModelsDialog({
       ...(byId.get(id)?.name ? { name: byId.get(id)?.name } : {}),
     }));
     const out = await run(
-      () => api.post(`/api/model-providers/${provider.id}/models`, { models, source: "api", system1 }),
+      () => api.post(`/api/model-providers/${provider.id}/models`, { models, source: "api" }),
       `已添加 ${models.length} 个模型`,
     );
     if (out) onSaved();
@@ -542,11 +560,6 @@ function RemoteModelsDialog({
               }}
             />
           </div>
-          <Toggle
-            checked={system1}
-            onChange={setSystem1}
-            label="把所选模型标记为 System 1（快速、不先进行长时间思考）"
-          />
           {shown.length ? (
             <ul className="remote-models">
               {shown.map((m) => (
@@ -587,14 +600,12 @@ function ManualModelsDialog({
 }) {
   const { run, busy } = useAction();
   const [text, setText] = useState("");
-  const [system1, setSystem1] = useState(false);
   const list = parseModelLines(text);
   const submit = async () => {
     const out = await run(
       () =>
         api.post<{ added: ModelConfig[]; skipped: number }>(`/api/model-providers/${provider.id}/models`, {
           models: list,
-          system1,
         }),
       "已添加（已存在的模型会跳过）",
     );
@@ -612,23 +623,37 @@ function ManualModelsDialog({
     >
       <Field
         label="模型名称"
-        hint="每行一个，填写服务商接口使用的模型名称；可写成「模型名称 | 显示名」。已存在的会跳过。"
+        hint={`每行一个，填写服务商接口使用的模型名称；可写成「模型名称 | 显示名」。已存在的会跳过。${
+          provider.protocol === "systemone" ? SYSTEM_ONE_MODELS : ""
+        }`}
       >
         <textarea
           className="mono"
           rows={5}
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={"qwen2.5-72b-instruct\ndeepseek-chat | DeepSeek V3"}
+          placeholder={
+            provider.protocol === "systemone"
+              ? "multilingual | Laya 多语言"
+              : "qwen2.5-72b-instruct\ndeepseek-chat | DeepSeek V3"
+          }
         />
       </Field>
-      <Toggle checked={system1} onChange={setSystem1} label="标记为 System 1 模型（快速、不先进行长时间思考）" />
-      <p className="small muted">{SYSTEM1_HINT}</p>
     </FormModal>
   );
 }
 
-function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose: () => void; onSaved: () => void }) {
+function ModelEditor({
+  model,
+  systemOne,
+  onClose,
+  onSaved,
+}: {
+  model: ModelConfig;
+  systemOne: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const { run, busy } = useAction();
   const [name, setName] = useState(model.name);
   const [params, setParams] = useState(
@@ -636,23 +661,7 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
   );
   const [limit, setLimit] = useState(model.daily_token_limit?.toString() ?? "");
   const [enabled, setEnabled] = useState(model.enabled);
-  const [system1, setSystem1] = useState(model.system1);
   const [error, setError] = useState<string | null>(null);
-
-  /** Merge a "thinking off" preset into the parameters being edited. */
-  const applyPreset = (key: string) => {
-    const preset = THINKING_OFF_PRESETS.find((p) => p.key === key);
-    if (!preset) return;
-    let current: Record<string, unknown> = {};
-    try {
-      current = params.trim() ? JSON.parse(params) : {};
-    } catch {
-      setError("当前参数不是有效的 JSON，先修正后再套用");
-      return;
-    }
-    setError(null);
-    setParams(JSON.stringify({ ...current, ...preset.params }, null, 2));
-  };
 
   const submit = async () => {
     let parsed: unknown = {};
@@ -671,7 +680,6 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
           params: parsed,
           daily_token_limit: limit.trim() ? Number(limit) : null,
           enabled,
-          system1,
         }),
       "已保存",
     );
@@ -694,7 +702,14 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder={model.model} />
       </Field>
       <div className="form-row">
-        <Field label="参数（JSON）" hint='调用时附带，例如 {"temperature": 0.3, "max_tokens": 4096}'>
+        <Field
+          label="参数（JSON）"
+          hint={
+            systemOne
+              ? '调用时附带，例如 Laya 的 {"max_len": 2048}（一次读入的最大 token 数）'
+              : '调用时附带，例如 {"temperature": 0.3, "max_tokens": 4096}'
+          }
+        >
           <textarea className="mono" rows={3} value={params} onChange={(e) => setParams(e.target.value)} />
         </Field>
         <Field label="每日 token 上限" hint="留空不限">
@@ -704,28 +719,16 @@ function ModelEditor({ model, onClose, onSaved }: { model: ModelConfig; onClose:
       <Toggle
         checked={enabled}
         onChange={setEnabled}
-        label={enabled ? "启用：角色可以使用这个模型" : "停用：使用它的角色会无法工作，直到重新启用"}
+        label={
+          systemOne
+            ? enabled
+              ? "启用：可以用作话题调度模型"
+              : "停用：用它做话题调度时，自动模式的多角色话题不会把消息交给角色"
+            : enabled
+              ? "启用：角色可以使用这个模型"
+              : "停用：使用它的角色会无法工作，直到重新启用"
+        }
       />
-      <FieldGroup label="System 1" hint={SYSTEM1_HINT}>
-        <Toggle checked={system1} onChange={setSystem1} label="标记为 System 1 模型（快速、不先进行长时间思考）" />
-        {system1 ? (
-          <div className="system1-presets">
-            <select value="" onChange={(e) => applyPreset(e.target.value)} aria-label="关闭思考的参数">
-              <option value="">为推理模型关闭思考：插入对应参数…</option>
-              {THINKING_OFF_PRESETS.map((p) => (
-                <option key={p.key} value={p.key}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-            <p className="small muted">
-              默认会先思考的模型需要关闭思考才适合作为 System 1。DeepSeek 请使用 deepseek-chat（deepseek-reasoner
-              无法关闭思考）；Anthropic
-              模型默认不开启思考，无需设置。保存后点击“检测能力”，可以看到响应时间以及是否仍会先思考。
-            </p>
-          </div>
-        ) : null}
-      </FieldGroup>
     </FormModal>
   );
 }

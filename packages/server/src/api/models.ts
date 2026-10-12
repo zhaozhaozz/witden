@@ -56,7 +56,7 @@ export async function modelRoutes(app: FastifyInstance) {
       return {
         model_config_id: found ? found.model.id : null,
         model: found ? { id: found.model.id, label: svc.modelLabel(found.model, found.provider) } : null,
-        usable: !!found && found.model.system1 && !svc.unusableReason(found.model, found.provider),
+        usable: !!found && svc.isSystemOne(found.provider) && !svc.unusableReason(found.model, found.provider),
       };
     }),
   );
@@ -68,8 +68,9 @@ export async function modelRoutes(app: FastifyInstance) {
       if (id) {
         const found = await svc.modelWithProvider(db, String(id));
         if (!found) throw new BadRequest("model not found");
-        // Routing must be quick: only models marked as fast ("System 1") are accepted.
-        if (!found.model.system1) throw new BadRequest("the dispatcher must be a model marked as System 1");
+        // The dispatcher asks typed questions (agent/router.ts): only System One decision models answer them.
+        if (!svc.isSystemOne(found.provider))
+          throw new BadRequest("the dispatcher must be a System One decision model (TypeSafe Jev, Laya)");
       }
       await putSetting(db, DISPATCHER, { model_config_id: id }, user.id);
       await audit(db, "settings.dispatcher", { actorType: "user", actorId: user.id, detail: { model_config_id: id } });
@@ -184,7 +185,7 @@ export async function modelRoutes(app: FastifyInstance) {
       const provider = await svc.getProvider(db, params(req).id);
       const b = body(req);
       const source = b.source === "api" ? "api" : "manual";
-      const added = await svc.addModels(db, provider, b.models, source, user.id, { system1: !!b.system1 });
+      const added = await svc.addModels(db, provider, b.models, source, user.id);
       await audit(db, "model.add", {
         actorType: "user",
         actorId: user.id,
@@ -233,7 +234,7 @@ export async function modelRoutes(app: FastifyInstance) {
     }),
   );
 
-  // Calls the model three times: no transaction is held meanwhile.
+  // Calls the model (three times for a chat model): no transaction is held meanwhile.
   app.post(
     "/api/models/:id/check",
     authedNoTx(async ({ db, user, req }) => {
@@ -244,7 +245,12 @@ export async function modelRoutes(app: FastifyInstance) {
         actorId: user.id,
         resourceType: "model",
         resourceId: model.id,
-        detail: { chat: model.capabilities.chat, tools: model.capabilities.tools, vision: model.capabilities.vision },
+        detail: {
+          chat: model.capabilities.chat,
+          tools: model.capabilities.tools,
+          vision: model.capabilities.vision,
+          decide: model.capabilities.decide,
+        },
       });
       return modelOut(db, model, await svc.getProvider(db, model.providerId));
     }),

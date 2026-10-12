@@ -142,10 +142,11 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const [dialog, setDialog] = useState<null | "copy" | "disable">(null);
   const toolGroups = useResource(() => api.get<ToolGroup[]>("/api/roles/tool-groups"), []);
   const models = useResource(() => api.get<ModelConfig[]>("/api/models"), []);
-  // Models grouped under their providers for the picker.
+  // Models grouped under their providers for the picker; System 1 decision models cannot chat, so no role uses them.
   const modelGroups = useMemo(() => {
     const groups = new Map<string, ModelConfig[]>();
     for (const m of models.data ?? []) {
+      if (m.provider?.protocol === "systemone") continue;
       const key = m.provider?.name ?? "";
       groups.set(key, [...(groups.get(key) ?? []), m]);
     }
