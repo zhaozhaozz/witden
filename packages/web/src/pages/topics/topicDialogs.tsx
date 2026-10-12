@@ -14,7 +14,6 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
   const [visibility, setVisibility] = useState("private");
-  const [history, setHistory] = useState("since_join");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [roleIds, setRoleIds] = useState<string[]>([]);
 
@@ -25,7 +24,6 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
           title: title.trim(),
           goal,
           visibility,
-          history_policy: history,
           user_ids: userIds,
           role_ids: roleIds,
         }),
@@ -55,20 +53,12 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
       <Field label="目标" hint="写清楚要完成什么，角色会把它当作这个话题的工作背景。">
         <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
-      <div className="form-row">
-        <Field label="可见范围">
-          <select value={visibility} onChange={(e) => setVisibility(e.target.value)}>
-            <option value="private">私密：仅参与者可见</option>
-            <option value="internal">团队内公开：所有成员可阅读</option>
-          </select>
-        </Field>
-        <Field label="新成员可看的历史">
-          <select value={history} onChange={(e) => setHistory(e.target.value)}>
-            <option value="since_join">只看加入之后的消息</option>
-            <option value="full">可看全部历史</option>
-          </select>
-        </Field>
-      </div>
+      <Field label="可见范围" hint="参与者可以阅读话题的全部历史，包括加入之前的消息。">
+        <select value={visibility} onChange={(e) => setVisibility(e.target.value)}>
+          <option value="private">私密：仅参与者可见</option>
+          <option value="internal">团队内公开：所有成员可阅读</option>
+        </select>
+      </Field>
       <FieldGroup label="邀请成员" wide>
         <MultiPick
           columns={3}
@@ -199,8 +189,7 @@ export function InviteDialog({
         </select>
       </Field>
       <p className="small muted">
-        {topic.history_policy === "full" ? "新加入者可以阅读这个话题的全部历史。" : "新加入者只能看到加入之后的消息。"}
-        被移除后将无法再访问这个话题。
+        新加入者可以阅读这个话题的全部历史，包括加入之前的消息；被移除后将无法再访问这个话题。
       </p>
     </FormModal>
   );

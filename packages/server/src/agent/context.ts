@@ -3,7 +3,7 @@
  * from earlier runs whose results were delivered here), recent topic messages it may read, and the brief.
  * Nothing from other topics is included unless the role explicitly references it (read_topic).
  */
-import { and, desc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   agentSessions,
@@ -78,14 +78,12 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
   return parts.filter(Boolean).join("\n");
 }
 
-/** Session notes, then recent topic history visible to this role, then the brief. */
-export async function firstUserMessage(db: Db, task: Task, role: Role, topic: Topic): Promise<string> {
+/** Session notes, then recent topic history (participants read the whole topic), then the brief. */
+export async function firstUserMessage(db: Db, task: Task, topic: Topic): Promise<string> {
   const [session] = task.sessionId
     ? await db.select().from(agentSessions).where(eq(agentSessions.id, task.sessionId)).limit(1)
     : [];
-  const member = await topicSvc.participant(db, topic.id, "role", role.id);
   const conds = [eq(messages.topicId, topic.id), isNull(messages.deletedAt)];
-  if (member?.historyFrom) conds.push(gte(messages.createdAt, member.historyFrom));
   if (task.sourceMessageId) {
     const [src] = await db.select().from(messages).where(eq(messages.id, task.sourceMessageId)).limit(1);
     if (src) conds.push(lte(messages.createdAt, src.createdAt));
@@ -124,7 +122,7 @@ export async function firstUserMessage(db: Db, task: Task, role: Role, topic: To
 export async function initialMessages(db: Db, task: Task, role: Role, topic: Topic): Promise<ChatMessage[]> {
   return [
     { role: "system", content: await systemPrompt(db, task, role, topic) },
-    { role: "user", content: await firstUserMessage(db, task, role, topic) },
+    { role: "user", content: await firstUserMessage(db, task, topic) },
   ];
 }
 

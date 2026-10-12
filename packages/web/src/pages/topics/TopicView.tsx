@@ -216,9 +216,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                   {topic.visibility === "internal" ? "团队内公开" : "私密"}
                 </Tag>
               ) : null}
-              <Tag title="新加入者可阅读的历史范围">
-                {topic.history_policy === "full" ? "新成员可看全部历史" : "新成员只看加入后消息"}
-              </Tag>
               {topic.source !== "internal" ? (
                 <Tag tone="accent">来自 {PLATFORM_LABEL[topic.source] ?? topic.source}</Tag>
               ) : null}
@@ -279,11 +276,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                     </button>
                   </div>
                 ) : messages.length ? (
-                  <div className="timeline-start small muted">
-                    {participantMap.get(`user:${me?.id}`)?.history_from
-                      ? "你加入之前的消息不可见（话题设置为只看加入后的消息）"
-                      : "话题开始"}
-                  </div>
+                  <div className="timeline-start small muted">话题开始</div>
                 ) : null}
                 {!messages.length ? (
                   <Empty

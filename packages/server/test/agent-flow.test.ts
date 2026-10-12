@@ -375,6 +375,30 @@ describe("computers", () => {
 });
 
 describe("sessions and data lifecycle", () => {
+  it("people and roles added later read the whole topic history", async () => {
+    const topic = (await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Later joiners" } })).body;
+    await w.post(w.alice, topic.id, "the launch date is March 3");
+    for (const p of [
+      { type: "user", id: w.ids.bob },
+      { type: "role", id: w.ids.dev },
+    ]) {
+      const added = await w.api("POST", `/api/topics/${topic.id}/participants`, { token: w.alice, json: p });
+      expect(added.status, added.raw).toBeLessThan(300);
+    }
+    const seen = await w.messages(topic.id, w.bob);
+    expect(seen.map((m: any) => m.content)).toContain("the launch date is March 3");
+    const people = (await w.api("GET", `/api/topics/${topic.id}`, { token: w.bob })).body.participants;
+    expect(people.every((p: any) => !("history_from" in p))).toBe(true);
+    let brief = "";
+    w.scripts.dev = (m) => {
+      brief = String(m[1].content);
+      return reply("March 3");
+    };
+    await w.post(w.bob, topic.id, "@dev when do we launch?");
+    await w.drain();
+    expect(brief).toContain("the launch date is March 3");
+  });
+
   it("each topic has its own agent session for a role", async () => {
     const other = (
       await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Other project", role_ids: [w.ids.dev] } })

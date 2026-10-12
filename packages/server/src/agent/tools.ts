@@ -585,8 +585,7 @@ async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<T
   if (!source || !requester || !(await topicSvc.canView(db, requester, source))) {
     throw new Forbidden("the requester cannot read that topic (or it does not exist)");
   }
-  const since = await topicSvc.visibleFrom(db, requester, source);
-  const msgs = await topicSvc.visibleMessages(db, source, since, { limit: Number(args.limit ?? 40) });
+  const msgs = await topicSvc.visibleMessages(db, source, { limit: Number(args.limit ?? 40) });
   const lines: string[] = [];
   for (const m of msgs)
     lines.push(

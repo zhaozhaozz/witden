@@ -291,7 +291,6 @@ export const topics = pgTable("topics", {
   kind: text("kind").notNull().default("group"), // group | dm
   status: text("status").notNull().default("active"),
   visibility: text("visibility").notNull().default("private"), // private | internal
-  historyPolicy: text("history_policy").notNull().default("since_join"), // full | since_join
   maxAutoRounds: integer("max_auto_rounds"),
   allowedModelConfigIds: json<string[] | null>("allowed_model_config_ids"),
   source: text("source").notNull().default("internal"),
@@ -312,7 +311,6 @@ export const topicParticipants = pgTable(
     participantId: text("participant_id").notNull(),
     isOwner: boolean("is_owner").notNull().default(false),
     joinedAt: created(),
-    historyFrom: ts("history_from"),
     removedAt: ts("removed_at"),
     invitedBy: text("invited_by"),
   },

@@ -43,7 +43,6 @@ async function participantsOut(db: Db, topic: Topic) {
         name: u?.name ?? "?",
         is_owner: p.isOwner,
         joined_at: p.joinedAt.toISOString(),
-        history_from: p.historyFrom?.toISOString() ?? null,
       });
     } else {
       const r = await svc.getRole(db, p.participantId);
@@ -62,7 +61,6 @@ async function participantsOut(db: Db, topic: Topic) {
         status: r?.status ?? null,
         is_owner: p.isOwner,
         joined_at: p.joinedAt.toISOString(),
-        history_from: p.historyFrom?.toISOString() ?? null,
       });
     }
   }
@@ -180,15 +178,7 @@ export async function topicRoutes(app: FastifyInstance) {
         throw new BadRequest("status must be active or archived");
       if (b.visibility !== undefined && (!["private", "internal"].includes(b.visibility) || topic.kind === "dm"))
         throw new BadRequest("invalid visibility");
-      const allowed = [
-        "title",
-        "goal",
-        "status",
-        "visibility",
-        "historyPolicy",
-        "maxAutoRounds",
-        "allowedModelConfigIds",
-      ];
+      const allowed = ["title", "goal", "status", "visibility", "maxAutoRounds", "allowedModelConfigIds"];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
       const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
       if (b.status === "archived") {
@@ -270,7 +260,7 @@ export async function topicRoutes(app: FastifyInstance) {
       const topic = await svc.getTopic(db, params(req).id);
       await svc.requireView(db, user, topic);
       const q = query(req);
-      const msgs = await svc.visibleMessages(db, topic, await svc.visibleFrom(db, user, topic), {
+      const msgs = await svc.visibleMessages(db, topic, {
         limit: Math.min(Number(q.limit ?? 100), 500),
         before: q.before ? new Date(q.before) : null,
       });

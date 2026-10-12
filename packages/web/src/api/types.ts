@@ -28,7 +28,6 @@ export interface Participant {
   name: string;
   is_owner: boolean;
   joined_at: string;
-  history_from: string | null;
   handle?: string | null;
   avatar_url?: string | null;
   /** Roles: badge colour and the computer the role works on. */
@@ -44,7 +43,6 @@ export interface Topic {
   kind: "group" | "dm";
   status: "active" | "archived";
   visibility: "private" | "internal";
-  history_policy: "full" | "since_join";
   max_auto_rounds: number | null;
   allowed_model_config_ids: string[] | null;
   source: string;

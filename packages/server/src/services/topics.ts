@@ -1,5 +1,5 @@
 /** Topics, participants and who may see which part of the history. */
-import { and, desc, eq, gte, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { messages, type Role, roles, type Topic, topicParticipants, topics, type User, users } from "../db/schema.js";
@@ -48,10 +48,6 @@ export async function requireView(db: Db, user: User, topic: Topic): Promise<voi
   if (!(await canView(db, user, topic))) throw new Forbidden("you cannot view this topic");
 }
 
-export async function visibleFrom(db: Db, user: User, topic: Topic): Promise<Date | null> {
-  return (await participant(db, topic.id, "user", user.id))?.historyFrom ?? null;
-}
-
 export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean> {
   return topic.status === "active" && !!(await participant(db, topic.id, "user", user.id));
 }
@@ -85,8 +81,6 @@ export async function addParticipant(
       participantId: id,
       isOwner: opts.owner ?? false,
       joinedAt: now,
-      // New members only see history from their joining time unless the topic says otherwise.
-      historyFrom: topic.historyPolicy === "full" || opts.owner ? null : now,
       invitedBy: opts.invitedBy ?? null,
     })
     .returning();
@@ -135,7 +129,6 @@ export async function createTopic(
     title: string;
     goal?: string;
     visibility?: string;
-    historyPolicy?: string;
     userIds?: string[];
     roleIds?: string[];
     maxAutoRounds?: number | null;
@@ -146,10 +139,7 @@ export async function createTopic(
 ): Promise<Topic> {
   await requirePerm(db, user, Perm.TOPIC_CREATE);
   const visibility = data.visibility ?? "private";
-  const historyPolicy = data.historyPolicy ?? "since_join";
   if (!["private", "internal"].includes(visibility)) throw new BadRequest("visibility must be private or internal");
-  if (!["full", "since_join"].includes(historyPolicy))
-    throw new BadRequest("history_policy must be full or since_join");
   if (!data.title?.trim()) throw new BadRequest("title is required");
   const kind = data.kind ?? "group";
   const [topic] = await db
@@ -160,7 +150,6 @@ export async function createTopic(
       goal: data.goal ?? "",
       kind,
       visibility: kind === "group" ? visibility : "private",
-      historyPolicy,
       maxAutoRounds: data.maxAutoRounds ?? null,
       allowedModelConfigIds: data.allowedModelConfigIds ?? null,
       source: data.source ?? "internal",
@@ -194,7 +183,6 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
       title: `DM ${user.name} · ${role.name}`,
       kind: "dm",
       visibility: "private",
-      historyPolicy: "full",
       source,
       createdBy: user.id,
     })
@@ -204,14 +192,9 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
   return topic;
 }
 
-export async function visibleMessages(
-  db: Db,
-  topic: Topic,
-  since: Date | null,
-  opts: { limit?: number; before?: Date | null } = {},
-) {
+/** A topic's messages, newest page first in time order. Every participant reads the whole history. */
+export async function visibleMessages(db: Db, topic: Topic, opts: { limit?: number; before?: Date | null } = {}) {
   const conds = [eq(messages.topicId, topic.id), isNull(messages.deletedAt)];
-  if (since) conds.push(gte(messages.createdAt, since));
   if (opts.before) conds.push(lt(messages.createdAt, opts.before));
   const rows = await db
     .select()

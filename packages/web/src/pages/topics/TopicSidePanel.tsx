@@ -222,10 +222,7 @@ function PeopleTab({
                 {p.is_owner ? <Tag tone="accent">负责人</Tag> : null}
                 {p.type === "role" && p.status === "disabled" ? <Tag tone="off">已停用</Tag> : null}
               </div>
-              <div className="small muted">
-                {fmtRelative(p.joined_at)}加入
-                {p.history_from ? ` · 可见 ${fmtTime(p.history_from)} 之后的消息` : " · 可见全部历史"}
-              </div>
+              <div className="small muted">{fmtRelative(p.joined_at)}加入</div>
             </div>
             {(canAdmin && !(p.type === "user" && p.id === me?.id)) ||
             (p.type === "user" && p.id === me?.id && !p.is_owner) ? (
@@ -409,7 +406,6 @@ function SettingsTab({
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
   const [visibility, setVisibility] = useState(topic.visibility);
-  const [history, setHistory] = useState(topic.history_policy);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
   const [publishing, setPublishing] = useState(false);
   const [clean, setClean] = useState({ messages: true, memories: true, files: true });
@@ -418,7 +414,6 @@ function SettingsTab({
     setTitle(topic.title);
     setGoal(topic.goal);
     setVisibility(topic.visibility);
-    setHistory(topic.history_policy);
     setRounds(topic.max_auto_rounds?.toString() ?? "");
   }, [topic]);
 
@@ -452,7 +447,6 @@ function SettingsTab({
                 title: title.trim(),
                 goal,
                 ...(topic.kind === "group" ? { visibility } : {}),
-                history_policy: history,
                 max_auto_rounds: rounds ? Number(rounds) : null,
               },
               "设置已保存",
@@ -473,12 +467,6 @@ function SettingsTab({
               </select>
             </Field>
           ) : null}
-          <Field label="新成员可看的历史">
-            <select value={history} onChange={(e) => setHistory(e.target.value as Topic["history_policy"])}>
-              <option value="since_join">只看加入之后的消息</option>
-              <option value="full">可看全部历史</option>
-            </select>
-          </Field>
           <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
             <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
           </Field>
