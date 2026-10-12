@@ -4,48 +4,40 @@ import { api, errorMessage } from "../../api/client";
 import type { ExecResult, Instance } from "../../api/types";
 import { fmtRelative } from "../../lib/format";
 import { useDirectory } from "../../lib/session";
-import { useAction } from "../../ui/feedback";
-import { Field, FormModal, Section, Tag } from "../../ui/kit";
+import { useAction, useFeedback } from "../../ui/feedback";
+import { Section, Tag } from "../../ui/kit";
 
 // noVNC is large; load it only when a desktop screen is actually opened.
 export const LiveDesktop = lazy(() => import("./LiveDesktop").then((m) => ({ default: m.LiveDesktop })));
 
-/** Take over a virtual computer: AI work on it pauses until the person hands it back. */
-export function TakeoverDialog({
-  inst,
-  onClose,
-  onDone,
-}: {
-  inst: Instance;
-  onClose: () => void;
-  onDone: (i: Instance) => void;
-}) {
+/**
+ * Take over a virtual computer: AI work on it pauses until the person hands it back. No reason is asked;
+ * only when AI work is running there does a confirmation say what will pause.
+ */
+export function useTakeover() {
+  const { confirm } = useFeedback();
   const { run, busy } = useAction();
-  const [reason, setReason] = useState("");
-  const count = inst.active_tasks?.length ?? 0;
-  return (
-    <FormModal
-      title={`接管 ${inst.name}`}
-      submitLabel="接管"
-      busy={busy}
-      onClose={onClose}
-      onSubmit={async () => {
-        const out = await run(
-          () => api.post<Instance>(`/api/instances/${inst.id}/takeover`, { reason: reason.trim() || null }),
-          "你已接管这台虚拟电脑，AI 工作已暂停",
-        );
-        if (out) onDone(out);
-      }}
-    >
-      <div className="callout callout-wait">
-        接管后，这台虚拟电脑上所有角色的 AI 工作都会暂停{count ? `（当前 ${count} 项任务）` : ""}
-        ，直到你交还控制。接管期间，你在浏览器里的鼠标和键盘操作会发送到这台虚拟电脑（不会影响你自己的电脑）。适合完成登录、验证码等需要人工的步骤。
-      </div>
-      <Field label="原因" hint="会显示给其他人，并记录在审计中。">
-        <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例如：登录企业邮箱" autoFocus />
-      </Field>
-    </FormModal>
-  );
+  const takeOver = async (inst: Instance): Promise<Instance | undefined> => {
+    const count = inst.active_tasks?.length ?? 0;
+    if (count) {
+      const ok = await confirm({
+        title: `接管 ${inst.name}`,
+        confirmLabel: "接管",
+        body: (
+          <p>
+            这台虚拟电脑上有 {count} 项 AI
+            工作，接管后会暂停，直到你交还控制。接管期间，你在浏览器里的鼠标和键盘操作会发送到这台虚拟电脑（不会影响你自己的电脑）。
+          </p>
+        ),
+      });
+      if (!ok) return undefined;
+    }
+    return run(
+      () => api.post<Instance>(`/api/instances/${inst.id}/takeover`, {}),
+      "你已接管这台虚拟电脑，AI 工作已暂停",
+    );
+  };
+  return { takeOver, busy };
 }
 
 interface ConsoleEntry {
@@ -163,7 +155,7 @@ export function OperatorLabel({ inst }: { inst: Pick<Instance, "operator"> }) {
   if (!op) return <span className="muted">空闲</span>;
   if (op.holder_type === "user")
     return (
-      <span title={op.reason ?? undefined}>
+      <span title={op.reason && op.reason !== "human takeover" ? op.reason : undefined}>
         <Tag tone="wait">人工接管</Tag> {dir.userName(op.holder_id)}
       </span>
     );

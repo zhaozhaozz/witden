@@ -29,7 +29,7 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { TaskStatusChip } from "../tasks/taskParts";
-import { LiveDesktop, OperatorConsole, OperatorLabel, TakeoverDialog } from "./computerControls";
+import { LiveDesktop, OperatorConsole, OperatorLabel, useTakeover } from "./computerControls";
 import {
   fromDraft,
   InstanceStatusChip,
@@ -374,7 +374,7 @@ function Overview({
   const { run, busy } = useAction();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(toDraft(inst.resources));
-  const [taking, setTaking] = useState(false);
+  const { takeOver, busy: taking } = useTakeover();
   const tpl = useResource(() => api.get<Template>(`/api/templates/${inst.template_id}`), [inst.template_id]);
   const stats = useResource(
     () => api.get<InstanceStats>(`/api/instances/${inst.id}/stats`, { volumes: true }),
@@ -577,8 +577,11 @@ function Overview({
                 <button
                   type="button"
                   className="btn btn-sm"
-                  disabled={busy || inst.status !== "running"}
-                  onClick={() => setTaking(true)}
+                  disabled={busy || taking || inst.status !== "running"}
+                  onClick={async () => {
+                    const out = await takeOver(inst);
+                    if (out) onChanged(out);
+                  }}
                 >
                   接管虚拟电脑
                 </button>
@@ -612,13 +615,6 @@ function Overview({
                 </button>
               ) : null}
             </div>
-          ) : null}
-          {taking ? (
-            <TakeoverDialog
-              inst={inst}
-              onClose={() => setTaking(false)}
-              onDone={(i) => (setTaking(false), onChanged(i))}
-            />
           ) : null}
         </Section>
 
@@ -685,7 +681,7 @@ function ScreenTab({ inst, reload }: { inst: Instance; reload: () => void }) {
   const { can, me } = useAuth();
   const dir = useDirectory();
   const { run, busy } = useAction();
-  const [taking, setTaking] = useState(false);
+  const { takeOver, busy: taking } = useTakeover();
   const heldByMe = inst.operator?.holder_type === "user" && inst.operator.holder_id === me?.id;
   const mode: "view" | "control" = heldByMe && can("instance.control") ? "control" : "view";
   const running = inst.status === "running";
@@ -712,7 +708,14 @@ function ScreenTab({ inst, reload }: { inst: Instance; reload: () => void }) {
                 交还控制
               </button>
             ) : (
-              <button type="button" className="btn btn-sm" disabled={busy || !running} onClick={() => setTaking(true)}>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={busy || taking || !running}
+                onClick={async () => {
+                  if (await takeOver(inst)) reload();
+                }}
+              >
                 接管并操作
               </button>
             )
@@ -733,9 +736,6 @@ function ScreenTab({ inst, reload }: { inst: Instance; reload: () => void }) {
         ) : (
           <Empty title="虚拟电脑未运行" hint="启动虚拟电脑后可以查看实时画面。" />
         )}
-        {taking ? (
-          <TakeoverDialog inst={inst} onClose={() => setTaking(false)} onDone={() => (setTaking(false), reload())} />
-        ) : null}
       </Section>
       <Screenshot inst={inst} />
     </div>

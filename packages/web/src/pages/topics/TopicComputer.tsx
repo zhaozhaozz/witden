@@ -7,7 +7,7 @@ import { useInterval, useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
 import { ComputerBadge, Empty, Loaded, Loading, StatusChip } from "../../ui/kit";
-import { LiveDesktop, OperatorConsole, OperatorLabel, TakeoverDialog } from "../computers/computerControls";
+import { LiveDesktop, OperatorConsole, OperatorLabel, useTakeover } from "../computers/computerControls";
 
 type Computer = { id: string; name: string; color: string | null };
 
@@ -78,7 +78,7 @@ export function TopicComputer({
 function ComputerView({ inst, reload }: { inst: Instance; reload: () => void }) {
   const { can, me } = useAuth();
   const { run, busy } = useAction();
-  const [taking, setTaking] = useState(false);
+  const { takeOver, busy: taking } = useTakeover();
   const desktop = inst.spec?.kind === "desktop";
   const running = inst.status === "running";
   const canControl = can("instance.control");
@@ -103,7 +103,14 @@ function ComputerView({ inst, reload }: { inst: Instance; reload: () => void }) 
               交还控制
             </button>
           ) : (
-            <button type="button" className="btn btn-xs" disabled={busy || !running} onClick={() => setTaking(true)}>
+            <button
+              type="button"
+              className="btn btn-xs"
+              disabled={busy || taking || !running}
+              onClick={async () => {
+                if (await takeOver(inst)) reload();
+              }}
+            >
               接管并操作
             </button>
           )
@@ -123,16 +130,6 @@ function ComputerView({ inst, reload }: { inst: Instance; reload: () => void }) 
           hint="有「接管虚拟电脑」权限的人可以在这里直接执行命令；角色的操作记录见任务详情。"
         />
       )}
-      {taking ? (
-        <TakeoverDialog
-          inst={inst}
-          onClose={() => setTaking(false)}
-          onDone={() => {
-            setTaking(false);
-            reload();
-          }}
-        />
-      ) : null}
     </div>
   );
 }
