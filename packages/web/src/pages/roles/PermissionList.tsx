@@ -201,7 +201,7 @@ export function PermissionList({
           <button
             type="button"
             className="btn btn-xs"
-            title="虚拟电脑里的操作始终允许；联系其他角色、平台记忆、其他话题和把文件分享到话题需要询问"
+            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆和其他话题需要询问"
             onClick={() => onChange([...defaults.allowed], [...defaults.approval, ...always])}
           >
             恢复默认

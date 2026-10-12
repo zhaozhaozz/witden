@@ -35,12 +35,12 @@ export const TOOL_GROUPS: Record<string, string> = {
 };
 
 /**
- * Permissions of a new role unless given: work inside its own virtual computer is always allowed; anything
- * that reaches outside it (other roles, platform memory, other topics, files shared into the topic) asks a
- * person first.
+ * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
+ * into the topic, is always allowed; reaching other roles, platform memory or other topics asks a person
+ * first. (Shared files still pass the information-flow check like any other output.)
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS);
-export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics", "share_file"];
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];

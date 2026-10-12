@@ -207,7 +207,7 @@ describe("permissions and isolation", () => {
     expect(w.manager.computer(w.ids.instance).commands).toEqual(["kubectl apply -f prod.yaml"]);
   });
 
-  it("new roles: work inside their virtual computer just runs, reaching outside it asks first", async () => {
+  it("new roles: work in their virtual computer (and sharing its files) runs, reaching outside asks first", async () => {
     const created = await w.api("POST", "/api/roles", {
       token: w.adminToken,
       json: { name: "Fresh", handle: "fresh", model_config_id: w.ids.model, instance_id: w.ids.instance },
@@ -223,10 +223,10 @@ describe("permissions and isolation", () => {
       "terminal",
       "topics",
     ]);
-    expect(created.body.approval_required).toEqual(["collaborate", "memory", "share_file", "topics"]);
+    expect(created.body.approval_required).toEqual(["collaborate", "memory", "topics"]);
     const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
     const files = groups.find((g: any) => g.group === "files");
-    expect([files.default_level, files.default_ask]).toEqual(["allow", ["share_file"]]);
+    expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
     expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
 
     await w.api("POST", "/api/grants", {
@@ -240,12 +240,18 @@ describe("permissions and isolation", () => {
         ? reply("", [call("run_command", { command: "echo inside" })])
         : turn === 1
           ? reply("", [call("share_file", { path: "report.txt" })])
-          : reply("shared");
+          : turn === 2
+            ? reply("", [call("remember", { content: "alice wants weekly reports", scope: "topic" })])
+            : reply("shared");
     await w.post(w.alice, dm.id, "make the report and send it to me");
     await w.drain();
+    // inside the virtual computer, and sharing a file from it into the topic: no approval
     expect(w.manager.computer(w.ids.instance).commands).toEqual(["echo inside"]);
+    const shared = (await w.api("GET", `/api/topics/${dm.id}/files`, { token: w.alice })).body;
+    expect(shared.map((f: any) => f.name)).toEqual(["report.txt"]);
+    // platform memory is outside it: asks first
     const approvals = (await w.api("GET", "/api/approvals", { token: w.adminToken })).body;
-    expect(approvals.map((a: any) => a.action)).toEqual(["share_file"]);
+    expect(approvals.map((a: any) => a.action)).toEqual(["remember"]);
   });
 
   it("emergency stop pauses work until released and resumed", async () => {
