@@ -230,6 +230,10 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   }
 
   const ext = topic.external;
+  const dm = topic.kind === "dm";
+  // A DM is named after its role (the stored title is "person · role").
+  const dmRole = dm ? topic.participants?.find((p) => p.type === "role") : undefined;
+  const heading = dm ? (dmRole?.name ?? topic.title) : topic.title;
   // Owners, plus administrators for removing / stopping things in group topics (decided by the server).
   const canAdmin = topic.can_administer ?? (topic.is_owner || (!!me?.is_admin && topic.kind === "group"));
   const manageOnly = topic.can_view === false;
@@ -244,7 +248,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       >
         {computerMax ? (
           <div className="chat-float-bar" {...chat.handle("move")}>
-            <span className="chat-float-title">{topic.kind === "dm" ? "私信" : topic.title}</span>
+            <span className="chat-float-title">{dm ? `与 ${heading} 的私信` : topic.title}</span>
             <button type="button" className="btn btn-xs btn-ghost" onClick={() => setChatOpen(false)}>
               收起
             </button>
@@ -256,13 +260,9 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
         {computerMax && chatOpen ? <ResizeGrips handle={chat.handle} /> : null}
         <header className="topic-head">
           <div className="topic-head-main">
-            <h2>
-              {topic.kind === "dm"
-                ? (topic.participants?.find((p) => p.type === "role")?.name ?? topic.title)
-                : topic.title}
-            </h2>
+            <h2>{heading}</h2>
             <div className="topic-tags">
-              <Tag>{topic.kind === "dm" ? "私信" : "群组话题"}</Tag>
+              {dm ? <Tag title={`只有你和 ${heading} 能看到；不能邀请其他成员或角色`}>私信</Tag> : <Tag>群组话题</Tag>}
               {topic.kind === "group" ? (
                 <Tag tone={topic.visibility === "internal" ? "info" : undefined}>
                   {topic.visibility === "internal" ? "团队内公开" : "私密"}
@@ -296,10 +296,10 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               )}
             </div>
             {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
-            <TopicCast participants={topic.participants ?? []} />
+            <TopicCast participants={topic.participants ?? []} showRoles={!dm} />
           </div>
           <button type="button" className="btn btn-sm" onClick={togglePanel} aria-pressed={panel}>
-            {panel ? "收起侧栏" : "任务与参与者"}
+            {panel ? "收起侧栏" : dm ? "任务与详情" : "任务与参与者"}
           </button>
         </header>
 
@@ -336,13 +336,17 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                     </button>
                   </div>
                 ) : messages.length ? (
-                  <div className="timeline-start small muted">话题开始</div>
+                  <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
                 ) : null}
                 {!messages.length ? (
                   <Empty
-                    title={topic.kind === "dm" ? "开始和角色私信" : "还没有消息"}
+                    title={dm ? `开始和 ${heading} 私信` : "还没有消息"}
                     hint={
-                      topic.can_post ? "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。" : undefined
+                      !topic.can_post
+                        ? undefined
+                        : dm
+                          ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
+                          : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
                     }
                   />
                 ) : null}
@@ -405,12 +409,23 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
         )}
 
         {manageOnly ? null : topic.can_post ? (
-          <Composer topicId={topic.id} participants={topic.participants ?? []} onSent={onSent} />
+          <Composer
+            topicId={topic.id}
+            participants={topic.participants ?? []}
+            onSent={onSent}
+            placeholder={
+              dm
+                ? `给 ${heading} 发消息（支持 Markdown、\`\`\`mermaid 流程图）；不需要 @。Enter 发送，Shift+Enter 换行`
+                : undefined
+            }
+          />
         ) : (
           <div className="readonly-note">
-            {topic.status === "archived"
-              ? "话题已归档，只能查看。负责人可以在设置中恢复。"
-              : "你不是这个话题的参与者，可以阅读但不能发言。请话题负责人邀请你加入。"}
+            {dm && topic.status === "archived"
+              ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
+              : topic.status === "archived"
+                ? "话题已归档，只能查看。负责人可以在设置中恢复。"
+                : "你不是这个话题的参与者，可以阅读但不能发言。请话题负责人邀请你加入。"}
           </div>
         )}
       </div>
@@ -460,25 +475,34 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
 }
 
 /** The roles taking part in a topic and the computers they work on, as badges. */
-function TopicCast({ participants }: { participants: NonNullable<Topic["participants"]> }) {
+/** The roles in a topic and the computers they work in (a DM shows only the computer: the role is the title). */
+function TopicCast({
+  participants,
+  showRoles = true,
+}: {
+  participants: NonNullable<Topic["participants"]>;
+  showRoles?: boolean;
+}) {
   const roles = participants.filter((p) => p.type === "role");
   if (!roles.length) return null;
   const computers = new Map<string, { id: string; name: string; color: string | null }>();
   for (const r of roles) if (r.instance) computers.set(r.instance.id, r.instance);
   return (
     <div className="topic-cast">
-      <span className="badge-row">
-        {roles.map((r) => (
-          <span key={r.id} className={r.status === "disabled" ? "badge-off" : undefined}>
-            <RoleBadge
-              role={{ id: r.id, name: r.name, handle: r.handle, color: r.color, avatar_url: r.avatar_url }}
-              title={r.status === "disabled" ? `${r.name} @${r.handle}（已停用）` : undefined}
-            />
-          </span>
-        ))}
-      </span>
+      {showRoles ? (
+        <span className="badge-row">
+          {roles.map((r) => (
+            <span key={r.id} className={r.status === "disabled" ? "badge-off" : undefined}>
+              <RoleBadge
+                role={{ id: r.id, name: r.name, handle: r.handle, color: r.color, avatar_url: r.avatar_url }}
+                title={r.status === "disabled" ? `${r.name} @${r.handle}（已停用）` : undefined}
+              />
+            </span>
+          ))}
+        </span>
+      ) : null}
       {computers.size ? (
-        <span className="badge-row" title="这些角色在各自的虚拟电脑里工作">
+        <span className="badge-row" title={showRoles ? "这些角色在各自的虚拟电脑里工作" : "角色在这台虚拟电脑里工作"}>
           <span className="small muted">在</span>
           {[...computers.values()].map((c) => (
             <ComputerBadge key={c.id} computer={c} />

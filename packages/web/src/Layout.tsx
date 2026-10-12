@@ -5,7 +5,7 @@ import type { Approval, KillSwitch } from "./api/types";
 import { useInterval } from "./lib/hooks";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { useAuth, useDirectory } from "./lib/session";
-import { useTopics } from "./lib/topics";
+import { isWebDm, useTopics } from "./lib/topics";
 import { PageErrorBoundary } from "./ui/ErrorBoundary";
 import { useAction } from "./ui/feedback";
 import { Avatar, Loading } from "./ui/kit";
@@ -296,7 +296,7 @@ function RoleList() {
   const { can } = useAuth();
   const { run } = useAction();
   const canEdit = can("role.manage");
-  const dmOf = new Map(t.topics.filter((x) => x.kind === "dm" && x.dm_role_id).map((x) => [x.dm_role_id as string, x]));
+  const dmOf = new Map(t.topics.filter((x) => isWebDm(x) && x.dm_role_id).map((x) => [x.dm_role_id as string, x]));
   const roles = dir.roles.filter((r) => r.status === "active").sort((a, b) => a.name.localeCompare(b.name, "zh"));
   return (
     <SideSection id="roles" title="角色" action={{ label: "+", title: "与角色私信", onClick: t.pickDm }}>

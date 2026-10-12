@@ -169,6 +169,9 @@ export async function topicRoutes(app: FastifyInstance) {
       const topic = await svc.getTopic(db, params(req).id);
       const b = body(req);
       const keys = Object.keys(b);
+      // A DM is one person and one role, always open: nothing to rename, archive or reconfigure.
+      if (topic.kind === "dm" && keys.some((k) => k !== "allowedModelConfigIds"))
+        throw new BadRequest("a DM has no title, archive or response settings: it is always one person and one role");
       if (!(await svc.isOwner(db, user, topic))) {
         // Administrators may archive / reactivate a topic they are not in, but not change who can read it.
         if (!((await svc.canAdminister(db, user, topic)) && keys.every((k) => k === "status")))
@@ -205,9 +208,10 @@ export async function topicRoutes(app: FastifyInstance) {
       const topic = await svc.getTopic(db, params(req).id);
       const b = body(req);
       if (!(await svc.canPost(db, user, topic))) throw new Forbidden("only participants can invite");
+      if (topic.kind === "dm")
+        throw new BadRequest("a DM is between one person and one role; start a topic to work with more");
       if (b.type === "role") await svc.inviteRole(db, user, topic, String(b.id));
       else if (b.type === "user") {
-        if (topic.kind === "dm") throw new BadRequest("DMs are private between one person and one role");
         if (!(await svc.isOwner(db, user, topic))) throw new Forbidden("only topic owners can add people");
         if (
           !(
@@ -232,6 +236,7 @@ export async function topicRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       const p = params(req);
       const topic = await svc.getTopic(db, p.id);
+      if (topic.kind === "dm") throw new BadRequest("a DM always keeps its person and its role");
       if (!((await svc.canAdminister(db, user, topic)) || (p.type === "user" && p.pid === user.id)))
         throw new Forbidden("only topic owners can remove participants");
       if (!(await svc.removeParticipant(db, topic, p.type, p.pid))) throw new NotFound("not a participant");

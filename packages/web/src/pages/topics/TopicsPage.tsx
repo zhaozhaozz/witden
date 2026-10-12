@@ -41,7 +41,7 @@ function AllTopics() {
     <div className="page">
       <PageHeader
         title="话题"
-        sub="话题是围绕一件具体事情的协作空间：成员和 AI 角色在这里讨论、分派任务、交付结果。常用的话题和角色也在左侧边栏里。"
+        sub="话题是围绕一件具体事情的协作空间：多位成员和角色在这里讨论、分派任务、交付结果，事情结束后可以归档。私信是你和某个角色之间一直保留的一对一对话，在左侧角色列表中点击角色即可打开。"
         actions={
           <div className="btn-row">
             <button type="button" className="btn btn-sm" onClick={t.pickDm}>
@@ -75,7 +75,7 @@ function AllTopics() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>话题</th>
+                    <th>名称</th>
                     <th>类型</th>
                     <th>最近消息</th>
                   </tr>
@@ -92,7 +92,7 @@ function AllTopics() {
                           {x.goal ? <div className="small muted clamp-1">{x.goal}</div> : null}
                         </td>
                         <td className="nowrap">
-                          {x.kind === "dm" ? "私信" : x.visibility === "internal" ? "团队内公开" : "私密"}
+                          {x.kind === "dm" ? "私信" : x.visibility === "internal" ? "话题 · 团队内公开" : "话题 · 私密"}
                           {x.source !== "internal" ? (
                             <Tag tone="accent">{PLATFORM_LABEL[x.source] ?? x.source}</Tag>
                           ) : null}

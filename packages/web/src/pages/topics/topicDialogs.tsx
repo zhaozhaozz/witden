@@ -170,7 +170,7 @@ export function InviteDialog({
           type="button"
           className={type === "user" ? "seg seg-on" : "seg"}
           disabled={!canAddUsers}
-          title={canAddUsers ? undefined : "只有话题负责人可以添加成员；私信不能添加成员"}
+          title={canAddUsers ? undefined : "只有话题负责人可以添加成员"}
           onClick={() => (setType("user"), setId(""))}
         >
           成员

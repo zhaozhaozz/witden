@@ -113,7 +113,7 @@ export function TopicsProvider({ children }: { children: ReactNode }) {
 
   const openDm = useCallback(
     async (roleId: string) => {
-      const existing = topics.find((t) => t.kind === "dm" && t.dm_role_id === roleId && t.status === "active");
+      const existing = topics.find((t) => isWebDm(t) && t.dm_role_id === roleId);
       if (existing) {
         nav(`/topics/${existing.id}`);
         return;
@@ -161,6 +161,9 @@ export function TopicsProvider({ children }: { children: ReactNode }) {
     </TopicsContext.Provider>
   );
 }
+
+/** Your open DM in the console (a DM held over Slack or Feishu is a separate conversation). */
+export const isWebDm = (t: Topic) => t.kind === "dm" && t.status === "active" && t.source === "internal";
 
 export function useTopics(): TopicsState {
   const ctx = useContext(TopicsContext);

@@ -183,7 +183,7 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
     .insert(topics)
     .values({
       id: newId("top"),
-      title: `DM ${user.name} · ${role.name}`,
+      title: `${user.name} · ${role.name}`,
       kind: "dm",
       visibility: "private",
       source,

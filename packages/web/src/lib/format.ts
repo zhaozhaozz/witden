@@ -255,14 +255,16 @@ export const TOOL_LABEL: Record<string, string> = {
   stay_silent: "决定不回复",
 };
 
-/** A topic's response modes, with the explanation shown on hover and in settings. */
-export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; hint: string }> = {
+/** A topic's response modes: a one-line summary for settings, the full explanation on hover. */
+export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; short: string; hint: string }> = {
   mention: {
     label: "主动 @",
+    short: "角色只在被 @ 时回应。",
     hint: "主动 @ 模式：角色只在被 @ 时回应。在输入框输入 @ 后，从弹出的列表里点选角色才算 @；粘贴或手打的“@名称”只是文字，不会让角色开始工作。角色之间也只能用专门的工具 @ 对方，回答里提到某个角色不会触发它。",
   },
   auto: {
     label: "自动",
+    short: "没有 @ 的消息也可能交给角色：只有一个角色时由它判断是否回复，有多个角色时由调度模型决定。",
     hint: "自动模式：没有 @ 任何角色的消息也可能交给角色。话题里只有一个角色时，它会看每条消息并自己决定是否回复（闲聊等可以不回）；有多个角色时，由「系统管理 → 话题调度」里设置的调度模型决定交给哪几个角色，也可以一个都不交。被 @ 的角色总会回应。",
   },
 };

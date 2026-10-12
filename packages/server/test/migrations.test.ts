@@ -89,3 +89,40 @@ describe("0003_drop_external_runtime", () => {
     await db.close();
   });
 });
+
+describe("0010_dm_always_open", () => {
+  it("keeps one open DM per person, role and source, and drops the DM prefix from titles", async () => {
+    const db = new PGlite();
+    const tags = fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0010")
+      .sort();
+    for (const f of tags) await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into topics (id, title, kind, status, source, last_message_at, created_at) values
+        -- archived and then reopened from the sidebar: an empty second DM was started
+        ('top_old', 'DM alice · dev', 'dm', 'archived', 'internal', now() - interval '1 hour', now() - interval '2 days'),
+        ('top_new', 'DM alice · dev', 'dm', 'active', 'internal', null, now() - interval '1 day'),
+        -- archived alone: reopened
+        ('top_lone', 'DM bob · dev', 'dm', 'archived', 'internal', now(), now()),
+        -- the same pair over Slack is a separate conversation
+        ('top_slack', 'DM alice · dev', 'dm', 'active', 'slack', now(), now()),
+        ('top_group', 'Release', 'group', 'archived', 'internal', now(), now());
+      insert into topic_participants (id, topic_id, participant_type, participant_id) values
+        ('p1', 'top_old', 'user', 'alice'), ('p2', 'top_old', 'role', 'dev'),
+        ('p3', 'top_new', 'user', 'alice'), ('p4', 'top_new', 'role', 'dev'),
+        ('p5', 'top_lone', 'user', 'bob'), ('p6', 'top_lone', 'role', 'dev'),
+        ('p7', 'top_slack', 'user', 'alice'), ('p8', 'top_slack', 'role', 'dev');
+    `);
+    await apply(db, "0010_dm_always_open");
+    const rows = (await db.query("select id, title, status from topics order by id")).rows as any[];
+    expect(rows.map((r) => [r.id, r.title, r.status])).toEqual([
+      ["top_group", "Release", "archived"],
+      ["top_lone", "bob · dev", "active"],
+      ["top_new", "alice · dev", "archived"],
+      ["top_old", "alice · dev", "active"],
+      ["top_slack", "alice · dev", "active"],
+    ]);
+    await db.close();
+  });
+});

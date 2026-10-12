@@ -71,6 +71,13 @@
       "when": 1791815253478,
       "tag": "0009_systemone_models",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791821176817,
+      "tag": "0010_dm_always_open",
+      "breakpoints": true
     }
   ]
 }

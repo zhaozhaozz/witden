@@ -5,6 +5,7 @@ import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../.
 import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
+import { useTopics } from "../../lib/topics";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
   Avatar,
@@ -14,6 +15,7 @@ import {
   FieldGroup,
   Guarded,
   Handle,
+  KV,
   Loaded,
   RoleBadge,
   Tabs,
@@ -47,6 +49,8 @@ export function TopicSidePanel({
   onToggleComputerMax?: () => void;
 }) {
   const manageOnly = topic.can_view === false;
+  // A DM is always you and one role: its tab shows the role instead of a participant list.
+  const dm = topic.kind === "dm";
   const [tab, setTab] = useState(manageOnly ? "people" : "tasks");
   const hasComputers = topicComputers(topic).length > 0;
   // Maximised, the panel shows only the computer (the tab row is hidden).
@@ -80,7 +84,8 @@ export function TopicSidePanel({
           { key: "tasks", label: "任务", badge: activeCount, hidden: manageOnly },
           { key: "approvals", label: "审批", badge: approvals.data?.length, hidden: manageOnly },
           { key: "computer", label: "虚拟电脑", hidden: manageOnly || !hasComputers },
-          { key: "people", label: "参与者" },
+          { key: "people", label: "参与者", hidden: dm },
+          { key: "role", label: "角色", hidden: !dm },
           { key: "sessions", label: "会话", hidden: manageOnly },
           { key: "files", label: "文件", hidden: manageOnly },
           { key: "notes", label: "记忆", hidden: manageOnly },
@@ -116,11 +121,16 @@ export function TopicSidePanel({
           <TopicComputer topic={topic} maximized={computerMax} onToggleMax={() => onToggleComputerMax?.()} />
         ) : null}
         {shown === "people" ? <PeopleTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} /> : null}
+        {shown === "role" ? <DmRoleTab topic={topic} /> : null}
         {shown === "sessions" ? <SessionsTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} canAdmin={canAdmin} /> : null}
         {shown === "notes" ? <NotesTab topic={topic} /> : null}
         {shown === "settings" ? (
-          <SettingsTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} onCleared={onCleared} />
+          dm ? (
+            <DmSettings topic={topic} onCleared={onCleared} />
+          ) : (
+            <SettingsTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} onCleared={onCleared} />
+          )
         ) : null}
       </div>
     </aside>
@@ -261,12 +271,61 @@ function PeopleTab({
   );
 }
 
+/** The other side of a DM: the role, what it does and where it works. */
+function DmRoleTab({ topic }: { topic: Topic }) {
+  const dir = useDirectory();
+  const { can } = useAuth();
+  const { newTopic } = useTopics();
+  const p = topic.participants?.find((x) => x.type === "role");
+  if (!p) return <Empty title="这段私信没有角色" />;
+  const role = dir.roleById.get(p.id);
+  return (
+    <div className="dm-role">
+      <div className="person">
+        <Avatar id={p.id} name={p.name} kind="role" size={40} src={p.avatar_url} color={p.color} />
+        <div className="person-main">
+          <div className="person-name">
+            <strong>{p.name}</strong>
+            {p.handle ? <Handle handle={p.handle} /> : null}
+            {p.status === "disabled" ? <Tag tone="off">已停用</Tag> : null}
+          </div>
+          {role?.description ? <div className="small">{role.description}</div> : null}
+        </div>
+      </div>
+      <KV
+        items={[
+          ["虚拟电脑", p.instance ? <ComputerBadge key="c" computer={p.instance} /> : "未分配"],
+          ["模型", role?.model?.label ?? "—"],
+        ]}
+      />
+      <p className="small muted side-note">
+        私信只在你和 {p.name} 之间：消息不需要
+        @，都会交给它；不能邀请其他成员或角色。需要多人或多个角色一起处理时，请新建话题。
+      </p>
+      <div className="btn-row">
+        {can("topic.create") ? (
+          <button type="button" className="btn btn-xs" onClick={newTopic}>
+            新建话题
+          </button>
+        ) : null}
+        {can("role.manage") ? (
+          <Link to={`/roles/${p.id}`} className="btn btn-xs">
+            编辑角色
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 function SessionsTab({ topic }: { topic: Topic }) {
   const res = useResource(() => api.get<AgentSession[]>(`/api/topics/${topic.id}/sessions`), [topic.id]);
   return (
     <>
       <p className="small muted side-note">
-        每个角色在这个话题里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。
+        {topic.kind === "dm"
+          ? "角色在这段私信里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。"
+          : "每个角色在这个话题里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。"}
       </p>
       <Loaded res={res}>{(rows) => <AgentSessionList sessions={rows} by="role" />}</Loaded>
     </>
@@ -328,7 +387,7 @@ function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
           </ul>
         ) : (
           <Empty
-            title="这个话题还没有文件"
+            title={topic.kind === "dm" ? "这段私信还没有文件" : "这个话题还没有文件"}
             hint="在输入框旁点击「附件」，从你自己的电脑上传；角色从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
           />
         )
@@ -343,7 +402,11 @@ function NotesTab({ topic }: { topic: Topic }) {
   const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "topic", topic_id: topic.id }), [topic.id]);
   return (
     <>
-      <p className="small muted side-note">话题记忆只在这个话题内使用，不会带入角色参与的其他话题。</p>
+      <p className="small muted side-note">
+        {topic.kind === "dm"
+          ? "这里的记忆只在这段私信中使用，不会带入其他话题；角色在私信里还会参考你的私密记忆（在个人页查看）。"
+          : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
+      </p>
       {topic.can_post ? (
         <form
           className="note-form"
@@ -362,7 +425,7 @@ function NotesTab({ topic }: { topic: Topic }) {
           <textarea
             rows={2}
             value={text}
-            placeholder="记下这个话题的要点或约定"
+            placeholder={topic.kind === "dm" ? "记下这段私信的要点或约定" : "记下这个话题的要点或约定"}
             onChange={(e) => setText(e.target.value)}
           />
           <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
@@ -396,7 +459,7 @@ function NotesTab({ topic }: { topic: Topic }) {
               ))}
             </ul>
           ) : (
-            <Empty title="暂无话题记忆" />
+            <Empty title={topic.kind === "dm" ? "暂无私信记忆" : "暂无话题记忆"} />
           )
         }
       </Loaded>
@@ -415,7 +478,6 @@ function SettingsTab({
   onTopicChange: (t: Topic) => void;
   onCleared: () => void;
 }) {
-  const { confirm, toast } = useFeedback();
   const { run, busy } = useAction();
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
@@ -423,7 +485,6 @@ function SettingsTab({
   const [responseMode, setResponseMode] = useState(topic.response_mode);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
   const [publishing, setPublishing] = useState(false);
-  const [clean, setClean] = useState({ messages: true, memories: true, files: true });
 
   useEffect(() => {
     setTitle(topic.title);
@@ -472,7 +533,7 @@ function SettingsTab({
           <Field label="标题">
             <input value={title} onChange={(e) => setTitle(e.target.value)} />
           </Field>
-          <Field label="目标">
+          <Field label="目标" hint="这个话题要完成什么；显示在标题下方，角色接到任务时也会读到。">
             <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
           </Field>
           {topic.kind === "group" ? (
@@ -491,7 +552,7 @@ function SettingsTab({
                     <input type="radio" checked={responseMode === m} onChange={() => setResponseMode(m)} />
                     <span>
                       <strong>{RESPONSE_MODE[m].label}</strong>
-                      <span className="small muted">{RESPONSE_MODE[m].hint.replace(/^[^：]*：/, "")}</span>
+                      <span className="small muted">{RESPONSE_MODE[m].short}</span>
                     </span>
                   </label>
                 ))}
@@ -556,64 +617,92 @@ function SettingsTab({
         </div>
       ) : null}
 
-      <div className="settings-block settings-danger">
-        <h4>清理数据</h4>
-        <p className="small muted">
-          永久清除所选内容。删除消息会一并删除由这些消息产生的记忆，任务执行记录也会被清空；审计只保留元数据。
-        </p>
-        <div className="check-col">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={clean.messages}
-              onChange={(e) => setClean({ ...clean, messages: e.target.checked })}
-            />
-            消息与任务记录
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={clean.memories}
-              onChange={(e) => setClean({ ...clean, memories: e.target.checked })}
-            />
-            话题记忆
-          </label>
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={clean.files}
-              onChange={(e) => setClean({ ...clean, files: e.target.checked })}
-            />
-            文件
-          </label>
-        </div>
-        <button
-          type="button"
-          className="btn btn-sm btn-danger"
-          disabled={busy || (!clean.messages && !clean.memories && !clean.files)}
-          onClick={async () => {
-            const ok = await confirm({
-              title: "永久清理话题数据",
-              body: <p>此操作不可撤销。确定清理「{topic.title}」中所选的数据？</p>,
-              confirmLabel: "永久清理",
-              danger: true,
-            });
-            if (!ok) return;
-            const out = await run(() =>
-              api.post<{ messages: number; memories: number; files: number }>(`/api/topics/${topic.id}/cleanup`, {
-                ...clean,
-                confirm: true,
-              }),
-            );
-            if (out) {
-              toast(`已清理 ${out.messages} 条消息、${out.memories} 条记忆、${out.files} 个文件`, "ok");
-              onCleared();
-            }
-          }}
-        >
-          清理所选数据
-        </button>
+      <CleanupBlock topic={topic} onCleared={onCleared} />
+    </div>
+  );
+}
+
+/** A DM has nothing to configure: it is always you and its role. Only its history can be cleared. */
+function DmSettings({ topic, onCleared }: { topic: Topic; onCleared: () => void }) {
+  const roleName = topic.participants?.find((p) => p.type === "role")?.name ?? "角色";
+  return (
+    <div className="settings">
+      <p className="small muted side-note">
+        私信是你和 {roleName}{" "}
+        之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。
+      </p>
+      {topic.is_owner && topic.status === "active" ? <CleanupBlock topic={topic} onCleared={onCleared} /> : null}
+    </div>
+  );
+}
+
+/** Permanently clear a topic's or DM's messages, memories and files. */
+function CleanupBlock({ topic, onCleared }: { topic: Topic; onCleared: () => void }) {
+  const { confirm, toast } = useFeedback();
+  const { run, busy } = useAction();
+  const [clean, setClean] = useState({ messages: true, memories: true, files: true });
+  const dm = topic.kind === "dm";
+  const name = dm
+    ? `与 ${topic.participants?.find((p) => p.type === "role")?.name ?? "角色"} 的私信`
+    : `「${topic.title}」`;
+  return (
+    <div className="settings-block settings-danger">
+      <h4>{dm ? "清空私信记录" : "清理数据"}</h4>
+      <p className="small muted">
+        永久清除所选内容。删除消息会一并删除由这些消息产生的记忆，任务执行记录也会被清空；审计只保留元数据。
+      </p>
+      <div className="check-col">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={clean.messages}
+            onChange={(e) => setClean({ ...clean, messages: e.target.checked })}
+          />
+          消息与任务记录
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={clean.memories}
+            onChange={(e) => setClean({ ...clean, memories: e.target.checked })}
+          />
+          {dm ? "私信记忆" : "话题记忆"}
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={clean.files}
+            onChange={(e) => setClean({ ...clean, files: e.target.checked })}
+          />
+          文件
+        </label>
       </div>
+      <button
+        type="button"
+        className="btn btn-sm btn-danger"
+        disabled={busy || (!clean.messages && !clean.memories && !clean.files)}
+        onClick={async () => {
+          const ok = await confirm({
+            title: dm ? "永久清空私信记录" : "永久清理话题数据",
+            body: <p>此操作不可撤销。确定清除{name}中所选的内容？</p>,
+            confirmLabel: dm ? "永久清空" : "永久清理",
+            danger: true,
+          });
+          if (!ok) return;
+          const out = await run(() =>
+            api.post<{ messages: number; memories: number; files: number }>(`/api/topics/${topic.id}/cleanup`, {
+              ...clean,
+              confirm: true,
+            }),
+          );
+          if (out) {
+            toast(`已清理 ${out.messages} 条消息、${out.memories} 条记忆、${out.files} 个文件`, "ok");
+            onCleared();
+          }
+        }}
+      >
+        {dm ? "清空所选内容" : "清理所选数据"}
+      </button>
     </div>
   );
 }

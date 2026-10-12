@@ -34,10 +34,12 @@ export function Composer({
   topicId,
   participants,
   onSent,
+  placeholder = "输入消息（支持 Markdown、```mermaid 流程图）。输入 @ 后从列表里点选角色或成员才算 @；Enter 发送，Shift+Enter 换行",
 }: {
   topicId: string;
   participants: Participant[];
   onSent: (msg: PostMessageResult) => void;
+  placeholder?: string;
 }) {
   const { me } = useAuth();
   const { toast } = useFeedback();
@@ -231,7 +233,7 @@ export function Composer({
           ref={area}
           rows={Math.min(8, Math.max(2, text.split("\n").length))}
           value={text}
-          placeholder="输入消息（支持 Markdown、```mermaid 流程图）。输入 @ 后从列表里点选角色或成员才算 @；Enter 发送，Shift+Enter 换行"
+          placeholder={placeholder}
           onChange={(e) => {
             setText(e.target.value);
             syncQuery(e.target.value, e.target.selectionStart);
