@@ -289,7 +289,9 @@ function TopicList() {
 function RoleList() {
   const dir = useDirectory();
   const t = useTopics();
+  const { can } = useAuth();
   const { run } = useAction();
+  const canEdit = can("role.manage");
   const dmOf = new Map(t.topics.filter((x) => x.kind === "dm" && x.dm_role_id).map((x) => [x.dm_role_id as string, x]));
   const roles = dir.roles.filter((r) => r.status === "active").sort((a, b) => a.name.localeCompare(b.name, "zh"));
   return (
@@ -299,25 +301,52 @@ function RoleList() {
         const on = !!dm && dm.id === t.activeId;
         const unread = !!dm && t.unread(dm);
         const online = r.instance?.status === "running";
+        // The edit shortcut sits next to the item (a link cannot live inside a button) and shows on hover.
         return (
-          <button
-            type="button"
-            key={r.id}
-            className={`nav-item side-item${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
-            title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
-            onClick={() => void run(() => t.openDm(r.id))}
-          >
-            <span className="side-avatar">
-              <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
-              <span className={`side-presence${online ? " side-online" : ""}`} aria-hidden />
-            </span>
-            <span className="side-label">{r.name}</span>
-            {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
-          </button>
+          <div key={r.id} className={`side-row${canEdit ? " side-row-edit" : ""}`}>
+            <button
+              type="button"
+              className={`nav-item side-item${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
+              title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
+              onClick={() => void run(() => t.openDm(r.id))}
+            >
+              <span className="side-avatar">
+                <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
+                <span className={`side-presence${online ? " side-online" : ""}`} aria-hidden />
+              </span>
+              <span className="side-label">{r.name}</span>
+              {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+            </button>
+            {canEdit ? (
+              <Link
+                to={`/roles/${r.id}`}
+                className="side-quick"
+                title={`编辑角色 ${r.name}`}
+                aria-label={`编辑角色 ${r.name}`}
+              >
+                <PencilIcon />
+              </Link>
+            ) : null}
+          </div>
         );
       })}
       {!roles.length ? <div className="side-empty">没有可用的角色</div> : null}
     </SideSection>
+  );
+}
+
+function PencilIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden>
+      <path
+        d="M11.2 2.3a1.5 1.5 0 0 1 2.1 0l.4.4a1.5 1.5 0 0 1 0 2.1L6 12.5l-3.2.9.9-3.2 7.5-7.9Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M9.8 3.8l2.4 2.4" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
   );
 }
 

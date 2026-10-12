@@ -709,6 +709,48 @@ textarea.prompt {
 .side-online {
   background: var(--ok);
 }
+/* Shortcut buttons on a sidebar item (e.g. edit a role): hidden until the row is hovered or focused. */
+.side-row {
+  position: relative;
+}
+.side-row-edit .side-item {
+  padding-right: 34px;
+}
+.side-quick {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--ink-3);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition: opacity 0.12s;
+}
+.side-row:hover .side-quick,
+.side-row:focus-within .side-quick {
+  opacity: 1;
+  pointer-events: auto;
+}
+.side-quick:hover {
+  background: rgba(23, 33, 43, 0.1);
+  color: var(--ink);
+  text-decoration: none;
+}
+.side-quick:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .side-quick {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
 .side-empty {
   padding: 2px 10px 6px 30px;
   color: var(--ink-3);
