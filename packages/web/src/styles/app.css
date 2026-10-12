@@ -2871,6 +2871,85 @@ textarea.prompt {
 
 /* --- responsive --------------------------------------------------------------------------------- */
 
+/* --- model providers (pages/ModelsPage.tsx) --------------------------------------------------------- */
+
+.provider-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.provider-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.provider-title h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.provider-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  margin: 8px 0 10px;
+  color: var(--ink-2);
+}
+.provider-card .table-wrap {
+  margin-top: 6px;
+}
+.provider-card .card-foot {
+  margin-top: 12px;
+}
+.model-table td {
+  vertical-align: top;
+}
+.model-table .caps {
+  margin: 0 0 2px;
+}
+.model-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-table tr.row-off td {
+  opacity: 0.6;
+}
+.model-table .row-actions .btn-row {
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.remote-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.remote-toolbar input[type="search"] {
+  flex: 1;
+}
+.remote-models {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.remote-models label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.remote-models label:hover {
+  background: var(--paper-2);
+}
+
 /* --- resizable sidebars (ui/resize.tsx) ----------------------------------------------------------- */
 
 .resize-handle {

@@ -9,7 +9,7 @@ import {
   externalConversations,
   externalIdentities,
   externalThreadLinks,
-  modelConfigs,
+  modelProviders,
   topicParticipants,
   topics,
 } from "../src/db/schema.js";
@@ -142,53 +142,149 @@ describe("with a database", () => {
     expect(bad.status).toBe(401);
   });
 
-  describe("model configs", () => {
-    const create = async () => {
-      const res = await h.api("POST", "/api/model-configs", {
-        token: h.adminToken,
-        json: { name: "local", base_url: "http://llm.local/v1", model: "qwen", api_key: "sk-secret-value-123456" },
+  describe("model providers", () => {
+    const admin = (method: string, url: string, json?: unknown) => h.api(method, url, { token: h.adminToken, json });
+    const create = async (extra: Record<string, unknown> = {}) => {
+      const res = await admin("POST", "/api/model-providers", {
+        name: "local",
+        base_url: "http://llm.local/v1",
+        api_key: "sk-secret-value-123456",
+        ...extra,
       });
       expect(res.status, res.raw).toBe(200);
       return res.body;
     };
+    afterEach(() => setFetch((...args) => fetch(...args)));
 
-    it("keys are encrypted at rest and never returned", async () => {
-      const cfg = await create();
-      expect(cfg.has_api_key).toBe(true);
-      expect(JSON.stringify(cfg)).not.toContain("sk-secret");
-      expect((await h.api("GET", "/api/model-configs", { token: h.adminToken })).raw).not.toContain("sk-secret");
-      const [stored] = await db().select().from(modelConfigs).where(eq(modelConfigs.id, cfg.id));
+    it("keys are encrypted at rest and never returned; revoking makes its models unusable", async () => {
+      const p = await create({ models: ["qwen"] });
+      expect(p.has_api_key).toBe(true);
+      expect(JSON.stringify(p)).not.toContain("sk-secret");
+      expect((await admin("GET", "/api/model-providers")).raw).not.toContain("sk-secret");
+      const [stored] = await db().select().from(modelProviders).where(eq(modelProviders.id, p.id));
       expect(stored.apiKeyEncrypted).not.toContain("sk-secret");
-      const revoked = (await h.api("POST", `/api/model-configs/${cfg.id}/revoke-key`, { token: h.adminToken })).body;
+      const revoked = (await admin("POST", `/api/model-providers/${p.id}/revoke-key`)).body;
       expect(revoked.status).toBe("revoked");
       expect(revoked.has_api_key).toBe(false);
-      expect((await h.api("GET", "/api/audit", { token: h.adminToken })).raw).not.toContain("sk-secret");
+      const [model] = (await admin("GET", "/api/models")).body;
+      expect(model.usable).toBe(false);
+      expect((await admin("GET", "/api/audit")).raw).not.toContain("sk-secret");
     });
 
-    it("capability check probes chat, tool calling and vision", async () => {
-      const cfg = await create();
+    it("lists an OpenAI-compatible provider's models; picked and hand-entered models are added once", async () => {
+      const p = await create();
+      let seen: { url: string; auth: string | null } | null = null;
+      setFetch(async (input, init) => {
+        seen = { url: String(input), auth: new Headers(init?.headers).get("authorization") };
+        return Response.json({ object: "list", data: [{ id: "qwen-max" }, { id: "qwen-plus" }, { id: "embed-1" }] });
+      });
+      const remote = (await admin("GET", `/api/model-providers/${p.id}/remote-models`)).body;
+      expect(seen).toEqual({ url: "http://llm.local/v1/models", auth: "Bearer sk-secret-value-123456" });
+      expect(remote.models.map((m: any) => m.id)).toEqual(["embed-1", "qwen-max", "qwen-plus"]);
+      const added = (
+        await admin("POST", `/api/model-providers/${p.id}/models`, {
+          models: [{ model: "qwen-max" }, { model: "qwen-plus", name: "Qwen Plus" }],
+          source: "api",
+        })
+      ).body;
+      expect(added.added.map((m: any) => [m.model, m.name, m.source])).toEqual([
+        ["qwen-max", "qwen-max", "api"],
+        ["qwen-plus", "Qwen Plus", "api"],
+      ]);
+      const again = (
+        await admin("POST", `/api/model-providers/${p.id}/models`, { models: ["qwen-max", "my-finetune"] })
+      ).body;
+      expect(again.added.map((m: any) => [m.model, m.source])).toEqual([["my-finetune", "manual"]]);
+      expect(again.skipped).toBe(1);
+      expect((await admin("POST", `/api/model-providers/${p.id}/models`, { models: ["has space"] })).status).toBe(400);
+      const listed = (await admin("GET", `/api/model-providers/${p.id}/remote-models`)).body.models;
+      expect(listed.filter((m: any) => m.added).map((m: any) => m.id)).toEqual(["qwen-max", "qwen-plus"]);
+      const provider = (await admin("GET", "/api/model-providers")).body.find((x: any) => x.id === p.id);
+      expect(provider.status).toBe("ok");
+      expect(provider.models.map((m: any) => m.label)).toEqual([
+        "local / my-finetune",
+        "local / qwen-max",
+        "local / Qwen Plus",
+      ]);
+    });
+
+    it("lists Anthropic models page by page; a failing list is visible on the provider", async () => {
+      const p = await create({ name: "claude", protocol: "anthropic", base_url: "https://api.anthropic.example" });
+      const urls: string[] = [];
+      setFetch(async (input, init) => {
+        const url = new URL(String(input));
+        urls.push(url.pathname + url.search);
+        expect(new Headers(init?.headers).get("x-api-key")).toBe("sk-secret-value-123456");
+        return url.searchParams.get("after_id")
+          ? Response.json({ data: [{ id: "model-b", display_name: "Model B" }], has_more: false })
+          : Response.json({ data: [{ id: "model-a", display_name: "Model A" }], has_more: true, last_id: "model-a" });
+      });
+      const remote = (await admin("GET", `/api/model-providers/${p.id}/remote-models`)).body;
+      expect(remote.models).toEqual([
+        { id: "model-a", name: "Model A", added: false },
+        { id: "model-b", name: "Model B", added: false },
+      ]);
+      expect(urls).toEqual(["/v1/models?limit=1000", "/v1/models?limit=1000&after_id=model-a"]);
+      setFetch(async () => new Response("invalid x-api-key", { status: 401 }));
+      const failed = await admin("GET", `/api/model-providers/${p.id}/remote-models`);
+      expect(failed.status).toBe(503);
+      const after = (await admin("GET", "/api/model-providers")).body.find((x: any) => x.id === p.id);
+      expect(after.status).toBe("error");
+      expect(after.status_detail).toContain("HTTP 401");
+    });
+
+    it("capability check runs per model; a new key or address puts its models back to unchecked", async () => {
+      const p = await create({ models: ["qwen"] });
+      const id = p.models[0].id;
       setModelFactory(() => ({
         async complete(messages, tools) {
           if (tools?.length) return reply("", [{ id: "c1", name: tools[0].name, arguments: {} }]);
           return reply(Array.isArray(messages[0].content) ? "Red" : "OK");
         },
       }));
-      const ok = (await h.api("POST", `/api/model-configs/${cfg.id}/check`, { token: h.adminToken })).body;
+      const ok = (await admin("POST", `/api/models/${id}/check`)).body;
       expect(ok.status).toBe("ok");
       expect(ok.capabilities).toMatchObject({ chat: true, tools: true, vision: true });
       setModelFactory(() => ({ complete: async () => reply("I cannot see images") }));
-      const weak = (await h.api("POST", `/api/model-configs/${cfg.id}/check`, { token: h.adminToken })).body;
+      const weak = (await admin("POST", `/api/models/${id}/check`)).body;
       expect(weak.capabilities.tools).toBe(false);
       expect(weak.capabilities.errors.tools).toContain("without calling the tool");
-      expect(weak.capabilities.vision).toBe(false);
+      await admin("PATCH", `/api/model-providers/${p.id}`, { api_key: "sk-another-key-7654321" });
+      const [model] = (await admin("GET", "/api/models")).body;
+      expect([model.status, model.capabilities]).toEqual(["unchecked", {}]);
     });
 
-    it("rejects invalid endpoints", async () => {
-      const res = await h.api("POST", "/api/model-configs", {
-        token: h.adminToken,
-        json: { name: "x", base_url: "ftp://bad", model: "m" },
-      });
-      expect(res.status).toBe(400);
+    it("models in use cannot be deleted; members only see models they may use", async () => {
+      const p = await create({ models: ["a", "b"] });
+      const [a, b] = p.models;
+      await admin("POST", "/api/roles", { name: "R", handle: "r", model_config_id: a.id });
+      expect((await admin("DELETE", `/api/models/${a.id}`)).status).toBe(409);
+      expect((await admin("DELETE", `/api/model-providers/${p.id}`)).status).toBe(409);
+      expect(
+        (await admin("PATCH", `/api/models/${b.id}`, { enabled: false, daily_token_limit: 1000 })).body,
+      ).toMatchObject({ enabled: false, daily_token_limit: 1000, usable: false });
+      const bob = await createUser(db(), { name: "bob", email: "bob@x.io", password: "bob-pass-123" });
+      await grant(db(), Perm.MODEL_USE, { userId: bob.id, resourceId: a.id });
+      const token = await h.login("bob@x.io", "bob-pass-123");
+      const seen = (await h.api("GET", "/api/model-providers", { token })).body;
+      expect(seen).toEqual([
+        {
+          id: p.id,
+          name: "local",
+          protocol: "openai",
+          status: "unchecked",
+          models: [expect.objectContaining({ id: a.id })],
+        },
+      ]);
+      expect((await h.api("GET", `/api/model-providers/${p.id}/remote-models`, { token })).status).toBe(403);
+      expect((await admin("DELETE", `/api/models/${b.id}`)).status).toBe(200);
+    });
+
+    it("rejects invalid endpoints and protocols", async () => {
+      expect((await admin("POST", "/api/model-providers", { name: "x", base_url: "ftp://bad" })).status).toBe(400);
+      expect(
+        (await admin("POST", "/api/model-providers", { name: "x", base_url: "http://a", protocol: "x" })).status,
+      ).toBe(400);
     });
   });
 });

@@ -477,7 +477,15 @@ export interface Role {
   created_at: string;
   updated_at: string;
   instance: { id: string; name: string; status: string; kind?: string } | null;
-  model: { id: string; name: string; capabilities: Capabilities; status: string } | null;
+  model: {
+    id: string;
+    name: string;
+    /** "provider / model" */
+    label?: string;
+    provider?: { id: string; name: string };
+    capabilities: Capabilities;
+    status: string;
+  } | null;
   tokens_today?: number;
   /** Configuration problems that will make work fail (no model, computer stopped, ...). */
   warnings?: string[];
@@ -501,23 +509,57 @@ export interface Capabilities {
   error?: string | null;
 }
 
+/** One model offered by a provider (roles, grants and usage refer to these). */
 export interface ModelConfig {
   id: string;
-  name: string;
-  provider: string;
-  base_url: string;
+  provider_id: string;
+  /** The id the provider knows it by. */
   model: string;
-  key_updated_at: string | null;
+  /** Display name; defaults to the model id. */
+  name: string;
+  /** "provider / name" */
+  label: string;
+  source: "api" | "manual";
+  enabled: boolean;
+  /** False when the model is disabled or its provider's key was revoked. */
+  usable: boolean;
   params: Dict;
   capabilities: Capabilities;
-  status: "unchecked" | "ok" | "error" | "revoked";
+  status: "unchecked" | "ok" | "error";
   daily_token_limit: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  has_api_key: boolean;
   used_by_roles?: string[];
   tokens_today?: number;
+  /** Present in the flat /api/models list. */
+  provider?: { id: string; name: string; protocol: ModelProtocol; status: ModelProvider["status"] };
+}
+
+export type ModelProtocol = "openai" | "anthropic";
+
+/** A model service: one endpoint, protocol and key, offering any number of models. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  protocol: ModelProtocol;
+  /** unchecked | ok (model list fetched) | error (listing failed) | revoked (key revoked) */
+  status: "unchecked" | "ok" | "error" | "revoked";
+  models: ModelConfig[];
+  // the fields below are only returned to people who manage model services
+  base_url?: string;
+  status_detail?: string | null;
+  models_fetched_at?: string | null;
+  key_updated_at?: string | null;
+  has_api_key?: boolean;
+  created_at?: string;
+}
+
+/** A model listed by the provider's own API. */
+export interface RemoteModel {
+  id: string;
+  name: string | null;
+  added: boolean;
 }
 
 export type MatchKey = "connection_id" | "conversation_id" | "conversation_kind" | "topic_id" | "user_id";

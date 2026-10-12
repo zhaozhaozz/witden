@@ -203,14 +203,14 @@ function useResourceNames() {
     () => api.get<KnowledgeSpace[]>("/api/knowledge-spaces").catch(() => [] as KnowledgeSpace[]),
     [],
   );
-  const models = useResource(() => api.get<ModelConfig[]>("/api/model-configs").catch(() => [] as ModelConfig[]), []);
+  const models = useResource(() => api.get<ModelConfig[]>("/api/models").catch(() => [] as ModelConfig[]), []);
   return useMemo(() => {
     const options: Record<string, { value: string; label: string }[]> = {
       role: dir.roles.map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` })),
       instance: (instances.data ?? []).map((i) => ({ value: i.id, label: i.name })),
       topic: (topics.data ?? []).filter((t) => t.kind === "group").map((t) => ({ value: t.id, label: t.title })),
       space: (spaces.data ?? []).map((s) => ({ value: s.id, label: s.name })),
-      model: (models.data ?? []).map((m) => ({ value: m.id, label: m.name })),
+      model: (models.data ?? []).map((m) => ({ value: m.id, label: m.label })),
       connection: (connections.data ?? []).map((c) => ({ value: c.id, label: c.name })),
     };
     const name = (type: string, id: string) =>

@@ -7,27 +7,33 @@ import {
   type ComputerInstance,
   computerInstances,
   type ModelConfig,
-  modelConfigs,
+  type ModelProvider,
   type Role,
   roles,
   topics,
 } from "../db/schema.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
-import { tokensToday } from "../services/model-configs.js";
+import { modelLabel, modelWithProvider, tokensToday, unusableReason } from "../services/model-configs.js";
 import * as svc from "../services/roles.js";
 import { canView } from "../services/topics.js";
 import { authed, body, params, row } from "./http.js";
 
 /** Configuration problems that would make work fail later, shown up front. */
-export function roleWarnings(role: Role, inst: ComputerInstance | undefined, cfg: ModelConfig | undefined): string[] {
+export function roleWarnings(
+  role: Role,
+  inst: ComputerInstance | undefined,
+  cfg: ModelConfig | undefined,
+  provider?: ModelProvider,
+): string[] {
   const out: string[] = [];
   const caps = cfg?.capabilities ?? {};
+  const unusable = cfg ? unusableReason(cfg, provider) : null;
   if (role.runtime === "external") {
     if (!role.runtimeConfig?.command) out.push("external runtime without a command: tasks will fail");
   } else if (!cfg) out.push("no model configured: the role cannot work");
-  else if (cfg.status === "revoked") out.push(`model ${cfg.name} has been revoked`);
-  else if (cfg.status === "unchecked") out.push(`model ${cfg.name} has not been checked yet`);
+  else if (unusable) out.push(`${unusable}: the role cannot work`);
+  else if (cfg.status === "unchecked") out.push(`model ${modelLabel(cfg, provider)} has not been checked yet`);
   if (role.runtime !== "external" && role.allowedTools.length && caps.tools === false)
     out.push("the model cannot call tools: the role can only chat");
   if ((role.allowedTools.includes("desktop") || role.allowedTools.includes("browser")) && caps.vision === false) {
@@ -45,12 +51,20 @@ async function roleOut(db: Db, role: Role, full: boolean) {
   const [inst] = role.instanceId
     ? await db.select().from(computerInstances).where(eq(computerInstances.id, role.instanceId)).limit(1)
     : [];
-  const [cfg] = role.modelConfigId
-    ? await db.select().from(modelConfigs).where(eq(modelConfigs.id, role.modelConfigId)).limit(1)
-    : [];
+  const found = await modelWithProvider(db, role.modelConfigId);
+  const cfg = found?.model;
   data.instance = inst ? { id: inst.id, name: inst.name, status: inst.status, kind: inst.spec.kind } : null;
-  data.model = cfg ? { id: cfg.id, name: cfg.name, capabilities: cfg.capabilities, status: cfg.status } : null;
-  data.warnings = roleWarnings(role, inst, cfg);
+  data.model = found
+    ? {
+        id: found.model.id,
+        name: found.model.name,
+        label: modelLabel(found.model, found.provider),
+        provider: { id: found.provider.id, name: found.provider.name },
+        capabilities: found.model.capabilities,
+        status: found.model.status,
+      }
+    : null;
+  data.warnings = roleWarnings(role, inst, cfg, found?.provider);
   if (!full) {
     // Members who can merely use a role see its public identity, not its prompt or wiring.
     for (const k of [

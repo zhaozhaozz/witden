@@ -11,7 +11,7 @@ import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { approvals, modelConfigs, roles, type Task, tasks, topics, usageRecords } from "../db/schema.js";
+import { approvals, roles, type Task, tasks, topics, usageRecords } from "../db/schema.js";
 import { InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
 import { redact } from "../security/crypto.js";
 import { Perm, usersWithPermission } from "../security/permissions.js";
@@ -181,21 +181,22 @@ export class TaskRunner {
         return this.failIn(tx, task, "step budget exhausted before the work was finished");
       if (budget.max_tokens && (usage.tokens ?? 0) >= budget.max_tokens)
         return this.failIn(tx, task, "token budget exhausted before the work was finished");
-      const cfgId = task.roleSnapshot.model_config_id ?? role.modelConfigId;
-      const [cfg] = cfgId ? await tx.select().from(modelConfigs).where(eq(modelConfigs.id, cfgId)).limit(1) : [];
-      if (!cfg) return this.failIn(tx, task, "no model configured for this role");
+      const found = await models.modelWithProvider(tx, task.roleSnapshot.model_config_id ?? role.modelConfigId);
+      if (!found) return this.failIn(tx, task, "no model configured for this role");
+      const cfg = found.model;
+      const label = models.modelLabel(cfg, found.provider);
       if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(cfg.id)) {
-        return this.failIn(tx, task, `model ${cfg.name} is not allowed in this topic`);
+        return this.failIn(tx, task, `model ${label} is not allowed in this topic`);
       }
       if (role.dailyTokenLimit && (await models.tokensToday(tx, { roleId: role.id })) >= role.dailyTokenLimit) {
         return this.failIn(tx, task, `@${role.handle} reached its daily token limit`);
       }
       if (cfg.dailyTokenLimit && (await models.tokensToday(tx, { modelConfigId: cfg.id })) >= cfg.dailyTokenLimit) {
-        return this.failIn(tx, task, `model ${cfg.name} reached its daily token limit`);
+        return this.failIn(tx, task, `model ${label} reached its daily token limit`);
       }
       let model: ChatModel;
       try {
-        model = models.chatModelFor(cfg);
+        model = await models.chatModelFor(tx, cfg);
       } catch (err) {
         return this.failIn(tx, task, (err as Error).message);
       }

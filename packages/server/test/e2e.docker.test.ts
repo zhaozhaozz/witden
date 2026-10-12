@@ -137,11 +137,12 @@ describe.skipIf(!enabled)("end to end with Docker", () => {
   }, 120_000);
 
   it("a role runs a command on its computer and answers in the topic", async () => {
-    const cfg = await api("POST", "/api/model-configs", {
+    const provider = await api("POST", "/api/model-providers", {
       name: `e2e-${suffix}`,
       base_url: model.url,
-      model: "scripted",
+      models: ["scripted"],
     });
+    const cfg = provider.models[0];
     const role = await api("POST", "/api/roles", {
       name: "Dev",
       handle: `dev${suffix}`,

@@ -79,7 +79,7 @@ export default function RolesPage() {
                           </Tag>
                         ) : r.model ? (
                           <>
-                            {r.model.name}
+                            {r.model.label ?? r.model.name}
                             <div>
                               <StatusChip meta={genericStatus(r.model.status)} compact />
                             </div>

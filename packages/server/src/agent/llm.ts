@@ -57,14 +57,13 @@ function parseArgs(raw: unknown): Record<string, any> {
 }
 
 async function post(url: string, headers: Record<string, string>, body: unknown, timeoutMs: number): Promise<any> {
+  return request(url, { method: "POST", headers, body: JSON.stringify(body) }, timeoutMs);
+}
+
+async function request(url: string, init: RequestInit, timeoutMs: number): Promise<any> {
   let res: Response;
   try {
-    res = await fetchImpl(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
   } catch (err) {
     throw new ModelError(`model endpoint unreachable: ${(err as Error).message}`);
   }
@@ -216,6 +215,47 @@ export function buildModel(
   return provider === "anthropic"
     ? new AnthropicModel(baseUrl, model, apiKey, params)
     : new OpenAICompatibleModel(baseUrl, model, apiKey, params);
+}
+
+// --- model lists ------------------------------------------------------------------------------------------
+
+export interface RemoteModel {
+  id: string;
+  /** Display name when the provider gives one. */
+  name: string | null;
+}
+
+/**
+ * The models a provider offers, from its own API: OpenAI-compatible `GET {base}/models` (OpenAI, vLLM,
+ * Ollama, DeepSeek, ...) or Anthropic `GET {base}/v1/models` (paged).
+ */
+export async function listModels(protocol: string, baseUrl: string, apiKey: string | null): Promise<RemoteModel[]> {
+  const base = baseUrl.replace(/\/+$/, "");
+  const found = new Map<string, RemoteModel>();
+  if (protocol === "anthropic") {
+    const headers = { "anthropic-version": "2023-06-01", ...(apiKey ? { "x-api-key": apiKey } : {}) };
+    let after: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const q = new URLSearchParams({ limit: "1000", ...(after ? { after_id: after } : {}) });
+      const data = await request(`${base}/v1/models?${q}`, { headers }, 30_000);
+      for (const m of data?.data ?? []) {
+        if (m?.id) found.set(String(m.id), { id: String(m.id), name: m.display_name ? String(m.display_name) : null });
+      }
+      if (!data?.has_more || !data.last_id) break;
+      after = String(data.last_id);
+    }
+  } else {
+    const headers: Record<string, string> = apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+    const data = await request(`${base}/models`, { headers }, 30_000);
+    // {data: [{id}]} is the norm; a bare array or {models: [...]} also occurs.
+    const list: unknown[] = Array.isArray(data) ? data : (data?.data ?? data?.models ?? []);
+    for (const m of list) {
+      const item = m as Record<string, unknown> | string;
+      const id = typeof item === "string" ? item : String(item?.id ?? item?.model ?? item?.name ?? "");
+      if (id) found.set(id, { id, name: null });
+    }
+  }
+  return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
 // --- capability probe --------------------------------------------------------------------------------------

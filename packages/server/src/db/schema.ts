@@ -90,22 +90,45 @@ export const externalIdentities = pgTable(
 
 // --- models & computers ---------------------------------------------------------------------------------
 
-export const modelConfigs = pgTable("model_configs", {
+/** A model service: one endpoint and key, offering any number of models. */
+export const modelProviders = pgTable("model_providers", {
   id: id(),
   name: text("name").notNull().unique(),
-  provider: text("provider").notNull().default("openai"), // openai | anthropic
+  protocol: text("protocol").notNull().default("openai"), // openai (OpenAI-compatible) | anthropic
   baseUrl: text("base_url").notNull(),
-  model: text("model").notNull(),
   apiKeyEncrypted: text("api_key_encrypted"),
   keyUpdatedAt: ts("key_updated_at"),
-  params: json<Json>("params").notNull().default({}),
-  capabilities: json<Json>("capabilities").notNull().default({}),
-  status: text("status").notNull().default("unchecked"), // unchecked | ok | error | revoked
-  dailyTokenLimit: integer("daily_token_limit"),
+  // unchecked | ok (model list fetched) | error (listing failed: statusDetail) | revoked (key revoked)
+  status: text("status").notNull().default("unchecked"),
+  statusDetail: text("status_detail"),
+  modelsFetchedAt: ts("models_fetched_at"),
   createdBy: text("created_by"),
   createdAt: created(),
   updatedAt: updated(),
 });
+
+/** One model offered by a provider (roles, grants, usage and topic restrictions refer to these rows). */
+export const modelConfigs = pgTable(
+  "model_configs",
+  {
+    id: id(),
+    providerId: text("provider_id")
+      .notNull()
+      .references(() => modelProviders.id, { onDelete: "cascade" }),
+    model: text("model").notNull(), // the id the provider knows it by
+    name: text("name").notNull(), // display name; defaults to the model id
+    source: text("source").notNull().default("manual"), // api (picked from the provider's list) | manual
+    enabled: boolean("enabled").notNull().default(true),
+    params: json<Json>("params").notNull().default({}),
+    capabilities: json<Json>("capabilities").notNull().default({}),
+    status: text("status").notNull().default("unchecked"), // unchecked | ok | error (capability check)
+    dailyTokenLimit: integer("daily_token_limit"),
+    createdBy: text("created_by"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("ux_model_per_provider").on(t.providerId, t.model)],
+);
 
 export const computerTemplates = pgTable("computer_templates", {
   id: id(),
@@ -648,6 +671,7 @@ export const killSwitches = pgTable("kill_switches", {
 export type User = typeof users.$inferSelect;
 export type Grant = typeof grants.$inferSelect;
 export type ModelConfig = typeof modelConfigs.$inferSelect;
+export type ModelProvider = typeof modelProviders.$inferSelect;
 export type ComputerTemplate = typeof computerTemplates.$inferSelect;
 export type ComputerInstance = typeof computerInstances.$inferSelect;
 export type Role = typeof roles.$inferSelect;

@@ -21,6 +21,7 @@ witden 的原则是**外部编排、内部执行**：平台进程负责身份、
 |---|---|
 | 电脑模板 `computer_templates` | 镜像、运行用户（禁止 root）、工作目录、持久化路径、凭据路径、默认资源；每次修改 `version + 1`。 |
 | 电脑实例 `computer_instances` | 一个容器 + 若干命名卷；保存模板快照（`spec`）；记录 Runner 令牌哈希（每次重建容器重新签发）和 Runner 连接状态。 |
+| 模型服务商 `model_providers` / 模型 `model_configs` | 服务商 = 地址、协议（OpenAI 兼容或 Anthropic）、加密密钥；一个服务商下有多个模型（从服务商的模型列表接口获取或手动填写），每个模型有自己的参数、能力检测结果和每日额度。角色、授权、用量和话题限制都指向模型。 |
 | AI 角色 `roles` | `@handle`、提示词、模型、**唯一的电脑实例**、工具组、可联系角色、需审批工具；`runtime` 为 `witden`（平台 Agent 循环）或 `external`（电脑里的第三方 Agent，`runtime_config.command`）。 |
 | 话题 `topics` | 协作空间；`kind=dm` 为一人一角色私信。 |
 | Agent 会话 `agent_sessions` | 每个“角色 × 话题”一个，保存该话题里已交付结论的摘要（`notes`）。角色在不同话题互不串上下文。 |

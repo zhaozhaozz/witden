@@ -37,9 +37,13 @@ export async function buildWorld(): Promise<World> {
     }),
   );
   const ids: Record<string, string> = { alice: alice.id, bob: bob.id };
-  const cfg = await must(
-    h.api("POST", "/api/model-configs", { token: admin, json: { name: "m", base_url: "http://llm/v1", model: "x" } }),
+  const provider = await must(
+    h.api("POST", "/api/model-providers", {
+      token: admin,
+      json: { name: "m", base_url: "http://llm/v1", models: ["x"] },
+    }),
   );
+  const cfg = provider.models[0];
   const tpl = await must(
     h.api("POST", "/api/templates", {
       token: admin,

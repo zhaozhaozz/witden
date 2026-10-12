@@ -183,7 +183,16 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const [draft, setDraft] = useState<Draft>(() => toDraft(role));
   const [dialog, setDialog] = useState<null | "copy" | "disable">(null);
   const toolGroups = useResource(() => api.get<ToolGroup[]>("/api/roles/tool-groups"), []);
-  const models = useResource(() => api.get<ModelConfig[]>("/api/model-configs"), []);
+  const models = useResource(() => api.get<ModelConfig[]>("/api/models"), []);
+  // Models grouped under their providers for the picker.
+  const modelGroups = useMemo(() => {
+    const groups = new Map<string, ModelConfig[]>();
+    for (const m of models.data ?? []) {
+      const key = m.provider?.name ?? "";
+      groups.set(key, [...(groups.get(key) ?? []), m]);
+    }
+    return [...groups.entries()];
+  }, [models.data]);
   const instances = useResource(() => api.get<Instance[]>("/api/instances"), []);
   const spaces = useResource(() => api.get<KnowledgeSpace[]>("/api/knowledge-spaces"), []);
 
@@ -500,18 +509,30 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           <Section title="模型与电脑">
             <div className="form-row">
               <Field
-                label="模型配置"
-                hint={external ? "外部智能体不使用这里的模型；切回平台智能体时才会用到。" : undefined}
+                label="模型"
+                hint={
+                  external
+                    ? "外部智能体不使用这里的模型；切回平台智能体时才会用到。"
+                    : selectedModel && "usable" in selectedModel && !selectedModel.usable
+                      ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
+                      : "按服务商分组；在「模型」页添加服务商和模型。"
+                }
               >
                 <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
                   <option value="">未配置</option>
-                  {(models.data ?? []).map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}（{m.model}）
-                    </option>
+                  {modelGroups.map(([provider, list]) => (
+                    <optgroup key={provider} label={provider || "其他"}>
+                      {list.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                          {m.name !== m.model ? `（${m.model}）` : ""}
+                          {m.usable ? "" : " · 不可用"}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                   {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
-                    <option value={role.model.id}>{role.model.name}</option>
+                    <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
                   ) : null}
                 </select>
               </Field>

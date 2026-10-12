@@ -153,14 +153,14 @@ export function UsageTab() {
   const [groupBy, setGroupBy] = useState("role");
   const res = useResource(() => api.get<UsageRow[]>("/api/usage", { days, group_by: groupBy }), [days, groupBy]);
   const instances = useResource(() => api.get<Instance[]>("/api/instances").catch(() => [] as Instance[]), []);
-  const models = useResource(() => api.get<ModelConfig[]>("/api/model-configs").catch(() => [] as ModelConfig[]), []);
+  const models = useResource(() => api.get<ModelConfig[]>("/api/models").catch(() => [] as ModelConfig[]), []);
 
   const label = useMemo(
     () => (key: string | null) => {
       if (!key) return <span className="muted">（未关联）</span>;
       if (groupBy === "role") return dir.roleLabel(key);
       if (groupBy === "instance") return instances.data?.find((i) => i.id === key)?.name ?? key;
-      if (groupBy === "model") return models.data?.find((m) => m.id === key)?.name ?? key;
+      if (groupBy === "model") return models.data?.find((m) => m.id === key)?.label ?? key;
       return <Link to={`/tasks/${key}`}>{key}</Link>;
     },
     [groupBy, dir, instances.data, models.data],

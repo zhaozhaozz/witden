@@ -223,25 +223,20 @@ describe("accounts and topics", () => {
     expect((await w.api("POST", `/api/instances/${w.ids.instance}/handback`, { token: w.alice })).status).toBe(200);
   });
 
-  it("changing a model endpoint drops the stored key", async () => {
-    const cfg = (
-      await w.api("POST", "/api/model-configs", {
+  it("changing a provider's endpoint drops the stored key", async () => {
+    const p = (
+      await w.api("POST", "/api/model-providers", {
         token: w.adminToken,
-        json: { name: "k", base_url: "http://a/v1", model: "m", api_key: "sk-keep-me-secret-123456" },
+        json: { name: "k", base_url: "http://a/v1", api_key: "sk-keep-me-secret-123456", models: ["m"] },
       })
     ).body;
-    expect(
-      (await w.api("PATCH", `/api/model-configs/${cfg.id}`, { token: w.adminToken, json: { model: "m2" } })).body
-        .has_api_key,
-    ).toBe(true);
-    expect(
-      (
-        await w.api("PATCH", `/api/model-configs/${cfg.id}`, {
-          token: w.adminToken,
-          json: { base_url: "http://evil/v1" },
-        })
-      ).body.has_api_key,
-    ).toBe(false);
+    const rename = await w.api("PATCH", `/api/model-providers/${p.id}`, { token: w.adminToken, json: { name: "k2" } });
+    expect(rename.body.has_api_key).toBe(true);
+    const moved = await w.api("PATCH", `/api/model-providers/${p.id}`, {
+      token: w.adminToken,
+      json: { base_url: "http://evil/v1" },
+    });
+    expect(moved.body.has_api_key).toBe(false);
   });
 });
 

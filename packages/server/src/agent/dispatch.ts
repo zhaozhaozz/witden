@@ -9,7 +9,6 @@ import {
   type Mention,
   type Message,
   messages,
-  modelConfigs,
   type Role,
   roles,
   type Task,
@@ -26,6 +25,7 @@ import { topicLabel } from "../security/labels.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
 import { publish, wake } from "../services/events.js";
+import * as models from "../services/model-configs.js";
 import * as topicSvc from "../services/topics.js";
 import { setStatus, textRestricted } from "./control.js";
 import { appendStep } from "./transcript.js";
@@ -157,12 +157,14 @@ export async function preflight(db: Db, topic: Topic, role: Role): Promise<strin
   if (role.runtime === "external") return reasons; // external agents bring their own model inside the computer
   if (!role.modelConfigId) reasons.push(`@${role.handle} has no model configured`);
   else {
-    const [cfg] = await db.select().from(modelConfigs).where(eq(modelConfigs.id, role.modelConfigId)).limit(1);
-    if (!cfg || cfg.status === "revoked")
-      reasons.push(`@${role.handle}'s model configuration is unavailable or revoked`);
-    else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(cfg.id)) {
+    const found = await models.modelWithProvider(db, role.modelConfigId);
+    const unusable = found ? models.unusableReason(found.model, found.provider) : "it no longer exists";
+    if (!found || unusable) reasons.push(`@${role.handle}'s model is unavailable: ${unusable}`);
+    else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(found.model.id)) {
       // No silent switch to another model: the role simply cannot act here.
-      reasons.push(`this topic only allows specific model services; @${role.handle} uses ${cfg.name}`);
+      reasons.push(
+        `this topic only allows specific models; @${role.handle} uses ${models.modelLabel(found.model, found.provider)}`,
+      );
     }
   }
   return reasons;
@@ -249,9 +251,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
     if (existing) return existing;
   }
   const { role, topic, parent = null } = o;
-  const [cfg] = role.modelConfigId
-    ? await db.select().from(modelConfigs).where(eq(modelConfigs.id, role.modelConfigId)).limit(1)
-    : [];
+  const found = await models.modelWithProvider(db, role.modelConfigId);
   let labels = [topicLabel(topic.id)];
   if (parent) labels = [...new Set([...parent.labels, ...labels])];
   const budget: Record<string, any> = {
@@ -288,7 +288,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       roleSnapshot: {
         config_version: role.configVersion,
         model_config_id: role.modelConfigId,
-        model_name: cfg?.name ?? null,
+        model_name: found ? models.modelLabel(found.model, found.provider) : null,
         system_prompt: role.systemPrompt,
         model_params: role.modelParams,
         instance_id: role.instanceId,
