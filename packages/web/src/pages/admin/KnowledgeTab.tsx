@@ -6,6 +6,7 @@ import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, Field, FormModal, Loaded, Section } from "../../ui/kit";
+import { ResizeHandle } from "../../ui/resize";
 
 export function KnowledgeTab() {
   const { run, busy } = useAction();
@@ -35,6 +36,7 @@ export function KnowledgeTab() {
         {(rows) =>
           rows.length ? (
             <div className="split">
+              <ResizeHandle name="knowledge" side="start" min={180} max={480} />
               <ul className="conn-list">
                 {rows.map((s) => (
                   <li key={s.id}>

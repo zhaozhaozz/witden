@@ -6,6 +6,7 @@ import { useInterval } from "./lib/hooks";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { useAuth, useDirectory } from "./lib/session";
 import { Avatar } from "./ui/kit";
+import { ResizeHandle } from "./ui/resize";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
 export const KILL_SWITCH_EVENT = "witden:kill-switch-changed";
@@ -110,6 +111,7 @@ export default function Layout() {
 
   return (
     <div className="app">
+      <ResizeHandle name="nav" side="start" min={150} max={360} />
       <aside className="sidebar">
         <Link to="/topics" className="brand">
           <img src="/favicon.svg" alt="" width={22} height={22} />

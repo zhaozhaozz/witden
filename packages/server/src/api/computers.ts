@@ -19,7 +19,7 @@ import {
 import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
 import { userCanRead } from "../security/labels.js";
-import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { Perm, requirePerm } from "../security/permissions.js";
 import * as svc from "../services/instances.js";
 import { currentLease, handBack, takeOver } from "../services/leases.js";
 import * as tpl from "../services/templates.js";

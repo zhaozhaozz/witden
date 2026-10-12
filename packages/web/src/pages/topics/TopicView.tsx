@@ -7,6 +7,7 @@ import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, ErrorNote, Loading, Tag } from "../../ui/kit";
+import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
 import { type Author, MessageItem } from "./MessageItem";
 import { TopicSidePanel } from "./TopicSidePanel";
@@ -177,6 +178,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
 
   return (
     <div className={`topic-view${panel ? " with-panel" : ""}`}>
+      {panel ? <ResizeHandle name="topic-panel" side="end" min={260} max={720} /> : null}
       <div className="conversation">
         <header className="topic-head">
           <div className="topic-head-main">

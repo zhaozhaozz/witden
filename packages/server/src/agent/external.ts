@@ -73,7 +73,10 @@ export async function runExternal(gateway: GatewayClient, taskId: string): Promi
       if (current?.status !== "running" || (await activeKillSwitch(getDb(), current))) {
         const stopped = await call("agent.stop", { sessionId }).then(
           () => true,
-          (err) => (console.warn(`[witden] could not stop external agent ${sessionId}`, err.message), false),
+          (err) => {
+            console.warn(`[witden] could not stop external agent ${sessionId}`, err.message);
+            return false;
+          },
         );
         await transaction(async (tx) => {
           const t = await getTask(tx, taskId);

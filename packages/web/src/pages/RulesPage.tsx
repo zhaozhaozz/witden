@@ -6,6 +6,7 @@ import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
 import { Empty, Field, FieldGroup, FormModal, Loaded, MultiPick, PageHeader, Section, Tag, Toggle } from "../ui/kit";
+import { ResizeHandle } from "../ui/resize";
 import { AssignmentTrace, type NameLookups, zh } from "../ui/trace";
 
 const MATCH_LABEL: Record<MatchKey, string> = {
@@ -96,6 +97,7 @@ export default function RulesPage() {
         }
       />
       <div className="rules-layout">
+        <ResizeHandle name="rules-explain" side="end" min={280} max={720} />
         <Section title="规则" className="rules-list">
           <Loaded res={res}>
             {(rows) =>

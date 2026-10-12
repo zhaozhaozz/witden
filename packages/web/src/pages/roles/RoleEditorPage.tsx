@@ -43,6 +43,7 @@ import {
   Tag,
   Toggle,
 } from "../../ui/kit";
+import { ResizeHandle } from "../../ui/resize";
 import { AgentSessionList } from "../sessionParts";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
@@ -347,6 +348,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
       ) : null}
 
       <div className="editor-layout">
+        <ResizeHandle name="role-editor" side="end" min={260} max={640} />
         <form
           className="form editor-main"
           onSubmit={(e) => {

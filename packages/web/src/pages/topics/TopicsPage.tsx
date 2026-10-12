@@ -6,6 +6,7 @@ import { fmtRelative, PLATFORM_LABEL } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { Empty, ErrorNote, Loading } from "../../ui/kit";
+import { ResizeHandle } from "../../ui/resize";
 import { TopicView } from "./TopicView";
 import { NewTopicDialog, OpenDmDialog } from "./topicDialogs";
 
@@ -58,6 +59,7 @@ export default function TopicsPage() {
 
   return (
     <div className="workspace">
+      <ResizeHandle name="topic-list" side="start" min={180} max={480} />
       <aside className="topic-list">
         <div className="topic-list-head">
           <input

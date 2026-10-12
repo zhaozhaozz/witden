@@ -20,6 +20,7 @@ import {
   Tag,
   Toggle,
 } from "../ui/kit";
+import { ResizeHandle } from "../ui/resize";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
 
@@ -94,6 +95,7 @@ export default function ConnectionsPage() {
         {(rows) =>
           rows.length ? (
             <div className="split">
+              <ResizeHandle name="connections" side="start" min={180} max={480} />
               <ul className="conn-list">
                 {rows.map((c) => (
                   <li key={c.id}>

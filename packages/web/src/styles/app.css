@@ -506,8 +506,10 @@ textarea.prompt {
 /* --- app shell ---------------------------------------------------------------------------------- */
 
 .app {
+  --side-w: 196px;
+  position: relative;
   display: grid;
-  grid-template-columns: 196px minmax(0, 1fr);
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
   height: 100vh;
 }
 
@@ -830,16 +832,22 @@ textarea.prompt {
 }
 
 .split {
+  --side-w: 260px;
+  --handle-gap: 14px;
+  position: relative;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
+  gap: var(--handle-gap);
   align-items: start;
 }
 
 .editor-layout {
+  --side-w: 340px;
+  --handle-gap: 14px;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
+  gap: var(--handle-gap);
   align-items: start;
 }
 .editor-main {
@@ -1530,12 +1538,14 @@ textarea.prompt {
 
 /* --- tabs --------------------------------------------------------------------------------------- */
 
+/* Tabs wrap onto another row when they do not fit; the bar never scrolls (a scrolling bar also showed a
+   stray scrollbar because each tab overlaps the bottom border by 1px). */
 .tabs {
   display: flex;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 0 2px;
   border-bottom: 1px solid var(--line);
   margin-bottom: 14px;
-  overflow-x: auto;
 }
 .tab {
   display: inline-flex;
@@ -1618,10 +1628,12 @@ textarea.prompt {
 /* --- topics workspace --------------------------------------------------------------------------- */
 
 .workspace {
+  --side-w: 264px;
+  position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: var(--side-w) minmax(0, 1fr);
 }
 
 .topic-list {
@@ -1694,6 +1706,7 @@ textarea.prompt {
 }
 
 .topic-view {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
@@ -1701,7 +1714,8 @@ textarea.prompt {
   background: var(--surface);
 }
 .topic-view.with-panel {
-  grid-template-columns: minmax(0, 1fr) 340px;
+  --side-w: 340px;
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
 }
 .topic-none {
   align-items: center;
@@ -2007,12 +2021,13 @@ textarea.prompt {
   background: var(--paper-2);
 }
 .side-panel .tabs {
-  padding: 6px 8px 0;
+  gap: 0;
+  padding: 6px 6px 0;
   margin-bottom: 0;
   background: var(--surface);
 }
 .side-panel .tab {
-  padding: 7px 8px;
+  padding: 7px 6px;
   font-size: 13px;
 }
 .side-body {
@@ -2449,9 +2464,12 @@ textarea.prompt {
 /* --- rules -------------------------------------------------------------------------------------- */
 
 .rules-layout {
+  --side-w: 380px;
+  --handle-gap: 14px;
+  position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) var(--side-w);
+  gap: var(--handle-gap);
   align-items: start;
 }
 .rules-list {
@@ -2853,24 +2871,65 @@ textarea.prompt {
 
 /* --- responsive --------------------------------------------------------------------------------- */
 
+/* --- resizable sidebars (ui/resize.tsx) ----------------------------------------------------------- */
+
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resize-start {
+  left: calc(var(--side-w) + var(--handle-gap, 0px) / 2 - 4px);
+}
+.resize-end {
+  right: calc(var(--side-w) + var(--handle-gap, 0px) / 2 - 4px);
+}
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 3px;
+  border-radius: 2px;
+  transition: background-color 0.15s;
+}
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after,
+.resize-handle.resize-active::after {
+  background: var(--harbor);
+  opacity: 0.5;
+}
+.resize-handle:focus-visible {
+  outline: none;
+}
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
 @media (max-width: 1360px) {
   .topic-view.with-panel {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    --side-w: 320px;
   }
   .rules-layout {
-    grid-template-columns: minmax(0, 1fr) 340px;
+    --side-w: 340px;
   }
   .editor-layout {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    --side-w: 300px;
   }
 }
 
 @media (max-width: 1240px) {
   .app {
-    grid-template-columns: 172px minmax(0, 1fr);
+    --side-w: 172px;
   }
   .workspace {
-    grid-template-columns: 228px minmax(0, 1fr);
+    --side-w: 228px;
   }
   .page {
     padding: 16px 20px 40px;
@@ -2879,6 +2938,10 @@ textarea.prompt {
   .editor-layout,
   .trace-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .rules-layout > .resize-handle,
+  .editor-layout > .resize-handle {
+    display: none;
   }
   .explain,
   .editor-side {
@@ -2900,6 +2963,9 @@ textarea.prompt {
   .grid-2,
   .split {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .split > .resize-handle {
+    display: none;
   }
   .form-row {
     flex-direction: column;
