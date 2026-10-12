@@ -35,7 +35,8 @@ witden 的原则是**外部编排、内部执行**：平台进程负责身份、
 Slack webhook ─验签─► processed_events（queued，去重）─► 200 ─► processInbound（SKIP LOCKED 领取）
 控制台消息 ────────────────────────────────────────────────┐            │
                                                             ▼            ▼
-                         agent/dispatch：@提及 > 私信角色 > 线程里已在工作的角色 > 规则默认角色 > active 角色
+                         agent/dispatch：@提及 > 私信角色 > 线程里已在工作的角色 > 规则默认角色 >（话题为自动模式时）唯一角色 / 调度器
+                                │ 多个角色：message_routes 排队 → Worker 调用调度模型（agent/router）选 0…N 个角色
                                 │ services/assignment（限制取交集、deny 优先、默认取最具体）
                                 │ authorize + preflight（role.use、实例、模型、话题限制）
                                 ▼
