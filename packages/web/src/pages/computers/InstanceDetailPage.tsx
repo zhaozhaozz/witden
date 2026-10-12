@@ -872,7 +872,11 @@ function ConsoleTab({ inst }: { inst: Instance }) {
   const nextId = useRef(1);
   const end = useRef<HTMLDivElement>(null);
 
-  useEffect(() => end.current?.scrollIntoView({ block: "nearest" }), [history]);
+  // Block body on purpose: newer browsers return a Promise from scrollIntoView, and anything an effect
+  // returns is called as its cleanup when the tab unmounts (which crashed the page).
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [history]);
 
   const exec = async () => {
     const cmd = command.trim();

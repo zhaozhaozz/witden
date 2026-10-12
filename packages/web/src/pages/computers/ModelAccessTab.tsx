@@ -23,7 +23,9 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
   const { confirm } = useFeedback();
   const [picked, setPicked] = useState<string[]>([]);
   const [showKey, setShowKey] = useState(false);
-  useEffect(() => setPicked(res.data?.model_ids ?? []), [res.data]);
+  useEffect(() => {
+    setPicked(res.data?.model_ids ?? []);
+  }, [res.data]);
 
   const save = async (body: Record<string, unknown>, done: string) => {
     const out = await run(() => api.put<ModelProxyInfo>(`/api/instances/${inst.id}/model-proxy`, body), done);

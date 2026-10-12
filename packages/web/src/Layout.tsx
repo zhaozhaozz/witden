@@ -1,11 +1,12 @@
 import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "./api/client";
 import type { Approval, KillSwitch } from "./api/types";
 import { useInterval } from "./lib/hooks";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { useAuth, useDirectory } from "./lib/session";
 import { useTopics } from "./lib/topics";
+import { PageErrorBoundary } from "./ui/ErrorBoundary";
 import { useAction } from "./ui/feedback";
 import { Avatar, Loading } from "./ui/kit";
 import { ResizeHandle } from "./ui/resize";
@@ -78,6 +79,7 @@ const SCOPE_LABEL: Record<string, string> = {
 
 export default function Layout() {
   const { me, can, logout } = useAuth();
+  const location = useLocation();
   const dir = useDirectory();
   const kills = useKillSwitches(can("emergency.stop"));
   const approvals = usePendingApprovals();
@@ -160,9 +162,11 @@ export default function Layout() {
             </Link>
           </div>
         ) : null}
-        <Suspense fallback={<Loading />}>
-          <Outlet />
-        </Suspense>
+        <PageErrorBoundary key={location.pathname}>
+          <Suspense fallback={<Loading />}>
+            <Outlet />
+          </Suspense>
+        </PageErrorBoundary>
       </div>
     </div>
   );

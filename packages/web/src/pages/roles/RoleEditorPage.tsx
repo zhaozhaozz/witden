@@ -163,7 +163,9 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     return !role && defaults ? { ...d, allowed_tools: defaults.allowed, approval_required: defaults.approval } : d;
   };
 
-  useEffect(() => setDraft(toDraft(role)), [role]);
+  useEffect(() => {
+    setDraft(toDraft(role));
+  }, [role]);
   const defaultsApplied = useRef(false);
   useEffect(() => {
     if (role || !defaults || defaultsApplied.current) return;
