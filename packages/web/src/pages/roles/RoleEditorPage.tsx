@@ -37,7 +37,7 @@ import {
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { AgentSessionList } from "../sessionParts";
-import { PermissionList } from "./PermissionList";
+import { defaultPermissions, PermissionList } from "./PermissionList";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
 interface Draft {
@@ -156,8 +156,20 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   }, [models.data]);
   const instances = useResource(() => api.get<Instance[]>("/api/instances"), []);
   const spaces = useResource(() => api.get<KnowledgeSpace[]>("/api/knowledge-spaces"), []);
+  const defaults = useMemo(() => (toolGroups.data ? defaultPermissions(toolGroups.data) : null), [toolGroups.data]);
+  // A new role starts from the platform's default permissions (see PermissionList).
+  const fresh = (): Draft => {
+    const d = toDraft(role);
+    return !role && defaults ? { ...d, allowed_tools: defaults.allowed, approval_required: defaults.approval } : d;
+  };
 
   useEffect(() => setDraft(toDraft(role)), [role]);
+  const defaultsApplied = useRef(false);
+  useEffect(() => {
+    if (role || !defaults || defaultsApplied.current) return;
+    defaultsApplied.current = true;
+    setDraft((d) => ({ ...d, allowed_tools: defaults.allowed, approval_required: defaults.approval }));
+  }, [role, defaults]);
 
   const original = useMemo(() => {
     try {
@@ -216,12 +228,14 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
         }
         if (err.code === "active_tasks_on_old_instance") {
           const ok = await confirm({
-            title: "需要先处理旧电脑上的任务",
+            title: "需要先处理旧虚拟电脑上的任务",
             danger: true,
-            confirmLabel: "取消这些任务并更换电脑",
+            confirmLabel: "取消这些任务并更换虚拟电脑",
             body: (
               <>
-                <p>这些任务已经固定在当前电脑上执行，不会自动转到新电脑。可以等它们完成后再更换，或者现在取消它们。</p>
+                <p>
+                  这些任务已经固定在当前虚拟电脑上执行，不会自动转到新虚拟电脑。可以等它们完成后再更换，或者现在取消它们。
+                </p>
                 {impact ? <ImpactView impact={impact} /> : null}
               </>
             ),
@@ -273,7 +287,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           role ? (
             <>
               <button type="button" className="btn btn-sm" onClick={() => setDialog("copy")}>
-                复制到其他电脑
+                复制到其他虚拟电脑
               </button>
               {role.status === "active" ? (
                 <button type="button" className="btn btn-sm btn-danger-ghost" onClick={() => setDialog("disable")}>
@@ -336,7 +350,10 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               </Field>
             </div>
             <div className="form-row">
-              <FieldGroup label="头像" hint="PNG、JPEG、GIF 或 WebP，最大 1 MB；也可以填写图片地址">
+              <FieldGroup
+                label="头像"
+                hint="从你自己的电脑选择 PNG、JPEG、GIF 或 WebP 图片（最大 1 MB），也可以填写图片地址"
+              >
                 <AvatarEditor
                   id={role?.id ?? (draft.handle || "new-role")}
                   name={draft.name || draft.handle || "?"}
@@ -453,8 +470,8 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             </Field>
           </Section>
 
-          <Section title="电脑">
-            <Field label="所属电脑" hint="角色执行任务时只能操作这台电脑；没有电脑时只能对话。">
+          <Section title="虚拟电脑">
+            <Field label="所属虚拟电脑" hint="角色执行任务时只能操作这台虚拟电脑；没有虚拟电脑时只能对话。">
               <select value={draft.instance_id} onChange={(e) => set("instance_id", e.target.value)}>
                 <option value="">未分配（只能对话）</option>
                 {(instances.data ?? []).map((i) => (
@@ -470,17 +487,19 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             {selectedInstance ? (
               <div className="computer-summary">
                 <ComputerBadge computer={selectedInstance} />
-                <span className="muted">{selectedInstance.spec?.kind === "desktop" ? "桌面电脑" : "命令行电脑"}</span>
+                <span className="muted">
+                  {selectedInstance.spec?.kind === "desktop" ? "桌面虚拟电脑" : "命令行虚拟电脑"}
+                </span>
                 <StatusChip meta={instanceStatus(selectedInstance.status)} compact />
                 <span className={selectedInstance.runner?.connected ? "text-ok" : "muted"}>
                   {selectedInstance.runner?.connected ? "Runner 已连接" : "Runner 未连接"}
                 </span>
-                <Link to={`/computers/${selectedInstance.id}`}>打开电脑</Link>
+                <Link to={`/computers/${selectedInstance.id}`}>打开虚拟电脑</Link>
               </div>
             ) : null}
             {role && draft.instance_id !== (role.instance_id ?? "") ? (
               <div className="callout callout-wait">
-                更换电脑不会迁移文件、已安装的软件和登录状态。已固定在旧电脑上的任务需要等它们完成或取消。
+                更换虚拟电脑不会迁移文件、已安装的软件和登录状态。已固定在旧虚拟电脑上的任务需要等它们完成或取消。
               </div>
             ) : null}
           </Section>
@@ -488,7 +507,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           <Section title="权限">
             <FieldGroup
               label="工具"
-              hint="「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求。点左侧箭头可以逐个工具设置。"
+              hint="新角色默认：虚拟电脑里的操作始终允许，联系其他角色、平台记忆、其他话题和把文件分享到话题需要询问。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求。点左侧箭头可以逐个工具设置。"
             >
               <Loaded res={toolGroups}>
                 {() => (
@@ -497,6 +516,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                     alwaysTools={alwaysTools}
                     allowed={draft.allowed_tools}
                     approval={draft.approval_required}
+                    defaults={defaults}
                     onChange={(allowed, approval) =>
                       setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
                     }
@@ -563,7 +583,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             {role && changed.length ? (
               <span className="small muted">已修改：{changed.map(fieldLabelAll).join("、")}</span>
             ) : null}
-            <button type="button" className="btn" disabled={!dirty} onClick={() => setDraft(toDraft(role))}>
+            <button type="button" className="btn" disabled={!dirty} onClick={() => setDraft(fresh())}>
               还原
             </button>
             <button
@@ -681,7 +701,7 @@ function CopyRoleDialog({
           <input className="mono" value={handle} onChange={(e) => setHandle(e.target.value.toLowerCase())} />
         </Field>
       </div>
-      <Field label="所属电脑">
+      <Field label="所属虚拟电脑">
         <select value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
           <option value="">稍后分配</option>
           {instances.map((i) => (
@@ -737,7 +757,7 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
         </label>
       </div>
       {onTasks === "reassign" ? (
-        <Field label="接手的角色" hint="转交会重新检查权限，接手角色在自己的电脑上执行。">
+        <Field label="接手的角色" hint="转交会重新检查权限，接手角色在自己的虚拟电脑上执行。">
           <select value={target} onChange={(e) => setTarget(e.target.value)}>
             <option value="">选择角色</option>
             {dir.roles

@@ -158,7 +158,7 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
               {list(r.allowed_roles, roleName)}
               <span>排除的角色</span>
               {r.denied_roles?.length ? list(r.denied_roles, roleName) : <span className="muted">无</span>}
-              <span>允许的电脑</span>
+              <span>允许的虚拟电脑</span>
               {list(r.allowed_instances, (id) => lookups.instanceName?.(id) ?? id)}
             </div>
           ),
@@ -200,7 +200,9 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
                   <span className={x.allowed ? "tag tag-ok" : "tag tag-bad"}>{x.allowed ? "可用" : "不可用"}</span>
                   <strong>{roleName(x.role_id)}</strong>
                   {x.instance_id ? (
-                    <span className="muted small">电脑 {lookups.instanceName?.(x.instance_id) ?? x.instance_id}</span>
+                    <span className="muted small">
+                      虚拟电脑 {lookups.instanceName?.(x.instance_id) ?? x.instance_id}
+                    </span>
                   ) : null}
                   {x.reasons?.length ? (
                     <ul className="reasons">

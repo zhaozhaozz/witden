@@ -77,6 +77,8 @@ export async function buildWorld(): Promise<World> {
             model_config_id: cfg.id,
             instance_id: inst.id,
             allowed_tools: tools,
+            // Tests opt into approvals explicitly; new roles otherwise ask before reaching outside their computer.
+            approval_required: [],
             allowed_contacts: ["*"],
             ...extra,
           },

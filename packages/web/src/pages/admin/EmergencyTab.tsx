@@ -10,7 +10,7 @@ import { Empty, Field, Loaded, Section, Tag } from "../../ui/kit";
 
 const SCOPES: [KillSwitch["scope"], string][] = [
   ["role", "某个角色"],
-  ["instance", "某台电脑"],
+  ["instance", "某台虚拟电脑"],
   ["connection", "某个通讯接入"],
   ["topic", "某个话题"],
   ["task", "某项任务"],
@@ -19,7 +19,7 @@ const SCOPES: [KillSwitch["scope"], string][] = [
 const SCOPE_LABEL: Record<string, string> = {
   global: "全部 AI 执行",
   role: "角色",
-  instance: "电脑",
+  instance: "虚拟电脑",
   connection: "通讯接入",
   topic: "话题",
   task: "任务",
@@ -97,7 +97,7 @@ export function EmergencyTab() {
           <p>
             {globalActive
               ? `由 ${dir.userName(globalActive.created_by)} 于 ${fmtDateTime(globalActive.created_at)} 触发${globalActive.reason ? `：${globalActive.reason}` : ""}。解除前不会开始任何新的 AI 工作。`
-              : "立即暂停所有角色正在进行的工作，并阻止新的工作开始。电脑本身不会被关闭，已暂停的任务可以在解除后继续。"}
+              : "立即暂停所有角色正在进行的工作，并阻止新的工作开始。虚拟电脑本身不会被关闭，已暂停的任务可以在解除后继续。"}
           </p>
         </div>
         {globalActive ? (

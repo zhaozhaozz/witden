@@ -12,7 +12,7 @@ export function ComputersNav() {
     <div className="subnav">
       {showInstances ? (
         <NavLink end to="/computers" className={({ isActive }) => (isActive ? "subnav-item subnav-on" : "subnav-item")}>
-          电脑实例
+          虚拟电脑实例
         </NavLink>
       ) : null}
       <NavLink
@@ -46,7 +46,7 @@ export function RunnerBadge({ inst }: { inst: Pick<Instance, "status" | "runner"
   if (inst.runner?.connected) return <Tag tone="ok">Runner 在线</Tag>;
   if (inst.status !== "running") return null;
   return (
-    <Tag tone="off" title="未连接的 Runner 会在需要时重新连接；命令行网络受限的电脑通过管理通道按需连接">
+    <Tag tone="off" title="未连接的 Runner 会在需要时重新连接；命令行网络受限的虚拟电脑通过管理通道按需连接">
       Runner 未连接
     </Tag>
   );
@@ -89,12 +89,13 @@ export function RunnerPanel({ inst }: { inst: Instance }) {
   const info = r.connected ? r.info : inst.runner_info;
   let hint: string | null = null;
   if (!r.connected) {
-    if (inst.status !== "running") hint = "电脑未运行，Runner 不在线。";
+    if (inst.status !== "running") hint = "虚拟电脑未运行，Runner 不在线。";
     else if (network !== "bridge")
       hint =
-        "这台电脑没有到平台的网络路由，Runner 在有操作需要时经 Docker 管理通道（stdio）按需连接，空闲时显示未连接是正常的。";
+        "这台虚拟电脑没有到平台的网络路由，Runner 在有操作需要时经 Docker 管理通道（stdio）按需连接，空闲时显示未连接是正常的。";
     else
-      hint = "电脑运行后 Runner 会主动连入平台。长时间未连接时，请检查电脑内的 Runner 日志以及 Runner 连接地址的配置。";
+      hint =
+        "虚拟电脑运行后 Runner 会主动连入平台。长时间未连接时，请检查虚拟电脑内的 Runner 日志以及 Runner 连接地址的配置。";
   }
   return (
     <>

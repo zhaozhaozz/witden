@@ -45,14 +45,14 @@ export default function InstancesPage() {
   return (
     <div className="page">
       <PageHeader
-        title="电脑"
-        sub="每台电脑是一个独立的 Docker 容器，角色只能在分配给自己的电脑里执行命令和操作桌面。"
+        title="虚拟电脑"
+        sub="每台虚拟电脑是一个独立的 Docker 容器，角色只能在分配给自己的虚拟电脑里执行命令和操作桌面。"
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
             {can("instance.manage") ? (
               <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
-                新建电脑
+                新建虚拟电脑
               </button>
             ) : null}
           </>
@@ -66,7 +66,7 @@ export default function InstancesPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>电脑</th>
+                    <th>虚拟电脑</th>
                     <th>状态</th>
                     <th>模板</th>
                     <th>资源限制</th>
@@ -81,7 +81,9 @@ export default function InstancesPage() {
                         <Link to={`/computers/${i.id}`} onClick={(e) => e.stopPropagation()}>
                           <ComputerBadge computer={i} />
                         </Link>
-                        <div className="small muted">{i.spec?.kind === "desktop" ? "桌面电脑" : "命令行电脑"}</div>
+                        <div className="small muted">
+                          {i.spec?.kind === "desktop" ? "桌面虚拟电脑" : "命令行虚拟电脑"}
+                        </div>
                       </td>
                       <td className="cell-status">
                         <InstanceStatusChip inst={i} compact /> <RunnerBadge inst={i} />
@@ -116,14 +118,16 @@ export default function InstancesPage() {
             </div>
           ) : (
             <Empty
-              title="还没有电脑"
+              title="还没有虚拟电脑"
               hint={
-                can("instance.manage") ? "从模板创建一台电脑，再把角色分配到这台电脑上。" : "你没有可以查看的电脑。"
+                can("instance.manage")
+                  ? "从模板创建一台虚拟电脑，再把角色分配到这台虚拟电脑上。"
+                  : "你没有可以查看的虚拟电脑。"
               }
               action={
                 can("instance.manage") ? (
                   <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-                    新建电脑
+                    新建虚拟电脑
                   </button>
                 ) : undefined
               }
@@ -186,7 +190,7 @@ function CreateInstanceDialog({
 
   return (
     <FormModal
-      title="新建电脑"
+      title="新建虚拟电脑"
       submitLabel="创建并启动"
       busy={busy}
       disabled={!templateId || !nameOk}
@@ -196,7 +200,7 @@ function CreateInstanceDialog({
         const i = await run(
           () =>
             api.post<Instance>("/api/instances", { template_id: templateId, name, color, resources: fromDraft(draft) }),
-          "电脑正在创建，完成后会自动启动",
+          "虚拟电脑正在创建，完成后会自动启动",
         );
         if (i) onCreated(i);
       }}
@@ -216,20 +220,20 @@ function CreateInstanceDialog({
       {tpl?.description ? <p className="small muted">{tpl.description}</p> : null}
       {tpl ? (
         <p className="small muted">
-          AI 的所有操作都以电脑内的非特权用户 <code>{tpl.user}</code> 身份执行。
+          AI 的所有操作都以虚拟电脑内的非特权用户 <code>{tpl.user}</code> 身份执行。
         </p>
       ) : null}
       <Field label="名称" hint="2–63 个字符：小写字母、数字和短横线，例如 dev-01。创建后不能修改。">
         <input value={name} onChange={(e) => setName(e.target.value.toLowerCase())} placeholder="dev-01" />
       </Field>
-      <FieldGroup label="颜色" hint="话题、任务等处的电脑徽章使用这个颜色">
+      <FieldGroup label="颜色" hint="话题、任务等处的虚拟电脑徽章使用这个颜色">
         <ColorPicker value={color} onChange={setColor} />
         <div className="badge-row">
-          <ComputerBadge computer={{ id: name || "new-computer", name: name || "电脑名称", color }} />
+          <ComputerBadge computer={{ id: name || "new-computer", name: name || "虚拟电脑名称", color }} />
         </div>
       </FieldGroup>
       <ResourceFields value={draft} onChange={setDraft} />
-      <p className="small muted">电脑创建后按模板快照固定配置；之后修改模板不会静默改变已有电脑。</p>
+      <p className="small muted">虚拟电脑创建后按模板快照固定配置；之后修改模板不会静默改变已有虚拟电脑。</p>
     </FormModal>
   );
 }

@@ -53,7 +53,7 @@ export default function MePage() {
             ) : (
               <p className="small muted">你还没有全局权限。被邀请的话题仍然可以参与。</p>
             )}
-            <p className="small muted">这里只列出全局授权；针对某个角色、电脑或话题的授权不在此显示。</p>
+            <p className="small muted">这里只列出全局授权；针对某个角色、虚拟电脑或话题的授权不在此显示。</p>
           </Section>
         </div>
         <div>

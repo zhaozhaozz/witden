@@ -102,7 +102,7 @@ export default function TaskDetailPage() {
             <TaskStatusBanner task={t} />
             {t.content_restricted ? (
               <div className="callout callout-wait">
-                该任务读取了你无权查看的资料：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行电脑仍然可见，你仍可以暂停或取消它。
+                该任务读取了你无权查看的资料：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以暂停或取消它。
               </div>
             ) : null}
             <TaskSummary task={t} />
@@ -160,7 +160,7 @@ function pausedBy(by: string | undefined): string | null {
   if (!by) return null;
   if (by === "user") return "由成员暂停，需要手动继续";
   if (by.startsWith("kill:")) return "由紧急停止暂停，解除后才能继续";
-  if (by.startsWith("takeover:")) return "有人接管了这台电脑，交还控制后自动继续";
+  if (by.startsWith("takeover:")) return "有人接管了这台虚拟电脑，交还控制后自动继续";
   return `暂停来源：${by}`;
 }
 
@@ -172,9 +172,9 @@ function waitParts(task: Task, userName: (id: string) => string): ReactNode[] {
   switch (wait.type) {
     case "instance":
       parts.push(
-        `等待电脑${task.instance ? ` ${task.instance.name} ` : ""}可用${wait.since ? `（自 ${fmtTime(wait.since)}）` : ""}，不会转到其他电脑执行`,
+        `等待虚拟电脑${task.instance ? ` ${task.instance.name} ` : ""}可用${wait.since ? `（自 ${fmtTime(wait.since)}）` : ""}，不会转到其他虚拟电脑执行`,
       );
-      if (wait.retry_call?.name) parts.push(`电脑可用后重试 ${wait.retry_call.name}`);
+      if (wait.retry_call?.name) parts.push(`虚拟电脑可用后重试 ${wait.retry_call.name}`);
       break;
     case "timer":
       parts.push(
@@ -255,7 +255,7 @@ function TaskSummary({ task: t }: { task: Task }) {
               ),
             ],
             [
-              "执行电脑",
+              "执行任务的虚拟电脑",
               t.instance ? (
                 <span className="inline-list">
                   {COMPUTER_PERMS.some(can) ? (
@@ -268,7 +268,7 @@ function TaskSummary({ task: t }: { task: Task }) {
                   <StatusChip meta={instanceStatus(t.instance.status)} compact />
                 </span>
               ) : (
-                <span className="muted">未分配（角色没有电脑时只能对话）</span>
+                <span className="muted">未分配（角色没有虚拟电脑时只能对话）</span>
               ),
             ],
             [
@@ -408,7 +408,7 @@ function Collapsible({ text, limit = 900 }: { text: string; limit?: number }) {
 
 const EVENT_LABEL: Record<string, string> = {
   wait: "等待",
-  instance_wait: "等待电脑",
+  instance_wait: "等待虚拟电脑",
   transcript_removed: "记录已删除",
   // events of older tasks
   external_agent_started: "启动外部智能体",
@@ -425,7 +425,7 @@ function isUncertainStep(s: TaskStep): boolean {
 }
 
 const UNCERTAIN_NOTE =
-  "电脑没有确认这个操作是否已经执行（连接中断或等待超时）。角色会先查看当前状态（截图、读文件、看页面）再决定是否重做，以免重复点击或重复提交。";
+  "虚拟电脑没有确认这个操作是否已经执行（连接中断或等待超时）。角色会先查看当前状态（截图、读文件、看页面）再决定是否重做，以免重复点击或重复提交。";
 
 function ExecutionLog({ steps }: { steps: TaskStep[] }) {
   return (
@@ -471,7 +471,7 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
             <>
               {uncertain ? <div className="callout callout-wait">{UNCERTAIN_NOTE}</div> : null}
               {p.recovered && !uncertain ? (
-                <p className="small muted">执行中断后，平台向电脑的操作日志查询了这次调用的结果并补记在这里。</p>
+                <p className="small muted">执行中断后，平台向虚拟电脑的操作日志查询了这次调用的结果并补记在这里。</p>
               ) : null}
               <Collapsible text={c.text} />
               {c.images ? <Tag>含 {c.images} 张截图</Tag> : null}
@@ -611,7 +611,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
               ["通讯接入", source.connection_id ? <IdText id={source.connection_id as string} /> : null],
               ["外部会话", source.conversation_id ? <IdText id={source.conversation_id as string} /> : null],
               ["Thread", source.thread_key ? <code className="id">{String(source.thread_key)}</code> : null],
-              ["执行电脑", t.instance ? <ComputerBadge computer={t.instance} /> : "—"],
+              ["执行任务的虚拟电脑", t.instance ? <ComputerBadge computer={t.instance} /> : "—"],
               ["角色会话", trace.session_id ? <IdText id={trace.session_id} /> : null],
             ]}
           />
@@ -620,7 +620,9 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
           {assignment.summary ? (
             <p className="small">
               结果：
-              {t.instance ? assignment.summary.replace(t.instance.id, `电脑 ${t.instance.name}`) : assignment.summary}
+              {t.instance
+                ? assignment.summary.replace(t.instance.id, `虚拟电脑 ${t.instance.name}`)
+                : assignment.summary}
             </p>
           ) : null}
           {assignment.trace?.length ? (

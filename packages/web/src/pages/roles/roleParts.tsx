@@ -12,9 +12,9 @@ const WARNING_PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^model (.+) has not been checked yet$/, (m) => `模型 ${m[1]} 还没有做能力检测`],
   [/^the model cannot call tools/, () => "模型不支持工具调用：角色只能对话"],
   [/^the model cannot understand images/, () => "模型不支持图像理解：桌面操作会被拒绝"],
-  [/^no computer assigned/, () => "未分配电脑：任务无法执行"],
-  [/^computer (.+) has no desktop$/, (m) => `电脑 ${m[1]} 没有桌面，桌面工具不可用`],
-  [/^computer (.+) is (\w+)$/, (m) => `电脑 ${m[1]} 当前${instanceStatus(m[2]).label}`],
+  [/^no computer assigned/, () => "未分配虚拟电脑：任务无法执行"],
+  [/^computer (.+) has no desktop$/, (m) => `虚拟电脑 ${m[1]} 没有桌面，桌面工具不可用`],
+  [/^computer (.+) is (\w+)$/, (m) => `虚拟电脑 ${m[1]} 当前${instanceStatus(m[2]).label}`],
 ];
 
 export function translateWarning(w: string): string {
@@ -27,9 +27,9 @@ export function translateWarning(w: string): string {
 
 const NOTE_ZH: Record<string, string> = {
   "Running and queued tasks keep the prompt, model and computer they started with.":
-    "执行中和排队中的任务继续使用开始时的提示词、模型和电脑。",
+    "执行中和排队中的任务继续使用开始时的提示词、模型和虚拟电脑。",
   "Changing the computer does not move files, installed software or logins; tasks pinned to the old computer must be cancelled or re-run explicitly.":
-    "更换电脑不会迁移文件、已安装的软件和登录状态；已固定在旧电脑上的任务需要明确取消或重新执行。",
+    "更换虚拟电脑不会迁移文件、已安装的软件和登录状态；已固定在旧虚拟电脑上的任务需要明确取消或重新执行。",
   "Agent sessions and topic notes stay with their topics; job knowledge stays with the role.":
     "角色会话和话题记忆留在各自话题中；岗位知识跟随角色。",
 };
@@ -38,7 +38,7 @@ const FIELD_ZH: Record<string, string> = {
   system_prompt: "提示词",
   model_config_id: "模型",
   model_params: "模型参数",
-  instance_id: "电脑",
+  instance_id: "虚拟电脑",
   allowed_tools: "工具",
 };
 

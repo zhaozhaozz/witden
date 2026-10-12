@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ACTIVE, cancelTree, pause } from "../agent/control.js";
-import { TOOL_GROUPS, TOOLS } from "../agent/tools.js";
+import { DEFAULT_ALLOWED_TOOLS, DEFAULT_APPROVAL_REQUIRED, TOOL_GROUPS, TOOLS } from "../agent/tools.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -120,7 +120,11 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
 export async function createRole(db: Db, user: User, data: Record<string, any>): Promise<Role> {
   await requirePerm(db, user, Perm.ROLE_MANAGE);
   if (!data.name || !data.handle) throw new BadRequest("name and handle are required");
-  const clean = await validate(db, user, data);
+  const clean = await validate(db, user, {
+    allowedTools: DEFAULT_ALLOWED_TOOLS,
+    approvalRequired: DEFAULT_APPROVAL_REQUIRED,
+    ...data,
+  });
   const [role] = await db
     .insert(roles)
     .values({ id: newId("role"), createdBy: user.id, ...(clean as any) })

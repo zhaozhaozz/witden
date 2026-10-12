@@ -399,7 +399,7 @@ function TopicCast({ participants }: { participants: NonNullable<Topic["particip
         ))}
       </span>
       {computers.size ? (
-        <span className="badge-row" title="这些角色在各自的电脑里工作">
+        <span className="badge-row" title="这些角色在各自的虚拟电脑里工作">
           <span className="small muted">在</span>
           {[...computers.values()].map((c) => (
             <ComputerBadge key={c.id} computer={c} />

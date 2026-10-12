@@ -71,7 +71,7 @@ const SCOPE_LABEL: Record<string, string> = {
   global: "全部 AI 执行",
   connection: "通讯接入",
   role: "角色",
-  instance: "电脑",
+  instance: "虚拟电脑",
   topic: "话题",
   task: "任务",
 };
@@ -83,7 +83,7 @@ export default function Layout() {
   const approvals = usePendingApprovals();
 
   const settings: NavItem[] = [
-    { to: "/computers", label: "电脑", any: COMPUTER_PERMS },
+    { to: "/computers", label: "虚拟电脑", any: COMPUTER_PERMS },
     { to: "/roles", label: "角色管理", any: ["role.manage"] },
     { to: "/models", label: "模型", any: ["secrets.manage"] },
     { to: "/rules", label: "分配规则", any: ["rules.manage"] },
@@ -307,7 +307,7 @@ function RoleList() {
             <button
               type="button"
               className={`nav-item side-item${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
-              title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
+              title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（虚拟电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
               onClick={() => void run(() => t.openDm(r.id))}
             >
               <span className="side-avatar">

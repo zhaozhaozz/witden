@@ -13,7 +13,7 @@ export default function RolesPage() {
     <div className="page">
       <PageHeader
         title="角色"
-        sub="角色是团队里的 AI 员工：有独立的身份、职责、模型和所属电脑。同一个角色可以为多位获授权的成员工作。"
+        sub="角色是团队里的 AI 员工：有独立的身份、职责、模型和所属虚拟电脑。同一个角色可以为多位获授权的成员工作。"
         actions={
           <Link to="/roles/new" className="btn btn-sm btn-primary">
             新建角色
@@ -29,7 +29,7 @@ export default function RolesPage() {
                   <tr>
                     <th>角色</th>
                     <th>状态</th>
-                    <th>电脑</th>
+                    <th>虚拟电脑</th>
                     <th>模型 / 运行方式</th>
                     <th>参与方式</th>
                     <th>工具</th>
@@ -108,7 +108,7 @@ export default function RolesPage() {
           ) : (
             <Empty
               title="还没有角色"
-              hint="先准备好模型配置和电脑，再创建角色，例如开发、测试、分析。"
+              hint="先准备好模型配置和虚拟电脑，再创建角色，例如开发、测试、分析。"
               action={
                 <Link to="/roles/new" className="btn btn-primary">
                   新建角色

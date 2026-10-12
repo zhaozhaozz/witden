@@ -105,7 +105,7 @@ export function ComputerBadge({ computer, title }: { computer: ComputerLike; tit
     <span
       className="badge badge-computer"
       style={{ "--badge": badgeColor(computer.id, computer.color) } as CSSProperties}
-      title={title ?? `电脑 ${computer.name}`}
+      title={title ?? `虚拟电脑 ${computer.name}`}
     >
       <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
         <rect x="1.5" y="2.5" width="13" height="9" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />

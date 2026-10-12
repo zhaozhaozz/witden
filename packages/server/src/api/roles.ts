@@ -2,7 +2,7 @@ import "@fastify/multipart";
 import fs from "node:fs";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { TOOL_GROUPS, TOOLS } from "../agent/tools.js";
+import { DEFAULT_ALLOWED_TOOLS, DEFAULT_APPROVAL_REQUIRED, TOOL_GROUPS, TOOLS } from "../agent/tools.js";
 import { type Db, transaction } from "../db/client.js";
 import {
   agentSessions,
@@ -89,11 +89,22 @@ export async function roleRoutes(app: FastifyInstance) {
   app.get(
     "/api/roles/tool-groups",
     authed(async () => [
-      ...Object.entries(TOOL_GROUPS).map(([group, description]) => ({
-        group,
-        description,
-        tools: [...TOOLS.values()].filter((t) => t.group === group).map((t) => t.name),
-      })),
+      ...Object.entries(TOOL_GROUPS).map(([group, description]) => {
+        const tools = [...TOOLS.values()].filter((t) => t.group === group).map((t) => t.name);
+        // What a new role gets: the group's level, and single tools that ask under an allowed group.
+        const level = !DEFAULT_ALLOWED_TOOLS.includes(group)
+          ? "off"
+          : DEFAULT_APPROVAL_REQUIRED.includes(group)
+            ? "ask"
+            : "allow";
+        return {
+          group,
+          description,
+          tools,
+          default_level: level,
+          default_ask: level === "allow" ? tools.filter((t) => DEFAULT_APPROVAL_REQUIRED.includes(t)) : [],
+        };
+      }),
       {
         group: null,
         description: "always available",

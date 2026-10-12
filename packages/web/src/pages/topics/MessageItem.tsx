@@ -65,7 +65,7 @@ export function AttachmentChip({ file, id }: { file?: Artifact; id: string }) {
       type="button"
       className="attach"
       disabled={busy || !file}
-      title={file ? `${file.name} · ${fmtBytes(file.size)} · 点击下载` : "文件已删除或无权查看"}
+      title={file ? `${file.name} · ${fmtBytes(file.size)} · 点击下载到你自己的电脑` : "文件已删除或无权查看"}
       onClick={() => file && void run(() => downloadFile(id, file.name))}
     >
       <span className="attach-icon" aria-hidden>

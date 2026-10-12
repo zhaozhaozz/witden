@@ -207,6 +207,47 @@ describe("permissions and isolation", () => {
     expect(w.manager.computer(w.ids.instance).commands).toEqual(["kubectl apply -f prod.yaml"]);
   });
 
+  it("new roles: work inside their virtual computer just runs, reaching outside it asks first", async () => {
+    const created = await w.api("POST", "/api/roles", {
+      token: w.adminToken,
+      json: { name: "Fresh", handle: "fresh", model_config_id: w.ids.model, instance_id: w.ids.instance },
+    });
+    expect(created.status, created.raw).toBe(200);
+    expect(created.body.allowed_tools).toEqual([
+      "browser",
+      "collaborate",
+      "desktop",
+      "files",
+      "memory",
+      "shell",
+      "terminal",
+      "topics",
+    ]);
+    expect(created.body.approval_required).toEqual(["collaborate", "memory", "share_file", "topics"]);
+    const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
+    const files = groups.find((g: any) => g.group === "files");
+    expect([files.default_level, files.default_ask]).toEqual(["allow", ["share_file"]]);
+    expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
+
+    await w.api("POST", "/api/grants", {
+      token: w.adminToken,
+      json: { permission: "role.use", user_id: w.ids.alice, resource_id: created.body.id },
+    });
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: created.body.id } })).body;
+    w.manager.computer(w.ids.instance).files.set("/home/witden/report.txt", Buffer.from("done"));
+    w.scripts.fresh = (_m, turn) =>
+      turn === 0
+        ? reply("", [call("run_command", { command: "echo inside" })])
+        : turn === 1
+          ? reply("", [call("share_file", { path: "report.txt" })])
+          : reply("shared");
+    await w.post(w.alice, dm.id, "make the report and send it to me");
+    await w.drain();
+    expect(w.manager.computer(w.ids.instance).commands).toEqual(["echo inside"]);
+    const approvals = (await w.api("GET", "/api/approvals", { token: w.adminToken })).body;
+    expect(approvals.map((a: any) => a.action)).toEqual(["share_file"]);
+  });
+
   it("emergency stop pauses work until released and resumed", async () => {
     w.scripts.dev = () => reply("hello");
     const ks = (

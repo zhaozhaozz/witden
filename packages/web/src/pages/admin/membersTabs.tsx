@@ -177,7 +177,7 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
 const RESOURCE_LABEL: Record<string, string> = {
   "*": "全局",
   role: "角色",
-  instance: "电脑",
+  instance: "虚拟电脑",
   topic: "话题",
   space: "知识空间",
   model: "模型配置",

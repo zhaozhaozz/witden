@@ -143,7 +143,7 @@ function TasksTab({ res }: { res: Resource<Task[]> }) {
                   ) : null}
                   <div className="task-card-meta small muted">
                     {t.owner ? <RoleBadge role={t.owner} compact /> : null}
-                    {t.instance ? <ComputerBadge computer={t.instance} /> : <span>无电脑</span>}
+                    {t.instance ? <ComputerBadge computer={t.instance} /> : <span>无虚拟电脑</span>}
                     {t.requester ? <span>{t.requester.name} 发起</span> : null}
                     <span title={fmtTime(t.updated_at)}>{fmtRelative(t.updated_at)}</span>
                   </div>
@@ -276,11 +276,17 @@ function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
             {rows.map((f) => (
               <li key={f.id}>
                 <div className="file-main">
-                  <button type="button" className="link-btn" onClick={() => void run(() => downloadFile(f.id, f.name))}>
+                  <button
+                    type="button"
+                    className="link-btn"
+                    title="下载到你自己的电脑"
+                    onClick={() => void run(() => downloadFile(f.id, f.name))}
+                  >
                     {f.name}
                   </button>
                   <div className="small muted">
-                    {fmtBytes(f.size)} · {f.kind === "upload" ? "上传" : f.kind === "generated" ? "角色生成" : f.kind} ·{" "}
+                    {fmtBytes(f.size)} ·{" "}
+                    {f.kind === "upload" ? "成员上传" : f.kind === "generated" ? "角色从虚拟电脑分享" : f.kind} ·{" "}
                     {f.created_by_type === "role" ? dir.roleLabel(f.created_by_id) : dir.userName(f.created_by_id)} ·{" "}
                     {fmtRelative(f.created_at)}
                   </div>
@@ -310,7 +316,10 @@ function FilesTab({ topic, canAdmin }: { topic: Topic; canAdmin: boolean }) {
             ))}
           </ul>
         ) : (
-          <Empty title="这个话题还没有文件" hint="在输入框旁点击「附件」上传；角色生成的文件也会出现在这里。" />
+          <Empty
+            title="这个话题还没有文件"
+            hint="在输入框旁点击「附件」，从你自己的电脑上传；角色从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
+          />
         )
       }
     </Loaded>

@@ -38,6 +38,21 @@ export function setGroupLevel(
   };
 }
 
+/** The platform's default for new roles, as (allowed, approval) lists. */
+export function defaultPermissions(groups: ToolGroup[]): { allowed: string[]; approval: string[] } {
+  const allowed: string[] = [];
+  const approval: string[] = [];
+  for (const g of groups) {
+    if (!g.group || g.default_level === "off") continue;
+    allowed.push(g.group);
+    if (g.default_level === "ask") approval.push(g.group);
+    else approval.push(...(g.default_ask ?? []));
+  }
+  return { allowed: allowed.sort(), approval: approval.sort() };
+}
+
+const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+
 function Choice({
   value,
   options,
@@ -77,6 +92,7 @@ export function PermissionList({
   allowed,
   approval,
   onChange,
+  defaults,
 }: {
   groups: ToolGroup[];
   /** Tools every role has (asking people, progress notes, follow-ups). */
@@ -84,7 +100,13 @@ export function PermissionList({
   allowed: string[];
   approval: string[];
   onChange: (allowed: string[], approval: string[]) => void;
+  /** Offer "恢复默认" when the settings differ from these. */
+  defaults?: { allowed: string[]; approval: string[] } | null;
 }) {
+  // Approvals for always-available tools are not shown here; keep them when restoring defaults.
+  const always = approval.filter((a) => alwaysTools.includes(a));
+  const isDefault =
+    !defaults || (sameSet(allowed, defaults.allowed) && sameSet(approval, [...defaults.approval, ...always]));
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const toggle = (g: string) =>
     setOpen((prev) => {
@@ -169,11 +191,23 @@ export function PermissionList({
           </div>
         );
       })}
-      {alwaysTools.length ? (
-        <div className="perm-always">
-          始终可用，不受这里限制：{alwaysTools.map((t) => TOOL_LABEL[t] ?? t).join("、")}
-        </div>
-      ) : null}
+      <div className="perm-always">
+        <span>
+          {alwaysTools.length
+            ? `始终可用，不受这里限制：${alwaysTools.map((t) => TOOL_LABEL[t] ?? t).join("、")}`
+            : null}
+        </span>
+        {defaults && !isDefault ? (
+          <button
+            type="button"
+            className="btn btn-xs"
+            title="虚拟电脑里的操作始终允许；联系其他角色、平台记忆、其他话题和把文件分享到话题需要询问"
+            onClick={() => onChange([...defaults.allowed], [...defaults.approval, ...always])}
+          >
+            恢复默认
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

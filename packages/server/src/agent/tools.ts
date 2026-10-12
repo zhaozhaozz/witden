@@ -24,15 +24,23 @@ import { delegate } from "./dispatch.js";
 import { deliver } from "./output.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
-  shell: "Run commands in the role's computer",
-  terminal: "Interactive / long-running terminal sessions",
-  files: "Read, write and share files in the role's computer",
-  desktop: "See the screen and use mouse and keyboard",
-  browser: "Drive a browser in the computer (the visible desktop browser or a background one)",
+  shell: "Run commands in the role's virtual computer",
+  terminal: "Interactive / long-running terminal sessions in the virtual computer",
+  files: "Read, write and organise files in the virtual computer, and share them with the topic",
+  desktop: "See the virtual computer's screen and use its mouse and keyboard",
+  browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
   collaborate: "Message and delegate to other roles (limited by contacts)",
-  memory: "Remember and recall scoped notes",
+  memory: "Remember and recall scoped notes on the platform",
   topics: "Reference other topics the requester can read",
 };
+
+/**
+ * Permissions of a new role unless given: work inside its own virtual computer is always allowed; anything
+ * that reaches outside it (other roles, platform memory, other topics, files shared into the topic) asks a
+ * person first.
+ */
+export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS);
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics", "share_file"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];

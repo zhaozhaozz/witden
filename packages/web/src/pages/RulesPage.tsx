@@ -89,7 +89,7 @@ export default function RulesPage() {
     <div className="page">
       <PageHeader
         title="分配规则"
-        sub="决定一条请求可以交给哪些角色、在哪些电脑上执行。所有匹配的规则同时生效：允许范围取交集，拒绝优先；默认角色取最具体的规则（话题 > 外部会话 > 成员 > 会话类型 > 通讯接入 > 全局）。外部会话没有匹配规则时一律拒绝。"
+        sub="决定一条请求可以交给哪些角色、在哪些虚拟电脑上执行。所有匹配的规则同时生效：允许范围取交集，拒绝优先；默认角色取最具体的规则（话题 > 外部会话 > 成员 > 会话类型 > 通讯接入 > 全局）。外部会话没有匹配规则时一律拒绝。"
         actions={
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
             新建规则
@@ -112,7 +112,7 @@ export default function RulesPage() {
                         <th>允许的角色</th>
                         <th>排除</th>
                         <th>默认角色</th>
-                        <th>允许的电脑</th>
+                        <th>允许的虚拟电脑</th>
                         <th title="具体度越高越优先决定默认角色；同级时优先级数字小的优先">具体度 / 优先级</th>
                         <th />
                       </tr>
@@ -375,15 +375,15 @@ function RuleEditor({
               </select>
             </Field>
           </div>
-          <FieldGroup label="允许的电脑" hint="例如敏感话题只允许使用独立电脑上的角色" wide>
-            <Toggle checked={limitInstances} onChange={setLimitInstances} label="只允许下列电脑" />
+          <FieldGroup label="允许的虚拟电脑" hint="例如敏感话题只允许使用独立虚拟电脑上的角色" wide>
+            <Toggle checked={limitInstances} onChange={setLimitInstances} label="只允许下列虚拟电脑" />
             {limitInstances ? (
               <MultiPick
                 columns={3}
                 options={ctx.instances.map((i) => ({ value: i.id, label: i.name }))}
                 value={allowInstances}
                 onChange={setAllowInstances}
-                empty="没有可选的电脑（可能缺少查看电脑的权限）"
+                empty="没有可选的虚拟电脑（可能缺少查看虚拟电脑的权限）"
               />
             ) : null}
           </FieldGroup>
@@ -408,7 +408,7 @@ function ExplainPanel({ ctx }: { ctx: Ctx }) {
   return (
     <Section title="规则检查" className="explain">
       <p className="small muted">
-        模拟一条请求，查看会交给哪个角色、在哪台电脑上执行，以及每一步的判断依据。不会创建任务。
+        模拟一条请求，查看会交给哪个角色、在哪台虚拟电脑上执行，以及每一步的判断依据。不会创建任务。
       </p>
       <form
         className="form"

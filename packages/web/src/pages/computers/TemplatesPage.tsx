@@ -35,8 +35,8 @@ export default function TemplatesPage() {
   return (
     <div className="page">
       <PageHeader
-        title="电脑"
-        sub="模板是创建电脑的预配置环境：镜像、预装软件、工作目录和需要持久保存的目录。每次修改模板都会增加版本号。"
+        title="虚拟电脑"
+        sub="模板是创建虚拟电脑的预配置环境：镜像、预装软件、工作目录和需要持久保存的目录。每次修改模板都会增加版本号。"
         actions={
           manage ? (
             <>
@@ -102,7 +102,7 @@ export default function TemplatesPage() {
                           {t.kind === "desktop" ? "桌面" : "命令行"}
                         </Tag>
                         {t.archived ? <Tag tone="off">已归档</Tag> : null}
-                        <span className="muted">{t.instance_count} 台电脑在用</span>
+                        <span className="muted">{t.instance_count} 台虚拟电脑在用</span>
                       </div>
                     </div>
                   </header>
@@ -177,11 +177,11 @@ export default function TemplatesPage() {
                           type="button"
                           className="btn btn-xs btn-danger-ghost"
                           disabled={busy || t.instance_count > 0}
-                          title={t.instance_count > 0 ? "还有电脑在使用这个模板，可以先归档" : undefined}
+                          title={t.instance_count > 0 ? "还有虚拟电脑在使用这个模板，可以先归档" : undefined}
                           onClick={async () => {
                             const ok = await confirm({
                               title: `删除模板 ${t.name}`,
-                              body: <p>删除后无法恢复。已有电脑不受影响。</p>,
+                              body: <p>删除后无法恢复。已有虚拟电脑不受影响。</p>,
                               danger: true,
                               confirmLabel: "删除",
                             });
@@ -318,7 +318,7 @@ function TemplateEditor({
     };
     const out = await run(
       () => (t ? api.patch(`/api/templates/${t.id}`, body) : api.post("/api/templates", body)),
-      t ? "模板已保存，版本号已增加；已有电脑不受影响" : "模板已创建",
+      t ? "模板已保存，版本号已增加；已有虚拟电脑不受影响" : "模板已创建",
     );
     if (out) onSaved();
   };
@@ -368,7 +368,7 @@ function TemplateEditor({
         <Field label="持久化目录" hint="每行一个绝对路径；重启后保留">
           <textarea className="mono" rows={3} value={form.persistent_paths} onChange={set("persistent_paths")} />
         </Field>
-        <Field label="凭据目录" hint="每行一个；复制电脑时默认排除。留空使用默认列表（~/.ssh 等）">
+        <Field label="凭据目录" hint="每行一个；复制虚拟电脑时默认排除。留空使用默认列表（~/.ssh 等）">
           <textarea className="mono" rows={3} value={form.credential_paths} onChange={set("credential_paths")} />
         </Field>
       </div>

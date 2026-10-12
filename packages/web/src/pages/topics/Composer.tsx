@@ -242,7 +242,12 @@ export function Composer({
         />
         <div className="composer-actions">
           <input ref={fileInput} type="file" multiple hidden onChange={onFiles} />
-          <button className="btn btn-sm btn-ghost" type="button" onClick={() => fileInput.current?.click()}>
+          <button
+            className="btn btn-sm btn-ghost"
+            type="button"
+            title="从你自己的电脑选择文件，上传到这个话题"
+            onClick={() => fileInput.current?.click()}
+          >
             附件
           </button>
           <button

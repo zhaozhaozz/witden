@@ -29,7 +29,7 @@ export default function LoginPage() {
           <img src="/favicon.svg" alt="" width={32} height={32} />
           <div>
             <h1>witden</h1>
-            <p>团队的 AI 员工与它们的电脑</p>
+            <p>团队的 AI 员工与它们的虚拟电脑</p>
           </div>
         </div>
         <form className="form" onSubmit={submit}>

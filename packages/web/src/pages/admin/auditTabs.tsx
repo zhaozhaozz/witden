@@ -45,7 +45,7 @@ export function AuditTab() {
         </select>
         <input className="mono" placeholder="任务 ID" value={draft.task_id} onChange={set("task_id")} />
         <input className="mono" placeholder="话题 ID" value={draft.topic_id} onChange={set("topic_id")} />
-        <input className="mono" placeholder="电脑 ID" value={draft.instance_id} onChange={set("instance_id")} />
+        <input className="mono" placeholder="虚拟电脑 ID" value={draft.instance_id} onChange={set("instance_id")} />
         <button type="submit" className="btn btn-sm btn-primary">
           筛选
         </button>
@@ -103,7 +103,7 @@ export function AuditTab() {
                           <span className="inline-list">
                             {a.task_id ? <Link to={`/tasks/${a.task_id}`}>任务</Link> : null}
                             {a.topic_id ? <Link to={`/topics/${a.topic_id}`}>话题</Link> : null}
-                            {a.instance_id ? <Link to={`/computers/${a.instance_id}`}>电脑</Link> : null}
+                            {a.instance_id ? <Link to={`/computers/${a.instance_id}`}>虚拟电脑</Link> : null}
                             {a.role_id ? <span>{dir.roleLabel(a.role_id)}</span> : null}
                           </span>
                         </td>
@@ -143,7 +143,7 @@ export function AuditTab() {
 const GROUPS: [string, string][] = [
   ["role", "按角色"],
   ["model", "按模型"],
-  ["instance", "按电脑"],
+  ["instance", "按虚拟电脑"],
   ["task", "按任务"],
 ];
 

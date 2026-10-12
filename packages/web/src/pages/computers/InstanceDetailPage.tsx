@@ -92,9 +92,9 @@ export default function InstanceDetailPage() {
                 }
                 sub={
                   <span className="head-meta">
-                    <Link to="/computers">电脑</Link>
+                    <Link to="/computers">虚拟电脑</Link>
                     <span>/</span>
-                    <span>{desktop ? "桌面电脑" : "命令行电脑"}</span>
+                    <span>{desktop ? "桌面虚拟电脑" : "命令行虚拟电脑"}</span>
                     <IdText id={inst.id} />
                   </span>
                 }
@@ -115,7 +115,7 @@ export default function InstanceDetailPage() {
                   ) : (
                     <div className="muted">{statusHint(inst.status)}</div>
                   )}
-                  {inst.paused_ai ? <div className="small">AI 工作已暂停：有人接管了这台电脑。</div> : null}
+                  {inst.paused_ai ? <div className="small">AI 工作已暂停：有人接管了这台虚拟电脑。</div> : null}
                 </div>
               </div>
               <Tabs
@@ -160,7 +160,7 @@ const PREVIEW_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   ],
   [/^all data in persistent path (.+)$/, (m) => `持久化目录 ${m[1]} 中的全部数据`],
   [/^data in persistent path (.+)$/, (m) => `持久化目录 ${m[1]} 中的数据`],
-  [/^instance name, resource limits and role assignments$/, () => "电脑名称、资源限制和角色分配"],
+  [/^instance name, resource limits and role assignments$/, () => "虚拟电脑名称、资源限制和角色分配"],
   [/^the container and everything in it$/, () => "容器及其中的全部内容"],
   [/^persistent path (.+)$/, (m) => `持久化目录 ${m[1]}`],
   [/^backups are kept until deleted separately$/, () => "已有备份会保留，需要单独删除"],
@@ -179,9 +179,9 @@ function statusHint(status: string): string {
     case "creating":
       return "正在创建容器和存储卷，完成后自动启动。";
     case "running":
-      return "电脑正在运行，分配到这里的角色可以执行任务。";
+      return "虚拟电脑正在运行，分配到这里的角色可以执行任务。";
     case "stopped":
-      return "电脑已停止；分配到这里的任务会等待电脑启动，不会转到其他电脑执行。";
+      return "虚拟电脑已停止；分配到这里的任务会等待虚拟电脑启动，不会转到其他虚拟电脑执行。";
     case "deleting":
       return "正在删除。";
     default:
@@ -235,7 +235,7 @@ function LifecycleButtons({ inst, onChanged }: { inst: Instance; onChanged: (i?:
               title: `停止 ${inst.name}`,
               body: (
                 <p>
-                  停止后，这台电脑上正在进行的 AI 工作会被中断{activeCount ? `（当前 ${activeCount} 项任务）` : ""}
+                  停止后，这台虚拟电脑上正在进行的 AI 工作会被中断{activeCount ? `（当前 ${activeCount} 项任务）` : ""}
                   ；持久化目录中的数据会保留。
                 </p>
               ),
@@ -347,7 +347,7 @@ function DestructiveDialog({
             ) : null}
             {p.roles_detached?.length ? (
               <p className="small">
-                以下角色将失去电脑，需要重新分配：
+                以下角色将失去虚拟电脑，需要重新分配：
                 {p.roles_detached.map((h) => (
                   <Handle key={h} handle={h} />
                 ))}
@@ -361,7 +361,7 @@ function DestructiveDialog({
         )}
       </Loaded>
       {needsName ? (
-        <Field label={`输入电脑名称 ${inst.name} 以确认`}>
+        <Field label={`输入虚拟电脑名称 ${inst.name} 以确认`}>
           <input value={typed} onChange={(e) => setTyped(e.target.value)} />
         </Field>
       ) : null}
@@ -505,7 +505,7 @@ function Overview({
               <p className="small muted">正在读取实际占用…</p>
             )
           ) : (
-            <p className="small muted">电脑未运行，没有实时占用数据。</p>
+            <p className="small muted">虚拟电脑未运行，没有实时占用数据。</p>
           )}
           {stats.data?.volumes && Object.keys(stats.data.volumes).length ? (
             <div className="volume-list">
@@ -524,7 +524,7 @@ function Overview({
               onSubmit={async () => {
                 const out = await run(
                   () => api.patch<Instance>(`/api/instances/${inst.id}/resources`, { resources: fromDraft(draft) }),
-                  "已保存。新的限制在下次重置电脑后生效",
+                  "已保存。新的限制在下次重置虚拟电脑后生效",
                 );
                 if (out) {
                   setEditing(false);
@@ -533,7 +533,9 @@ function Overview({
               }}
             >
               <ResourceFields value={draft} onChange={setDraft} />
-              <p className="small muted">新限制在重置电脑（重新创建容器）后才会生效，保存不会中断正在进行的工作。</p>
+              <p className="small muted">
+                新限制在重置虚拟电脑（重新创建容器）后才会生效，保存不会中断正在进行的工作。
+              </p>
             </FormModal>
           ) : null}
         </Section>
@@ -542,7 +544,7 @@ function Overview({
       <div>
         <Section title="Runner">
           <p className="small muted">
-            Runner 是电脑里的执行代理：AI 的每个操作、控制台命令和实时画面都经由它进入这台电脑。
+            Runner 是虚拟电脑里的执行代理：AI 的每个操作、控制台命令和实时画面都经由它进入这台虚拟电脑。
           </p>
           <RunnerPanel inst={inst} />
         </Section>
@@ -590,7 +592,7 @@ function Overview({
                   disabled={busy || inst.status !== "running"}
                   onClick={() => setTaking(true)}
                 >
-                  接管电脑
+                  接管虚拟电脑
                 </button>
               )}
               {!heldByMe && op?.holder_type === "user" && me?.is_admin ? (
@@ -603,7 +605,7 @@ function Overview({
                       title: "强制结束接管",
                       body: (
                         <p>
-                          {dir.userName(op.holder_id)} 正在操作这台电脑。结束接管后，AI
+                          {dir.userName(op.holder_id)} 正在操作这台虚拟电脑。结束接管后，AI
                           工作会恢复，对方将失去鼠标和键盘控制。
                         </p>
                       ),
@@ -634,7 +636,7 @@ function Overview({
 
         <Section title="共享范围">
           <p className="small">
-            这台电脑上的所有角色共享文件、已安装的软件和登录状态。需要互相保密的工作应放到不同的电脑上，而不是只靠不同的角色提示词区分。
+            这台虚拟电脑上的所有角色共享文件、已安装的软件和登录状态。需要互相保密的工作应放到不同的虚拟电脑上，而不是只靠不同的角色提示词区分。
           </p>
           <KV
             items={[
@@ -682,7 +684,7 @@ function Overview({
               ],
             ]}
           />
-          <p className="small muted">凭据目录在复制电脑时默认不会带到新电脑。</p>
+          <p className="small muted">凭据目录在复制虚拟电脑时默认不会带到新虚拟电脑。</p>
         </Section>
       </div>
     </div>
@@ -710,14 +712,14 @@ function TakeoverDialog({
       onSubmit={async () => {
         const out = await run(
           () => api.post<Instance>(`/api/instances/${inst.id}/takeover`, { reason: reason.trim() || null }),
-          "你已接管这台电脑，AI 工作已暂停",
+          "你已接管这台虚拟电脑，AI 工作已暂停",
         );
         if (out) onDone(out);
       }}
     >
       <div className="callout callout-wait">
-        接管后，这台电脑上所有角色的 AI 工作都会暂停{count ? `（当前 ${count} 项任务）` : ""}
-        ，直到你交还控制。适合完成登录、验证码等需要人工的步骤。
+        接管后，这台虚拟电脑上所有角色的 AI 工作都会暂停{count ? `（当前 ${count} 项任务）` : ""}
+        ，直到你交还控制。接管期间，你在浏览器里的鼠标和键盘操作会发送到这台虚拟电脑（不会影响你自己的电脑）。适合完成登录、验证码等需要人工的步骤。
       </div>
       <Field label="原因" hint="会显示给其他人，并记录在审计中。">
         <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="例如：登录企业邮箱" autoFocus />
@@ -768,17 +770,17 @@ function ScreenTab({ inst, reload }: { inst: Instance; reload: () => void }) {
       >
         <p className="small muted">
           {mode === "control"
-            ? "你已接管这台电脑，画面可操作，AI 工作已暂停。完成后请交还控制。"
+            ? "你已接管这台虚拟电脑，画面可操作，AI 工作已暂停。完成后请交还控制。"
             : inst.operator?.holder_type === "user" && !heldByMe
-              ? `只读画面：${dir.userName(inst.operator.holder_id)} 正在接管这台电脑，只有接管人可以操作。`
-              : "只读画面：可以观察 AI 的操作。只有接管电脑的人才能使用鼠标和键盘，接管会暂停这台电脑上的 AI 工作。"}
+              ? `只读画面：${dir.userName(inst.operator.holder_id)} 正在接管这台虚拟电脑，只有接管人可以操作。`
+              : "只读画面：可以观察 AI 的操作。只有接管虚拟电脑的人才能使用鼠标和键盘，接管会暂停这台虚拟电脑上的 AI 工作。"}
         </p>
         {running ? (
           <Suspense fallback={<Loading label="正在加载实时画面组件" />}>
             <LiveDesktop key={mode} instanceId={inst.id} mode={mode} />
           </Suspense>
         ) : (
-          <Empty title="电脑未运行" hint="启动电脑后可以查看实时画面。" />
+          <Empty title="虚拟电脑未运行" hint="启动虚拟电脑后可以查看实时画面。" />
         )}
         {taking ? (
           <TakeoverDialog inst={inst} onClose={() => setTaking(false)} onDone={() => (setTaking(false), reload())} />
@@ -846,7 +848,7 @@ function Screenshot({ inst }: { inst: Instance }) {
           <figcaption className="small muted">截取于 {at ? fmtTime(at.toISOString()) : ""}</figcaption>
         </figure>
       ) : (
-        <p className="small muted">实时画面不可用时，可以用截图查看电脑屏幕。截图不会保存。</p>
+        <p className="small muted">实时画面不可用时，可以用截图查看虚拟电脑屏幕。截图不会保存。</p>
       )}
     </Section>
   );
@@ -892,7 +894,7 @@ function ConsoleTab({ inst }: { inst: Instance }) {
   return (
     <Section title="操作员控制台">
       <p className="small muted">
-        命令经由 Runner 只在这台电脑（容器）内执行，以非特权用户 <code>{String(inst.spec?.user ?? "witden")}</code>{" "}
+        命令经由 Runner 只在这台虚拟电脑（容器）内执行，以非特权用户 <code>{String(inst.spec?.user ?? "witden")}</code>{" "}
         的身份运行，每条命令都会记录审计。不会在平台宿主机上执行。
       </p>
       <div className="console">
@@ -930,7 +932,7 @@ function ConsoleTab({ inst }: { inst: Instance }) {
           className="mono"
           value={command}
           onChange={(e) => setCommand(e.target.value)}
-          placeholder={inst.status === "running" ? "输入 shell 命令，例如 ls -la" : "电脑未运行"}
+          placeholder={inst.status === "running" ? "输入 shell 命令，例如 ls -la" : "虚拟电脑未运行"}
           disabled={inst.status !== "running"}
           aria-label="命令"
         />
@@ -982,8 +984,8 @@ function SessionsTab({ inst }: { inst: Instance }) {
       }
     >
       <p className="small muted">
-        桌面浏览器开在这台电脑的桌面上，实时画面里能看到，接管后可以直接操作；后台浏览器是单独的会话，屏幕上看不到。终端在后台运行。
-        电脑停止、重启、重置或恢复后，其中的会话都会标记为已关闭。
+        桌面浏览器开在这台虚拟电脑的桌面上，实时画面里能看到，接管后可以直接操作；后台浏览器是单独的会话，屏幕上看不到。终端在后台运行。
+        虚拟电脑停止、重启、重置或恢复后，其中的会话都会标记为已关闭。
       </p>
       <Loaded res={res}>
         {(all) => {
@@ -1131,7 +1133,7 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
                                     恢复会用 {fmtDateTime(b.created_at)}{" "}
                                     的备份替换当前容器和持久化数据，之后的改动会丢失。
                                   </p>
-                                  <p>这台电脑上进行中的 AI 工作会被中断。</p>
+                                  <p>这台虚拟电脑上进行中的 AI 工作会被中断。</p>
                                 </>
                               ),
                               confirmLabel: "恢复",
@@ -1158,12 +1160,12 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
           }
         </Loaded>
       </Section>
-      <Section title="复制为新电脑">
+      <Section title="复制为新虚拟电脑">
         <p className="small">
-          复制当前环境（软件、文件）到一台新电脑。账号凭据、私密文件和浏览器登录状态默认不会被复制。
+          复制当前环境（软件、文件）到一台新虚拟电脑。账号凭据、私密文件和浏览器登录状态默认不会被复制。
         </p>
         <button type="button" className="btn btn-sm" onClick={() => setCloning(true)}>
-          复制电脑
+          复制虚拟电脑
         </button>
         {cloning ? (
           <FormModal
@@ -1179,7 +1181,7 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
                     name: cloneName,
                     include_credentials: withCreds,
                   }),
-                "正在复制，新电脑会在完成后出现",
+                "正在复制，新虚拟电脑会在完成后出现",
               );
               if (out) {
                 setCloning(false);
@@ -1187,7 +1189,7 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
               }
             }}
           >
-            <Field label="新电脑名称" hint="小写字母、数字和短横线">
+            <Field label="新虚拟电脑名称" hint="小写字母、数字和短横线">
               <input value={cloneName} onChange={(e) => setCloneName(e.target.value.toLowerCase())} />
             </Field>
             <Toggle
@@ -1198,7 +1200,7 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
             />
             {withCreds ? (
               <div className="callout callout-bad">
-                新电脑上的所有角色都将能使用原电脑的账号和登录状态。只有确实需要时才勾选。
+                新虚拟电脑上的所有角色都将能使用原虚拟电脑的账号和登录状态。只有确实需要时才勾选。
               </div>
             ) : null}
           </FormModal>
@@ -1223,7 +1225,7 @@ function TasksTab({ inst }: { inst: Instance }) {
     <Section>
       {inst.waiting_tasks?.length ? (
         <div className="callout callout-wait">
-          {inst.waiting_tasks.length} 项任务正在等待这台电脑可用；它们不会转到其他电脑执行。
+          {inst.waiting_tasks.length} 项任务正在等待这台虚拟电脑可用；它们不会转到其他虚拟电脑执行。
         </div>
       ) : null}
       <Loaded res={res}>
@@ -1257,7 +1259,7 @@ function TasksTab({ inst }: { inst: Instance }) {
               </tbody>
             </table>
           ) : (
-            <Empty title="这台电脑还没有执行过任务" />
+            <Empty title="这台虚拟电脑还没有执行过任务" />
           )
         }
       </Loaded>

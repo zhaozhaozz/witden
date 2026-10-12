@@ -52,7 +52,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
               }
             >
               <p className="small muted">
-                开启后，这台电脑里的程序（例如角色或成员自己安装的其他智能体、脚本）可以通过本机地址使用平台里的模型。电脑里只有本机地址和平台为这台电脑签发的密钥：真实的服务商地址和密钥不会进入电脑，这个密钥离开这台电脑也无法使用。平台按下面的列表决定能用哪些模型，并按电脑记录用量。
+                开启后，这台虚拟电脑里的程序（例如角色或成员自己安装的其他智能体、脚本）可以通过虚拟电脑内部的地址使用平台里的模型。虚拟电脑里只有这个内部地址和平台为它签发的密钥：真实的服务商地址和密钥不会进入虚拟电脑，这个密钥离开这台虚拟电脑也无法使用。下面的地址只在这台虚拟电脑内部有效，在你自己的电脑上访问不到。平台按下面的列表决定能用哪些模型，并按虚拟电脑记录用量。
               </p>
               {p.enabled ? (
                 <KV
@@ -76,7 +76,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                                 title: "更换密钥",
                                 body: (
                                   <p>
-                                    旧密钥立即失效。电脑在线时，新密钥会自动写入下面的环境变量文件；已经在运行的程序需要重启后才会读到。
+                                    旧密钥立即失效。虚拟电脑在线时，新密钥会自动写入下面的环境变量文件；已经在运行的程序需要重启后才会读到。
                                   </p>
                                 ),
                                 confirmLabel: "更换",
@@ -97,7 +97,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                         </span>
                       ) : (
                         <span key="k" className="muted">
-                          只有能管理这台电脑的人可以查看
+                          只有能管理这台虚拟电脑的人可以查看
                         </span>
                       ),
                     ],
@@ -116,7 +116,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                 />
               ) : null}
               {p.enabled && !p.runner_connected ? (
-                <p className="small text-bad">电脑现在没有连上平台；Runner 连上后设置会自动生效。</p>
+                <p className="small text-bad">虚拟电脑现在没有连上平台；Runner 连上后设置会自动生效。</p>
               ) : null}
             </Section>
 
@@ -166,7 +166,7 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
               )}
               {manage ? (
                 <div className="pick-section">
-                  <div className="small muted">勾选这台电脑可以使用的模型（只能勾选你自己有权使用的模型）：</div>
+                  <div className="small muted">勾选这台虚拟电脑可以使用的模型（只能勾选你自己有权使用的模型）：</div>
                   <MultiPick
                     value={picked}
                     onChange={setPicked}

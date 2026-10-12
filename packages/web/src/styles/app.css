@@ -1481,6 +1481,10 @@ textarea.prompt {
   font-size: 12px;
 }
 .perm-always {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 8px 12px;
   border-top: 1px solid var(--line-2);
   color: var(--ink-3);

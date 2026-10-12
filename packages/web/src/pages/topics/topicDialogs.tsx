@@ -86,7 +86,7 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
             .map((r) => ({
               value: r.id,
               label: `${r.name} @${r.handle}`,
-              hint: r.instance ? `电脑 ${r.instance.name}` : "未分配电脑",
+              hint: r.instance ? `虚拟电脑 ${r.instance.name}` : "未分配虚拟电脑",
             }))}
           value={roleIds}
           onChange={setRoleIds}

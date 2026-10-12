@@ -142,7 +142,7 @@ export function TaskControls({
           }}
         >
           <p className="muted">
-            转交会创建一项由新角色负责的任务，并重新检查权限；新角色不会因此获得原角色更多的权限，任务会在新角色自己的电脑上执行。
+            转交会创建一项由新角色负责的任务，并重新检查权限；新角色不会因此获得原角色更多的权限，任务会在新角色自己的虚拟电脑上执行。
           </p>
           <Field label="新负责人">
             <select value={target} onChange={(e) => setTarget(e.target.value)}>
@@ -150,7 +150,7 @@ export function TaskControls({
               {candidates.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name} @{r.handle}
-                  {r.instance ? ` · ${r.instance.name}` : " · 未分配电脑"}
+                  {r.instance ? ` · ${r.instance.name}` : " · 未分配虚拟电脑"}
                 </option>
               ))}
             </select>

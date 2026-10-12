@@ -52,7 +52,7 @@ export default function TasksPage() {
     <div className="page">
       <PageHeader
         title="任务"
-        sub="每项任务都有请求人、来源话题、负责角色和执行电脑。点开任务可以看到每一步执行记录和分配依据。"
+        sub="每项任务都有请求人、来源话题、负责角色和执行任务的虚拟电脑。点开任务可以看到每一步执行记录和分配依据。"
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
@@ -98,7 +98,7 @@ export default function TasksPage() {
                     <th>任务</th>
                     <th>状态与原因</th>
                     <th>负责角色</th>
-                    <th>电脑</th>
+                    <th>虚拟电脑</th>
                     <th>话题</th>
                     <th>请求人</th>
                     <th>更新</th>

@@ -494,6 +494,9 @@ export interface ToolGroup {
   group: string | null;
   description: string;
   tools: string[];
+  /** What a new role gets: the group's level, and single tools that ask while the group is allowed. */
+  default_level?: "allow" | "ask" | "off";
+  default_ask?: string[];
 }
 
 export interface Capabilities {
