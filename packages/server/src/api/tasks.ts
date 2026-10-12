@@ -55,8 +55,10 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
   const [requester] = task.requesterUserId
     ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
     : [];
-  data.owner = role ? { id: role.id, handle: role.handle, name: role.name } : null;
-  data.instance = inst ? { id: inst.id, name: inst.name, status: inst.status } : null;
+  data.owner = role
+    ? { id: role.id, handle: role.handle, name: role.name, color: role.color, avatar_url: role.avatarUrl }
+    : null;
+  data.instance = inst ? { id: inst.id, name: inst.name, status: inst.status, color: inst.color } : null;
   data.topic = topic ? { id: topic.id, title: topic.title, kind: topic.kind } : null;
   data.requester = requester ? { id: requester.id, name: requester.name } : null;
   if (opts.detail) {
@@ -90,7 +92,9 @@ async function approvalOut(db: Db, a: Approval, user: User) {
   data.can_decide = a.status === "pending" && decide;
   data.can_approve = data.can_decide && sees;
   const [role] = await db.select().from(roles).where(eq(roles.id, a.roleId)).limit(1);
-  data.role = role ? { id: role.id, handle: role.handle } : null;
+  data.role = role
+    ? { id: role.id, handle: role.handle, name: role.name, color: role.color, avatar_url: role.avatarUrl }
+    : null;
   return data;
 }
 

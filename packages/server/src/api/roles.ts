@@ -1,7 +1,9 @@
+import "@fastify/multipart";
+import fs from "node:fs";
 import { and, eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { TOOL_GROUPS, TOOLS } from "../agent/tools.js";
-import type { Db } from "../db/client.js";
+import { type Db, transaction } from "../db/client.js";
 import {
   agentSessions,
   type ComputerInstance,
@@ -12,12 +14,14 @@ import {
   roles,
   topics,
 } from "../db/schema.js";
+import { BadRequest } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { avatarFile, MAX_AVATAR_BYTES, saveAvatar } from "../services/appearance.js";
 import { audit } from "../services/audit.js";
 import { modelLabel, modelWithProvider, tokensToday, unusableReason } from "../services/model-configs.js";
 import * as svc from "../services/roles.js";
 import { canView } from "../services/topics.js";
-import { authed, body, params, row } from "./http.js";
+import { authed, authedNoTx, body, params, row } from "./http.js";
 
 /** Configuration problems that would make work fail later, shown up front. */
 export function roleWarnings(
@@ -50,7 +54,9 @@ async function roleOut(db: Db, role: Role, full: boolean) {
     : [];
   const found = await modelWithProvider(db, role.modelConfigId);
   const cfg = found?.model;
-  data.instance = inst ? { id: inst.id, name: inst.name, status: inst.status, kind: inst.spec.kind } : null;
+  data.instance = inst
+    ? { id: inst.id, name: inst.name, status: inst.status, kind: inst.spec.kind, color: inst.color }
+    : null;
   data.model = found
     ? {
         id: found.model.id,
@@ -124,6 +130,59 @@ export async function roleRoutes(app: FastifyInstance) {
       return roleOut(db, role, false);
     }),
   );
+
+  // --- avatars: uploaded images are stored by content hash and served without login (img tags, Slack) ---
+  app.post(
+    "/api/roles/:id/avatar",
+    authedNoTx(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.ROLE_MANAGE);
+      await svc.getRole(db, params(req).id);
+      const file = await req.file({ limits: { fileSize: MAX_AVATAR_BYTES + 1 } });
+      if (!file) throw new BadRequest("file is required");
+      const url = saveAvatar(await file.toBuffer());
+      return transaction(async (tx) => {
+        const [role] = await tx
+          .update(roles)
+          .set({ avatarUrl: url })
+          .where(eq(roles.id, params(req).id))
+          .returning();
+        await audit(tx, "role.avatar", {
+          actorType: "user",
+          actorId: user.id,
+          roleId: role.id,
+          detail: { avatar: url },
+        });
+        return roleOut(tx, role, true);
+      });
+    }),
+  );
+  app.delete(
+    "/api/roles/:id/avatar",
+    authed(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.ROLE_MANAGE);
+      const [role] = await db
+        .update(roles)
+        .set({ avatarUrl: null })
+        .where(eq(roles.id, (await svc.getRole(db, params(req).id)).id))
+        .returning();
+      await audit(db, "role.avatar", {
+        actorType: "user",
+        actorId: user.id,
+        roleId: role.id,
+        detail: { avatar: null },
+      });
+      return roleOut(db, role, true);
+    }),
+  );
+  app.get("/api/avatars/:file", async (req, reply) => {
+    const found = avatarFile(params(req).file);
+    if (!found) return reply.code(404).send({ error: { code: "not_found", message: "no such avatar", detail: {} } });
+    return reply
+      .header("content-type", found.type)
+      .header("cache-control", "public, max-age=31536000, immutable")
+      .header("x-content-type-options", "nosniff")
+      .send(fs.createReadStream(found.file));
+  });
 
   /** A role's agent sessions: one per topic, listed only for topics the viewer can read. */
   app.get(

@@ -21,6 +21,7 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
+import { absoluteAvatarUrl } from "../services/appearance.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
 
 const API = "https://slack.com/api/";
@@ -146,7 +147,9 @@ export class SlackAdapter implements Adapter {
       const name = role ? `${role.name} (@${role.handle})` : "role";
       if (conn.settings.custom_identity) {
         extra.username = name;
-        if (role?.avatarUrl) extra.icon_url = role.avatarUrl;
+        // Slack fetches the icon itself: uploaded avatars need the platform's public address.
+        const icon = absoluteAvatarUrl(role?.avatarUrl);
+        if (icon) extra.icon_url = icon;
       } else text = `*${name}*: ${text}`;
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];

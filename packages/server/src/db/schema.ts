@@ -158,6 +158,8 @@ export const computerTemplates = pgTable("computer_templates", {
 export const computerInstances = pgTable("computer_instances", {
   id: id(),
   name: text("name").notNull().unique(),
+  /** Badge colour (#rrggbb); null = derived from the id. */
+  color: text("color"),
   templateId: text("template_id")
     .notNull()
     .references(() => computerTemplates.id),
@@ -249,6 +251,8 @@ export const roles = pgTable("roles", {
   name: text("name").notNull(),
   handle: text("handle").notNull().unique(),
   avatarUrl: text("avatar_url"),
+  /** Badge colour (#rrggbb); null = derived from the id. */
+  color: text("color"),
   description: text("description").notNull().default(""),
   systemPrompt: text("system_prompt").notNull().default(""),
   modelConfigId: text("model_config_id").references(() => modelConfigs.id),

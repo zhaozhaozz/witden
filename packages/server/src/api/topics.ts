@@ -8,6 +8,7 @@ import { type Db, db as getDb, transaction } from "../db/client.js";
 import {
   agentSessions,
   artifacts,
+  computerInstances,
   memories,
   messages,
   roles,
@@ -46,12 +47,18 @@ async function participantsOut(db: Db, topic: Topic) {
       });
     } else {
       const r = await svc.getRole(db, p.participantId);
+      const [inst] = r?.instanceId
+        ? await db.select().from(computerInstances).where(eq(computerInstances.id, r.instanceId)).limit(1)
+        : [];
       out.push({
         type: "role",
         id: p.participantId,
         name: r?.name ?? "?",
         handle: r?.handle ?? null,
         avatar_url: r?.avatarUrl ?? null,
+        color: r?.color ?? null,
+        // the computer the role works on, shown as a badge next to it
+        instance: inst ? { id: inst.id, name: inst.name, color: inst.color } : null,
         status: r?.status ?? null,
         is_owner: p.isOwner,
         joined_at: p.joinedAt.toISOString(),

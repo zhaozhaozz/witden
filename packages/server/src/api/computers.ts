@@ -21,6 +21,7 @@ import { runtime } from "../runtime.js";
 import { secretBox } from "../security/crypto.js";
 import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { parseColor } from "../services/appearance.js";
 import * as svc from "../services/instances.js";
 import { currentLease, handBack, takeOver } from "../services/leases.js";
 import { modelLabel, unusableReason } from "../services/model-configs.js";
@@ -201,7 +202,11 @@ export async function computerRoutes(app: FastifyInstance) {
       await requirePerm(db, user, Perm.INSTANCE_MANAGE);
       const b = body(req);
       const template = await tpl.getTemplate(db, b.templateId);
-      const inst = await svc.createInstance(db, template, String(b.name ?? ""), b.resources ?? {}, user.id);
+      const color = parseColor(b.color);
+      let inst = await svc.createInstance(db, template, String(b.name ?? ""), b.resources ?? {}, user.id);
+      if (color) {
+        [inst] = await db.update(computerInstances).set({ color }).where(eq(computerInstances.id, inst.id)).returning();
+      }
       await svc.recordAudit(db, user.id, "instance.create", inst, {
         template: template.name,
         resources: inst.resources,
@@ -216,6 +221,24 @@ export async function computerRoutes(app: FastifyInstance) {
       const inst = await svc.getInstance(db, params(req).id);
       if (!(await canSee(db, user, inst))) await requirePerm(db, user, Perm.INSTANCE_OBSERVE, inst.id);
       return instanceOut(db, inst, { detail: true, user });
+    }),
+  );
+  app.patch(
+    "/api/instances/:id",
+    authed(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.INSTANCE_MANAGE, params(req).id);
+      const inst = await svc.getInstance(db, params(req).id);
+      const b = body(req);
+      const update: Partial<ComputerInstance> = {};
+      if ("color" in b) update.color = parseColor(b.color);
+      if (!Object.keys(update).length) return instanceOut(db, inst, { detail: true, user });
+      const [updated] = await db
+        .update(computerInstances)
+        .set(update)
+        .where(eq(computerInstances.id, inst.id))
+        .returning();
+      await svc.recordAudit(db, user.id, "instance.update", updated, { fields: Object.keys(update) });
+      return instanceOut(db, updated, { detail: true, user });
     }),
   );
   app.patch(

@@ -36,6 +36,13 @@
       "when": 1791787291419,
       "tag": "0004_model_proxy",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791788685911,
+      "tag": "0005_colors",
+      "breakpoints": true
     }
   ]
 }

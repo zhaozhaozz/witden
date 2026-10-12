@@ -16,6 +16,7 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, NotFound } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { parseAvatarUrl, parseColor } from "./appearance.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
@@ -40,7 +41,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   }
   for (const key of [
     "name",
-    "avatarUrl",
     "description",
     "systemPrompt",
     "responseMode",
@@ -51,6 +51,8 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   ] as const) {
     if (key in data) (out as any)[key] = data[key];
   }
+  if ("avatarUrl" in data) out.avatarUrl = parseAvatarUrl(data.avatarUrl);
+  if ("color" in data) out.color = parseColor(data.color);
   if (!["mention", "active"].includes(out.responseMode ?? "mention"))
     throw new BadRequest("response_mode must be mention or active");
   if ("modelConfigId" in data) {
@@ -210,6 +212,7 @@ export async function copyRole(
     name: name || role.name,
     handle,
     avatarUrl: role.avatarUrl,
+    color: role.color,
     description: role.description,
     systemPrompt: role.systemPrompt,
     modelConfigId: role.modelConfigId,
