@@ -51,6 +51,8 @@ export interface InboundMessage {
   /** The bot was mentioned (or it is a DM). */
   addressed: boolean;
   files?: Record<string, any>[];
+  /** The thread itself, where the platform has one with its own identity (a GitHub issue or pull request). */
+  thread?: { kind: string; title?: string; url?: string };
 }
 
 const STALLED_MS = 5 * 60_000;
@@ -233,12 +235,18 @@ async function threadTopic(
     .limit(1);
   if (link) return topicSvc.getTopic(db, link.topicId);
   const isDm = conv.kind === "im";
-  const title = (msg.text.trim().split("\n")[0] || "thread").slice(0, 80);
+  const first = (msg.text.trim().split("\n")[0] || "thread").replace(/\*\*/g, "").slice(0, 80);
+  // A DM is named after its person; an issue / PR after itself; a channel thread after its first line.
+  const title = isDm
+    ? starter.name
+    : msg.thread?.title
+      ? `${conv.name ?? conv.externalId}#${msg.threadKey} ${msg.thread.title}`.slice(0, 200)
+      : `#${conv.name ?? conv.externalId}: ${first}`;
   const [topic] = await db
     .insert(topics)
     .values({
       id: newId("top"),
-      title: `${isDm ? "DM" : `#${conv.name ?? conv.externalId}`}: ${title}`,
+      title,
       kind: isDm ? "dm" : "group",
       source: conn.platform,
       createdBy: starter.id,
@@ -251,6 +259,7 @@ async function threadTopic(
     conversationId: conv.id,
     threadKey: msg.threadKey,
     topicId: topic.id,
+    meta: msg.thread ?? {},
   });
   return topic;
 }

@@ -1,7 +1,8 @@
 import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "./api/client";
-import type { Approval, KillSwitch } from "./api/types";
+import type { Approval, KillSwitch, Topic } from "./api/types";
+import { connectionLabel, conversationIcon, conversationKind, sourceOf } from "./lib/conversations";
 import { useInterval } from "./lib/hooks";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { useAuth, useDirectory } from "./lib/session";
@@ -115,6 +116,7 @@ export default function Layout() {
           </div>
           <TopicList />
           <RoleList />
+          <ConnectionLists />
           {settings.length ? (
             <SideSection id="settings" title="设置">
               {settings.map((i) => (
@@ -130,7 +132,7 @@ export default function Layout() {
             {me ? <Avatar id={me.id} name={me.name} kind="user" size={26} src={me.avatar_url} /> : null}
             <span className="me-name">
               <span>{me?.name}</span>
-              <span className="muted small">{me?.is_admin ? "管理员" : "成员"}</span>
+              <span className="muted small">管理员</span>
             </span>
           </NavLink>
           <button
@@ -251,11 +253,11 @@ function SideSection({
 
 const MAX_TOPICS = 40;
 
-/** Group topics, most recent activity first; unread ones in bold. */
+/** Console topics (group), most recent activity first; unread ones in bold. */
 function TopicList() {
   const { can } = useAuth();
   const t = useTopics();
-  const topics = t.topics.filter((x) => x.kind === "group" && x.status === "active");
+  const topics = t.topics.filter((x) => x.kind === "group" && x.status === "active" && sourceOf(x) === "console");
   return (
     <SideSection
       id="topics"
@@ -286,6 +288,61 @@ function TopicList() {
         </Link>
       ) : null}
     </SideSection>
+  );
+}
+
+const MAX_PER_CONNECTION = 20;
+
+/**
+ * The conversations the roles hold elsewhere, one section per connection (a Slack workspace, a GitHub
+ * account ...): threads, DMs, issues and pull requests, most recent first.
+ */
+function ConnectionLists() {
+  const t = useTopics();
+  const groups = new Map<string, Topic[]>();
+  for (const x of t.topics) {
+    if (x.status !== "active" || sourceOf(x) === "console" || !x.channel) continue;
+    groups.set(x.channel.connection_id, [...(groups.get(x.channel.connection_id) ?? []), x]);
+  }
+  const sections = [...groups.values()].sort((a, b) =>
+    a[0].channel!.connection_name.localeCompare(b[0].channel!.connection_name, "zh"),
+  );
+  return (
+    <>
+      {sections.map((list) => {
+        const c = list[0].channel!;
+        return (
+          <SideSection
+            key={c.connection_id}
+            id={`conn-${c.connection_id}`}
+            title={connectionLabel(c)}
+            to={`/topics?source=${c.connection_id}`}
+          >
+            {list.slice(0, MAX_PER_CONNECTION).map((x) => (
+              <NavLink
+                key={x.id}
+                to={`/topics/${x.id}`}
+                className={({ isActive }) =>
+                  `nav-item side-item${isActive ? " nav-on" : ""}${t.unread(x) ? " side-unread" : ""}`
+                }
+                title={`${conversationKind(x)}：${x.title}`}
+              >
+                <span className="side-icon" aria-hidden>
+                  {conversationIcon(x)}
+                </span>
+                <span className="side-label">{x.title}</span>
+                {t.unread(x) ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+              </NavLink>
+            ))}
+            {list.length > MAX_PER_CONNECTION ? (
+              <Link to={`/topics?source=${c.connection_id}`} className="nav-item side-item side-more">
+                查看全部 {list.length} 个会话
+              </Link>
+            ) : null}
+          </SideSection>
+        );
+      })}
+    </>
   );
 }
 

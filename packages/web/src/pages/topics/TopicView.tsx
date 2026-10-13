@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { api } from "../../api/client";
 import { type LiveHandler, useLiveEvents } from "../../api/events";
 import type { Artifact, Message, PostMessageResult, Topic } from "../../api/types";
-import { CONVERSATION_KIND, PLATFORM_LABEL, parseTime } from "../../lib/format";
+import { connectionLabel, conversationKind, placeLabel } from "../../lib/conversations";
+import { PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -227,7 +228,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     );
   }
 
-  const ext = topic.external;
+  const ch = topic.channel ?? null;
   const dm = topic.kind === "dm";
   // A DM is named after its role (the stored title is "person · role").
   const dmRole = dm ? topic.participants?.find((p) => p.type === "role") : undefined;
@@ -259,7 +260,23 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           <div className="topic-head-main">
             <h2>{heading}</h2>
             <div className="topic-tags">
-              {dm ? <Tag title={`只有你和 ${heading} 能看到；不能邀请其他成员或角色`}>私信</Tag> : <Tag>群组话题</Tag>}
+              {dm && !ch ? (
+                <Tag title={`你与 ${heading} 的私信；不能邀请其他成员或角色`}>私信</Tag>
+              ) : (
+                <Tag>{conversationKind(topic)}</Tag>
+              )}
+              {ch ? (
+                <Tag tone="accent" title={`thread ${ch.thread_key}`}>
+                  {topic.source === "internal" ? "已同步到 " : ""}
+                  {connectionLabel(ch)}
+                  {placeLabel(topic) ? ` · ${placeLabel(topic)}` : ""}
+                </Tag>
+              ) : null}
+              {ch?.url ? (
+                <a className="small" href={ch.url} target="_blank" rel="noreferrer">
+                  在 {PLATFORM_LABEL[ch.platform] ?? ch.platform} 中打开 ↗
+                </a>
+              ) : null}
               <ResponseModeSwitch
                 topic={topic}
                 onChange={(t) => {
@@ -268,14 +285,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                 }}
               />
               <DispatcherWarning topic={topic} />
-              {topic.source !== "internal" ? (
-                <Tag tone="accent">来自 {PLATFORM_LABEL[topic.source] ?? topic.source}</Tag>
-              ) : null}
-              {ext?.conversation_kind ? (
-                <Tag tone="accent" title={ext.thread_key ? `thread ${ext.thread_key}` : undefined}>
-                  已关联外部{CONVERSATION_KIND[ext.conversation_kind] ?? ext.conversation_kind}
-                </Tag>
-              ) : null}
               {topic.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
               {roleOff ? <Tag tone="off">角色已停用</Tag> : null}
               <span

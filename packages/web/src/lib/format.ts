@@ -187,6 +187,7 @@ export const CONVERSATION_KIND: Record<string, string> = {
 export const PLATFORM_LABEL: Record<string, string> = {
   slack: "Slack",
   feishu: "飞书",
+  github: "GitHub",
   wecom: "企业微信",
   web: "网页",
   internal: "内部",

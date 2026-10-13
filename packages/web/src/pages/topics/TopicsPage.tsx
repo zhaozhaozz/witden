@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Topic } from "../../api/types";
-import { fmtRelative, PLATFORM_LABEL } from "../../lib/format";
+import { connectionLabel, conversationKind, placeLabel, sourceOf } from "../../lib/conversations";
+import { fmtRelative } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useTopics } from "../../lib/topics";
@@ -22,11 +23,16 @@ export default function TopicsPage() {
   return <AllTopics />;
 }
 
-/** Every topic you can see, with search and archived ones: what the sidebar shows, and more. */
+/**
+ * Every conversation of the roles, wherever it lives: console topics and DMs, Slack / Feishu threads and DMs,
+ * GitHub issues and pull requests. Filter by source, search, include archived ones.
+ */
 function AllTopics() {
   const { can } = useAuth();
   const dir = useDirectory();
   const t = useTopics();
+  const [params, setParams] = useSearchParams();
+  const source = params.get("source") ?? "";
   const [q, setQ] = useState("");
   const [query, setQuery] = useState("");
   const [archived, setArchived] = useState(false);
@@ -36,12 +42,16 @@ function AllTopics() {
     () => api.get<Topic[]>("/api/topics", { q: query, include_archived: archived }),
     [query, archived],
   );
+  // The sources present: the console, then each connection with conversations.
+  const sources = new Map<string, string>([["console", "控制台"]]);
+  for (const x of res.data ?? [])
+    if (x.channel && sourceOf(x) !== "console") sources.set(sourceOf(x), connectionLabel(x.channel));
 
   return (
     <div className="page">
       <PageHeader
-        title="话题"
-        sub="话题是围绕一件具体事情的协作空间：多位成员和角色在这里讨论、分派任务、交付结果，事情结束后可以归档。私信是你和某个角色之间一直保留的一对一对话，在左侧角色列表中点击角色即可打开。"
+        title="全部会话"
+        sub="角色参与的全部会话：控制台里的话题和私信，以及 Slack、飞书中的 thread 和私信、GitHub 上的 issue 和 pull request。"
         actions={
           <div className="btn-row">
             <button type="button" className="btn btn-sm" onClick={t.pickDm}>
@@ -56,12 +66,24 @@ function AllTopics() {
         }
       />
       <div className="toolbar">
+        <select
+          value={source}
+          onChange={(e) => setParams(e.target.value ? { source: e.target.value } : {}, { replace: true })}
+          aria-label="来源"
+        >
+          <option value="">全部来源</option>
+          {[...sources.entries()].map(([k, v]) => (
+            <option key={k} value={k}>
+              {v}
+            </option>
+          ))}
+        </select>
         <input
           type="search"
           placeholder="搜索标题或目标"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          aria-label="搜索话题"
+          aria-label="搜索会话"
         />
         <label className="check small">
           <input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} />
@@ -69,20 +91,23 @@ function AllTopics() {
         </label>
       </div>
       <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
+        {(all) => {
+          const rows = source ? all.filter((x) => sourceOf(x) === source) : all;
+          return rows.length ? (
             <div className="table-wrap">
               <table className="table">
                 <thead>
                   <tr>
                     <th>名称</th>
+                    <th>来源</th>
                     <th>类型</th>
                     <th>最近消息</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((x) => {
-                    const dmRole = x.dm_role_id ? dir.roleById.get(x.dm_role_id) : undefined;
+                    const dmRole =
+                      x.kind === "dm" && !x.channel && x.dm_role_id ? dir.roleById.get(x.dm_role_id) : undefined;
                     return (
                       <tr key={x.id}>
                         <td>
@@ -92,10 +117,18 @@ function AllTopics() {
                           {x.goal ? <div className="small muted clamp-1">{x.goal}</div> : null}
                         </td>
                         <td className="nowrap">
-                          {x.kind === "dm" ? "私信" : "话题"}
-                          {x.source !== "internal" ? (
-                            <Tag tone="accent">{PLATFORM_LABEL[x.source] ?? x.source}</Tag>
-                          ) : null}
+                          {x.channel ? (
+                            <>
+                              {x.source === "internal" ? "控制台，已同步到 " : ""}
+                              {connectionLabel(x.channel)}
+                              {placeLabel(x) ? <div className="small muted">{placeLabel(x)}</div> : null}
+                            </>
+                          ) : (
+                            "控制台"
+                          )}
+                        </td>
+                        <td className="nowrap">
+                          {conversationKind(x)}
                           {x.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
                           {dmRole && dmRole.status !== "active" ? <Tag tone="off">角色已停用</Tag> : null}
                         </td>
@@ -110,11 +143,15 @@ function AllTopics() {
             </div>
           ) : (
             <Empty
-              title={query ? "没有匹配的话题" : "还没有话题"}
-              hint={query ? undefined : "新建一个话题，邀请同事和角色一起推进一件事；或者直接在左侧选一个角色私信。"}
+              title={query || source ? "没有匹配的会话" : "还没有会话"}
+              hint={
+                query || source
+                  ? undefined
+                  : "新建一个话题，或在左侧选一个角色私信；接入 Slack、GitHub 后，那里的会话也会出现在这里。"
+              }
             />
-          )
-        }
+          );
+        }}
       </Loaded>
     </div>
   );

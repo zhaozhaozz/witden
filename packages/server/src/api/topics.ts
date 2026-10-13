@@ -21,7 +21,7 @@ import {
   users,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
-import { externalContext } from "../integrations/links.js";
+import { type ChannelInfo, channelsOf } from "../integrations/links.js";
 import { topicLabel, userCanRead } from "../security/labels.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
@@ -66,22 +66,15 @@ async function participantsOut(db: Db, topic: Topic) {
   return out;
 }
 
-async function topicOut(db: Db, topic: Topic, user: User, detail = false) {
+async function topicOut(db: Db, topic: Topic, user: User, detail = false, channels?: Map<string, ChannelInfo>) {
   const data: Record<string, any> = row(topic);
+  // Where it lives outside the console (Slack channel, GitHub issue ...), or null.
+  data.channel = (channels ?? (await channelsOf(db, [topic.id]))).get(topic.id) ?? null;
   data.can_post = await svc.canPost(db, user, topic);
   // A DM is "the conversation with this role" in sidebars.
   if (topic.kind === "dm") data.dm_role_id = (await svc.participants(db, topic.id, "role"))[0]?.participantId ?? null;
   if (detail) {
     data.participants = await participantsOut(db, topic);
-    const ext = await externalContext(db, topic.id);
-    data.external = Object.keys(ext).length
-      ? {
-          connection_id: ext.connectionId,
-          conversation_id: ext.conversationId,
-          conversation_kind: ext.conversationKind,
-          thread_key: ext.threadKey,
-        }
-      : null;
   }
   return data;
 }
@@ -112,7 +105,11 @@ export async function topicRoutes(app: FastifyInstance) {
         .orderBy(desc(topics.lastMessageAt), desc(topics.createdAt))
         .limit(300);
       const out = [];
-      for (const t of rows) out.push(await topicOut(db, t, user));
+      const channels = await channelsOf(
+        db,
+        rows.map((t) => t.id),
+      );
+      for (const t of rows) out.push(await topicOut(db, t, user, false, channels));
       return out;
     }),
   );

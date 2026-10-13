@@ -54,6 +54,10 @@ const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
     ["app_secret", "App Secret"],
     ["verification_token", "Verification Token"],
   ],
+  github: [
+    ["token", "机器人账号的 Token（ghp_… 或 github_pat_…）"],
+    ["webhook_secret", "Webhook Secret"],
+  ],
 };
 
 export default function ConnectionsPage() {
@@ -347,6 +351,13 @@ function ConnectionDetail({
           <p className="small muted">
             把事件地址填到 Slack 应用的 Event Subscriptions，并订阅
             app_mention、message.channels、message.groups、message.im 等事件。
+          </p>
+        ) : null}
+        {conn.platform === "github" ? (
+          <p className="small muted">
+            在仓库或组织的 Settings → Webhooks 中添加 webhook：Payload URL 填事件地址，Content type 选
+            application/json，Secret 填上面的 Webhook Secret，事件选择 Issues、Issue comments 和 Pull requests。在 issue
+            或 pull request 中 @{conn.bot_user_id ?? "机器人账号"} 即可让角色工作。
           </p>
         ) : null}
       </Section>
@@ -724,6 +735,7 @@ function ConnectionEditor({
           <select value={platform} disabled={!!conn} onChange={(e) => (setPlatform(e.target.value), setCreds({}))}>
             <option value="slack">Slack</option>
             <option value="feishu">飞书（实验性）</option>
+            <option value="github">GitHub</option>
           </select>
         </Field>
         <Field label="名称">

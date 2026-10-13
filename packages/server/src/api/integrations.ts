@@ -30,6 +30,7 @@ import { authed, authedNoTx, body, params, query, row } from "./http.js";
 const PLATFORMS: Record<string, string[]> = {
   slack: ["bot_token", "signing_secret"],
   feishu: ["app_id", "app_secret", "verification_token"],
+  github: ["token", "webhook_secret"],
 };
 const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "default_sync_mode"]);
 
@@ -410,6 +411,20 @@ export async function integrationRoutes(app: FastifyInstance) {
     if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
       throw new Forbidden("event from another workspace");
     await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
+    return { ok: true };
+  });
+
+  app.post("/api/integrations/github/:id/events", async (req) => {
+    const { verifySignature } = await import("../integrations/github.js");
+    const { credentials } = await import("../integrations/slack.js");
+    const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
+    const conn = await getConn(getDb(), params(req).id);
+    if (conn.platform !== "github") throw new NotFound("unknown connection");
+    verifySignature(credentials(conn).webhook_secret ?? "", raw, String(req.headers["x-hub-signature-256"] ?? ""));
+    const event = String(req.headers["x-github-event"] ?? "");
+    if (event === "ping" || conn.status !== "active") return { ok: true };
+    const input = { event, delivery: String(req.headers["x-github-delivery"] ?? ""), payload: req.body ?? {} };
+    await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, input));
     return { ok: true };
   });
 

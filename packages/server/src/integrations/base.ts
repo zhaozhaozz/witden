@@ -50,6 +50,20 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     edits_deletes: "not synchronised",
     limits: ["event encryption must be disabled"],
   },
+  github: {
+    status: "supported",
+    account_types: ["a GitHub account for the bot (user or machine account) with a token"],
+    conversations: ["public repository", "private repository"],
+    threads: "an issue or pull request maps to one topic",
+    mentions: "@bot-login in an issue, pull request or comment; role:handle to choose a role",
+    files: "not synchronised (images in comments stay links)",
+    role_identity: "the role's name at the top of each comment",
+    edits_deletes: "comment edits update the internal message; deletes remove it and derived memories",
+    limits: [
+      "inline review comments on pull requests are not synchronised yet",
+      "private repositories: listing collaborators needs push access, otherwise posting there counts as public",
+    ],
+  },
   wecom: {
     status: "planned",
     account_types: ["WeCom (企业微信) self-built app"],
@@ -73,6 +87,7 @@ export async function getAdapter(conn: Connection): Promise<Adapter> {
   if (!registry.size) {
     await import("./slack.js");
     await import("./feishu.js");
+    await import("./github.js");
   }
   const factory = registry.get(conn.platform);
   if (!factory) throw new Error(`no adapter for platform ${conn.platform}`);

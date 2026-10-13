@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { externalConversations, externalThreadLinks } from "../db/schema.js";
+import { connections, externalConversations, externalThreadLinks } from "../db/schema.js";
 
 export interface ExternalContext {
   connectionId?: string;
@@ -25,4 +25,61 @@ export async function externalContext(db: Db, topicId: string): Promise<External
     conversationKind: conv.kind,
     threadKey: link.threadKey,
   };
+}
+
+/** Where a conversation lives outside the console, as the console shows it. */
+export interface ChannelInfo {
+  connection_id: string;
+  connection_name: string;
+  platform: string;
+  conversation_id: string;
+  /** public | private | im | mpim */
+  conversation_kind: string;
+  /** Slack channel name, GitHub "owner/repo". */
+  conversation_name: string | null;
+  thread_key: string;
+  /** GitHub: issue | pull_request. */
+  thread_kind: string | null;
+  url: string | null;
+}
+
+/** The (first) external conversation of each topic, for many topics at once. */
+export async function channelsOf(db: Db, topicIds: string[]): Promise<Map<string, ChannelInfo>> {
+  const out = new Map<string, ChannelInfo>();
+  if (!topicIds.length) return out;
+  const links = await db
+    .select()
+    .from(externalThreadLinks)
+    .where(inArray(externalThreadLinks.topicId, topicIds))
+    .orderBy(asc(externalThreadLinks.createdAt));
+  if (!links.length) return out;
+  const convs = await db
+    .select()
+    .from(externalConversations)
+    .where(inArray(externalConversations.id, [...new Set(links.map((l) => l.conversationId))]));
+  const conns = await db
+    .select()
+    .from(connections)
+    .where(inArray(connections.id, [...new Set(convs.map((c) => c.connectionId))]));
+  const convById = new Map(convs.map((c) => [c.id, c]));
+  const connById = new Map(conns.map((c) => [c.id, c]));
+  for (const link of links) {
+    if (out.has(link.topicId)) continue;
+    const conv = convById.get(link.conversationId);
+    const conn = conv ? connById.get(conv.connectionId) : undefined;
+    if (!conv || !conn) continue;
+    const meta = (link.meta ?? {}) as Record<string, unknown>;
+    out.set(link.topicId, {
+      connection_id: conn.id,
+      connection_name: conn.name,
+      platform: conn.platform,
+      conversation_id: conv.id,
+      conversation_kind: conv.kind,
+      conversation_name: conv.name,
+      thread_key: link.threadKey,
+      thread_kind: typeof meta.kind === "string" ? meta.kind : null,
+      url: typeof meta.url === "string" ? meta.url : null,
+    });
+  }
+  return out;
 }

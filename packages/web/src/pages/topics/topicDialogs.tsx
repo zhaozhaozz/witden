@@ -194,6 +194,7 @@ export function InviteDialog({
 const CHANNEL_HINT: Record<string, string> = {
   slack: "Slack 频道 ID，例如 C0123456。",
   feishu: "飞书群聊 ID（chat_id，oc_ 开头）。",
+  github: "仓库，写成 owner/repo；发布时会在这个仓库新建一个 issue。",
 };
 
 /**

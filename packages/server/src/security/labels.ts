@@ -18,6 +18,7 @@
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
+  connections,
   type ExternalConversation,
   externalConversations,
   externalIdentities,
@@ -68,6 +69,11 @@ export async function externalPrincipal(db: Db, connectionId: string, externalUs
 }
 
 export async function conversationReaders(db: Db, conv: ExternalConversation): Promise<Readers> {
+  // A public GitHub repository is readable by anyone at all, not just by people in some workspace.
+  if (conv.kind === "public") {
+    const [conn] = await db.select().from(connections).where(eq(connections.id, conv.connectionId)).limit(1);
+    if (conn?.platform === "github") return readers([PUBLIC]);
+  }
   // Unknown or stale membership is treated as "everyone in the workspace" so the check fails closed.
   const stale = !conv.membersSyncedAt || Date.now() - conv.membersSyncedAt.getTime() > MEMBERSHIP_TTL_MS;
   if (conv.kind === "public" || stale) return readers([`ws:${conv.connectionId}`]);

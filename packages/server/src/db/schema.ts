@@ -566,6 +566,8 @@ export const externalThreadLinks = pgTable(
     topicId: text("topic_id")
       .notNull()
       .references(() => topics.id, { onDelete: "cascade" }),
+    /** What the thread is on its platform: ``{kind: "issue" | "pull_request", title, url}`` for GitHub. */
+    meta: json<Json>("meta").notNull().default({}),
     createdAt: created(),
   },
   (t) => [uniqueIndex("ux_thread_link").on(t.conversationId, t.threadKey), index("ix_thread_link_topic").on(t.topicId)],

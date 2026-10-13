@@ -539,7 +539,7 @@ function SettingsTab({
           <p className="small muted">
             把话题发布到 Slack 或飞书的频道 / 群聊，并在对应 thread
             中继续交流。需要对该通讯接入拥有「发布话题到外部频道」权限。
-            {topic.external?.conversation_kind ? " 这个话题已经关联了一个外部会话。" : ""}
+            {topic.channel ? " 这个话题已经关联了一个外部会话。" : ""}
           </p>
           <button type="button" className="btn btn-sm" onClick={() => setPublishing(true)}>
             发布到频道

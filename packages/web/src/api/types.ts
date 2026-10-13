@@ -55,7 +55,23 @@ export interface Topic {
   /** You take part (a DM: only its own person; a DM with a disabled role: nobody). */
   can_post: boolean;
   participants?: Participant[];
-  external?: ExternalContext | null;
+  /** Where it lives outside the console (a Slack thread or DM, a GitHub issue or PR), or null. */
+  channel?: ChannelInfo | null;
+}
+
+export interface ChannelInfo {
+  connection_id: string;
+  connection_name: string;
+  platform: string;
+  conversation_id: string;
+  /** public | private | im | mpim */
+  conversation_kind: string;
+  /** Slack channel name, GitHub "owner/repo". */
+  conversation_name: string | null;
+  thread_key: string;
+  /** GitHub: issue | pull_request. */
+  thread_kind: string | null;
+  url: string | null;
 }
 
 export interface ExternalContext {
