@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
-import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../../api/types";
+import type { Approval, Artifact, Memory, Task, Topic } from "../../api/types";
 import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -23,7 +23,6 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { ApprovalCard } from "../approvalParts";
-import { AgentSessionList } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { InviteDialog, PublishDialog } from "./topicDialogs";
@@ -86,14 +85,13 @@ export function TopicSidePanel({
           { key: "computer", label: "虚拟电脑", hidden: manageOnly || !hasComputers },
           { key: "people", label: "参与者", hidden: dm },
           { key: "role", label: "角色", hidden: !dm },
-          { key: "sessions", label: "会话", hidden: manageOnly },
           { key: "files", label: "文件", hidden: manageOnly },
           { key: "notes", label: "记忆", hidden: manageOnly },
           { key: "settings", label: "设置" },
         ]}
       />
       <div className="side-body">
-        {shown === "tasks" ? <TasksTab res={tasks} /> : null}
+        {shown === "tasks" ? <TasksTab res={tasks} dm={dm} /> : null}
         {shown === "approvals" ? (
           <Loaded res={approvals}>
             {(rows) =>
@@ -122,7 +120,6 @@ export function TopicSidePanel({
         ) : null}
         {shown === "people" ? <PeopleTab topic={topic} canAdmin={canAdmin} onTopicChange={onTopicChange} /> : null}
         {shown === "role" ? <DmRoleTab topic={topic} /> : null}
-        {shown === "sessions" ? <SessionsTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} canAdmin={canAdmin} /> : null}
         {shown === "notes" ? <NotesTab topic={topic} /> : null}
         {shown === "settings" ? (
@@ -137,7 +134,7 @@ export function TopicSidePanel({
   );
 }
 
-function TasksTab({ res }: { res: Resource<Task[]> }) {
+function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
   const [onlyActive, setOnlyActive] = useState(false);
   return (
     <>
@@ -148,7 +145,16 @@ function TasksTab({ res }: { res: Resource<Task[]> }) {
         {(rows) => {
           const list = onlyActive ? rows.filter((t) => isActiveTask(t.status)) : rows;
           if (!list.length)
-            return <Empty title="还没有任务" hint="在消息里 @ 一个角色，它接下的工作会作为任务出现在这里。" />;
+            return (
+              <Empty
+                title="还没有任务"
+                hint={
+                  dm
+                    ? "给角色发消息后，它接下的工作会作为任务出现在这里。"
+                    : "在消息里 @ 一个角色，它接下的工作会作为任务出现在这里。"
+                }
+              />
+            );
           return (
             <ul className="task-cards">
               {list.map((t) => (
@@ -315,20 +321,6 @@ function DmRoleTab({ topic }: { topic: Topic }) {
         ) : null}
       </div>
     </div>
-  );
-}
-
-function SessionsTab({ topic }: { topic: Topic }) {
-  const res = useResource(() => api.get<AgentSession[]>(`/api/topics/${topic.id}/sessions`), [topic.id]);
-  return (
-    <>
-      <p className="small muted side-note">
-        {topic.kind === "dm"
-          ? "角色在这段私信里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。"
-          : "每个角色在这个话题里有自己的会话：它在这里接到的任务共享这份上下文，不会带到其他话题。会话笔记是此前交付结果的摘要，角色继续工作时会读到。"}
-      </p>
-      <Loaded res={res}>{(rows) => <AgentSessionList sessions={rows} by="role" />}</Loaded>
-    </>
   );
 }
 

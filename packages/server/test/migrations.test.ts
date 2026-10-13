@@ -126,3 +126,58 @@ describe("0010_dm_always_open", () => {
     await db.close();
   });
 });
+
+describe("0011_merge_old_dms", () => {
+  it("moves an old read-only DM into the open one, rewriting labels wherever its content went", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0011")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle) values ('dev', 'Dev', 'dev');
+      insert into topics (id, title, kind, status, source, last_message_at) values
+        ('top_old', 'alice · Dev', 'dm', 'archived', 'internal', now() - interval '2 days'),
+        ('top_new', 'alice · Dev', 'dm', 'active', 'internal', now() - interval '1 day'),
+        ('top_group', 'Release', 'group', 'active', 'internal', now());
+      insert into topic_participants (id, topic_id, participant_type, participant_id) values
+        ('p1', 'top_old', 'user', 'alice'), ('p2', 'top_old', 'role', 'dev'),
+        ('p3', 'top_new', 'user', 'alice'), ('p4', 'top_new', 'role', 'dev');
+      insert into messages (id, topic_id, author_type, author_id, content, created_at) values
+        ('m1', 'top_old', 'user', 'alice', 'my salary is 12345', now() - interval '3 days'),
+        ('m2', 'top_new', 'user', 'alice', 'hello again', now() - interval '1 day');
+      insert into agent_sessions (id, role_id, topic_id, notes, runs) values
+        ('s_old', 'dev', 'top_old', '[{"task_id":"t1","request":"old","result":"r","at":"x"}]', 1),
+        ('s_new', 'dev', 'top_new', '[{"task_id":"t2","request":"new","result":"r","at":"y"}]', 2);
+      insert into tasks (id, topic_id, session_id, title, owner_role_id, labels) values
+        ('t1', 'top_old', 's_old', 'old task', 'dev', '["topic:top_old"]'),
+        ('t3', 'top_group', null, 'read the DM', 'dev', '["topic:top_group","topic:top_old"]');
+      insert into artifacts (id, name, storage_key, topic_id, labels) values ('f1', 'a.txt', 'k1', 'top_old', '["topic:top_old"]');
+      insert into memories (id, scope, topic_id, content, labels) values ('mem1', 'topic', 'top_old', 'note', '["topic:top_old"]');
+    `);
+    await apply(db, "0011_merge_old_dms");
+    const q = async (sql: string) => (await db.query(sql)).rows as any[];
+    expect(await q("select id, status from topics order by id")).toEqual([
+      { id: "top_group", status: "active" },
+      { id: "top_new", status: "active" },
+    ]);
+    expect(
+      (await q("select id from messages where topic_id = 'top_new' order by created_at")).map((r) => r.id),
+    ).toEqual(["m1", "m2"]);
+    const [session] = await q("select id, notes, runs from agent_sessions");
+    expect([session.id, session.notes.map((n: any) => n.request), session.runs]).toEqual(["s_new", ["old", "new"], 3]);
+    expect(await q("select id, topic_id, session_id from tasks order by id")).toEqual([
+      { id: "t1", topic_id: "top_new", session_id: "s_new" },
+      { id: "t3", topic_id: "top_group", session_id: null },
+    ]);
+    const labels = async (table: string, id: string) =>
+      [...(await q(`select labels from ${table} where id = '${id}'`))[0].labels].sort();
+    expect(await labels("tasks", "t1")).toEqual(["topic:top_new"]);
+    expect(await labels("tasks", "t3")).toEqual(["topic:top_group", "topic:top_new"]);
+    expect(await labels("artifacts", "f1")).toEqual(["topic:top_new"]);
+    expect(await labels("memories", "mem1")).toEqual(["topic:top_new"]);
+    expect((await q("select topic_id from artifacts"))[0].topic_id).toBe("top_new");
+    await db.close();
+  });
+});

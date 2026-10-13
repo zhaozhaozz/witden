@@ -49,7 +49,11 @@ export async function requireView(db: Db, user: User, topic: Topic): Promise<voi
 }
 
 export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean> {
-  return topic.status === "active" && !!(await participant(db, topic.id, "user", user.id));
+  if (topic.status !== "active" || !(await participant(db, topic.id, "user", user.id))) return false;
+  if (topic.kind !== "dm") return true;
+  // A DM whose role was disabled keeps its history, read-only; enabling the role opens it again.
+  const [p] = await participants(db, topic.id, "role");
+  return (p ? await getRole(db, p.participantId) : undefined)?.status === "active";
 }
 
 export async function isOwner(db: Db, user: User, topic: Topic): Promise<boolean> {

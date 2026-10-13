@@ -234,6 +234,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   // A DM is named after its role (the stored title is "person · role").
   const dmRole = dm ? topic.participants?.find((p) => p.type === "role") : undefined;
   const heading = dm ? (dmRole?.name ?? topic.title) : topic.title;
+  // A DM with a disabled role keeps its history, read-only (the server refuses new messages).
+  const roleOff = dm && dmRole?.status === "disabled";
   // Owners, plus administrators for removing / stopping things in group topics (decided by the server).
   const canAdmin = topic.can_administer ?? (topic.is_owner || (!!me?.is_admin && topic.kind === "group"));
   const manageOnly = topic.can_view === false;
@@ -285,6 +287,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                 </Tag>
               ) : null}
               {topic.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
+              {roleOff ? <Tag tone="off">角色已停用</Tag> : null}
               {manageOnly ? <Tag tone="wait">仅可管理</Tag> : null}
               {manageOnly ? null : (
                 <span
@@ -421,11 +424,13 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           />
         ) : (
           <div className="readonly-note">
-            {dm && topic.status === "archived"
-              ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
-              : topic.status === "archived"
-                ? "话题已归档，只能查看。负责人可以在设置中恢复。"
-                : "你不是这个话题的参与者，可以阅读但不能发言。请话题负责人邀请你加入。"}
+            {roleOff
+              ? `${heading} 已停用，这段私信只能查看。角色重新启用后可以继续私信。`
+              : dm && topic.status === "archived"
+                ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
+                : topic.status === "archived"
+                  ? "话题已归档，只能查看。负责人可以在设置中恢复。"
+                  : "你不是这个话题的参与者，可以阅读但不能发言。请话题负责人邀请你加入。"}
           </div>
         )}
       </div>

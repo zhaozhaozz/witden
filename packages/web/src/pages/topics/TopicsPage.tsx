@@ -97,6 +97,7 @@ function AllTopics() {
                             <Tag tone="accent">{PLATFORM_LABEL[x.source] ?? x.source}</Tag>
                           ) : null}
                           {x.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
+                          {dmRole && dmRole.status !== "active" ? <Tag tone="off">角色已停用</Tag> : null}
                           {x.can_view === false ? <Tag tone="wait">仅可管理</Tag> : null}
                         </td>
                         <td className="nowrap muted">

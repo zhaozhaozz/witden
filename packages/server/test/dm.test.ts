@@ -38,4 +38,18 @@ describe("DMs", () => {
     });
     expect(cleared.status).toBe(200);
   });
+
+  it("with a disabled role become read-only, and open again when the role is enabled", async () => {
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
+    const say = () => w.api("POST", `/api/topics/${dm.id}/messages`, { token: w.alice, json: { content: "hi" } });
+    await w.api("POST", `/api/roles/${w.ids.dev}/disable`, { token: w.adminToken, json: { on_tasks: "cancel" } });
+    expect((await w.api("GET", `/api/topics/${dm.id}`, { token: w.alice })).body.can_post).toBe(false);
+    expect((await say()).status).toBe(403);
+    // the history stays readable
+    expect((await w.api("GET", `/api/topics/${dm.id}/messages`, { token: w.alice })).status).toBe(200);
+
+    await w.api("POST", `/api/roles/${w.ids.dev}/enable`, { token: w.adminToken });
+    expect((await w.api("GET", `/api/topics/${dm.id}`, { token: w.alice })).body.can_post).toBe(true);
+    expect((await say()).status).toBe(200);
+  });
 });

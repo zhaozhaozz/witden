@@ -78,6 +78,13 @@
       "when": 1791821176817,
       "tag": "0010_dm_always_open",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791856083299,
+      "tag": "0011_merge_old_dms",
+      "breakpoints": true
     }
   ]
 }
