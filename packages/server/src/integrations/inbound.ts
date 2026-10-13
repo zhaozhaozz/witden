@@ -168,7 +168,13 @@ export async function resolveIdentity(
     await db.update(externalIdentities).set({ displayName }).where(eq(externalIdentities.id, ident.id));
   }
   if (!ident.userId && conn.settings.auto_provision_users) {
-    const user = await createUser(db, { name: displayName || `${conn.platform}-${externalUserId}` });
+    // An external member of this connection: uses only the roles it allows, has no console sign-in.
+    const created = await createUser(db, { name: displayName || `${conn.platform}-${externalUserId}` });
+    const [user] = await db
+      .update(users)
+      .set({ externalConnectionId: conn.id })
+      .where(eq(users.id, created.id))
+      .returning();
     await db.update(externalIdentities).set({ userId: user.id }).where(eq(externalIdentities.id, ident.id));
     await audit(db, "identity.auto_provision", {
       connectionId: conn.id,

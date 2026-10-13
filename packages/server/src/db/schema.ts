@@ -30,6 +30,11 @@ export const users = pgTable("users", {
   avatarUrl: text("avatar_url"),
   isAdmin: boolean("is_admin").notNull().default(false),
   isActive: boolean("is_active").notNull().default(true),
+  /**
+   * Set for an external member: a person from a connected Slack / Feishu workspace with no console account,
+   * created when they first talk to witden. They use only the roles that connection allows, never sign in.
+   */
+  externalConnectionId: text("external_connection_id"),
   createdAt: created(),
   updatedAt: updated(),
 });

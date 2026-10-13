@@ -92,6 +92,13 @@
       "when": 1791859299255,
       "tag": "0012_drop_topic_visibility",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791859691615,
+      "tag": "0013_external_members",
+      "breakpoints": true
     }
   ]
 }

@@ -7,7 +7,7 @@
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { grants, type User, users } from "../db/schema.js";
+import { connections, grants, type User, users } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
 
 export const Perm = {
@@ -56,6 +56,7 @@ export function isPerm(value: string): value is Perm {
 
 export async function hasPermission(db: Db, user: User | null | undefined, perm: Perm, resourceId?: string | null) {
   if (!user?.isActive) return false;
+  if (user.externalConnectionId) return externalMemberMay(db, user.externalConnectionId, perm, resourceId);
   if (user.isAdmin) return true;
   const rtype = PERM_RESOURCE[perm] ?? "*";
   const resources = resourceId ? ["*", resourceId] : ["*"];
@@ -72,6 +73,17 @@ export async function hasPermission(db: Db, user: User | null | undefined, perm:
     )
     .limit(1);
   return rows.length > 0;
+}
+
+/**
+ * External members may use (and bring into a thread) only the roles their connection lists in
+ * ``settings.external_role_ids``; grants, including grants to everybody, do not apply to them.
+ */
+async function externalMemberMay(db: Db, connectionId: string, perm: Perm, roleId?: string | null): Promise<boolean> {
+  if (!roleId || (perm !== Perm.ROLE_USE && perm !== Perm.ROLE_INVITE)) return false;
+  const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
+  const allowed: unknown = conn?.settings?.external_role_ids;
+  return Array.isArray(allowed) && allowed.includes(roleId);
 }
 
 export async function requirePerm(db: Db, user: User | null | undefined, perm: Perm, resourceId?: string | null) {

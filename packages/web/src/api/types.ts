@@ -11,6 +11,8 @@ export interface User {
   avatar_url?: string | null;
   is_admin?: boolean;
   is_active: boolean;
+  /** An external member: a person from this Slack / Feishu connection, with no console sign-in. */
+  external_connection_id?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -692,6 +694,8 @@ export interface Connection {
   status_reason: string | null;
   settings: {
     auto_provision_users?: boolean;
+    /** Roles that external members of this connection may use. */
+    external_role_ids?: string[];
     custom_identity?: boolean;
     default_sync_mode?: "mentions" | "all" | "off";
     [key: string]: unknown;

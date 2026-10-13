@@ -19,7 +19,13 @@ export async function adminRoutes(app: FastifyInstance) {
       // Everyone may see the member directory (names) to mention and invite; details need user.manage.
       const rows = await db.select().from(users).orderBy(users.name);
       if (await hasPermission(db, user, Perm.USER_MANAGE)) return rows.map((u) => row(u));
-      return rows.map((u) => ({ id: u.id, name: u.name, avatar_url: u.avatarUrl, is_active: u.isActive }));
+      return rows.map((u) => ({
+        id: u.id,
+        name: u.name,
+        avatar_url: u.avatarUrl,
+        is_active: u.isActive,
+        external_connection_id: u.externalConnectionId,
+      }));
     }),
   );
 
@@ -59,6 +65,8 @@ export async function adminRoutes(app: FastifyInstance) {
         throw new BadRequest("only administrators can change an administrator account");
       const b = body(req);
       if (b.isAdmin !== undefined && !user.isAdmin) throw new BadRequest("only administrators can change admin status");
+      if (target.externalConnectionId && (b.password || b.isAdmin))
+        throw new BadRequest("external members come from a connected workspace and do not sign in to the console");
       const update: Partial<typeof target> = {};
       if (b.name !== undefined) update.name = b.name;
       if (b.isAdmin !== undefined) update.isAdmin = !!b.isAdmin;

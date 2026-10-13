@@ -30,7 +30,7 @@ const PLATFORMS: Record<string, string[]> = {
   slack: ["bot_token", "signing_secret"],
   feishu: ["app_id", "app_secret", "verification_token"],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "default_sync_mode"]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "default_sync_mode"]);
 
 function connOut(conn: Connection) {
   const base = settings().publicUrl.replace(/\/+$/, "");
@@ -47,6 +47,11 @@ function cleanSettings(s: Record<string, any>): Record<string, any> {
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
   if (!["mentions", "all", "off"].includes(s.default_sync_mode ?? "mentions"))
     throw new BadRequest("default_sync_mode must be mentions, all or off");
+  if (
+    s.external_role_ids !== undefined &&
+    !(Array.isArray(s.external_role_ids) && s.external_role_ids.every((x: unknown) => typeof x === "string"))
+  )
+    throw new BadRequest("external_role_ids must be a list of role ids");
   return s;
 }
 

@@ -9,10 +9,12 @@ import {
   CopyText,
   Empty,
   Field,
+  FieldGroup,
   FormModal,
   JsonBlock,
   KV,
   Loaded,
+  MultiPick,
   PageHeader,
   Section,
   StatusChip,
@@ -218,6 +220,7 @@ function ConnectionDetail({
   onDeleted: () => void;
 }) {
   const { can } = useAuth();
+  const dir = useDirectory();
   const { confirm, toast } = useFeedback();
   const { run, busy } = useAction();
   const [tab, setTab] = useState("conversations");
@@ -329,8 +332,13 @@ function ConnectionDetail({
             ],
             ["新会话默认同步", SYNC_MODE[conn.settings?.default_sync_mode ?? "mentions"]],
             [
-              "自动创建成员",
-              conn.settings?.auto_provision_users ? "是：未关联的外部账号自动创建内部成员" : "否：需要管理员关联身份",
+              "外部成员",
+              conn.settings?.auto_provision_users
+                ? `开启：未关联的人自动成为外部成员，可以使用 ${
+                    (conn.settings.external_role_ids ?? []).map((id) => dir.roleLabel(id)).join("、") ||
+                    "（还没有选择角色）"
+                  }`
+                : "关闭：未关联的人不能使用，需要管理员关联身份",
             ],
             ["角色身份显示", conn.settings?.custom_identity ? "用角色自己的名称和头像发消息" : "在消息前加角色名称"],
           ]}
@@ -668,7 +676,9 @@ function ConnectionEditor({
   const [platform, setPlatform] = useState(conn?.platform ?? "slack");
   const [name, setName] = useState(conn?.name ?? "");
   const [creds, setCreds] = useState<Record<string, string>>({});
+  const dir = useDirectory();
   const [autoProvision, setAutoProvision] = useState(!!conn?.settings?.auto_provision_users);
+  const [externalRoles, setExternalRoles] = useState<string[]>(conn?.settings?.external_role_ids ?? []);
   const [customIdentity, setCustomIdentity] = useState(!!conn?.settings?.custom_identity);
   const [syncMode, setSyncMode] = useState(conn?.settings?.default_sync_mode ?? "mentions");
   const fields = CREDENTIAL_FIELDS[platform] ?? [];
@@ -685,6 +695,7 @@ function ConnectionEditor({
         const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
         const settings = {
           auto_provision_users: autoProvision,
+          external_role_ids: externalRoles,
           custom_identity: customIdentity,
           default_sync_mode: syncMode,
         };
@@ -741,8 +752,24 @@ function ConnectionEditor({
       <Toggle
         checked={autoProvision}
         onChange={setAutoProvision}
-        label="自动为未关联的外部账号创建内部成员（默认无任何权限）"
+        label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
       />
+      {autoProvision ? (
+        <FieldGroup
+          label="外部成员可以使用的角色"
+          hint="只对外部成员生效；其他授权（包括授予所有人的）不适用于外部成员。"
+        >
+          <MultiPick
+            columns={3}
+            options={dir.roles
+              .filter((r) => r.status === "active")
+              .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
+            value={externalRoles}
+            onChange={setExternalRoles}
+            empty="还没有可用的角色"
+          />
+        </FieldGroup>
+      ) : null}
       <Toggle
         checked={customIdentity}
         onChange={setCustomIdentity}

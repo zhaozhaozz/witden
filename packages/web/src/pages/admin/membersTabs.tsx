@@ -56,8 +56,18 @@ export function MembersTab() {
                         {u.id === me?.id ? <span className="muted small">（你）</span> : null}
                       </span>
                     </td>
-                    <td>{u.email ?? <span className="muted">—（外部账号自动创建）</span>}</td>
-                    <td>{u.is_admin ? <Tag tone="accent">管理员</Tag> : "成员"}</td>
+                    <td>
+                      {u.email ?? <span className="muted">{u.external_connection_id ? "—（不登录控制台）" : "—"}</span>}
+                    </td>
+                    <td>
+                      {u.is_admin ? (
+                        <Tag tone="accent">管理员</Tag>
+                      ) : u.external_connection_id ? (
+                        <Tag title="来自 Slack / 飞书 的外部成员：只能使用该接入允许的角色">外部成员</Tag>
+                      ) : (
+                        "成员"
+                      )}
+                    </td>
                     <td>{u.is_active ? <Tag tone="ok">在职</Tag> : <Tag tone="off">已停用</Tag>}</td>
                     <td className="nowrap">{u.created_at ? fmtRelative(u.created_at) : "—"}</td>
                     <td className="nowrap">
@@ -154,20 +164,28 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
       ) : null}
-      <Field label={user ? "重置密码" : "初始密码"} hint={user ? "留空保持不变" : undefined}>
-        <input
-          type="password"
-          autoComplete="new-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
-      </Field>
-      <Toggle
-        checked={isAdmin}
-        onChange={setIsAdmin}
-        disabled={!me?.is_admin}
-        label="管理员（拥有全部管理权限，但仍看不到他人的私信）"
-      />
+      {user?.external_connection_id ? (
+        <p className="small muted">
+          外部成员来自 Slack / 飞书 接入，不登录控制台，只能使用该接入允许的角色（在“通讯接入”中设置）。
+        </p>
+      ) : (
+        <>
+          <Field label={user ? "重置密码" : "初始密码"} hint={user ? "留空保持不变" : undefined}>
+            <input
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </Field>
+          <Toggle
+            checked={isAdmin}
+            onChange={setIsAdmin}
+            disabled={!me?.is_admin}
+            label="管理员（拥有全部管理权限，但仍看不到他人的私信）"
+          />
+        </>
+      )}
     </FormModal>
   );
 }

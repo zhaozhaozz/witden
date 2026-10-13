@@ -1,15 +1,25 @@
 /** Chat integrations end to end: signed Slack webhooks in, Web API calls out (and a small Feishu check). */
 import { createHmac } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { connections, externalIdentities, processedEvents, tasks } from "../src/db/schema.js";
+import {
+  connections,
+  externalIdentities,
+  grants,
+  processedEvents,
+  tasks,
+  topicParticipants,
+  topics,
+  users,
+} from "../src/db/schema.js";
 import { getAdapter } from "../src/integrations/base.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
 import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
+import { hasPermission, Perm } from "../src/security/permissions.js";
 import { reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -252,6 +262,63 @@ describe("slack", () => {
     await send(event("<@UBOT> @dev hello again", { user: "UMALLORY", ts: "300.4" }));
     await w.waitFor(async () => (await allTasks()).length === 1);
     expect((await allTasks())[0].requesterUserId).toBe(w.ids.bob);
+  });
+
+  it("external members: unlinked people get an account limited to the connection's roles; DMs stay apart", async () => {
+    w.scripts.dev = () => reply("hi there");
+    const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { settings: { auto_provision_users: true, external_role_ids: [w.ids.dev] } },
+    });
+    expect(patched.status, patched.raw).toBe(200);
+    await send(event("<@UBOT> @dev hello", { user: "UCAROL", ts: "500.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    const carolId = (await allTasks())[0].requesterUserId as string;
+    const listed = (await w.api("GET", "/api/users", { token: w.adminToken })).body as any[];
+    expect(listed.find((u) => u.id === carolId)).toMatchObject({ external_connection_id: conn.id, email: null });
+
+    // Only the roles the connection lists; grants, even to everybody, do not reach external members.
+    await db()
+      .insert(grants)
+      .values({
+        id: newId("grt"),
+        subjectType: "all",
+        subjectId: "*",
+        permission: "role.use",
+        resourceType: "role",
+        resourceId: w.ids.test,
+      });
+    const [carol] = await db().select().from(users).where(eq(users.id, carolId));
+    expect(await hasPermission(db(), carol, Perm.ROLE_USE, w.ids.dev)).toBe(true);
+    expect(await hasPermission(db(), carol, Perm.ROLE_USE, w.ids.test)).toBe(false);
+    expect(await hasPermission(db(), carol, Perm.TOPIC_CREATE)).toBe(false);
+    // ...and no console sign-in
+    const pw = await w.api("PATCH", `/api/users/${carolId}`, {
+      token: w.adminToken,
+      json: { password: "secret-pass-1" },
+    });
+    expect(pw.status).toBe(400);
+
+    // Each person's DM with the bot is their own conversation.
+    await send(
+      event("hello", { user: "UCAROL", channel: "D1", ts: "501.1", etype: "message" }, { channel_type: "im" }),
+    );
+    await send(event("hello", { user: "UDAVE", channel: "D2", ts: "502.1", etype: "message" }, { channel_type: "im" }));
+    await settle();
+    const dms = await db().select().from(topics).where(eq(topics.kind, "dm"));
+    expect(dms).toHaveLength(2);
+    const people = await Promise.all(
+      dms.map(async (t) =>
+        (
+          await db()
+            .select()
+            .from(topicParticipants)
+            .where(and(eq(topicParticipants.topicId, t.id), eq(topicParticipants.participantType, "user")))
+        ).map((p) => p.participantId),
+      ),
+    );
+    expect(people.map((p) => p.length)).toEqual([1, 1]);
+    expect(people[0][0]).not.toBe(people[1][0]);
   });
 
   it("no rule means a refusal visible in the thread", async () => {

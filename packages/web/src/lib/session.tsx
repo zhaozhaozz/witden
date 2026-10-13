@@ -78,6 +78,7 @@ export function useAuth(): AuthState {
 // --- directory: names of people and roles, used to label ids everywhere ------------------------------
 
 interface DirectoryState {
+  /** Console members (pickers offer these); external members are only resolved by id. */
   users: User[];
   roles: Role[];
   userById: Map<string, User>;
@@ -107,7 +108,7 @@ export function DirectoryProvider({ children }: { children: ReactNode }) {
     const userById = new Map(users.map((u) => [u.id, u]));
     const roleById = new Map(roles.map((r) => [r.id, r]));
     return {
-      users,
+      users: users.filter((u) => !u.external_connection_id),
       roles,
       userById,
       roleById,

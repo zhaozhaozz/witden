@@ -181,3 +181,31 @@ describe("0011_merge_old_dms", () => {
     await db.close();
   });
 });
+
+describe("0013_external_members", () => {
+  it("marks accounts created automatically for a connection as its external members", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0013")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into users (id, name, email, password_hash) values
+        ('usr_auto', 'carol', null, null),
+        ('usr_given_login', 'dave', 'dave@example.com', 'hash'),
+        ('usr_member', 'alice', 'alice@example.com', 'hash');
+      insert into audit_logs (id, action, actor_type, connection_id, detail) values
+        ('aud_1', 'identity.auto_provision', 'system', 'conn_1', '{"user_id": "usr_auto"}'),
+        ('aud_2', 'identity.auto_provision', 'system', 'conn_1', '{"user_id": "usr_given_login"}');
+    `);
+    await apply(db, "0013_external_members");
+    const rows = (await db.query("select id, external_connection_id from users order by id")).rows;
+    expect(rows).toEqual([
+      { id: "usr_auto", external_connection_id: "conn_1" },
+      { id: "usr_given_login", external_connection_id: null },
+      { id: "usr_member", external_connection_id: null },
+    ]);
+    await db.close();
+  });
+});
