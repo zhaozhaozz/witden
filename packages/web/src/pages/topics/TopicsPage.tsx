@@ -92,7 +92,7 @@ function AllTopics() {
                           {x.goal ? <div className="small muted clamp-1">{x.goal}</div> : null}
                         </td>
                         <td className="nowrap">
-                          {x.kind === "dm" ? "私信" : x.visibility === "internal" ? "话题 · 团队内公开" : "话题 · 私密"}
+                          {x.kind === "dm" ? "私信" : "话题"}
                           {x.source !== "internal" ? (
                             <Tag tone="accent">{PLATFORM_LABEL[x.source] ?? x.source}</Tag>
                           ) : null}

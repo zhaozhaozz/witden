@@ -289,7 +289,6 @@ export const topics = pgTable("topics", {
   goal: text("goal").notNull().default(""),
   kind: text("kind").notNull().default("group"), // group | dm
   status: text("status").notNull().default("active"),
-  visibility: text("visibility").notNull().default("private"), // private | internal
   /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
   responseMode: text("response_mode").notNull().default("mention"), // mention | auto
   maxAutoRounds: integer("max_auto_rounds"),

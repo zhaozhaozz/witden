@@ -265,11 +265,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             <h2>{heading}</h2>
             <div className="topic-tags">
               {dm ? <Tag title={`只有你和 ${heading} 能看到；不能邀请其他成员或角色`}>私信</Tag> : <Tag>群组话题</Tag>}
-              {topic.kind === "group" ? (
-                <Tag tone={topic.visibility === "internal" ? "info" : undefined}>
-                  {topic.visibility === "internal" ? "团队内公开" : "私密"}
-                </Tag>
-              ) : null}
               <ResponseModeSwitch
                 topic={topic}
                 onChange={(t) => {

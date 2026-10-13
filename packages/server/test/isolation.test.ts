@@ -199,8 +199,7 @@ describe("accounts and topics", () => {
       (await w.api("PATCH", `/api/users/${me.id}`, { token: w.bob, json: { password: "pwned-pass-1" } })).status,
     ).toBe(400);
     expect(
-      (await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.adminToken, json: { visibility: "internal" } }))
-        .status,
+      (await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.adminToken, json: { title: "renamed" } })).status,
     ).toBe(403);
     expect((await w.api("GET", `/api/topics/${w.ids.topic}/messages`, { token: w.adminToken })).status).toBe(403);
     expect(

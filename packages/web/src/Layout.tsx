@@ -273,7 +273,7 @@ function TopicList() {
           title={x.title}
         >
           <span className="side-icon" aria-hidden>
-            {x.visibility === "internal" ? "#" : <LockIcon />}
+            #
           </span>
           <span className="side-label">{x.title}</span>
           {t.unread(x) ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
@@ -350,15 +350,6 @@ function PencilIcon() {
         strokeLinejoin="round"
       />
       <path d="M9.8 3.8l2.4 2.4" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function LockIcon() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden>
-      <rect x="2" y="5.5" width="8" height="5.5" rx="1.2" fill="currentColor" />
-      <path d="M3.8 5.5V4a2.2 2.2 0 0 1 4.4 0v1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   );
 }

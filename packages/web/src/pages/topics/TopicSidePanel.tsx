@@ -473,7 +473,6 @@ function SettingsTab({
   const { run, busy } = useAction();
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
-  const [visibility, setVisibility] = useState(topic.visibility);
   const [responseMode, setResponseMode] = useState(topic.response_mode);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
   const [publishing, setPublishing] = useState(false);
@@ -481,7 +480,6 @@ function SettingsTab({
   useEffect(() => {
     setTitle(topic.title);
     setGoal(topic.goal);
-    setVisibility(topic.visibility);
     setResponseMode(topic.response_mode);
     setRounds(topic.max_auto_rounds?.toString() ?? "");
   }, [topic]);
@@ -515,7 +513,7 @@ function SettingsTab({
               {
                 title: title.trim(),
                 goal,
-                ...(topic.kind === "group" ? { visibility, response_mode: responseMode } : {}),
+                ...(topic.kind === "group" ? { response_mode: responseMode } : {}),
                 max_auto_rounds: rounds ? Number(rounds) : null,
               },
               "设置已保存",
@@ -528,14 +526,6 @@ function SettingsTab({
           <Field label="目标" hint="这个话题要完成什么；显示在标题下方，角色接到任务时也会读到。">
             <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
           </Field>
-          {topic.kind === "group" ? (
-            <Field label="可见范围">
-              <select value={visibility} onChange={(e) => setVisibility(e.target.value as Topic["visibility"])}>
-                <option value="private">私密：仅参与者可见</option>
-                <option value="internal">团队内公开：所有成员可阅读</option>
-              </select>
-            </Field>
-          ) : null}
           {topic.kind === "group" ? (
             <FieldGroup label="角色响应方式">
               <div className="mode-options">

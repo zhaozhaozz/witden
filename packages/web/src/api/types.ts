@@ -42,7 +42,6 @@ export interface Topic {
   goal: string;
   kind: "group" | "dm";
   status: "active" | "archived";
-  visibility: "private" | "internal";
   /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */
   response_mode: "mention" | "auto";
   max_auto_rounds: number | null;

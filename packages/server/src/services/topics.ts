@@ -37,11 +37,9 @@ export async function participants(db: Db, topicId: string, type?: "user" | "rol
     .where(and(...conds));
 }
 
-/** Private topics and DMs: participants only (administrators included). Internal group topics: all members. */
+/** Topics and DMs are read by their participants only (administrators included). */
 export async function canView(db: Db, user: User, topic: Topic): Promise<boolean> {
-  if (!user.isActive) return false;
-  if (await participant(db, topic.id, "user", user.id)) return true;
-  return topic.kind === "group" && topic.visibility === "internal";
+  return user.isActive && !!(await participant(db, topic.id, "user", user.id));
 }
 
 export async function requireView(db: Db, user: User, topic: Topic): Promise<void> {
@@ -132,7 +130,6 @@ export async function createTopic(
   data: {
     title: string;
     goal?: string;
-    visibility?: string;
     responseMode?: string;
     userIds?: string[];
     roleIds?: string[];
@@ -143,8 +140,6 @@ export async function createTopic(
   },
 ): Promise<Topic> {
   await requirePerm(db, user, Perm.TOPIC_CREATE);
-  const visibility = data.visibility ?? "private";
-  if (!["private", "internal"].includes(visibility)) throw new BadRequest("visibility must be private or internal");
   const responseMode = parseResponseMode(data.responseMode ?? "mention");
   if (!data.title?.trim()) throw new BadRequest("title is required");
   const kind = data.kind ?? "group";
@@ -155,7 +150,6 @@ export async function createTopic(
       title: data.title.trim(),
       goal: data.goal ?? "",
       kind,
-      visibility: kind === "group" ? visibility : "private",
       responseMode,
       maxAutoRounds: data.maxAutoRounds ?? null,
       allowedModelConfigIds: data.allowedModelConfigIds ?? null,
@@ -189,7 +183,6 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
       id: newId("top"),
       title: `${user.name} · ${role.name}`,
       kind: "dm",
-      visibility: "private",
       source,
       createdBy: user.id,
     })

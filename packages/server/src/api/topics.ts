@@ -105,11 +105,7 @@ export async function topicRoutes(app: FastifyInstance) {
             isNull(topicParticipants.removedAt),
           ),
         );
-      const conds = [
-        user.isAdmin
-          ? or(inArray(topics.id, mine), eq(topics.kind, "group"))
-          : or(inArray(topics.id, mine), and(eq(topics.visibility, "internal"), eq(topics.kind, "group"))),
-      ];
+      const conds = [user.isAdmin ? or(inArray(topics.id, mine), eq(topics.kind, "group")) : inArray(topics.id, mine)];
       if (q.include_archived !== "true") conds.push(eq(topics.status, "active"));
       if (q.q) conds.push(or(ilike(topics.title, `%${q.q}%`), ilike(topics.goal, `%${q.q}%`)));
       const rows = await db
@@ -138,7 +134,7 @@ export async function topicRoutes(app: FastifyInstance) {
         resourceType: "topic",
         resourceId: topic.id,
         topicId: topic.id,
-        detail: { visibility: topic.visibility },
+        detail: { kind: topic.kind },
       });
       return topicOut(db, topic, user, true);
     }),
@@ -179,18 +175,8 @@ export async function topicRoutes(app: FastifyInstance) {
       }
       if (b.status !== undefined && !["active", "archived"].includes(b.status))
         throw new BadRequest("status must be active or archived");
-      if (b.visibility !== undefined && (!["private", "internal"].includes(b.visibility) || topic.kind === "dm"))
-        throw new BadRequest("invalid visibility");
       if (b.responseMode !== undefined) svc.parseResponseMode(b.responseMode);
-      const allowed = [
-        "title",
-        "goal",
-        "status",
-        "visibility",
-        "responseMode",
-        "maxAutoRounds",
-        "allowedModelConfigIds",
-      ];
+      const allowed = ["title", "goal", "status", "responseMode", "maxAutoRounds", "allowedModelConfigIds"];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
       const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
       if (b.status === "archived") {

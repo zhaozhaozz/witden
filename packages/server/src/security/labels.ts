@@ -87,7 +87,6 @@ export async function topicReaders(db: Db, topicId: string): Promise<Readers> {
     [],
     people.map((p) => `u:${p.participantId}`),
   );
-  if (topic.kind === "group" && topic.visibility === "internal") out = union(out, readers(["internal"]));
   const links = await db.select().from(externalThreadLinks).where(eq(externalThreadLinks.topicId, topicId));
   for (const link of links) {
     const [conv] = await db

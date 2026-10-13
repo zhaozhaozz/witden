@@ -236,7 +236,6 @@ async function threadTopic(
       id: newId("top"),
       title: `${isDm ? "DM" : `#${conv.name ?? conv.externalId}`}: ${title}`,
       kind: isDm ? "dm" : "group",
-      visibility: "private",
       source: conn.platform,
       createdBy: starter.id,
     })

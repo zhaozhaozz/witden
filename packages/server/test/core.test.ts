@@ -52,7 +52,7 @@ describe("with a database", () => {
   const topic = async (kind: string, userIds: string[]) => {
     const [t] = await db()
       .insert(topics)
-      .values({ id: newId("top"), title: "t", kind, visibility: "private" })
+      .values({ id: newId("top"), title: "t", kind })
       .returning();
     for (const id of userIds) {
       await db()

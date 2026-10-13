@@ -13,7 +13,6 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
   const { run, busy } = useAction();
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
-  const [visibility, setVisibility] = useState("private");
   const [userIds, setUserIds] = useState<string[]>([]);
   const [roleIds, setRoleIds] = useState<string[]>([]);
 
@@ -23,7 +22,6 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
         api.post<Topic>("/api/topics", {
           title: title.trim(),
           goal,
-          visibility,
           user_ids: userIds,
           role_ids: roleIds,
         }),
@@ -53,13 +51,7 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
       <Field label="目标" hint="写清楚要完成什么，角色会把它当作这个话题的工作背景。">
         <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
-      <Field label="可见范围" hint="参与者可以阅读话题的全部历史，包括加入之前的消息。">
-        <select value={visibility} onChange={(e) => setVisibility(e.target.value)}>
-          <option value="private">私密：仅参与者可见</option>
-          <option value="internal">团队内公开：所有成员可阅读</option>
-        </select>
-      </Field>
-      <FieldGroup label="邀请成员" wide>
+      <FieldGroup label="邀请成员" hint="只有参与者能看到这个话题；参与者可以阅读全部历史，包括加入之前的消息。" wide>
         <MultiPick
           columns={3}
           options={dir.users.filter((u) => u.id !== me?.id && u.is_active).map((u) => ({ value: u.id, label: u.name }))}

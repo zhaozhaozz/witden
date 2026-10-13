@@ -1,4 +1,7 @@
-/** A DM is one person and one role, always open: no invites, no removal, no archive, no topic settings. */
+/**
+ * A DM is one person and one role, always open: no invites, no removal, no archive, no topic settings.
+ * A topic has no visibility setting: only its participants read it.
+ */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -51,5 +54,14 @@ describe("DMs", () => {
     await w.api("POST", `/api/roles/${w.ids.dev}/enable`, { token: w.adminToken });
     expect((await w.api("GET", `/api/topics/${dm.id}`, { token: w.alice })).body.can_post).toBe(true);
     expect((await say()).status).toBe(200);
+  });
+
+  it("topics are read by their participants only; there is no team-wide visibility", async () => {
+    const t = (await w.api("POST", "/api/topics", { token: w.alice, json: { title: "plans", visibility: "internal" } }))
+      .body;
+    expect(t.visibility).toBeUndefined();
+    expect((await w.api("GET", `/api/topics/${t.id}`, { token: w.bob })).status).toBe(403);
+    const listed = (await w.api("GET", "/api/topics", { token: w.bob })).body as any[];
+    expect(listed.some((x) => x.id === t.id)).toBe(false);
   });
 });
