@@ -52,7 +52,7 @@ Compose 部署包含四个服务，另有一个可选服务：
    - `WITDEN_MANAGER_TOKEN`、`WITDEN_INTERNAL_TOKEN`、`POSTGRES_PASSWORD`：任意足够长的随机字符串，例如 `openssl rand -hex 24`。
    - `DOCKER_GID`：Docker socket 所属的组，`stat -c %g /var/run/docker.sock`。
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
-   - `WITDEN_PUBLIC_URL`：成员访问控制台的地址，用于生成链接和 Slack 事件地址。
+   - `WITDEN_PUBLIC_URL`：访问控制台的地址，用于生成链接和 Slack 事件地址。
 
 2. 构建虚拟电脑镜像和平台镜像：
 
@@ -94,7 +94,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多个角色，需要一个 System 1 模型（TypeSafe Jev，或开源模型 Laya）。启用 Compose 中的 Laya 服务（见 2.3）后，它会被自动添加并设为调度模型；使用其他服务时，在“设置 → 模型”中添加接口协议为“System One”的服务商和模型，再在“设置 → 系统管理 → 话题调度”中选择它。详见[使用指南](user-guide.md#8-话题调度)。
 3. **虚拟电脑**：在“设置 → 虚拟电脑 → 模板”中点击“导入内置模板”（命令行模板 `dev-shell` 和桌面模板 `desktop-browser`），然后从模板创建虚拟电脑，等待状态变为运行中。
 4. **角色**：在“设置 → 角色管理”中创建角色，选择模型和虚拟电脑。
-5. **成员与授权**：在“设置 → 系统管理”中添加成员，并授予“使用角色”“邀请角色进话题”“创建话题”等权限。
+5. **管理员账号**（可选）：在“设置 → 系统管理 → 账号”中添加其他管理员。能登录控制台的账号都是管理员，可以看到全部会话。
 6. **通讯接入**（可选）：参见[接入 Slack](slack.md)。
 
 ## 4. 配置项
@@ -109,7 +109,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 | `WITDEN_DATABASE_URL` | 嵌入式数据库 | PostgreSQL 连接地址，例如 `postgres://user:pass@db:5432/witden`。 |
 | `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
-| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 成员访问平台的地址。 |
+| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 访问控制台的地址。 |
 | `WITDEN_PROCESS_ROLE` | `all` | `all`、`api` 或 `worker`，也可用 `serve --role` 指定。 |
 | `WITDEN_HUB_HOST` / `WITDEN_HUB_PORT` | `0.0.0.0` / `8330` | 虚拟电脑连接平台的监听地址和端口。 |
 | `WITDEN_HUB_URL_FOR_COMPUTERS` | `ws://witden-hub:8330/runner` | 虚拟电脑内连接平台使用的地址（`witden-hub` 解析为宿主机网关）。 |
