@@ -24,7 +24,7 @@ witden 让你拥有一组“AI 员工”。每位 AI 员工（称为**角色**�
 - 角色响应方式按话题设置：“主动 @”（默认）只在角色被 @ 时响应；“自动”模式下，没有 @ 的消息也可以由角色处理——只有一个角色时由它判断是否需要回复，有多个角色时由调度模型决定交给哪些角色。
 - 消息支持 Markdown、图片和 Mermaid 流程图；角色工作时实时显示思考状态、正在使用的工具和逐字生成的回答。
 - 接入 Slack（飞书为实验性支持）：一个 thread 对应一个话题，消息格式自动转换。
-- 接入 GitHub：在 issue 或 pull request 中 @ 机器人账号即可让角色工作，回复以评论发回；公开仓库中的内部资料需要批准才会发出。
+- 接入 GitHub（GitHub App 或机器人账号）：在 issue 或 pull request 中 @ 机器人即可让角色工作，回复以评论发回；公开仓库中的内部资料需要批准才会发出。
 
 **虚拟电脑**
 - 版本化模板，从模板创建多个独立实例；支持启动、停止、重启、重置、删除、备份、恢复和复制，复制时默认不带账号凭据。
@@ -88,7 +88,7 @@ node packages/server/dist/cli.js serve
 - [系统架构](docs/architecture.md)：组件、执行边界、可靠性设计
 - [安全说明](docs/security.md)：平台提供的保护、部署方的责任、已知限制
 - [接入 Slack](docs/slack.md)：创建 Slack App、连接、分配规则与身份关联
-- [接入 GitHub](docs/github.md)：机器人账号、Webhook、在 issue 和 pull request 中使用
+- [接入 GitHub](docs/github.md)：GitHub App 或机器人账号、Webhook、在 issue 和 pull request 中使用
 - [参与开发](CONTRIBUTING.md)：开发环境、测试与代码约定
 
 ## 许可证

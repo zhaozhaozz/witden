@@ -33,7 +33,7 @@
 5. **保管主密钥和令牌。** 设置 `WITDEN_SECRET_KEY` 并离线备份，丢失后已保存的密钥无法解密；`WITDEN_INTERNAL_TOKEN` 只提供给 API 和 Worker。
 6. **保护控制台。** 只在内部网络中开放，并在前面放置 HTTPS 反向代理。控制台账号都是管理员，可以看到所有会话（包括 Slack、飞书中与机器人的私信），请据此告知使用机器人的人。
 7. **配置 Slack。** 必须设置 Signing Secret；按需授予 `chat:write.customize` 以显示角色名称和头像；只把机器人邀请到需要的频道。
-8. **配置 GitHub。** 必须设置 Webhook Secret；使用专用的机器账号，令牌只授予需要接入的仓库。
+8. **配置 GitHub。** 必须设置 Webhook Secret；优先使用 GitHub App，只安装到需要的仓库，私钥只保存在 witden 中；使用机器人账号时，用专用账号，令牌只授予需要接入的仓库。
 
 ## 3. 已知限制
 
