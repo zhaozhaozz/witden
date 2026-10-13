@@ -244,7 +244,7 @@ function SideSection({
           </button>
         ) : null}
       </div>
-      {collapsed ? null : <div className="side-body">{children}</div>}
+      {collapsed ? null : <div className="side-list">{children}</div>}
     </div>
   );
 }

@@ -594,7 +594,11 @@ textarea.prompt {
 }
 /* Slack-style lists in the main sidebar: topics and the roles you can message. */
 .side-section {
-  margin-bottom: 10px;
+  margin-bottom: 14px;
+}
+/* Its own class: .side-body belongs to the topic's right panel (scrolling, deep bottom padding). */
+.side-list {
+  padding: 2px 12px 0;
 }
 .side-head {
   display: flex;
