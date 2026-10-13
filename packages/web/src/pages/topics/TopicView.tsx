@@ -24,9 +24,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const { toast, confirm } = useFeedback();
   const { run } = useAction();
   const topicRes = useResource(() => api.get<Topic>(`/api/topics/${topicId}`), [topicId]);
-  // Administrators may manage a private topic they are not in, without reading it (can_view=false).
-  const viewable = topicRes.data ? topicRes.data.can_view !== false : null;
-  const files = useResource(() => api.get<Artifact[]>(`/api/topics/${topicId}/files`), [topicId], viewable === true);
+  const files = useResource(() => api.get<Artifact[]>(`/api/topics/${topicId}/files`), [topicId]);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [msgError, setMsgError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -64,8 +62,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
 
   useEffect(() => {
     setMessages(null);
-    if (viewable) void loadMessages();
-  }, [loadMessages, viewable]);
+    void loadMessages();
+  }, [loadMessages]);
 
   const loadEarlier = async () => {
     if (!messages?.length) return;
@@ -129,7 +127,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, []);
 
-  const live = useLiveEvents(viewable ? { topic_id: topicId } : null, (type, data) => {
+  const live = useLiveEvents({ topic_id: topicId }, (type, data) => {
     activityFeed.current?.(type, data);
     if (type === "task.live") return;
     if (type === "message.created") {
@@ -236,9 +234,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const heading = dm ? (dmRole?.name ?? topic.title) : topic.title;
   // A DM with a disabled role keeps its history, read-only (the server refuses new messages).
   const roleOff = dm && dmRole?.status === "disabled";
-  // Owners, plus administrators for removing / stopping things in group topics (decided by the server).
-  const canAdmin = topic.can_administer ?? (topic.is_owner || (!!me?.is_admin && topic.kind === "group"));
-  const manageOnly = topic.can_view === false;
 
   return (
     <div className={`topic-view${panel || computerMax ? " with-panel" : ""}${computerMax ? " computer-max" : ""}`}>
@@ -283,15 +278,12 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               ) : null}
               {topic.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
               {roleOff ? <Tag tone="off">角色已停用</Tag> : null}
-              {manageOnly ? <Tag tone="wait">仅可管理</Tag> : null}
-              {manageOnly ? null : (
-                <span
-                  className={`live-dot${live ? " live-on" : ""}`}
-                  title={live ? "实时更新已连接" : "实时更新未连接，正在重试"}
-                >
-                  {live ? "实时" : "离线"}
-                </span>
-              )}
+              <span
+                className={`live-dot${live ? " live-on" : ""}`}
+                title={live ? "实时更新已连接" : "实时更新未连接，正在重试"}
+              >
+                {live ? "实时" : "离线"}
+              </span>
             </div>
             {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
             <TopicCast participants={topic.participants ?? []} showRoles={!dm} />
@@ -301,112 +293,102 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           </button>
         </header>
 
-        {manageOnly ? (
-          <div className="timeline">
-            <Empty
-              title="这是一个你没有参与的私密话题"
-              hint="作为管理员，你可以归档话题、移除参与者或清理数据，但不能阅读其中的消息、文件和任务内容。"
-            />
-          </div>
-        ) : (
-          <div
-            className="timeline"
-            ref={scroller}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-            }}
-          >
-            {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
-            {messages === null ? (
-              <Loading />
-            ) : (
-              <>
-                {hasMore ? (
-                  <div className="timeline-more">
-                    <button
-                      type="button"
-                      className="btn btn-xs"
-                      disabled={loadingMore}
-                      onClick={() => void loadEarlier()}
-                    >
-                      {loadingMore ? "加载中…" : "加载更早的消息"}
-                    </button>
-                  </div>
-                ) : messages.length ? (
-                  <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
-                ) : null}
-                {!messages.length ? (
-                  <Empty
-                    title={dm ? `开始和 ${heading} 私信` : "还没有消息"}
-                    hint={
-                      !topic.can_post
-                        ? undefined
-                        : dm
-                          ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
-                          : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
-                    }
-                  />
-                ) : null}
-                {messages.map((m, i) => {
-                  const prev = messages[i - 1];
-                  const compact =
-                    !!prev &&
-                    prev.author_type === m.author_type &&
-                    prev.author_id === m.author_id &&
-                    m.author_type !== "system" &&
-                    (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) <
-                      5 * 60_000;
-                  const author = authorOf(m);
-                  return (
-                    <MessageItem
-                      key={m.id}
-                      msg={m}
-                      author={author}
-                      mentionTokens={mentionTokens(m)}
-                      compact={compact}
-                      files={fileMap}
-                      canDelete={(m.author_type === "user" && m.author_id === me?.id) || canAdmin}
-                      onEdit={async (content) => {
-                        const out = await run(() => api.patch<Message>(`/api/messages/${m.id}`, { content }));
-                        if (out) setMessages((prev) => prev?.map((x) => (x.id === out.id ? out : x)) ?? prev);
-                        return !!out;
-                      }}
-                      onDelete={async () => {
-                        const ok = await confirm({
-                          title: "删除消息",
-                          body: <p>消息内容会被清空，由这条消息产生的记忆也会一并删除。</p>,
-                          confirmLabel: "删除",
-                          danger: true,
-                        });
-                        if (!ok) return;
-                        const out = await run(() => api.del<{ memories_deleted: number }>(`/api/messages/${m.id}`));
-                        if (out) {
-                          setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev);
-                          toast(
-                            out.memories_deleted
-                              ? `消息已删除，同时删除了 ${out.memories_deleted} 条相关记忆`
-                              : "消息已删除",
-                            "ok",
-                          );
-                        }
-                      }}
-                    />
-                  );
-                })}
-                <RoleActivity
-                  topicId={topic.id}
-                  connected={live}
-                  feed={activityFeed}
-                  authorOf={roleAuthor}
-                  onGrow={keepAtBottom}
+        <div
+          className="timeline"
+          ref={scroller}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          }}
+        >
+          {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
+          {messages === null ? (
+            <Loading />
+          ) : (
+            <>
+              {hasMore ? (
+                <div className="timeline-more">
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={loadingMore}
+                    onClick={() => void loadEarlier()}
+                  >
+                    {loadingMore ? "加载中…" : "加载更早的消息"}
+                  </button>
+                </div>
+              ) : messages.length ? (
+                <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
+              ) : null}
+              {!messages.length ? (
+                <Empty
+                  title={dm ? `开始和 ${heading} 私信` : "还没有消息"}
+                  hint={
+                    !topic.can_post
+                      ? undefined
+                      : dm
+                        ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
+                        : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
+                  }
                 />
-              </>
-            )}
-          </div>
-        )}
+              ) : null}
+              {messages.map((m, i) => {
+                const prev = messages[i - 1];
+                const compact =
+                  !!prev &&
+                  prev.author_type === m.author_type &&
+                  prev.author_id === m.author_id &&
+                  m.author_type !== "system" &&
+                  (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) < 5 * 60_000;
+                const author = authorOf(m);
+                return (
+                  <MessageItem
+                    key={m.id}
+                    msg={m}
+                    author={author}
+                    mentionTokens={mentionTokens(m)}
+                    compact={compact}
+                    files={fileMap}
+                    canDelete
+                    onEdit={async (content) => {
+                      const out = await run(() => api.patch<Message>(`/api/messages/${m.id}`, { content }));
+                      if (out) setMessages((prev) => prev?.map((x) => (x.id === out.id ? out : x)) ?? prev);
+                      return !!out;
+                    }}
+                    onDelete={async () => {
+                      const ok = await confirm({
+                        title: "删除消息",
+                        body: <p>消息内容会被清空，由这条消息产生的记忆也会一并删除。</p>,
+                        confirmLabel: "删除",
+                        danger: true,
+                      });
+                      if (!ok) return;
+                      const out = await run(() => api.del<{ memories_deleted: number }>(`/api/messages/${m.id}`));
+                      if (out) {
+                        setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev);
+                        toast(
+                          out.memories_deleted
+                            ? `消息已删除，同时删除了 ${out.memories_deleted} 条相关记忆`
+                            : "消息已删除",
+                          "ok",
+                        );
+                      }
+                    }}
+                  />
+                );
+              })}
+              <RoleActivity
+                topicId={topic.id}
+                connected={live}
+                feed={activityFeed}
+                authorOf={roleAuthor}
+                onGrow={keepAtBottom}
+              />
+            </>
+          )}
+        </div>
 
-        {manageOnly ? null : topic.can_post ? (
+        {topic.can_post ? (
           <Composer
             topicId={topic.id}
             participants={topic.participants ?? []}
@@ -424,8 +406,10 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               : dm && topic.status === "archived"
                 ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
                 : topic.status === "archived"
-                  ? "话题已归档，只能查看。负责人可以在设置中恢复。"
-                  : "你不是这个话题的参与者，可以阅读但不能发言。请话题负责人邀请你加入。"}
+                  ? "话题已归档，只能查看。可以在右侧“设置”中恢复。"
+                  : dm
+                    ? `这是其他人与 ${heading} 的私信，只能查看。`
+                    : "你不是这个话题的参与者，可以查看；在右侧“参与者”中把自己加入后即可发言。"}
           </div>
         )}
       </div>
@@ -455,7 +439,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       {panel || computerMax ? (
         <TopicSidePanel
           topic={topic}
-          canAdmin={canAdmin}
           version={version}
           computerMax={computerMax}
           onToggleComputerMax={toggleComputerMax}

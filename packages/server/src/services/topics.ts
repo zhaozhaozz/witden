@@ -4,7 +4,7 @@ import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { messages, type Role, roles, type Topic, topicParticipants, topics, type User, users } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
-import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { hasPermission, isConsoleUser, Perm, requirePerm } from "../security/permissions.js";
 
 export async function getTopic(db: Db, id: string): Promise<Topic> {
   const [topic] = await db.select().from(topics).where(eq(topics.id, id)).limit(1);
@@ -37,8 +37,9 @@ export async function participants(db: Db, topicId: string, type?: "user" | "rol
     .where(and(...conds));
 }
 
-/** Topics and DMs are read by their participants only (administrators included). */
+/** The console shows every conversation to its accounts; an external member sees only their own. */
 export async function canView(db: Db, user: User, topic: Topic): Promise<boolean> {
+  if (isConsoleUser(user)) return true;
   return user.isActive && !!(await participant(db, topic.id, "user", user.id));
 }
 
@@ -54,14 +55,9 @@ export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean
   return (p ? await getRole(db, p.participantId) : undefined)?.status === "active";
 }
 
-export async function isOwner(db: Db, user: User, topic: Topic): Promise<boolean> {
-  const p = await participant(db, topic.id, "user", user.id);
-  return !!p?.isOwner && user.isActive;
-}
-
-/** Owners, plus administrators for actions that remove or stop things; none of these widen a private topic. */
-export async function canAdminister(db: Db, user: User, topic: Topic): Promise<boolean> {
-  return (await isOwner(db, user, topic)) || (user.isAdmin && user.isActive && topic.kind === "group");
+/** Settings, members, cleanup and other management: any console account (all are administrators). */
+export async function canAdminister(_db: Db, user: User, _topic: Topic): Promise<boolean> {
+  return isConsoleUser(user);
 }
 
 export async function addParticipant(
@@ -69,7 +65,7 @@ export async function addParticipant(
   topic: Topic,
   type: "user" | "role",
   id: string,
-  opts: { invitedBy?: string | null; owner?: boolean } = {},
+  opts: { invitedBy?: string | null } = {},
 ) {
   const existing = await participant(db, topic.id, type, id);
   if (existing) return existing;
@@ -81,7 +77,6 @@ export async function addParticipant(
       topicId: topic.id,
       participantType: type,
       participantId: id,
-      isOwner: opts.owner ?? false,
       joinedAt: now,
       invitedBy: opts.invitedBy ?? null,
     })
@@ -157,7 +152,7 @@ export async function createTopic(
       createdBy: user.id,
     })
     .returning();
-  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id, owner: true });
+  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id });
   for (const uid of data.userIds ?? []) {
     if (uid === user.id) continue;
     const [u] = await db.select().from(users).where(eq(users.id, uid)).limit(1);
@@ -187,7 +182,7 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
       createdBy: user.id,
     })
     .returning();
-  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id, owner: true });
+  await addParticipant(db, topic, "user", user.id, { invitedBy: user.id });
   await addParticipant(db, topic, "role", role.id, { invitedBy: user.id });
   return topic;
 }

@@ -1,13 +1,15 @@
 /**
- * Permission checks enforced by the system (never by prompts).
+ * Who may do what.
  *
- * Everything is denied unless a grant allows it. Administrators implicitly hold every management
- * permission, but private topics and DMs stay readable by their participants only (see services/topics).
+ * Everyone who signs in to the console is an administrator: the console is where the roles and computers are
+ * configured, and it shows every conversation the roles take part in. The people the roles serve are outside
+ * it — Slack / Feishu members and channels. A person from a connected workspace without a console account is
+ * an *external member* of that connection and may use only the roles it lists. What reaches outside people
+ * is controlled by the information-flow labels (security/labels.ts), not by these permissions.
  */
-import { and, eq, inArray, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { newId } from "../db/ids.js";
-import { connections, grants, type User, users } from "../db/schema.js";
+import { connections, type User, users } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
 
 export const Perm = {
@@ -35,50 +37,16 @@ export const Perm = {
 export type Perm = (typeof Perm)[keyof typeof Perm];
 export const ALL_PERMS = Object.values(Perm) as Perm[];
 
-/** Resource type a permission is scoped to ("*" = global permission). */
-export const PERM_RESOURCE: Partial<Record<Perm, string>> = {
-  "role.use": "role",
-  "role.invite": "role",
-  "instance.observe": "instance",
-  "instance.control": "instance",
-  "instance.manage": "instance",
-  "file.download": "topic",
-  "approval.decide": "role",
-  "knowledge.read": "space",
-  "knowledge.write": "space",
-  "model.use": "model",
-  "topic.publish": "connection",
-};
-
-export function isPerm(value: string): value is Perm {
-  return (ALL_PERMS as string[]).includes(value);
-}
+/** A console account (an administrator), as opposed to an external member of a connection. */
+export const isConsoleUser = (user: User | null | undefined): boolean => !!user?.isActive && !user.externalConnectionId;
 
 export async function hasPermission(db: Db, user: User | null | undefined, perm: Perm, resourceId?: string | null) {
   if (!user?.isActive) return false;
   if (user.externalConnectionId) return externalMemberMay(db, user.externalConnectionId, perm, resourceId);
-  if (user.isAdmin) return true;
-  const rtype = PERM_RESOURCE[perm] ?? "*";
-  const resources = resourceId ? ["*", resourceId] : ["*"];
-  const rows = await db
-    .select({ id: grants.id })
-    .from(grants)
-    .where(
-      and(
-        eq(grants.permission, perm),
-        inArray(grants.resourceType, [rtype, "*"]),
-        inArray(grants.resourceId, resources),
-        or(and(eq(grants.subjectType, "user"), eq(grants.subjectId, user.id)), eq(grants.subjectType, "all")),
-      ),
-    )
-    .limit(1);
-  return rows.length > 0;
+  return true;
 }
 
-/**
- * External members may use (and bring into a thread) only the roles their connection lists in
- * ``settings.external_role_ids``; grants, including grants to everybody, do not apply to them.
- */
+/** External members may use (and bring into a thread) only the roles their connection lists. */
 async function externalMemberMay(db: Db, connectionId: string, perm: Perm, roleId?: string | null): Promise<boolean> {
   if (!roleId || (perm !== Perm.ROLE_USE && perm !== Perm.ROLE_INVITE)) return false;
   const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
@@ -92,46 +60,16 @@ export async function requirePerm(db: Db, user: User | null | undefined, perm: P
   }
 }
 
-/** Active users holding ``perm`` (explicitly or as admin). */
+/** The console accounts: they approve, decide and are told about everything. */
+export async function consoleUsers(db: Db): Promise<Set<string>> {
+  const active = await db.select().from(users).where(eq(users.isActive, true));
+  return new Set(active.filter((u) => !u.externalConnectionId).map((u) => u.id));
+}
+
+/** Active users holding ``perm`` on a resource: the console accounts, plus external members it allows. */
 export async function usersWithPermission(db: Db, perm: Perm, resourceId?: string | null): Promise<Set<string>> {
   const active = await db.select().from(users).where(eq(users.isActive, true));
   const out = new Set<string>();
   for (const u of active) if (await hasPermission(db, u, perm, resourceId)) out.add(u.id);
   return out;
-}
-
-export async function grant(
-  db: Db,
-  perm: Perm,
-  opts: { userId?: string | null; resourceId?: string; createdBy?: string | null } = {},
-) {
-  const subjectType = opts.userId ? "user" : "all";
-  const subjectId = opts.userId ?? "*";
-  const resourceId = opts.resourceId ?? "*";
-  const existing = await db
-    .select()
-    .from(grants)
-    .where(
-      and(
-        eq(grants.subjectType, subjectType),
-        eq(grants.subjectId, subjectId),
-        eq(grants.permission, perm),
-        eq(grants.resourceId, resourceId),
-      ),
-    )
-    .limit(1);
-  if (existing[0]) return existing[0];
-  const [row] = await db
-    .insert(grants)
-    .values({
-      id: newId("grant"),
-      subjectType,
-      subjectId,
-      permission: perm,
-      resourceType: PERM_RESOURCE[perm] ?? "*",
-      resourceId,
-      createdBy: opts.createdBy ?? null,
-    })
-    .returning();
-  return row;
 }

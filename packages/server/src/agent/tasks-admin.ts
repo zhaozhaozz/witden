@@ -11,17 +11,15 @@ import { authorize, buildEnvelope, createTask, systemMessage } from "./dispatch.
 import { activeKillSwitch } from "./revocation.js";
 import { appendStep } from "./transcript.js";
 
-/** Requester and topic owners steer a task; administrators can only stop it (pause / cancel). */
-export async function canControl(db: Db, user: User, task: Task, action = "pause"): Promise<boolean> {
+/** Console accounts steer every task (they are all administrators). */
+export async function canControl(db: Db, user: User, task: Task, _action = "pause"): Promise<boolean> {
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
-  if (!topic || !user.isActive) return false;
-  if (task.requesterUserId === user.id || (await topicSvc.isOwner(db, user, topic))) return true;
-  return ["pause", "cancel"].includes(action) && (await topicSvc.canAdminister(db, user, topic));
+  return !!topic && (await topicSvc.canAdminister(db, user, topic));
 }
 
 async function requireControl(db: Db, user: User, task: Task, action: string) {
   if (!(await canControl(db, user, task, action))) {
-    throw new Forbidden("only the requester or topic owners can do this (administrators can pause or cancel)");
+    throw new Forbidden("only console accounts can control tasks");
   }
 }
 

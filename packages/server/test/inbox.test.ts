@@ -46,7 +46,7 @@ function listen(token: string) {
 }
 
 describe("inbox stream", () => {
-  it("announces new messages in topics the person can view, without their text", async () => {
+  it("announces new messages in every conversation to console accounts, without their text", async () => {
     w.scripts.dev = () => reply("noted");
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
     const bob = listen(w.bob);
@@ -55,10 +55,12 @@ describe("inbox stream", () => {
     await w.post(w.alice, w.ids.topic, "release notes are ready");
     await w.post(w.alice, dm.id, "my secret plan");
     await w.drain();
-    await w.waitFor(async () => bob.events.length >= 1);
+    await w.waitFor(async () => bob.events.length >= 2);
     await new Promise((r) => setTimeout(r, 200));
     bob.stop();
-    expect(new Set(bob.events.map((e) => e.data.topic_id))).toEqual(new Set([w.ids.topic]));
+    // the console shows every conversation, alice's DM with the role included
+    expect(new Set(bob.events.map((e) => e.data.topic_id))).toEqual(new Set([w.ids.topic, dm.id]));
+    expect(JSON.stringify(bob.events)).not.toContain("secret plan");
     expect(bob.events.every((e) => e.type === "topic.activity")).toBe(true);
     expect(JSON.stringify(bob.events)).not.toContain("release notes");
 

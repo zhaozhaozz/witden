@@ -1,6 +1,6 @@
 import "@fastify/multipart";
 import fs from "node:fs";
-import { and, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { dispatchHumanMessage, messageOut, saveMessage, systemMessage } from "../agent/dispatch.js";
 import { recheckActiveTasks } from "../agent/revocation.js";
@@ -23,6 +23,7 @@ import {
 import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { topicLabel, userCanRead } from "../security/labels.js";
+import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
 import { purgeMessage } from "../services/messages.js";
@@ -41,7 +42,6 @@ async function participantsOut(db: Db, topic: Topic) {
         type: "user",
         id: p.participantId,
         name: u?.name ?? "?",
-        is_owner: p.isOwner,
         joined_at: p.joinedAt.toISOString(),
       });
     } else {
@@ -59,7 +59,6 @@ async function participantsOut(db: Db, topic: Topic) {
         // the computer the role works on, shown as a badge next to it
         instance: inst ? { id: inst.id, name: inst.name, color: inst.color } : null,
         status: r?.status ?? null,
-        is_owner: p.isOwner,
         joined_at: p.joinedAt.toISOString(),
       });
     }
@@ -69,10 +68,7 @@ async function participantsOut(db: Db, topic: Topic) {
 
 async function topicOut(db: Db, topic: Topic, user: User, detail = false) {
   const data: Record<string, any> = row(topic);
-  data.is_owner = await svc.isOwner(db, user, topic);
   data.can_post = await svc.canPost(db, user, topic);
-  data.can_view = await svc.canView(db, user, topic);
-  data.can_administer = await svc.canAdminister(db, user, topic);
   // A DM is "the conversation with this role" in sidebars.
   if (topic.kind === "dm") data.dm_role_id = (await svc.participants(db, topic.id, "role"))[0]?.participantId ?? null;
   if (detail) {
@@ -105,7 +101,8 @@ export async function topicRoutes(app: FastifyInstance) {
             isNull(topicParticipants.removedAt),
           ),
         );
-      const conds = [user.isAdmin ? or(inArray(topics.id, mine), eq(topics.kind, "group")) : inArray(topics.id, mine)];
+      // Console accounts see every conversation; anyone else only their own.
+      const conds: (SQL | undefined)[] = isConsoleUser(user) ? [] : [inArray(topics.id, mine)];
       if (q.include_archived !== "true") conds.push(eq(topics.status, "active"));
       if (q.q) conds.push(or(ilike(topics.title, `%${q.q}%`), ilike(topics.goal, `%${q.q}%`)));
       const rows = await db
@@ -115,10 +112,7 @@ export async function topicRoutes(app: FastifyInstance) {
         .orderBy(desc(topics.lastMessageAt), desc(topics.createdAt))
         .limit(300);
       const out = [];
-      for (const t of rows) {
-        if (await svc.canView(db, user, t)) out.push(await topicOut(db, t, user));
-        else if (user.isAdmin && t.kind === "group") out.push(await topicOut(db, t, user)); // metadata only, for management
-      }
+      for (const t of rows) out.push(await topicOut(db, t, user));
       return out;
     }),
   );
@@ -153,9 +147,8 @@ export async function topicRoutes(app: FastifyInstance) {
     "/api/topics/:id",
     authed(async ({ db, user, req }) => {
       const topic = await svc.getTopic(db, params(req).id);
-      if ((await svc.canView(db, user, topic)) || (user.isAdmin && topic.kind === "group"))
-        return topicOut(db, topic, user, true);
-      throw new Forbidden("you cannot view this topic");
+      await svc.requireView(db, user, topic);
+      return topicOut(db, topic, user, true);
     }),
   );
 
@@ -168,11 +161,7 @@ export async function topicRoutes(app: FastifyInstance) {
       // A DM is one person and one role, always open: nothing to rename, archive or reconfigure.
       if (topic.kind === "dm" && keys.some((k) => k !== "allowedModelConfigIds"))
         throw new BadRequest("a DM has no title, archive or response settings: it is always one person and one role");
-      if (!(await svc.isOwner(db, user, topic))) {
-        // Administrators may archive / reactivate a topic they are not in, but not change who can read it.
-        if (!((await svc.canAdminister(db, user, topic)) && keys.every((k) => k === "status")))
-          throw new Forbidden("only topic owners can change the topic");
-      }
+      if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can change a topic");
       if (b.status !== undefined && !["active", "archived"].includes(b.status))
         throw new BadRequest("status must be active or archived");
       if (b.responseMode !== undefined) svc.parseResponseMode(b.responseMode);
@@ -193,22 +182,19 @@ export async function topicRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       const topic = await svc.getTopic(db, params(req).id);
       const b = body(req);
-      if (!(await svc.canPost(db, user, topic))) throw new Forbidden("only participants can invite");
+      if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can invite");
       if (topic.kind === "dm")
         throw new BadRequest("a DM is between one person and one role; start a topic to work with more");
       if (b.type === "role") await svc.inviteRole(db, user, topic, String(b.id));
       else if (b.type === "user") {
-        if (!(await svc.isOwner(db, user, topic))) throw new Forbidden("only topic owners can add people");
-        if (
-          !(
-            await db
-              .select()
-              .from(users)
-              .where(eq(users.id, String(b.id)))
-              .limit(1)
-          ).length
-        )
-          throw new NotFound("user not found");
+        const [added] = await db
+          .select()
+          .from(users)
+          .where(eq(users.id, String(b.id)))
+          .limit(1);
+        if (!added) throw new NotFound("user not found");
+        // People from a connected workspace take part through their own Slack / Feishu conversations.
+        if (added.externalConnectionId) throw new BadRequest("external members cannot be added to console topics");
         await svc.addParticipant(db, topic, "user", String(b.id), { invitedBy: user.id });
       } else throw new BadRequest("type must be user or role");
       await systemMessage(db, topic, `${user.name} added a ${b.type} to the topic.`);

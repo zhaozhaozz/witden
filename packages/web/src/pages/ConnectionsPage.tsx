@@ -452,7 +452,8 @@ function Identities({ conn }: { conn: Connection }) {
   return (
     <>
       <p className="small muted side-note">
-        外部账号按平台用户 ID 关联到内部成员，不按显示名称判断身份。未关联的账号无法使用需要授权的角色。
+        外部账号按平台用户 ID
+        关联到内部成员，不按显示名称判断身份。未关联的人在连接开启“允许未关联的人使用”时成为外部成员，否则不能使用角色。
       </p>
       <Loaded res={res}>
         {(rows) =>

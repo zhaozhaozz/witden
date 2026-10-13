@@ -1,6 +1,7 @@
 /** End-to-end behaviour of AI roles, mapped to the product's acceptance scenarios. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { call, lastToolResult, reply } from "./support/harness.js";
+import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -70,7 +71,8 @@ describe("permissions and isolation", () => {
     expect(denied[0].task_id).toBe(child.id);
   });
 
-  it("DM material stays out of the group unless its owner approves", async () => {
+  it("DM material stays out of a Slack channel unless its owner approves", async () => {
+    await linkChannel(w, w.ids.topic, ["UCAROL"]);
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
     w.scripts.dev = (_m, turn) =>
       turn === 0
@@ -83,7 +85,7 @@ describe("permissions and isolation", () => {
       turn === 0 ? reply("", [call("recall", { query: "salary" })]) : reply(`What I found: ${lastToolResult(m)}`);
     await w.post(w.alice, w.ids.topic, "@dev what is alice's salary?");
     await w.drain();
-    expect(JSON.stringify(await w.messages(w.ids.topic, w.bob))).not.toContain("12345");
+    expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
 
     w.scripts.dev = (_m, turn) =>
       turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("From the DM: salary 12345");
@@ -91,17 +93,13 @@ describe("permissions and isolation", () => {
     await w.drain();
     const task = await w.task(posted.tasks[0].id);
     expect(task.status).toBe("waiting_approval");
-    expect(JSON.stringify(await w.messages(w.ids.topic, w.bob))).not.toContain("12345");
-    // bob is in the group but the material is alice's: no log, no content, no approval power
-    expect((await w.api("GET", `/api/tasks/${task.id}/log`, { token: w.bob })).status).toBe(403);
-    expect((await w.api("GET", `/api/tasks/${task.id}`, { token: w.bob })).body.content_restricted).toBe(true);
+    expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
     expect((await w.api("GET", "/api/audit", { token: w.adminToken })).raw).not.toContain("salary is 12345");
+    // the material is alice's: she decides whether the channel may see it
     const held = (await w.api("GET", "/api/approvals", { token: w.alice })).body.find(
       (a: any) => a.task_id === task.id,
     );
     expect(held.approver_user_ids).toEqual([w.ids.alice]);
-    const bobView = (await w.api("GET", "/api/approvals", { token: w.bob })).body.find((a: any) => a.id === held.id);
-    expect(bobView.detail.content).toBeUndefined();
     expect(
       (await w.api("POST", `/api/approvals/${held.id}/decide`, { token: w.bob, json: { approve: true } })).status,
     ).toBe(403);
@@ -109,37 +107,20 @@ describe("permissions and isolation", () => {
       (await w.api("POST", `/api/approvals/${held.id}/decide`, { token: w.alice, json: { approve: true } })).status,
     ).toBe(200);
     expect((await w.task(task.id)).status).toBe("completed");
-    expect((await w.messages(w.ids.topic, w.bob)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
+    expect((await w.messages(w.ids.topic)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
   });
 
-  it("a mention is not a bypass", async () => {
-    await w.api("POST", "/api/users", {
-      token: w.adminToken,
-      json: { name: "carol", email: "carol@example.com", password: "carol-pass-1" },
-    });
-    const carol = await w.login("carol@example.com", "carol-pass-1");
-    expect(
-      (await w.api("POST", `/api/topics/${w.ids.topic}/messages`, { token: carol, json: { content: "@dev hi" } }))
-        .status,
-    ).toBe(403);
-    expect((await w.api("GET", `/api/topics/${w.ids.topic}/messages`, { token: carol })).status).toBe(403);
-  });
-
-  it("revoking a permission stops waiting work and refuses new requests", async () => {
-    w.scripts.dev = () => reply("", [call("ask_human", { question: "Which branch?" })]);
-    const posted = await w.post(w.alice, w.ids.topic, "@dev deploy");
+  it("inside the console, material moves freely: every console account may read it", async () => {
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
+    w.scripts.dev = () => reply("noted");
+    await w.post(w.alice, dm.id, "my salary is 12345");
     await w.drain();
-    expect((await w.task(posted.tasks[0].id)).status).toBe("waiting_human");
-    const grants = (await w.api("GET", "/api/grants", { token: w.adminToken })).body;
-    const g = grants.find(
-      (x: any) => x.subject_id === w.ids.alice && x.permission === "role.use" && x.resource_id === w.ids.dev,
-    );
-    await w.api("DELETE", `/api/grants/${g.id}`, { token: w.adminToken });
-    const task = await w.task(posted.tasks[0].id);
-    expect(task.status).toBe("cancelled");
-    expect(task.status_reason).toContain("may no longer use");
-    await w.post(w.alice, w.ids.topic, "@dev deploy again");
-    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("permission to use @dev");
+    w.scripts.dev = (_m, turn) =>
+      turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("From the DM: salary 12345");
+    const posted = await w.post(w.alice, w.ids.topic, "@dev check my DM and tell bob");
+    await w.drain();
+    expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
+    expect((await w.messages(w.ids.topic, w.bob)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
   });
 
   it("asks the right person and resumes on their answer", async () => {
@@ -173,7 +154,7 @@ describe("permissions and isolation", () => {
     expect(texts.filter((t: string) => t.includes("your turn")).length).toBeLessThanOrEqual(4);
   });
 
-  it("tools needing approval wait for someone who can see the request", async () => {
+  it("tools needing approval wait for a console account to approve", async () => {
     await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
     w.scripts.dev = (m, turn) =>
       turn === 0
@@ -184,21 +165,7 @@ describe("permissions and isolation", () => {
     const id = posted.tasks[0].id;
     expect((await w.task(id)).status).toBe("waiting_approval");
     expect(w.manager.computer(w.ids.instance).commands).toEqual([]);
-    const approval = (await w.api("GET", "/api/approvals", { token: w.adminToken })).body.find(
-      (a: any) => a.task_id === id,
-    );
-    expect(
-      (await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.alice, json: { approve: true } })).status,
-    ).toBe(403);
-    const blind = await w.api("POST", `/api/approvals/${approval.id}/decide`, {
-      token: w.adminToken,
-      json: { approve: true },
-    });
-    expect(blind.status).toBe(403);
-    await w.api("POST", "/api/grants", {
-      token: w.adminToken,
-      json: { permission: "approval.decide", user_id: w.ids.bob, resource_id: w.ids.dev },
-    });
+    const approval = (await w.api("GET", "/api/approvals", { token: w.bob })).body.find((a: any) => a.task_id === id);
     expect(
       (await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } })).status,
     ).toBe(200);

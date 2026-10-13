@@ -68,7 +68,6 @@ async function main(argv: string[]): Promise<number> {
         name: values.name ?? "admin",
         email: values.email,
         password: values.password,
-        isAdmin: true,
       });
     });
     console.log(`created admin ${user.email} (${user.id})`);

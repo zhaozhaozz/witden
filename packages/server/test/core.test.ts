@@ -17,7 +17,7 @@ import {
 import { ModelError } from "../src/errors.js";
 import { hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
 import { checkFlow, topicLabel, topicReaders, userLabel } from "../src/security/labels.js";
-import { grant, hasPermission, Perm } from "../src/security/permissions.js";
+import { hasPermission, Perm } from "../src/security/permissions.js";
 import { setModelFactory } from "../src/services/model-configs.js";
 import { createUser } from "../src/services/users.js";
 import { type Harness, reply, startHarness } from "./support/harness.js";
@@ -62,28 +62,60 @@ describe("with a database", () => {
     return t;
   };
 
-  it("permissions are deny-by-default and resource-scoped", async () => {
+  it("console accounts may do everything; external members only use their connection's roles", async () => {
     const alice = await createUser(db(), { name: "alice", email: "alice@example.com" });
-    expect(await hasPermission(db(), alice, Perm.ROLE_USE, "role_x")).toBe(false);
-    await grant(db(), Perm.ROLE_USE, { userId: alice.id, resourceId: "role_x" });
+    expect(alice.isAdmin).toBe(true);
     expect(await hasPermission(db(), alice, Perm.ROLE_USE, "role_x")).toBe(true);
-    expect(await hasPermission(db(), alice, Perm.ROLE_USE, "role_y")).toBe(false);
-    // baseline grant created at bootstrap
-    expect(await hasPermission(db(), alice, Perm.TOPIC_CREATE)).toBe(true);
+    expect(await hasPermission(db(), alice, Perm.SECRETS_MANAGE)).toBe(true);
+    const [conn] = await db()
+      .insert(connections)
+      .values({ id: newId("conn"), platform: "slack", name: "acme", settings: { external_role_ids: ["role_x"] } })
+      .returning();
+    const carol = await createUser(db(), { name: "carol", externalConnectionId: conn.id });
+    expect(carol.isAdmin).toBe(false);
+    expect(await hasPermission(db(), carol, Perm.ROLE_USE, "role_x")).toBe(true);
+    expect(await hasPermission(db(), carol, Perm.ROLE_USE, "role_y")).toBe(false);
+    expect(await hasPermission(db(), carol, Perm.TOPIC_CREATE)).toBe(false);
   });
 
-  it("DM content cannot flow into a group; private memory stays with its owner", async () => {
+  it("inside the console material flows freely; a channel's outside members may not see a DM or private notes", async () => {
     const alice = await createUser(db(), { name: "alice", email: "a@x.io" });
     const bob = await createUser(db(), { name: "bob", email: "b@x.io" });
     const dm = await topic("dm", [alice.id]);
     const group = await topic("group", [alice.id, bob.id]);
-    const toGroup = await topicReaders(db(), group.id);
-    const decision = await checkFlow(db(), [topicLabel(dm.id), topicLabel(group.id)], toGroup);
+    const flow = async (labels: string[], to: string) => checkFlow(db(), labels, await topicReaders(db(), to));
+    expect((await flow([topicLabel(dm.id), userLabel(alice.id)], group.id)).allowed).toBe(true);
+    // the group is mirrored into a Slack channel with carol, who has no console account
+    const [conn] = await db()
+      .insert(connections)
+      .values({ id: newId("conn"), platform: "slack", name: "acme" })
+      .returning();
+    const [conv] = await db()
+      .insert(externalConversations)
+      .values({
+        id: newId("conv"),
+        connectionId: conn.id,
+        externalId: "G1",
+        kind: "private",
+        memberIds: ["UCAROL"],
+        membersSyncedAt: new Date(),
+      })
+      .returning();
+    await db()
+      .insert(externalThreadLinks)
+      .values({
+        id: newId("lnk"),
+        connectionId: conn.id,
+        conversationId: conv.id,
+        threadKey: "1.0",
+        topicId: group.id,
+      });
+    const decision = await flow([topicLabel(dm.id), topicLabel(group.id)], group.id);
     expect(decision.allowed).toBe(false);
     expect(decision.blockedLabels).toEqual([topicLabel(dm.id)]);
-    expect((await checkFlow(db(), [topicLabel(group.id)], await topicReaders(db(), dm.id))).allowed).toBe(true);
-    expect((await checkFlow(db(), [userLabel(alice.id)], await topicReaders(db(), dm.id))).allowed).toBe(true);
-    expect((await checkFlow(db(), [userLabel(alice.id)], toGroup)).allowed).toBe(false);
+    expect((await flow([userLabel(alice.id)], group.id)).allowed).toBe(false);
+    // the channel's own content may go back to the console DM
+    expect((await flow([topicLabel(group.id)], dm.id)).allowed).toBe(true);
   });
 
   it("public and private Slack channels; unknown membership and labels fail closed", async () => {
@@ -255,7 +287,7 @@ describe("with a database", () => {
       expect([model.status, model.capabilities]).toEqual(["unchecked", {}]);
     });
 
-    it("models in use cannot be deleted; members only see models they may use", async () => {
+    it("models in use cannot be deleted; a disabled model is not usable", async () => {
       const p = await create({ models: ["a", "b"] });
       const [a, b] = p.models;
       await admin("POST", "/api/roles", { name: "R", handle: "r", model_config_id: a.id });
@@ -264,20 +296,6 @@ describe("with a database", () => {
       expect(
         (await admin("PATCH", `/api/models/${b.id}`, { enabled: false, daily_token_limit: 1000 })).body,
       ).toMatchObject({ enabled: false, daily_token_limit: 1000, usable: false });
-      const bob = await createUser(db(), { name: "bob", email: "bob@x.io", password: "bob-pass-123" });
-      await grant(db(), Perm.MODEL_USE, { userId: bob.id, resourceId: a.id });
-      const token = await h.login("bob@x.io", "bob-pass-123");
-      const seen = (await h.api("GET", "/api/model-providers", { token })).body;
-      expect(seen).toEqual([
-        {
-          id: p.id,
-          name: "local",
-          protocol: "openai",
-          status: "unchecked",
-          models: [expect.objectContaining({ id: a.id })],
-        },
-      ]);
-      expect((await h.api("GET", `/api/model-providers/${p.id}/remote-models`, { token })).status).toBe(403);
       expect((await admin("DELETE", `/api/models/${b.id}`)).status).toBe(200);
     });
 

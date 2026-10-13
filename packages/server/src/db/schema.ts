@@ -57,25 +57,6 @@ export const apiSessions = pgTable(
   (t) => [index("ix_api_sessions_user").on(t.userId)],
 );
 
-/** Explicit permission grant. Everything not granted is denied. */
-export const grants = pgTable(
-  "grants",
-  {
-    id: id(),
-    subjectType: text("subject_type").notNull(), // user | all
-    subjectId: text("subject_id").notNull().default("*"),
-    permission: text("permission").notNull(),
-    resourceType: text("resource_type").notNull(),
-    resourceId: text("resource_id").notNull().default("*"),
-    createdBy: text("created_by"),
-    createdAt: created(),
-  },
-  (t) => [
-    uniqueIndex("ux_grants").on(t.subjectType, t.subjectId, t.permission, t.resourceType, t.resourceId),
-    index("ix_grants_permission").on(t.permission),
-  ],
-);
-
 /** An account on a chat platform, identified by its stable platform id (never its display name). */
 export const externalIdentities = pgTable(
   "external_identities",
@@ -112,7 +93,7 @@ export const modelProviders = pgTable("model_providers", {
   updatedAt: updated(),
 });
 
-/** One model offered by a provider (roles, grants, usage and topic restrictions refer to these rows). */
+/** One model offered by a provider (roles, usage and topic restrictions refer to these rows). */
 export const modelConfigs = pgTable(
   "model_configs",
   {
@@ -314,7 +295,6 @@ export const topicParticipants = pgTable(
       .references(() => topics.id, { onDelete: "cascade" }),
     participantType: text("participant_type").notNull(), // user | role
     participantId: text("participant_id").notNull(),
-    isOwner: boolean("is_owner").notNull().default(false),
     joinedAt: created(),
     removedAt: ts("removed_at"),
     invitedBy: text("invited_by"),
@@ -700,7 +680,6 @@ export const killSwitches = pgTable("kill_switches", {
 });
 
 export type User = typeof users.$inferSelect;
-export type Grant = typeof grants.$inferSelect;
 export type ModelConfig = typeof modelConfigs.$inferSelect;
 export type ModelProvider = typeof modelProviders.$inferSelect;
 export type ComputerTemplate = typeof computerTemplates.$inferSelect;

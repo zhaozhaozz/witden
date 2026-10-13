@@ -72,14 +72,6 @@ describe("appearance", () => {
         })
       ).status,
     ).toBe(413);
-    expect(
-      (
-        await w.api("POST", `/api/roles/${w.ids.dev}/avatar`, {
-          token: w.alice,
-          ...multipart("me.png", png, "image/png"),
-        })
-      ).status,
-    ).toBe(403);
     expect((await admin("DELETE", `/api/roles/${w.ids.dev}/avatar`)).body.avatar_url).toBeNull();
     // editors upload first and save the URL with the rest of the form
     const stored = await w.api("POST", "/api/avatars", {
@@ -100,9 +92,6 @@ describe("appearance", () => {
     expect(patched.status, patched.raw).toBe(200);
     expect(patched.body.color).toBe("#2e7d32");
     expect((await admin("PATCH", `/api/instances/${w.ids.instance}`, { color: "green" })).status).toBe(400);
-    expect(
-      (await w.api("PATCH", `/api/instances/${w.ids.instance}`, { token: w.bob, json: { color: "#000000" } })).status,
-    ).toBe(403);
     await admin("PATCH", `/api/roles/${w.ids.dev}`, { color: "#aa3366" });
 
     const role = (await admin("GET", `/api/roles/${w.ids.dev}`)).body;

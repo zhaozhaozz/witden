@@ -18,17 +18,14 @@ export interface User {
 }
 
 export interface Me extends User {
-  /** Global permissions plus anything held on at least one resource. */
+  /** What this account may do (a console account: everything). */
   permissions: string[];
-  global_permissions?: string[];
-  scoped_permissions?: { permission: string; resource_id: string }[];
 }
 
 export interface Participant {
   type: "user" | "role";
   id: string;
   name: string;
-  is_owner: boolean;
   joined_at: string;
   handle?: string | null;
   avatar_url?: string | null;
@@ -55,12 +52,8 @@ export interface Topic {
   dm_role_id?: string | null;
   created_at: string;
   updated_at: string;
-  is_owner: boolean;
+  /** You take part (a DM: only its own person; a DM with a disabled role: nobody). */
   can_post: boolean;
-  /** false: an administrator sees a private topic's metadata only (manage, never read). */
-  can_view?: boolean;
-  /** Owner, or administrator of a group topic: may archive, remove participants and clean up. */
-  can_administer?: boolean;
   participants?: Participant[];
   external?: ExternalContext | null;
 }
@@ -616,22 +609,6 @@ export interface ExplainResult {
   reason: string | null;
   candidates: RoleDecision[];
   trace: TraceStep[];
-}
-
-export interface Grant {
-  id: string;
-  subject_type: "user" | "all";
-  subject_id: string;
-  permission: string;
-  resource_type: string;
-  resource_id: string;
-  created_by: string | null;
-  created_at: string;
-}
-
-export interface PermissionInfo {
-  permission: string;
-  resource_type: string;
 }
 
 export interface ExternalIdentity {

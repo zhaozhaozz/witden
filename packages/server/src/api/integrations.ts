@@ -1,6 +1,7 @@
 /** Chat connections, conversations, deliveries, publishing topics outward, and the platform webhooks. */
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
+import { recheckActiveTasks } from "../agent/revocation.js";
 import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -163,6 +164,8 @@ export async function integrationRoutes(app: FastifyInstance) {
         update.statusReason = b.status === "active" ? null : `paused by ${user.name}`;
       }
       const [updated] = await db.update(connections).set(update).where(eq(connections.id, conn.id)).returning();
+      // Roles taken off the external members' list stop their work at once.
+      if (b.settings) await recheckActiveTasks(db, "the connection's settings changed");
       await audit(db, "connection.update", {
         actorType: "user",
         actorId: user.id,
@@ -308,7 +311,8 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/topics/:id/publish",
     authedNoTx(async ({ db, user, req }) => {
       const topic = await topicSvc.getTopic(db, params(req).id);
-      if (!(await topicSvc.isOwner(db, user, topic))) throw new Forbidden("only topic owners can publish a topic");
+      if (!(await topicSvc.canAdminister(db, user, topic)))
+        throw new Forbidden("only console accounts can publish a topic");
       if (topic.kind === "dm") throw new BadRequest("DMs cannot be published to a channel");
       const b = body(req);
       const conn = await getConn(db, String(b.connectionId ?? ""));

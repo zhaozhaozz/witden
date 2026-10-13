@@ -289,33 +289,6 @@ export const EXEC_SESSION_KIND: Record<string, string> = {
   browser: "浏览器",
 };
 
-export const PERMISSION_LABEL: Record<string, string> = {
-  "topic.create": "创建话题",
-  "role.use": "使用角色",
-  "role.invite": "邀请角色进话题",
-  "role.manage": "管理角色",
-  "instance.observe": "观察虚拟电脑",
-  "instance.control": "接管虚拟电脑",
-  "instance.manage": "管理虚拟电脑",
-  "template.manage": "管理模板",
-  "file.download": "下载话题文件到自己的电脑",
-  "rules.manage": "管理分配规则",
-  "secrets.manage": "管理模型与密钥",
-  "model.use": "使用模型配置",
-  "connection.manage": "管理通讯接入",
-  "topic.publish": "发布话题到外部频道",
-  "audit.view": "查看审计与用量",
-  "user.manage": "管理成员与授权",
-  "approval.decide": "审批",
-  "knowledge.read": "读取知识空间",
-  "knowledge.write": "编辑知识空间",
-  "emergency.stop": "紧急停止",
-};
-
-export function permissionLabel(p: string): string {
-  return PERMISSION_LABEL[p] ?? p;
-}
-
 const AUDIT_LABEL: Record<string, string> = {
   "task.create": "创建任务",
   "task.created": "创建任务",

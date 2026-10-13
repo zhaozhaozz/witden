@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Memory } from "../api/types";
-import { fmtRelative, permissionLabel } from "../lib/format";
+import { fmtRelative } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
@@ -34,26 +34,21 @@ export default function MePage() {
             <KV
               items={[
                 ["邮箱", me.email ?? "—"],
-                ["身份", me.is_admin ? <Tag tone="accent">管理员</Tag> : "成员"],
+                [
+                  "身份",
+                  <Tag key="r" tone="accent">
+                    管理员
+                  </Tag>,
+                ],
                 ["我发起的任务", <Link to="/tasks">在任务页勾选「我发起的」查看</Link>],
               ]}
             />
           </Section>
           <Section title="我的权限">
-            {me.is_admin ? (
-              <p className="small">管理员拥有全部管理权限。私信内容仍然只有参与者本人可见。</p>
-            ) : me.permissions.length ? (
-              <div className="inline-list">
-                {me.permissions.map((p) => (
-                  <Tag key={p} title={p}>
-                    {permissionLabel(p)}
-                  </Tag>
-                ))}
-              </div>
-            ) : (
-              <p className="small muted">你还没有全局权限。被邀请的话题仍然可以参与。</p>
-            )}
-            <p className="small muted">这里只列出全局授权；针对某个角色、虚拟电脑或话题的授权不在此显示。</p>
+            <p className="small">
+              控制台账号都是管理员：可以配置角色、虚拟电脑和通讯接入，查看所有会话。外部成员（来自 Slack /
+              飞书）不登录控制台。
+            </p>
           </Section>
         </div>
         <div>

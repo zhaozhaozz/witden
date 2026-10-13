@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtime } from "../src/runtime.js";
 import type { BusEvent } from "../src/services/events.js";
 import { call, reply } from "./support/harness.js";
+import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -44,8 +45,9 @@ describe("live activity", () => {
     expect(final.content).toBe(answer);
   });
 
-  it("no streamed text where the material may not be shown", async () => {
+  it("no streamed text while the material may not reach the topic's Slack channel", async () => {
     const SECRET = "salary-12345";
+    await linkChannel(w, w.ids.topic, ["UCAROL"]);
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
     w.scripts.dev = () => reply("noted");
     await w.post(w.alice, dm.id, `my ${SECRET} is private`);

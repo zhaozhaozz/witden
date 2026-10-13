@@ -56,7 +56,7 @@ const MESSAGE_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
     /^you are not a \(verified\) member of that conversation$/,
     () => "你不是该会话的（已验证）成员，不能把话题发布到这里",
   ],
-  [/^only topic owners/, () => "只有话题负责人可以执行这个操作"],
+  [/^only console accounts/, () => "只有控制台账号可以执行这个操作"],
   [/^you cannot view this topic$/, () => "你无权查看这个话题"],
 ];
 

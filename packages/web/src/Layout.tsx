@@ -255,7 +255,7 @@ const MAX_TOPICS = 40;
 function TopicList() {
   const { can } = useAuth();
   const t = useTopics();
-  const topics = t.topics.filter((x) => x.kind === "group" && x.status === "active" && x.can_view !== false);
+  const topics = t.topics.filter((x) => x.kind === "group" && x.status === "active");
   return (
     <SideSection
       id="topics"

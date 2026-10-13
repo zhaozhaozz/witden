@@ -15,7 +15,6 @@ const ENV_VARS = ["OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL", "AN
  */
 export function ModelAccessTab({ inst }: { inst: Instance }) {
   const { can } = useAuth();
-  // Scoped grants count too (/api/auth/me lists them); the server checks this computer specifically.
   const manage = can("instance.manage");
   const res = useResource(() => api.get<ModelProxyInfo>(`/api/instances/${inst.id}/model-proxy`), [inst.id]);
   const models = useResource(() => api.get<ModelConfig[]>("/api/models"), [], manage);

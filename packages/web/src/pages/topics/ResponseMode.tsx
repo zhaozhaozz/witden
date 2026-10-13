@@ -9,12 +9,12 @@ const MODES = ["mention", "auto"] as const;
 
 /**
  * The topic's response mode as a two-way switch in its header: 主动 @ / 自动, each explained on hover.
- * Owners switch it right here; others see the current mode (the buttons stay hoverable for the explanation).
+ * Switched right here while the topic is active (the buttons stay hoverable for the explanation).
  */
 export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange: (t: Topic) => void }) {
   const { run, busy } = useAction();
   if (topic.kind !== "group") return null;
-  const editable = topic.is_owner && topic.status === "active";
+  const editable = topic.status === "active";
   const pick = async (mode: (typeof MODES)[number]) => {
     if (!editable || busy || mode === topic.response_mode) return;
     const t = await run(
@@ -35,7 +35,7 @@ export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange
             aria-checked={topic.response_mode === m}
             aria-disabled={!editable}
             className={`seg${topic.response_mode === m ? " seg-on" : ""}${editable ? "" : " seg-readonly"}`}
-            title={`${RESPONSE_MODE[m].hint}${editable ? "" : "\n\n只有话题负责人可以切换。"}`}
+            title={`${RESPONSE_MODE[m].hint}${editable ? "" : "\n\n话题已归档，不能切换。"}`}
             onClick={() => void pick(m)}
           >
             {RESPONSE_MODE[m].label}

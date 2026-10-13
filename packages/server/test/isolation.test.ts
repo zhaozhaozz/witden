@@ -1,13 +1,15 @@
 /**
  * Indirect leak paths and control-flow bypasses (from a security review of the first version).
- * Setup: alice asks @dev in a group topic that bob is also in; the task reads alice's DM, which holds SECRET.
- * Nothing derived from it may reach bob, or administrators who are not in the DM.
+ * Setup: the group topic is mirrored into a Slack channel with carol, an outside person; alice asks @dev there
+ * and the task reads alice's DM, which holds SECRET. Nothing derived from it may reach the channel unless
+ * alice approves. Console accounts (all administrators) may read everything.
  */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { db } from "../src/db/client.js";
-import { tasks } from "../src/db/schema.js";
+import { db, db as getDb } from "../src/db/client.js";
+import { outboundMessages, tasks, users } from "../src/db/schema.js";
 import { call, lastToolResult, reply } from "./support/harness.js";
+import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "salary-12345";
@@ -20,6 +22,7 @@ beforeEach(async () => {
   w.scripts.dev = () => reply("noted");
   await w.post(w.alice, dm.id, `my ${SECRET} is private`);
   await w.drain();
+  await linkChannel(w, w.ids.topic, ["UCAROL"]);
 });
 afterEach(async () => {
   await w.close();
@@ -36,87 +39,41 @@ async function runDev(...steps: ReturnType<typeof call>[]) {
 }
 
 describe("indirect channels", () => {
-  it("a held file is not downloadable and is deleted on reject", async () => {
+  it("a held file is not shared with the channel, and is deleted on reject", async () => {
     w.manager.computer(w.ids.instance).files.set("/home/witden/leak.txt", Buffer.from(SECRET));
     const id = await runDev(call("share_file", { path: "leak.txt" }));
     expect((await w.task(id)).status).toBe("waiting_approval");
-    expect((await w.api("GET", `/api/topics/${w.ids.topic}/files`, { token: w.bob })).body).toEqual([]);
+    expect((await w.api("GET", `/api/topics/${w.ids.topic}/files`, { token: w.alice })).body).toEqual([]);
+    // nothing carrying the file went to the channel
+    const mirrored = await getDb().select().from(outboundMessages);
+    const topicMessages = await w.messages(w.ids.topic);
+    for (const out of mirrored) {
+      const m = topicMessages.find((x: any) => x.id === out.messageId);
+      expect(JSON.stringify(m ?? {})).not.toContain(SECRET);
+      expect(m?.attachments ?? []).toEqual([]);
+    }
     const approval = (await w.api("GET", "/api/approvals", { token: w.alice })).body.find((a: any) => a.task_id === id);
     const fileId = approval.detail.attachments[0];
-    expect((await w.api("GET", `/api/files/${fileId}`, { token: w.bob })).status).toBe(403);
     expect((await w.api("GET", `/api/files/${fileId}`, { token: w.alice })).status).toBe(200);
     await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.alice, json: { approve: false } });
     expect((await w.api("GET", `/api/files/${fileId}`, { token: w.alice })).status).toBe(404);
   });
 
-  it("topic notes cannot carry restricted material", async () => {
+  it("topic notes cannot carry material the channel may not see", async () => {
     await runDev(call("remember", { content: `alice ${SECRET}`, scope: "topic" }));
-    for (const token of [w.alice, w.bob]) {
-      const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token })).body;
-      expect(JSON.stringify(mems)).not.toContain(SECRET);
-    }
+    const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;
+    expect(JSON.stringify(mems)).not.toContain(SECRET);
   });
 
-  it("task views hide derived text from people who cannot read the source", async () => {
-    w.scripts.test = () => reply("ok");
-    const id = await runDev(
-      call("run_command", { command: `echo ${SECRET} > notes` }),
-      call("delegate_task", { role: "test", task: `check ${SECRET}`, expected_output: "x" }),
-      call("follow_up_later", { minutes: 60, reason: `recheck ${SECRET}` }),
-    );
-    for (const url of [`/api/tasks/${id}/trace`, `/api/tasks/${id}`, `/api/tasks?topic_id=${w.ids.topic}`]) {
-      expect((await w.api("GET", url, { token: w.bob })).raw).not.toContain(SECRET);
-    }
-    expect((await w.api("GET", `/api/tasks/${id}/trace`, { token: w.alice })).raw).toContain(SECRET);
-  });
-
-  it("approvers do not see material they cannot read", async () => {
-    await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
-    w.scripts.dev = () => reply("", [call("run_command", { command: `echo ${SECRET}` })]);
-    await w.post(w.alice, dm.id, `store my ${SECRET}`);
-    await w.drain();
-    const approvals = (await w.api("GET", "/api/approvals", { token: w.adminToken })).body;
-    expect(approvals.length).toBeGreaterThan(0);
-    expect(JSON.stringify(approvals)).not.toContain(SECRET);
-    expect(approvals[0].can_approve).toBe(false);
-  });
-
-  it("open event streams stop receiving restricted detail", async () => {
-    const { allowed } = await import("../src/api/events.js");
-    w.scripts.dev = (_m, turn) => {
-      const plan = [call("ask_human", { question: "go ahead?" }), call("read_topic", { topic_id: dm.id })];
-      return turn < plan.length ? reply("", [plan[turn]]) : reply("ok");
-    };
-    const id = (await w.post(w.alice, w.ids.topic, "@dev go")).tasks[0].id;
-    await w.drain();
-    const bobId = w.ids.bob;
-    // allowed while the task only carries the group label...
-    expect(
-      await allowed(bobId, [`task:${id}`], { type: "task.step", data: { task_id: id }, channels: [`task:${id}`] }),
-    ).toBe(true);
-    await w.post(w.alice, w.ids.topic, "yes");
-    await w.drain();
-    // ...and no longer once it has read the DM, even on a stream opened earlier
-    expect(
-      await allowed(bobId, [`task:${id}`], { type: "task.step", data: { task_id: id }, channels: [`task:${id}`] }),
-    ).toBe(false);
-    expect(
-      await allowed(w.ids.alice, [`task:${id}`], {
-        type: "task.step",
-        data: { task_id: id },
-        channels: [`task:${id}`],
-      }),
-    ).toBe(true);
+  it("console accounts read every conversation, including another person's DM", async () => {
+    const msgs = await w.messages(dm.id, w.bob);
+    expect(JSON.stringify(msgs)).toContain(SECRET);
   });
 });
 
 describe("control flow", () => {
   it("approval during an emergency stop does not run the tool until resumed", async () => {
     await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
-    await w.api("POST", "/api/grants", {
-      token: w.adminToken,
-      json: { permission: "approval.decide", user_id: w.ids.bob },
-    });
     w.scripts.dev = (_m, turn) =>
       turn === 0 ? reply("", [call("run_command", { command: "kubectl delete ns prod" })]) : reply("done");
     const id = (await w.post(w.alice, w.ids.topic, "@dev ship")).tasks[0].id;
@@ -189,37 +146,26 @@ describe("control flow", () => {
 });
 
 describe("accounts and topics", () => {
-  it("user.manage cannot change administrators; admins cannot widen private topics", async () => {
-    await w.api("POST", "/api/grants", {
-      token: w.adminToken,
-      json: { permission: "user.manage", user_id: w.ids.bob },
+  it("every console account is an administrator; external members never sign in", async () => {
+    const made = await w.api("POST", "/api/users", {
+      token: w.bob,
+      json: { name: "erin", email: "erin@example.com", password: "erin-pass-12", is_admin: false },
     });
-    const me = (await w.api("GET", "/api/auth/me", { token: w.adminToken })).body;
-    expect(
-      (await w.api("PATCH", `/api/users/${me.id}`, { token: w.bob, json: { password: "pwned-pass-1" } })).status,
-    ).toBe(400);
-    expect(
-      (await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.adminToken, json: { title: "renamed" } })).status,
-    ).toBe(403);
-    expect((await w.api("GET", `/api/topics/${w.ids.topic}/messages`, { token: w.adminToken })).status).toBe(403);
-    expect(
-      (await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.adminToken, json: { status: "archived" } }))
-        .status,
-    ).toBe(200);
+    expect(made.body.is_admin).toBe(true);
+    const [ext] = await getDb()
+      .insert(users)
+      .values({ id: "usr_ext", name: "carol", externalConnectionId: "conn_x" })
+      .returning();
+    const pw = await w.api("PATCH", `/api/users/${ext.id}`, { token: w.alice, json: { password: "carol-pass-1" } });
+    expect(pw.status).toBe(400);
   });
 
-  it("hand back only by the person in control", async () => {
-    for (const uid of [w.ids.alice, w.ids.bob]) {
-      await w.api("POST", "/api/grants", {
-        token: w.adminToken,
-        json: { permission: "instance.control", user_id: uid, resource_id: w.ids.instance },
-      });
-    }
-    expect(
-      (await w.api("POST", `/api/instances/${w.ids.instance}/takeover`, { token: w.alice, json: {} })).status,
-    ).toBe(200);
-    expect((await w.api("POST", `/api/instances/${w.ids.instance}/handback`, { token: w.bob })).status).toBe(403);
-    expect((await w.api("POST", `/api/instances/${w.ids.instance}/handback`, { token: w.alice })).status).toBe(200);
+  it("a takeover is handed back by its holder, or by another console account (all are administrators)", async () => {
+    const take = (token: string) => w.api("POST", `/api/instances/${w.ids.instance}/takeover`, { token, json: {} });
+    expect((await take(w.alice)).status).toBe(200);
+    expect((await w.api("POST", `/api/instances/${w.ids.instance}/handback`, { token: w.bob })).status).toBe(200);
+    const inst = (await w.api("GET", `/api/instances/${w.ids.instance}`, { token: w.alice })).body;
+    expect(inst.operator?.holder_type ?? null).not.toBe("user");
   });
 
   it("changing a provider's endpoint drops the stored key", async () => {

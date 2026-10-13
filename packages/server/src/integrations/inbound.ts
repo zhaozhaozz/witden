@@ -169,12 +169,10 @@ export async function resolveIdentity(
   }
   if (!ident.userId && conn.settings.auto_provision_users) {
     // An external member of this connection: uses only the roles it allows, has no console sign-in.
-    const created = await createUser(db, { name: displayName || `${conn.platform}-${externalUserId}` });
-    const [user] = await db
-      .update(users)
-      .set({ externalConnectionId: conn.id })
-      .where(eq(users.id, created.id))
-      .returning();
+    const user = await createUser(db, {
+      name: displayName || `${conn.platform}-${externalUserId}`,
+      externalConnectionId: conn.id,
+    });
     await db.update(externalIdentities).set({ userId: user.id }).where(eq(externalIdentities.id, ident.id));
     await audit(db, "identity.auto_provision", {
       connectionId: conn.id,
@@ -246,7 +244,7 @@ async function threadTopic(
       createdBy: starter.id,
     })
     .returning();
-  await topicSvc.addParticipant(db, topic, "user", starter.id, { owner: true });
+  await topicSvc.addParticipant(db, topic, "user", starter.id);
   await db.insert(externalThreadLinks).values({
     id: newId("lnk"),
     connectionId: conn.id,

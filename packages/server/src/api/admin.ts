@@ -1,12 +1,12 @@
-/** Members, grants, external identities, audit trail, usage and emergency stop. */
+/** Console accounts (all administrators), external identities, audit trail, usage and emergency stop. */
 import { and, desc, eq, gte, like, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { applyKillSwitch, onUserDeactivated, recheckActiveTasks } from "../agent/revocation.js";
+import { applyKillSwitch, onUserDeactivated } from "../agent/revocation.js";
 import { newId } from "../db/ids.js";
-import { auditLogs, externalIdentities, grants, killSwitches, usageRecords, users } from "../db/schema.js";
+import { auditLogs, externalIdentities, killSwitches, usageRecords, users } from "../db/schema.js";
 import { BadRequest, NotFound } from "../errors.js";
 import { hashPassword } from "../security/crypto.js";
-import { ALL_PERMS, grant, hasPermission, isPerm, PERM_RESOURCE, Perm, requirePerm } from "../security/permissions.js";
+import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { publish } from "../services/events.js";
 import { createUser, revokeUserSessions } from "../services/users.js";
@@ -34,13 +34,8 @@ export async function adminRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.USER_MANAGE);
       const b = body(req);
-      if (b.isAdmin && !user.isAdmin) throw new BadRequest("only administrators can create administrators");
-      const created = await createUser(db, {
-        name: b.name,
-        email: b.email,
-        password: b.password,
-        isAdmin: !!b.isAdmin,
-      });
+      // Every console account is an administrator.
+      const created = await createUser(db, { name: b.name, email: b.email, password: b.password });
       await audit(db, "user.create", {
         actorType: "user",
         actorId: user.id,
@@ -61,15 +56,11 @@ export async function adminRoutes(app: FastifyInstance) {
         .where(eq(users.id, params(req).id))
         .limit(1);
       if (!target) throw new NotFound("user not found");
-      if (target.isAdmin && !user.isAdmin)
-        throw new BadRequest("only administrators can change an administrator account");
       const b = body(req);
-      if (b.isAdmin !== undefined && !user.isAdmin) throw new BadRequest("only administrators can change admin status");
-      if (target.externalConnectionId && (b.password || b.isAdmin))
+      if (target.externalConnectionId && b.password)
         throw new BadRequest("external members come from a connected workspace and do not sign in to the console");
       const update: Partial<typeof target> = {};
       if (b.name !== undefined) update.name = b.name;
-      if (b.isAdmin !== undefined) update.isAdmin = !!b.isAdmin;
       if (b.password) update.passwordHash = hashPassword(String(b.password));
       if (b.isActive !== undefined) update.isActive = !!b.isActive;
       const [updated] = await db.update(users).set(update).where(eq(users.id, target.id)).returning();
@@ -87,65 +78,6 @@ export async function adminRoutes(app: FastifyInstance) {
         detail,
       });
       return row(updated);
-    }),
-  );
-
-  app.get(
-    "/api/grants",
-    authed(async ({ db, user }) => {
-      await requirePerm(db, user, Perm.USER_MANAGE);
-      return (await db.select().from(grants).orderBy(grants.permission)).map((g) => row(g));
-    }),
-  );
-
-  app.get(
-    "/api/permissions",
-    authed(async () => ALL_PERMS.map((p) => ({ permission: p, resource_type: PERM_RESOURCE[p] ?? "*" }))),
-  );
-
-  app.post(
-    "/api/grants",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.USER_MANAGE);
-      const b = body(req);
-      if (!isPerm(String(b.permission))) throw new BadRequest(`unknown permission ${b.permission}`);
-      const g = await grant(db, b.permission, {
-        userId: b.userId ?? null,
-        resourceId: b.resourceId ?? "*",
-        createdBy: user.id,
-      });
-      await audit(db, "grant.create", {
-        actorType: "user",
-        actorId: user.id,
-        resourceType: "grant",
-        resourceId: g.id,
-        detail: b,
-      });
-      return row(g);
-    }),
-  );
-
-  app.delete(
-    "/api/grants/:id",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.USER_MANAGE);
-      const [g] = await db
-        .select()
-        .from(grants)
-        .where(eq(grants.id, params(req).id))
-        .limit(1);
-      if (!g) throw new NotFound("grant not found");
-      await db.delete(grants).where(eq(grants.id, g.id));
-      // Revocation takes effect on queued and running work too.
-      await recheckActiveTasks(db, `permission ${g.permission} revoked`);
-      await audit(db, "grant.delete", {
-        actorType: "user",
-        actorId: user.id,
-        resourceType: "grant",
-        resourceId: g.id,
-        detail: row(g),
-      });
-      return { ok: true };
     }),
   );
 

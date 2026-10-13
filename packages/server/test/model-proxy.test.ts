@@ -94,14 +94,7 @@ describe("model proxy", () => {
     expect(out.key).toMatch(/^wdm_/);
     expect(out.endpoints.openai).toBe("http://127.0.0.1:8686/v1");
     expect(JSON.stringify(pc.modelProxy)).not.toContain("sk-openai");
-    // members who can see the computer but not manage it do not see the key
-    await admin("POST", "/api/grants", {
-      permission: "instance.observe",
-      user_id: w.ids.bob,
-      resource_id: w.ids.instance,
-    });
-    const seen = (await w.api("GET", `/api/instances/${w.ids.instance}/model-proxy`, { token: w.bob })).body;
-    expect(seen.key).toBeNull();
+    // the key is shown on the computer's model access page only, never in the computer listing
     const listed = (await admin("GET", `/api/instances/${w.ids.instance}`)).raw;
     expect(listed).not.toContain("model_proxy_key_encrypted");
     expect(listed).not.toContain(out.key);
@@ -217,19 +210,5 @@ describe("model proxy", () => {
     await admin("PUT", `/api/instances/${w.ids.instance}/model-proxy`, { enabled: false });
     await w.waitFor(async () => pc.modelProxy === null);
     expect((await pc.proxy("GET", "/v1/models", { headers: auth(rotated.key) })).status).toBe(403);
-  });
-
-  it("only people who may use a model can give a computer access to it", async () => {
-    const p = await provider("openai", "openai", "https://api.openai.example/v1", ["gpt-x"]);
-    await admin("POST", "/api/grants", {
-      permission: "instance.manage",
-      user_id: w.ids.bob,
-      resource_id: w.ids.instance,
-    });
-    const put = (json: unknown) => w.api("PUT", `/api/instances/${w.ids.instance}/model-proxy`, { token: w.bob, json });
-    expect((await put({ enabled: true, model_ids: [p.models[0].id] })).status).toBe(403);
-    await admin("POST", "/api/grants", { permission: "model.use", user_id: w.ids.bob, resource_id: p.models[0].id });
-    expect((await put({ enabled: true, model_ids: [p.models[0].id] })).status).toBe(200);
-    expect((await put({ model_ids: ["mdl_missing"] })).status).toBe(404);
   });
 });

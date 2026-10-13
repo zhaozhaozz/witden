@@ -13,7 +13,7 @@ export default function RolesPage() {
     <div className="page">
       <PageHeader
         title="角色"
-        sub="角色是团队里的 AI 员工：有独立的身份、职责、模型和所属虚拟电脑。同一个角色可以为多位获授权的成员工作。"
+        sub="角色是 AI 员工：有独立的身份、职责、模型和所属虚拟电脑。角色可以在控制台里和管理员对话，也可以作为 Slack、飞书的机器人为那里的成员和群工作。"
         actions={
           <Link to="/roles/new" className="btn btn-sm btn-primary">
             新建角色

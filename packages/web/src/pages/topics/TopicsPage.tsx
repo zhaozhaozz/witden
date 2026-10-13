@@ -98,7 +98,6 @@ function AllTopics() {
                           ) : null}
                           {x.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
                           {dmRole && dmRole.status !== "active" ? <Tag tone="off">角色已停用</Tag> : null}
-                          {x.can_view === false ? <Tag tone="wait">仅可管理</Tag> : null}
                         </td>
                         <td className="nowrap muted">
                           {x.last_message_at ? fmtRelative(x.last_message_at) : "无消息"}

@@ -79,9 +79,9 @@ describe("mention mode (default)", () => {
     expect(owners).toEqual([w.ids.dev, w.ids.test].sort());
   });
 
-  it("only owners switch the mode, to a known value", async () => {
+  it("any console account switches the mode, to a known value", async () => {
     const patch = (token: string, json: unknown) => w.api("PATCH", `/api/topics/${w.ids.topic}`, { token, json });
-    expect((await patch(w.bob, { response_mode: "auto" })).status).toBe(403);
+    expect((await patch(w.bob, { response_mode: "mention" })).status).toBe(200);
     expect((await patch(w.alice, { response_mode: "everyone" })).status).toBe(400);
     expect((await patch(w.alice, { response_mode: "auto" })).body.response_mode).toBe("auto");
   });
@@ -186,7 +186,6 @@ describe("auto mode", () => {
     const put = (token: string, id: string) =>
       w.api("PUT", "/api/settings/dispatcher", { token, json: { model_config_id: id } });
     expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBeNull();
-    expect((await put(w.bob, laya.id)).status).toBe(403);
     const chat = await put(w.adminToken, w.ids.model);
     expect([chat.status, chat.raw.includes("System One")]).toEqual([400, true]);
     expect((await put(w.adminToken, laya.id)).status).toBe(200);

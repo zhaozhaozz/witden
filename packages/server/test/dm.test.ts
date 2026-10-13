@@ -1,6 +1,6 @@
 /**
  * A DM is one person and one role, always open: no invites, no removal, no archive, no topic settings.
- * A topic has no visibility setting: only its participants read it.
+ * There is no visibility setting: the console (all administrators) sees every topic and DM.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildWorld, type World } from "./support/world.js";
@@ -56,12 +56,15 @@ describe("DMs", () => {
     expect((await say()).status).toBe(200);
   });
 
-  it("topics are read by their participants only; there is no team-wide visibility", async () => {
+  it("console accounts see every topic and DM; there is no visibility setting", async () => {
     const t = (await w.api("POST", "/api/topics", { token: w.alice, json: { title: "plans", visibility: "internal" } }))
       .body;
     expect(t.visibility).toBeUndefined();
-    expect((await w.api("GET", `/api/topics/${t.id}`, { token: w.bob })).status).toBe(403);
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
+    expect((await w.api("GET", `/api/topics/${t.id}`, { token: w.bob })).status).toBe(200);
     const listed = (await w.api("GET", "/api/topics", { token: w.bob })).body as any[];
-    expect(listed.some((x) => x.id === t.id)).toBe(false);
+    expect(listed.map((x) => x.id)).toEqual(expect.arrayContaining([t.id, dm.id]));
+    // ...but only its own person writes in a DM
+    expect((await w.api("GET", `/api/topics/${dm.id}`, { token: w.bob })).body.can_post).toBe(false);
   });
 });

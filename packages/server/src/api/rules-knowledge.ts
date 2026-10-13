@@ -262,7 +262,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       else if (m.scope === "topic" && m.topicId)
         allowed =
           (await canReadMemory(db, user, m)) &&
-          (await topicSvc.isOwner(db, user, await topicSvc.getTopic(db, m.topicId)));
+          (await topicSvc.canAdminister(db, user, await topicSvc.getTopic(db, m.topicId)));
       if (!allowed) throw new Forbidden("you cannot delete this memory");
       await db.update(memories).set({ deletedAt: new Date(), content: "" }).where(eq(memories.id, m.id));
       await audit(db, "memory.delete", {

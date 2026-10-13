@@ -70,20 +70,11 @@ describe("templates", () => {
 });
 
 describe("instances", () => {
-  it("lifecycle, shared scope, previews and visibility", async () => {
+  it("lifecycle, shared scope and previews", async () => {
     const tpl = await template();
     const inst = await instance(tpl.id, "box-1");
     expect(inst.shared_scope.credential_paths).toContain("/home/witden/.ssh");
     expect(inst.runner.connected).toBe(true);
-    await h.api("POST", "/api/users", {
-      token: h.adminToken,
-      json: { name: "bob", email: "bob@example.com", password: "bob-pass-123" },
-    });
-    const bob = await h.login("bob@example.com", "bob-pass-123");
-    expect((await h.api("GET", "/api/instances", { token: bob })).body).toEqual([]);
-    expect(
-      (await h.api("POST", `/api/instances/${inst.id}/actions`, { token: bob, json: { action: "stop" } })).status,
-    ).toBe(403);
     const reset = await h.api("POST", `/api/instances/${inst.id}/actions`, {
       token: h.adminToken,
       json: { action: "reset" },
@@ -335,20 +326,14 @@ describe("live view and permissions", () => {
     expect(audit[0].detail.mode).toBe("control");
   });
 
-  it("/api/auth/me reports resource-scoped permissions", async () => {
+  it("/api/auth/me: every console account holds every permission", async () => {
     await h.api("POST", "/api/users", {
       token: h.adminToken,
       json: { name: "olga", email: "olga@example.com", password: "olga-pass-123" },
     });
     const olga = await h.login("olga@example.com", "olga-pass-123");
     const me = (await h.api("GET", "/api/auth/me", { token: olga })).body;
-    await h.api("POST", "/api/grants", {
-      token: h.adminToken,
-      json: { permission: "instance.observe", user_id: me.id, resource_id: "inst_x" },
-    });
-    const after = (await h.api("GET", "/api/auth/me", { token: olga })).body;
-    expect(after.permissions).toContain("instance.observe");
-    expect(after.global_permissions).not.toContain("instance.observe");
-    expect(after.scoped_permissions).toContainEqual({ permission: "instance.observe", resource_id: "inst_x" });
+    expect(me.is_admin).toBe(true);
+    expect(me.permissions).toEqual(expect.arrayContaining(["instance.observe", "secrets.manage", "user.manage"]));
   });
 });

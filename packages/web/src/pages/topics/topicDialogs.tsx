@@ -136,7 +136,7 @@ export function InviteDialog({
   const present = new Set((topic.participants ?? []).map((p) => `${p.type}:${p.id}`));
   const roles = dir.roles.filter((r) => r.status === "active" && !present.has(`role:${r.id}`));
   const users = dir.users.filter((u) => u.is_active && !present.has(`user:${u.id}`));
-  const canAddUsers = topic.kind === "group" && topic.is_owner;
+  const canAddUsers = topic.kind === "group";
 
   return (
     <FormModal
@@ -162,7 +162,7 @@ export function InviteDialog({
           type="button"
           className={type === "user" ? "seg seg-on" : "seg"}
           disabled={!canAddUsers}
-          title={canAddUsers ? undefined : "只有话题负责人可以添加成员"}
+          title={canAddUsers ? undefined : "私信不能添加成员"}
           onClick={() => (setType("user"), setId(""))}
         >
           成员

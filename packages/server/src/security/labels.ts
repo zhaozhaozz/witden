@@ -4,13 +4,16 @@
  * Every piece of data an AI task reads carries a label naming where it came from (`topic:<id>`,
  * `user:<id>`, `space:<id>` or `public`). Each label has a *reader set*: the people allowed to see that
  * data. Before a task sends anything to a destination (a topic, an external channel), the destination's
- * audience must be a subset of the readers of every label the task has read. This stops DM material from
- * leaking into group chats and stops delegation from widening access: permissions are checked on the data
- * flow itself, not on which role happens to hold the data.
+ * audience must be a subset of the readers of every label the task has read. This stops one person's DM
+ * from leaking into a channel and stops delegation from widening access: permissions are checked on the
+ * data flow itself, not on which role happens to hold the data.
  *
- * Principals are `u:<user_id>` (member) or `x:<connection_id>:<external_user_id>` (external account not
- * linked to a member). Universes stand for whole populations: `public`, `internal` (all active members) and
- * `ws:<connection_id>` (everyone in an external workspace, e.g. a public Slack channel).
+ * The console accounts (all administrators) read every conversation, so every reader set includes them
+ * (`internal`); what is protected is the people outside: Slack / Feishu members and channels.
+ *
+ * Principals are `u:<user_id>` (console account or external member) or `x:<connection_id>:<external_user_id>`
+ * (external account without a user). Universes stand for whole populations: `public`, `internal` (the
+ * console accounts) and `ws:<connection_id>` (everyone in an external workspace, e.g. a public Slack channel).
  */
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -23,9 +26,11 @@ import {
   topics,
   users,
 } from "../db/schema.js";
-import { Perm, usersWithPermission } from "./permissions.js";
+import { consoleUsers, Perm, usersWithPermission } from "./permissions.js";
 
 export const PUBLIC = "public";
+/** The console accounts. */
+export const CONSOLE = "internal";
 /** Private conversation member lists older than this are no longer trusted for audience checks. */
 export const MEMBERSHIP_TTL_MS = 30 * 60 * 1000;
 
@@ -84,7 +89,7 @@ export async function topicReaders(db: Db, topicId: string): Promise<Readers> {
       ),
     );
   let out = readers(
-    [],
+    [CONSOLE],
     people.map((p) => `u:${p.participantId}`),
   );
   const links = await db.select().from(externalThreadLinks).where(eq(externalThreadLinks.topicId, topicId));
@@ -105,11 +110,11 @@ export async function labelReaders(db: Db, label: string): Promise<Readers> {
   const kind = label.slice(0, idx);
   const ident = label.slice(idx + 1);
   if (kind === "topic") return topicReaders(db, ident);
-  if (kind === "user") return readers([], [`u:${ident}`]);
+  if (kind === "user") return readers([CONSOLE], [`u:${ident}`]);
   if (kind === "space") {
     const ids = await usersWithPermission(db, Perm.KNOWLEDGE_READ, ident);
     return readers(
-      [],
+      [CONSOLE],
       [...ids].map((u) => `u:${u}`),
     );
   }
@@ -118,14 +123,14 @@ export async function labelReaders(db: Db, label: string): Promise<Readers> {
 
 async function memberOf(db: Db, principal: string, universe: string): Promise<boolean> {
   if (universe === PUBLIC) return true;
-  if (universe === "internal") {
+  if (universe === CONSOLE) {
     if (!principal.startsWith("u:")) return false;
     const [u] = await db
       .select()
       .from(users)
       .where(eq(users.id, principal.slice(2)))
       .limit(1);
-    return !!u?.isActive;
+    return !!u?.isActive && !u.externalConnectionId;
   }
   if (universe.startsWith("ws:")) {
     const connectionId = universe.slice(3);
@@ -194,15 +199,19 @@ export async function userCanRead(db: Db, userId: string, labels: string[]): Pro
   return true;
 }
 
-/** Users who may approve releasing data under ``label`` to a wider audience. */
+/**
+ * Users who may approve releasing data under ``label`` to a wider audience: the console accounts among the
+ * people it came from (the person whose DM or notes it is, the people in the topic), otherwise any console
+ * account — an external member cannot approve anything, they have no console.
+ */
 export async function labelOwners(db: Db, label: string): Promise<Set<string>> {
+  const admins = await consoleUsers(db);
   const idx = label.indexOf(":");
   const kind = label.slice(0, idx);
   const ident = label.slice(idx + 1);
-  if (kind === "user") return new Set([ident]);
-  if (kind === "topic") {
-    const [topic] = await db.select().from(topics).where(eq(topics.id, ident)).limit(1);
-    if (!topic) return new Set();
+  let from: string[] = [];
+  if (kind === "user") from = [ident];
+  else if (kind === "topic") {
     const rows = await db
       .select()
       .from(topicParticipants)
@@ -213,10 +222,8 @@ export async function labelOwners(db: Db, label: string): Promise<Set<string>> {
           isNull(topicParticipants.removedAt),
         ),
       );
-    if (topic.kind === "dm") return new Set(rows.map((r) => r.participantId));
-    const owners = rows.filter((r) => r.isOwner).map((r) => r.participantId);
-    return new Set(owners.length ? owners : rows.map((r) => r.participantId));
+    from = rows.map((r) => r.participantId);
   }
-  if (kind === "space") return usersWithPermission(db, Perm.KNOWLEDGE_WRITE, ident);
-  return new Set();
+  const owners = from.filter((id) => admins.has(id));
+  return new Set(owners.length ? owners : admins);
 }

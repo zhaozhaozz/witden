@@ -5,11 +5,11 @@ import { newId } from "../db/ids.js";
 import { apiSessions, type User, users } from "../db/schema.js";
 import { BadRequest, Conflict, Unauthorized } from "../errors.js";
 import { hashPassword, hashToken, newToken, verifyPassword } from "../security/crypto.js";
-import { grant, Perm } from "../security/permissions.js";
 
+/** A console account (an administrator), or with ``externalConnectionId`` an external member of that connection. */
 export async function createUser(
   db: Db,
-  opts: { name: string; email?: string | null; password?: string | null; isAdmin?: boolean },
+  opts: { name: string; email?: string | null; password?: string | null; externalConnectionId?: string },
 ): Promise<User> {
   const email = opts.email?.toLowerCase() ?? null;
   if (email) {
@@ -25,7 +25,8 @@ export async function createUser(
       name: opts.name,
       email,
       passwordHash: opts.password ? hashPassword(opts.password) : null,
-      isAdmin: opts.isAdmin ?? false,
+      isAdmin: !opts.externalConnectionId,
+      externalConnectionId: opts.externalConnectionId ?? null,
     })
     .returning();
   return user;
@@ -39,7 +40,7 @@ export async function getUser(db: Db, id: string | null | undefined): Promise<Us
 
 export async function authenticate(db: Db, email: string, password: string): Promise<User> {
   const [user] = await db.select().from(users).where(eq(users.email, email.toLowerCase())).limit(1);
-  if (!user?.isActive || !verifyPassword(password, user.passwordHash)) {
+  if (!user?.isActive || user.externalConnectionId || !verifyPassword(password, user.passwordHash)) {
     throw new Unauthorized("invalid email or password");
   }
   return user;
@@ -93,7 +94,7 @@ export async function revokeUserSessions(db: Db, userId: string): Promise<void> 
   await db.update(apiSessions).set({ revoked: true }).where(eq(apiSessions.userId, userId));
 }
 
-/** First start: create the initial admin (if configured) and baseline grants. */
+/** First start: create the initial administrator (if configured). */
 export async function bootstrap(db: Db, settings: Settings): Promise<void> {
   const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(users);
   if (count === 0 && settings.bootstrapAdminEmail) {
@@ -104,9 +105,6 @@ export async function bootstrap(db: Db, settings: Settings): Promise<void> {
       name: settings.bootstrapAdminName,
       email: settings.bootstrapAdminEmail,
       password: settings.bootstrapAdminPassword,
-      isAdmin: true,
     });
   }
-  // Every member may open topics; everything else must be granted explicitly.
-  await grant(db, Perm.TOPIC_CREATE);
 }

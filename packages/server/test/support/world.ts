@@ -1,4 +1,8 @@
-/** A small team for end-to-end tests: two people, three roles, one shared computer. */
+/**
+ * A small setup for end-to-end tests: two console accounts (alice, bob — administrators, like every console
+ * account), three roles, one shared computer, and a topic with all of them. People outside the console are
+ * Slack / Feishu members (see test/support/outside.ts).
+ */
 import type { ChatMessage, LLMResponse } from "../../src/agent/llm.js";
 import { type Harness, reply, type Script, startHarness, turnOf, useScripts } from "./harness.js";
 
@@ -88,15 +92,6 @@ export async function buildWorld(): Promise<World> {
   ids.dev = await role("dev", ["shell", "files", "collaborate", "memory", "topics", "terminal", "browser", "desktop"]);
   ids.test = await role("test", ["shell", "collaborate"]);
   ids.analyst = await role("analyst", ["collaborate", "memory"]);
-  for (const uid of [alice.id, bob.id]) {
-    for (const r of ["dev", "test", "analyst"]) {
-      for (const perm of ["role.use", "role.invite"]) {
-        await must(
-          h.api("POST", "/api/grants", { token: admin, json: { permission: perm, user_id: uid, resource_id: ids[r] } }),
-        );
-      }
-    }
-  }
   const aliceToken = await h.login("alice@example.com", "alice-pass-1");
   const bobToken = await h.login("bob@example.com", "bob-pass-12");
   const topic = await must(

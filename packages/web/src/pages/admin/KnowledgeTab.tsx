@@ -26,7 +26,7 @@ export function KnowledgeTab() {
     <>
       <div className="toolbar">
         <span className="small muted">
-          知识空间存放团队共享资料。成员需要「读取知识空间」授权才能查看；角色需要在配置中选择空间才能读取。
+          知识空间存放团队共享资料。管理员都可以查看和编辑；角色需要在配置中选择空间才能读取。
         </span>
         <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
           新建知识空间
@@ -113,12 +113,7 @@ function SpaceMemories({ space }: { space: KnowledgeSpace }) {
           }
         }}
       >
-        <textarea
-          rows={3}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="添加一条共享资料（需要「编辑知识空间」授权）"
-        />
+        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="添加一条共享资料" />
         <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
           添加
         </button>

@@ -1,8 +1,6 @@
-import { and, eq, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { settings } from "../config.js";
 import { transaction } from "../db/client.js";
-import { grants } from "../db/schema.js";
 import { ALL_PERMS, hasPermission } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { authenticate, issueToken, revokeToken } from "../services/users.js";
@@ -31,23 +29,9 @@ export async function authRoutes(app: FastifyInstance) {
   app.get(
     "/api/auth/me",
     authed(async ({ db, user }) => {
-      const global: string[] = [];
-      for (const p of ALL_PERMS) if (await hasPermission(db, user, p)) global.push(p);
-      const mine = await db
-        .select()
-        .from(grants)
-        .where(or(and(eq(grants.subjectType, "user"), eq(grants.subjectId, user.id)), eq(grants.subjectType, "all")));
-      const scoped = mine
-        .filter((g) => g.resourceId !== "*")
-        .map((g) => ({ permission: g.permission, resource_id: g.resourceId }));
-      return {
-        ...row(user),
-        // Global permissions plus anything held on at least one resource (to show the relevant pages);
-        // every action is still checked against the specific resource on the server.
-        permissions: [...new Set([...global, ...scoped.map((s) => s.permission)])].sort(),
-        global_permissions: global.sort(),
-        scoped_permissions: scoped,
-      };
+      const permissions: string[] = [];
+      for (const p of ALL_PERMS) if (await hasPermission(db, user, p)) permissions.push(p);
+      return { ...row(user), permissions: permissions.sort() };
     }),
   );
 
