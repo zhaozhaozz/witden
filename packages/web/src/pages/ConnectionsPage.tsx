@@ -54,7 +54,18 @@ const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
     ["app_secret", "App Secret"],
     ["verification_token", "Verification Token"],
   ],
-  github: [
+  // GitHub: see GITHUB_FIELDS (a GitHub App, or a bot account's token)
+  github: [],
+};
+
+/** A GitHub App (recommended) or a bot account; the private key is a multi-line PEM. */
+const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
+  app: [
+    ["app_id", "App ID"],
+    ["private_key", "Private key（.pem 文件的全部内容）"],
+    ["webhook_secret", "Webhook Secret"],
+  ],
+  token: [
     ["token", "机器人账号的 Token（ghp_… 或 github_pat_…）"],
     ["webhook_secret", "Webhook Secret"],
   ],
@@ -334,6 +345,9 @@ function ConnectionDetail({
                 <span className="muted">首次测试后获取</span>
               ),
             ],
+            ...(conn.platform === "github"
+              ? [["接入方式", conn.github_auth === "app" ? "GitHub App" : "机器人账号 Token"] as [string, string]]
+              : []),
             ["新会话默认同步", SYNC_MODE[conn.settings?.default_sync_mode ?? "mentions"]],
             [
               "外部成员",
@@ -344,7 +358,14 @@ function ConnectionDetail({
                   }`
                 : "关闭：未关联的人不能使用，需要管理员关联身份",
             ],
-            ["角色身份显示", conn.settings?.custom_identity ? "用角色自己的名称和头像发消息" : "在消息前加角色名称"],
+            [
+              "角色身份显示",
+              conn.platform === "github"
+                ? "评论开头写角色名称"
+                : conn.settings?.custom_identity
+                  ? "用角色自己的名称和头像发消息"
+                  : "在消息前加角色名称",
+            ],
           ]}
         />
         {conn.platform === "slack" ? (
@@ -353,7 +374,15 @@ function ConnectionDetail({
             app_mention、message.channels、message.groups、message.im 等事件。
           </p>
         ) : null}
-        {conn.platform === "github" ? (
+        {conn.platform === "github" && conn.github_auth === "app" ? (
+          <p className="small muted">
+            在 GitHub App 的设置中：Webhook URL 填事件地址，Webhook secret 填上面的 Webhook Secret；权限给 Issues、Pull
+            requests 读写和 Metadata 只读；订阅 Issues、Issue comment、Pull request
+            事件；再把应用安装到需要的仓库或组织。在 issue 或 pull request 中 @{conn.bot_user_id ?? "应用名"}{" "}
+            即可让角色工作。
+          </p>
+        ) : null}
+        {conn.platform === "github" && conn.github_auth !== "app" ? (
           <p className="small muted">
             在仓库或组织的 Settings → Webhooks 中添加 webhook：Payload URL 填事件地址，Content type 选
             application/json，Secret 填上面的 Webhook Secret，事件选择 Issues、Issue comments 和 Pull requests。在 issue
@@ -693,8 +722,13 @@ function ConnectionEditor({
   const [externalRoles, setExternalRoles] = useState<string[]>(conn?.settings?.external_role_ids ?? []);
   const [customIdentity, setCustomIdentity] = useState(!!conn?.settings?.custom_identity);
   const [syncMode, setSyncMode] = useState(conn?.settings?.default_sync_mode ?? "mentions");
-  const fields = CREDENTIAL_FIELDS[platform] ?? [];
-  const missing = !conn && fields.some(([k]) => !creds[k]?.trim());
+  const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
+  const fields = platform === "github" ? GITHUB_FIELDS[githubAuth] : (CREDENTIAL_FIELDS[platform] ?? []);
+  // Switching an existing GitHub connection to the other way needs that way's keys (its webhook secret stays).
+  const switching = !!conn && platform === "github" && (conn.github_auth ?? "token") !== githubAuth;
+  // New connections need every field; an existing one keeps what is left empty.
+  const required = fields.filter(([k]) => !conn || (switching && k !== "webhook_secret"));
+  const missing = required.some(([k]) => !creds[k]?.trim());
 
   return (
     <FormModal
@@ -742,15 +776,42 @@ function ConnectionEditor({
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：公司 Slack" />
         </Field>
       </div>
+      {platform === "github" ? (
+        <Field
+          label="接入方式"
+          hint={
+            githubAuth === "app"
+              ? "以 GitHub App 身份工作：回复显示为 <应用名>[bot]，按安装授权到仓库，令牌自动续期。"
+              : "以一个 GitHub 账号（建议单独的机器账号）的身份工作，使用它的 Token。"
+          }
+        >
+          <select value={githubAuth} onChange={(e) => (setGithubAuth(e.target.value as "app" | "token"), setCreds({}))}>
+            <option value="app">GitHub App（推荐）</option>
+            <option value="token">机器人账号 Token</option>
+          </select>
+        </Field>
+      ) : null}
       {fields.map(([k, label]) => (
-        <Field key={k} label={label} hint={conn ? "留空保持不变" : undefined}>
-          <input
-            type="password"
-            autoComplete="off"
-            className="mono"
-            value={creds[k] ?? ""}
-            onChange={(e) => setCreds({ ...creds, [k]: e.target.value })}
-          />
+        <Field key={k} label={label} hint={conn && !switching ? "留空保持不变" : undefined}>
+          {k === "private_key" ? (
+            <textarea
+              rows={4}
+              className="mono"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="-----BEGIN RSA PRIVATE KEY-----"
+              value={creds[k] ?? ""}
+              onChange={(e) => setCreds({ ...creds, [k]: e.target.value })}
+            />
+          ) : (
+            <input
+              type="password"
+              autoComplete="off"
+              className="mono"
+              value={creds[k] ?? ""}
+              onChange={(e) => setCreds({ ...creds, [k]: e.target.value })}
+            />
+          )}
         </Field>
       ))}
       <Field label="新会话默认同步范围" hint="接入平台不等于导入全部消息">
@@ -783,11 +844,13 @@ function ConnectionEditor({
           />
         </FieldGroup>
       ) : null}
-      <Toggle
-        checked={customIdentity}
-        onChange={setCustomIdentity}
-        label="以角色自己的名称和头像发送消息（Slack 需要 chat:write.customize）"
-      />
+      {platform !== "github" ? (
+        <Toggle
+          checked={customIdentity}
+          onChange={setCustomIdentity}
+          label="以角色自己的名称和头像发送消息（Slack 需要 chat:write.customize）"
+        />
+      ) : null}
     </FormModal>
   );
 }

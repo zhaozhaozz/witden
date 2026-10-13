@@ -52,10 +52,10 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
   },
   github: {
     status: "supported",
-    account_types: ["a GitHub account for the bot (user or machine account) with a token"],
+    account_types: ["GitHub App (replies as <app>[bot])", "a bot account (user or machine account) with a token"],
     conversations: ["public repository", "private repository"],
     threads: "an issue or pull request maps to one topic",
-    mentions: "@bot-login in an issue, pull request or comment; role:handle to choose a role",
+    mentions: "@app-name (or @bot-login) in an issue, pull request or comment; role:handle to choose a role",
     files: "not synchronised (images in comments stay links)",
     role_identity: "the role's name at the top of each comment",
     edits_deletes: "comment edits update the internal message; deletes remove it and derived memories",

@@ -1,5 +1,5 @@
 /** GitHub: signed webhooks in, issue comments out; an issue or pull request is one topic. */
-import { createHmac } from "node:crypto";
+import { createHmac, createVerify, generateKeyPairSync } from "node:crypto";
 import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
@@ -207,5 +207,130 @@ describe("github", () => {
     expect(task.status).toBe("waiting_approval");
     await deliverPending();
     expect(gh.comments.some((c) => c.body.includes("hunter2"))).toBe(false);
+  });
+});
+
+/** A GitHub App "acme-witden" (id 4242) installed on acme/api as installation 555. */
+class FakeGithubApp {
+  comments: { path: string; body: string; token: string }[] = [];
+  minted = 0;
+  lookups = 0;
+  constructor(private readonly publicKey: string) {}
+
+  /** The app's JWT: signed with its private key, issued by it, not expired. */
+  private jwtOk(auth: string) {
+    const [h, p, sig] = auth.replace(/^Bearer /, "").split(".");
+    if (!sig) return false;
+    const ok = createVerify("RSA-SHA256").update(`${h}.${p}`).verify(this.publicKey, Buffer.from(sig, "base64url"));
+    const claims = JSON.parse(Buffer.from(p, "base64url").toString());
+    return ok && claims.iss === "4242" && claims.exp > Date.now() / 1000;
+  }
+
+  fetch: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    const auth = ((init?.headers ?? {}) as Record<string, string>).authorization ?? "";
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const app = () => this.jwtOk(auth);
+    if (url.pathname === "/app" && app()) return Response.json({ id: 4242, slug: "acme-witden", name: "Acme witden" });
+    if (url.pathname === "/app/installations" && app()) return Response.json([{ id: 555 }]);
+    if (url.pathname === "/repos/acme/api/installation" && app()) {
+      this.lookups++;
+      return Response.json({ id: 555 });
+    }
+    if (url.pathname === "/app/installations/555/access_tokens" && app()) {
+      this.minted++;
+      return Response.json({
+        token: `ghs_inst_${this.minted}`,
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+      });
+    }
+    if (/^\/repos\/acme\/api\/issues\/\d+\/comments$/.test(url.pathname) && auth.startsWith("Bearer ghs_inst_")) {
+      this.comments.push({ path: url.pathname, body: body.body, token: auth.slice(7) });
+      return Response.json({ id: 7000 + this.comments.length });
+    }
+    return new Response("{}", { status: 401 });
+  };
+}
+
+describe("github app", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  });
+  let fake: FakeGithubApp;
+
+  beforeEach(async () => {
+    fake = new FakeGithubApp(publicKey);
+    setGithubFetch(fake.fetch);
+    const bad = async (credentials: Record<string, string>) =>
+      (
+        await w.api("POST", "/api/connections", {
+          token: w.adminToken,
+          json: { platform: "github", name: "x", credentials },
+        })
+      ).status;
+    expect(await bad({ app_id: "abc", private_key: privateKey, webhook_secret: SECRET })).toBe(400);
+    expect(await bad({ app_id: "4242", private_key: "not a key", webhook_secret: SECRET })).toBe(400);
+    expect(await bad({ webhook_secret: SECRET })).toBe(400);
+    const res = await w.api("POST", "/api/connections", {
+      token: w.adminToken,
+      json: {
+        platform: "github",
+        name: "acme app",
+        credentials: { app_id: "4242", private_key: privateKey, webhook_secret: SECRET },
+      },
+    });
+    expect(res.status, res.raw).toBe(200);
+    expect(res.raw).not.toContain("PRIVATE KEY");
+    expect(res.body.github_auth).toBe("app");
+    conn = res.body;
+    const tested = (await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body;
+    expect(tested).toMatchObject({ ok: true, app: "acme-witden", installations: 1 });
+    await w.api("POST", "/api/rules", {
+      token: w.adminToken,
+      json: { name: "app", match: { connection_id: conn.id }, allow_role_ids: [w.ids.dev], default_role_id: w.ids.dev },
+    });
+    await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { settings: { auto_provision_users: true, external_role_ids: [w.ids.dev] } },
+    });
+  });
+
+  it("answers as the app, with one installation token reused until it nears expiry", async () => {
+    w.scripts.dev = () => reply("On it.");
+    const asked = (id: number, body: string, user: object = ALICE) => ({
+      action: "created",
+      installation: { id: 555 },
+      repository: repo(),
+      issue: issue(12),
+      comment: { id, body, user },
+    });
+    await send("issue_comment", asked(1, "@acme-witden role:dev please check"));
+    await settle();
+    await w.drain();
+    await deliverPending();
+    await send("issue_comment", asked(2, "@acme-witden and the Firefox case?"));
+    await settle();
+    await w.drain();
+    await deliverPending();
+    expect(fake.comments.filter((c) => c.body.includes("On it."))).toHaveLength(2);
+    expect(new Set(fake.comments.map((c) => c.token))).toEqual(new Set(["ghs_inst_1"]));
+    expect(fake.minted).toBe(1);
+    // the webhook named the installation: no lookup was needed
+    expect(fake.lookups).toBe(0);
+    // the app's own comments come back as <slug>[bot]: never answered
+    const before = (await allTasks()).length;
+    await send("issue_comment", asked(3, "@acme-witden echo", { login: "acme-witden[bot]", id: 1, type: "Bot" }));
+    await settle();
+    expect((await allTasks()).length).toBe(before);
+  });
+
+  it("switching to a bot account token drops the app's credentials", async () => {
+    const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { credentials: { token: TOKEN } },
+    });
+    expect(patched.body.github_auth).toBe("token");
   });
 });

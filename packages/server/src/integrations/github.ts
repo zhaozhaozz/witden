@@ -1,13 +1,14 @@
 /**
- * GitHub adapter: webhooks in, REST API out, acting as a bot account (a user or machine account whose token
- * the connection holds).
+ * GitHub adapter: webhooks in, REST API out. It acts either as a **GitHub App** (app id + private key: a JWT
+ * buys a short-lived token per installation, and replies come from ``<app>[bot]``) or as a **bot account**
+ * (a user or machine account whose token the connection holds).
  *
  * A repository is a conversation (public or private) and an issue or pull request is a thread: one topic per
  * issue / PR. Comments that @-mention the bot account ask the roles for work; replies are posted as comments.
  * Public repositories are readable by anyone, so material from inside witden needs approval before it is
  * posted there (security/labels.ts).
  */
-import { createHmac } from "node:crypto";
+import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -66,6 +67,33 @@ export class GithubClient {
   }
 }
 
+/** A GitHub App's JWT: RS256, valid ten minutes, issued a minute early to absorb clock drift. */
+export function appJwt(appId: string, privateKey: string, now = Date.now()): string {
+  const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+  const iat = Math.floor(now / 1000) - 60;
+  const unsigned = `${enc({ alg: "RS256", typ: "JWT" })}.${enc({ iat, exp: iat + 600, iss: appId })}`;
+  const sig = createSign("RSA-SHA256").update(unsigned).sign(createPrivateKey(privateKey));
+  return `${unsigned}.${sig.toString("base64url")}`;
+}
+
+/** Credentials for one of the two ways in: ``app_id`` + ``private_key``, or ``token``; always ``webhook_secret``. */
+export function checkCredentials(creds: Record<string, string>): void {
+  if (!creds.webhook_secret) throw new BadRequest("missing credentials: webhook_secret");
+  if (creds.app_id || creds.private_key) {
+    if (!/^\d+$/.test(creds.app_id ?? "")) throw new BadRequest("app_id must be the GitHub App's numeric id");
+    try {
+      createPrivateKey(creds.private_key ?? "");
+    } catch {
+      throw new BadRequest("private_key must be the GitHub App's private key (PEM)");
+    }
+  } else if (!creds.token) throw new BadRequest("missing credentials: app_id and private_key, or token");
+}
+
+/** Installation tokens, per connection and installation, renewed five minutes before they expire. */
+const installationTokens = new Map<string, { token: string; expiresAt: number }>();
+/** Which installation covers a repository: learned from webhooks, otherwise looked up. */
+const repoInstallations = new Map<string, number>();
+
 /** "owner/repo" and an issue / PR number from a stored conversation id and thread key. */
 function issuePath(repo: string, thread: string | null): string {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !/^\d+$/.test(thread ?? ""))
@@ -76,15 +104,55 @@ function issuePath(repo: string, thread: string | null): string {
 export class GithubAdapter implements Adapter {
   platform = "github";
 
-  client(conn: Connection): GithubClient {
-    const token = credentials(conn).token;
-    if (!token) throw new BadRequest("GitHub connection has no token");
-    return new GithubClient(token);
+  static isApp = (conn: Connection) => !!credentials(conn).app_id;
+
+  /** The app itself (for /app endpoints). */
+  private appClient(conn: Connection): GithubClient {
+    const creds = credentials(conn);
+    return new GithubClient(appJwt(creds.app_id, creds.private_key));
   }
 
-  /** The bot account: its login is how people address it (@login) and how its own comments are recognised. */
+  /** A client for work on ``repo``: the bot account's token, or the app's token for the installation covering it. */
+  async client(conn: Connection, repo: string): Promise<GithubClient> {
+    const creds = credentials(conn);
+    if (!creds.app_id) {
+      if (!creds.token) throw new BadRequest("GitHub connection has no token");
+      return new GithubClient(creds.token);
+    }
+    const repoKey = `${conn.id}:${repo}`;
+    let installation = repoInstallations.get(repoKey);
+    if (!installation) {
+      const { data } = await this.appClient(conn).request("GET", `/repos/${repo}/installation`);
+      installation = Number(data.id);
+      repoInstallations.set(repoKey, installation);
+    }
+    const tokenKey = `${conn.id}:${installation}`;
+    const cached = installationTokens.get(tokenKey);
+    if (cached && cached.expiresAt - Date.now() > 5 * 60_000) return new GithubClient(cached.token);
+    try {
+      const { data } = await this.appClient(conn).request("POST", `/app/installations/${installation}/access_tokens`);
+      const expiresAt = Date.parse(data.expires_at) || Date.now() + 60 * 60_000;
+      installationTokens.set(tokenKey, { token: data.token, expiresAt });
+      return new GithubClient(data.token);
+    } catch (err) {
+      repoInstallations.delete(repoKey); // uninstalled or moved: look it up again next time
+      throw err;
+    }
+  }
+
+  /**
+   * Who the bot is: an app is addressed as @<app-slug> and comments as <app-slug>[bot]; a bot account by its
+   * login. Its own comments are recognised and never answered.
+   */
   async test(_db: Db, conn: Connection) {
-    const { data } = await this.client(conn).request("GET", "/user");
+    if (GithubAdapter.isApp(conn)) {
+      const app = (await this.appClient(conn).request("GET", "/app")).data;
+      const installations = (await this.appClient(conn).request("GET", "/app/installations?per_page=100")).data;
+      conn.botUserId = String(app.slug);
+      conn.externalWorkspaceId = String(app.id);
+      return { app: app.slug, name: app.name, installations: (installations ?? []).length };
+    }
+    const { data } = await (await this.client(conn, "")).request("GET", "/user");
     conn.botUserId = String(data.login);
     conn.externalWorkspaceId = String(data.id);
     return { login: data.login, id: data.id, type: data.type };
@@ -129,7 +197,7 @@ export class GithubAdapter implements Adapter {
 
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
     const body = await this.render(db, conn, msg);
-    const { data } = await this.client(conn).request(
+    const { data } = await (await this.client(conn, out.conversationExternalId)).request(
       "POST",
       `${issuePath(out.conversationExternalId, out.threadKey)}/comments`,
       { body },
@@ -141,7 +209,7 @@ export class GithubAdapter implements Adapter {
   async postRoot(conn: Connection, repo: string, text: string): Promise<string> {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new BadRequest("a GitHub repository is written owner/repo");
     const [title, ...rest] = text.split("\n");
-    const { data } = await this.client(conn).request("POST", `/repos/${repo}/issues`, {
+    const { data } = await (await this.client(conn, repo)).request("POST", `/repos/${repo}/issues`, {
       title: title.replace(/^Topic:\s*/, "").slice(0, 250) || "witden",
       body: rest.join("\n"),
     });
@@ -149,7 +217,9 @@ export class GithubAdapter implements Adapter {
   }
 
   async reply(conn: Connection, repo: string, thread: string, text: string): Promise<void> {
-    await this.client(conn).request("POST", `${issuePath(repo, thread)}/comments`, { body: `_${text}_` });
+    await (await this.client(conn, repo)).request("POST", `${issuePath(repo, thread)}/comments`, {
+      body: `_${text}_`,
+    });
   }
 
   async conversationKind(db: Db, conn: Connection, repo: string, hint: string | null): Promise<[string, string]> {
@@ -160,7 +230,7 @@ export class GithubAdapter implements Adapter {
       .where(and(eq(externalConversations.connectionId, conn.id), eq(externalConversations.externalId, repo)))
       .limit(1);
     if (conv) return [conv.kind, repo];
-    const { data } = await this.client(conn).request("GET", `/repos/${repo}`);
+    const { data } = await (await this.client(conn, repo)).request("GET", `/repos/${repo}`);
     return [data.private ? "private" : "public", repo];
   }
 
@@ -172,7 +242,10 @@ export class GithubAdapter implements Adapter {
     let next: string | null = `/repos/${conv.externalId}/collaborators?per_page=100`;
     // Listing collaborators needs push access; without it the list stays unknown and checks fail closed.
     for (let page = 0; next && page < 20; page++) {
-      const r: { data: any; next: string | null } = await this.client(conn).request("GET", next);
+      const r: { data: any; next: string | null } = await (await this.client(conn, conv.externalId)).request(
+        "GET",
+        next,
+      );
       members.push(...(r.data ?? []).map((u: any) => String(u.id)));
       next = r.next;
     }
@@ -187,6 +260,8 @@ export class GithubAdapter implements Adapter {
     const { event, payload } = input ?? {};
     const repo = String(payload?.repository?.full_name ?? "");
     if (!repo) return [];
+    // A GitHub App's webhooks name the installation: replies to this repository use its token.
+    if (payload.installation?.id) repoInstallations.set(`${conn.id}:${repo}`, Number(payload.installation.id));
     const kind = payload.repository.private ? "private" : "public";
     const issue = payload.issue ?? payload.pull_request;
     if (!issue) return [];

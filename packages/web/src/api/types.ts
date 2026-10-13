@@ -694,6 +694,8 @@ export interface Connection {
     [key: string]: unknown;
   };
   has_credentials: boolean;
+  /** GitHub: acting as a GitHub App or as a bot account. */
+  github_auth?: "app" | "token";
   external_workspace_id: string | null;
   bot_user_id: string | null;
   capabilities?: unknown;

@@ -30,14 +30,21 @@ import { authed, authedNoTx, body, params, query, row } from "./http.js";
 const PLATFORMS: Record<string, string[]> = {
   slack: ["bot_token", "signing_secret"],
   feishu: ["app_id", "app_secret", "verification_token"],
-  github: ["token", "webhook_secret"],
+  // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
+  github: [],
 };
 const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "default_sync_mode"]);
 
 function connOut(conn: Connection) {
   const base = settings().publicUrl.replace(/\/+$/, "");
+  const creds =
+    conn.platform === "github" && conn.credentialsEncrypted
+      ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
+      : {};
   return {
     ...row(conn),
+    // GitHub: acting as an app or as a bot account (never the credentials themselves)
+    ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : "token" } : {}),
     has_credentials: !!conn.credentialsEncrypted,
     capabilities: CAPABILITIES[conn.platform] ?? {},
     events_url: `${base}/api/integrations/${conn.platform}/${conn.id}/events`,
@@ -122,6 +129,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       const creds: Record<string, string> = b.credentials ?? {};
       const missing = required.filter((k) => !creds[k]);
       if (missing.length) throw new BadRequest(`missing credentials: ${missing.join(", ")}`);
+      if (b.platform === "github") (await import("../integrations/github.js")).checkCredentials(creds);
       if ((await db.select().from(connections).where(eq(connections.name, b.name)).limit(1)).length)
         throw new BadRequest("a connection with this name exists");
       const [conn] = await db
@@ -155,7 +163,14 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (b.name) update.name = b.name;
       if (b.credentials) {
         const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
-        for (const [k, v] of Object.entries(b.credentials)) if (v) current[k] = v;
+        const given = Object.fromEntries(Object.entries(b.credentials).filter(([, v]) => v)) as Record<string, string>;
+        if (conn.platform === "github") {
+          // Switching between a GitHub App and a bot account drops the other way's credentials.
+          if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
+          if (given.app_id || given.private_key) delete current.token;
+        }
+        for (const [k, v] of Object.entries(given)) current[k] = v;
+        if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
         update.credentialsEncrypted = secretBox().encrypt(JSON.stringify(current));
       }
       if (b.settings) update.settings = cleanSettings({ ...conn.settings, ...b.settings });
