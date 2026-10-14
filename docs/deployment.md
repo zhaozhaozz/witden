@@ -26,7 +26,7 @@ export WITDEN_BOOTSTRAP_ADMIN_PASSWORD=change-me-please
 node packages/server/dist/cli.js serve
 ```
 
-一个进程同时提供网页控制台、API、Worker 和 Docker 管理功能。控制台默认监听 8320 端口，虚拟电脑通过 8330 端口连接平台。
+一个进程同时提供网页控制台、API、Worker 和 Docker 管理功能。控制台默认监听 8320 端口，事件端口为 8325（见 2.4），虚拟电脑通过 8330 端口连接平台。
 
 ### 2.2 Docker Compose
 
@@ -36,7 +36,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
 |---|---|---|
 | `db` | PostgreSQL | 只在内部网络中可访问。 |
 | `manager` | Docker Manager | 唯一挂载 Docker socket 的服务，按白名单创建和管理虚拟电脑。 |
-| `api` | 控制台、API、虚拟电脑连接入口 | 对外发布 8320（控制台）和 8330（虚拟电脑连接）端口。 |
+| `api` | 控制台、API、事件接口、虚拟电脑连接入口 | 发布 8320（控制台，只在内网使用）、8325（事件端口，默认只发布在 127.0.0.1，见 2.4）和 8330（虚拟电脑连接）端口。 |
 | `worker` | 运行 AI 角色、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
 | `laya`（可选） | 开源的 Laya 决策模型，用作话题调度模型 | 默认不启动，见 2.3。只在内部网络中可访问，不对外发布端口。 |
 | `tunnel`（可选使用） | Cloudflare Tunnel，为平台提供公网 HTTPS 地址 | 在控制台填写 tunnel token 后才连接 Cloudflare，见 2.4。只主动向外连接，不对外发布端口。 |
@@ -53,7 +53,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
    - `WITDEN_MANAGER_TOKEN`、`WITDEN_INTERNAL_TOKEN`、`POSTGRES_PASSWORD`：任意足够长的随机字符串，例如 `openssl rand -hex 24`。
    - `DOCKER_GID`：Docker socket 所属的组，`stat -c %g /var/run/docker.sock`。
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
-   - `WITDEN_PUBLIC_URL`：访问控制台的地址，用于生成链接和事件地址。Slack、GitHub、飞书需要公网 HTTPS 地址，也可以之后在控制台中设置和检查，见 2.4。
+   - `WITDEN_PUBLIC_URL`：在内网访问控制台的地址，消息中的链接指向这里。Slack、GitHub、飞书需要的公网事件地址在控制台中设置和检查，见 2.4。
 
 2. 构建虚拟电脑镜像和平台镜像：
 
@@ -89,69 +89,69 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 
 单进程部署也可以使用 Laya：自行运行 Laya 服务（`pip install "laya[serve]"` 后执行 `laya-serve`），并把 `WITDEN_LAYA_URL` 设为它的地址，例如 `http://127.0.0.1:8000`。
 
-### 2.4 公网地址
+### 2.4 公网事件地址
 
-Slack、GitHub、飞书把事件推送到 witden 的公网地址，消息中“在 witden 中查看”等链接也用这个地址。它必须满足：
+控制台不对公网开放。Slack、GitHub、飞书需要把事件推送到一个公网地址，为此 witden 有一个单独的**事件端口**（`WITDEN_WEBHOOK_PORT`，默认 8325）。它只提供：
+
+- 各平台的事件接口 `/api/integrations/<平台>/<接入>/events`，每个接口都校验平台的签名或令牌；
+- 公网地址的检查接口 `/api/integrations/probe`；
+- 角色头像 `/api/avatars/<文件>`：以角色身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。
+
+其他请求一律返回 404，包括控制台页面和所有管理接口。公网地址只能转发到这个端口。消息中“在 witden 中查看”等链接仍然指向 `WITDEN_PUBLIC_URL`（控制台的内网地址），只有能访问内网的人可以打开。
+
+公网事件地址必须满足：
 
 - 以 `https://` 开头，证书有效（这些平台不接受自签名证书）；
-- 能从公网访问，并转发到 witden（Compose 部署为本机的 `WITDEN_PORT`，默认 8320）；
+- 能从公网访问，并且只转发到事件端口；
 - 只包含协议和域名，不带路径。
 
-公网地址默认取 `WITDEN_PUBLIC_URL`，也可以在控制台中设置：接入 Slack 时引导的第一步“准备公网地址”。控制台中保存的地址优先于 `WITDEN_PUBLIC_URL`，保存后立即生效，不需要重启。保存前，witden 会通过这个地址请求自己的检查接口 `/api/integrations/probe`，并核对用主密钥派生的签名，确认请求回到的是当前这个部署；不是 HTTPS、证书无效、域名解析不到、发生重定向或转发到别的服务时都不能保存。服务器所在网络不能从内部访问自己的公网地址时（检查显示连不上或超时），可以确认后仍然保存。
+在控制台中设置这个地址：接入 Slack 时引导的第一步“准备公网事件地址”。保存后立即生效，不需要重启；没有设置时，事件地址按 `WITDEN_PUBLIC_URL` 生成，只适合各平台能直接访问控制台的内部环境。保存前，witden 会做以下检查：
 
-准备公网地址有两种方式。
+1. 通过这个地址请求事件端口的检查接口，核对用主密钥派生的签名，确认请求回到的是当前这个部署的事件端口。
+2. 请求这个地址的 `/api/health`，确认从这个地址打不开控制台。
 
-**方式一：自己的域名和反向代理。** 把域名的 DNS 记录指向服务器的公网 IP，在防火墙中放行 443 端口，用反向代理提供 HTTPS 并转发到 witden。控制台使用 Server-Sent Events 推送实时更新、使用 WebSocket 显示远程桌面，反向代理需要支持这两者。
+转发到控制台端口、只把部分路径转发到事件端口，或者不是 HTTPS、证书无效、发生重定向、转发到别的服务时，都不能保存。服务器所在网络不能从内部访问自己的公网地址时（检查显示连不上、超时或解析不到），可以确认后仍然保存。
+
+准备公网事件地址有两种方式。
+
+**方式一：自己的域名和反向代理。** 准备一个专用于接收事件的域名（例如 `hooks.example.com`），把它的 DNS 记录指向服务器的公网 IP，在防火墙中放行 443 端口，用反向代理提供 HTTPS 并只转发到事件端口。Compose 部署时，事件端口只发布在本机的 `127.0.0.1:8325`；反向代理在另一台机器上时，用 `WITDEN_WEBHOOK_BIND` 把它发布到那台机器能访问的网卡。
 
 Caddy（自动申请证书）：
 
 ```
-witden.example.com {
-    reverse_proxy 127.0.0.1:8320
+hooks.example.com {
+    reverse_proxy 127.0.0.1:8325
 }
 ```
 
-nginx（证书可用 `certbot --nginx -d witden.example.com` 申请）：
+nginx（证书可用 `certbot --nginx -d hooks.example.com` 申请）：
 
 ```nginx
-map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-
 server {
     listen 443 ssl;
-    server_name witden.example.com;
-    ssl_certificate     /etc/letsencrypt/live/witden.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/witden.example.com/privkey.pem;
-    client_max_body_size 60m;
+    server_name hooks.example.com;
+    ssl_certificate     /etc/letsencrypt/live/hooks.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hooks.example.com/privkey.pem;
+    client_max_body_size 25m;
 
     location / {
-        proxy_pass http://127.0.0.1:8320;
+        proxy_pass http://127.0.0.1:8325;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # remote desktops use WebSocket, live updates use Server-Sent Events
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 1h;
     }
 }
 ```
-
-只想让外部平台访问、不对公网开放控制台时，可以只转发以 `/api/integrations/` 开头的路径：事件地址和地址检查都在这个路径下。此时消息中“在 witden 中查看”的链接在公网上打不开。
 
 **方式二：Cloudflare Tunnel。** Compose 中的 `tunnel` 服务（镜像 `witden/tunnel`，内含 cloudflared）主动连接 Cloudflare，不需要公网 IP、开放端口或自己管理证书；域名需要托管在 Cloudflare。它随 `docker compose up -d` 一起启动，在填写 token 之前只是等待，不需要修改 `.env` 或在服务器上执行其他命令。
 
 1. 在 Cloudflare 控制台的 **Networking → Tunnels** 中点击 **Create a tunnel**，输入名称后创建；在安装说明中选择 Docker，复制命令中 `--token` 后面的内容（也可以复制整条命令）。不需要运行这条命令。
 2. 在 witden 控制台接入 Slack 的第一步选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务几秒内读取到它并连接 Cloudflare，页面显示连接状态。
-3. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8320`。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网地址。
+3. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8325`（事件端口，不是控制台的 8320）。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网事件地址；指向 8320 的路由会在页面上标出，并且通不过检查。
 
 在控制台中更换 token 后，`tunnel` 服务会自动用新 token 重新连接；点击“停用 tunnel”会删除 token 并断开连接。之后可以在 Cloudflare 中删除这个 tunnel。完全不需要这个服务时，可以执行 `docker compose rm -sf tunnel`，或在 `docker-compose.yml` 中删除它。
 
-单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8320`），再在控制台中填写并检查地址。
+单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8325`），再在控制台中填写并检查地址。
 
 ## 3. 首次配置
 
@@ -174,10 +174,12 @@ server {
 | `WITDEN_DATABASE_URL` | 嵌入式数据库 | PostgreSQL 连接地址，例如 `postgres://user:pass@db:5432/witden`。 |
 | `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
-| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 访问控制台的地址。控制台中保存的公网地址优先，见 2.4。 |
+| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 在内网访问控制台的地址，消息中的链接指向这里。控制台中没有保存公网事件地址时，事件地址也按它生成（见 2.4）。 |
+| `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查和角色头像，公网地址只转发到这里。设为 `0` 时不开启。 |
+| `WITDEN_WEBHOOK_BIND` | `127.0.0.1` | （Compose）事件端口在宿主机上发布到的网卡地址。反向代理在其他机器上时修改。 |
 | `WITDEN_TUNNEL_TOKEN_FILE` | — | Cloudflare Tunnel token 的保存位置，`tunnel` 服务从这里读取。Compose 中已设置为 `/tunnel/token`；未设置时控制台不提供 Cloudflare Tunnel 选项。 |
 | `WITDEN_TUNNEL_METRICS_URL` | — | cloudflared 指标接口的地址，用于显示连接状态和读取路由。Compose 中为 `http://tunnel:2000`。 |
-| `WITDEN_TUNNEL_ORIGIN` | — | tunnel 路由应指向的地址，显示在控制台中。Compose 中为 `http://api:8320`。 |
+| `WITDEN_TUNNEL_ORIGIN` | — | tunnel 路由应指向的地址，显示在控制台中。Compose 中为 `http://api:8325`（事件端口）。 |
 | `WITDEN_PROCESS_ROLE` | `all` | `all`、`api` 或 `worker`，也可用 `serve --role` 指定。 |
 | `WITDEN_HUB_HOST` / `WITDEN_HUB_PORT` | `0.0.0.0` / `8330` | 虚拟电脑连接平台的监听地址和端口。 |
 | `WITDEN_HUB_URL_FOR_COMPUTERS` | `ws://witden-hub:8330/runner` | 虚拟电脑内连接平台使用的地址（`witden-hub` 解析为宿主机网关）。 |

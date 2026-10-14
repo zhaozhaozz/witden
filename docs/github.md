@@ -2,7 +2,7 @@
 
 接入后，角色可以作为机器人在 GitHub 仓库中工作：在 issue、pull request 或评论中 @ 机器人，就能把工作交给 witden 中的角色。每个 issue 或 pull request 对应 witden 中的一个会话，角色的回复以评论的形式发回同一个 issue 或 pull request。
 
-配置需要 witden 管理员账号，以及创建 GitHub App 或添加 webhook 所需的仓库或组织管理权限。GitHub 把事件发送到 witden 的公网 HTTPS 地址，准备方法见[部署与配置](deployment.md#24-公网地址)；也可以先按[接入 Slack](slack.md#1-准备公网地址)的引导完成这一步。
+配置需要 witden 管理员账号，以及创建 GitHub App 或添加 webhook 所需的仓库或组织管理权限。GitHub 把事件发送到 witden 的公网事件地址（只通往事件端口，不开放控制台），准备方法见[部署与配置](deployment.md#24-公网事件地址)；也可以先按[接入 Slack](slack.md#1-准备公网事件地址)的引导完成这一步。
 
 witden 支持两种接入方式：
 
