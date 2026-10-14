@@ -9,9 +9,10 @@
  */
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { db as getDb } from "../db/client.js";
-import { Forbidden, NotFound } from "../errors.js";
+import { Forbidden, NotFound, WitdenError } from "../errors.js";
 import { getAdapter, type InboundAction } from "../integrations/base.js";
 import { enqueueInbound, processInbound } from "../integrations/inbound.js";
+import { noteWebhook } from "../integrations/webhook-status.js";
 import { runtime } from "../runtime.js";
 import { probeAnswer } from "../services/public-url.js";
 import { params, query, sendError } from "./http.js";
@@ -30,6 +31,16 @@ async function acceptEvents(connectionId: string, actions: InboundAction[]): Pro
       /* drain */
     }
   });
+}
+
+/** Run a platform's verification; a signed call that fails it is remembered for the console. */
+function rejectedIf(connectionId: string, signed: boolean, verify: () => void): void {
+  try {
+    verify();
+  } catch (err) {
+    if (signed && err instanceof WitdenError) noteWebhook(connectionId, "rejected", err.message);
+    throw err;
+  }
 }
 
 export async function webhookRoutes(app: FastifyInstance, listener: "console" | "webhooks") {
@@ -56,17 +67,24 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
     const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "slack") throw new NotFound("unknown connection");
-    verifySignature(
-      credentials(conn).signing_secret ?? "",
-      String(req.headers["x-slack-request-timestamp"] ?? ""),
-      raw,
-      String(req.headers["x-slack-signature"] ?? ""),
+    const signature = req.headers["x-slack-signature"];
+    rejectedIf(conn.id, !!signature, () =>
+      verifySignature(
+        credentials(conn).signing_secret ?? "",
+        String(req.headers["x-slack-request-timestamp"] ?? ""),
+        raw,
+        String(signature ?? ""),
+      ),
     );
     const payload: any = req.body ?? {};
-    if (payload.type === "url_verification") return reply.send({ challenge: payload.challenge });
+    if (payload.type === "url_verification") {
+      noteWebhook(conn.id, "verified");
+      return reply.send({ challenge: payload.challenge });
+    }
     if (payload.type !== "event_callback" || conn.status !== "active") return { ok: true };
     if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
       throw new Forbidden("event from another workspace");
+    noteWebhook(conn.id, "received");
     await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
     return { ok: true };
   });
@@ -77,8 +95,12 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
     const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "github") throw new NotFound("unknown connection");
-    verifySignature(credentials(conn).webhook_secret ?? "", raw, String(req.headers["x-hub-signature-256"] ?? ""));
+    const signature = req.headers["x-hub-signature-256"];
+    rejectedIf(conn.id, !!signature, () =>
+      verifySignature(credentials(conn).webhook_secret ?? "", raw, String(signature ?? "")),
+    );
     const event = String(req.headers["x-github-event"] ?? "");
+    noteWebhook(conn.id, event === "ping" ? "verified" : "received");
     if (event === "ping" || conn.status !== "active") return { ok: true };
     const input = { event, delivery: String(req.headers["x-github-delivery"] ?? ""), payload: req.body ?? {} };
     await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, input));
@@ -90,8 +112,12 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     if (conn.platform !== "feishu") throw new NotFound("unknown connection");
     const adapter = (await getAdapter(conn)) as import("../integrations/feishu.js").FeishuAdapter;
     const payload: any = req.body ?? {};
-    adapter.verify(conn, payload);
-    if (payload.type === "url_verification") return reply.send({ challenge: payload.challenge });
+    rejectedIf(conn.id, !!(payload?.header?.token ?? payload?.token), () => adapter.verify(conn, payload));
+    if (payload.type === "url_verification") {
+      noteWebhook(conn.id, "verified");
+      return reply.send({ challenge: payload.challenge });
+    }
+    noteWebhook(conn.id, "received");
     if (conn.status !== "active") return { ok: true };
     await acceptEvents(conn.id, await adapter.parse(getDb(), conn, payload));
     return { ok: true };

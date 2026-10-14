@@ -7,7 +7,14 @@ import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
 import { CopyText, Field, FieldGroup, Loaded, MultiPick, Section, Tag } from "../ui/kit";
-import { ConnectionSettingsFields, Identities, INBOUND_STATUS, type InboundEvent, settingsOf } from "./connectionParts";
+import {
+  ConnectionSettingsFields,
+  Identities,
+  INBOUND_STATUS,
+  type InboundEvent,
+  lastRejected,
+  settingsOf,
+} from "./connectionParts";
 import { PublicAddressStep } from "./PublicAddress";
 
 const BOT_SCOPES: [string, string][] = [
@@ -155,7 +162,9 @@ export function SlackSetup({
         if (r.ok) go(EVENTS);
       }}
     />,
-    conn ? <EventsStep key="events" conn={conn} onNext={() => go(ACCESS)} /> : null,
+    conn ? (
+      <EventsStep key="events" conn={conn} onNext={() => go(ACCESS)} onFixSecret={() => setStep(CREDENTIALS)} />
+    ) : null,
     conn ? (
       <AccessStep
         key="access"
@@ -302,7 +311,10 @@ function CredentialsStep({
   const [token, setToken] = useState("");
   const [secret, setSecret] = useState("");
   const wrongToken = !!token.trim() && !token.trim().startsWith("xoxb-");
-  const ready = !!name.trim() && (conn ? true : !!token.trim() && !!secret.trim());
+  // Slack shows several tokens and secrets; an app-level token here fails every event's signature check.
+  const secretIsToken = /^(xapp-|xox[a-z]-)/.test(secret.trim());
+  const secretOdd = !!secret.trim() && !secretIsToken && !/^[0-9a-f]{32}$/.test(secret.trim());
+  const ready = !!name.trim() && !wrongToken && !secretIsToken && (conn ? true : !!token.trim() && !!secret.trim());
   const hint = result && !result.ok ? SLACK_ERRORS.find(([re]) => re.test(result.error ?? ""))?.[1] : null;
 
   const submit = async () => {
@@ -345,7 +357,8 @@ function CredentialsStep({
         </li>
         <li>
           <b>Signing Secret</b>：应用的 <b>Basic Information</b> 页面 → <b>App Credentials</b>，点击 Show 后复制。witden
-          用它确认收到的事件确实来自 Slack。
+          用它确认收到的事件确实来自 Slack。注意不要填 App-Level Token（xapp- 开头）、Client Secret 或 Verification
+          Token，Signing Secret 是 32 位十六进制字符。
         </li>
       </ul>
       <form
@@ -379,7 +392,23 @@ function CredentialsStep({
             onChange={(e) => setToken(e.target.value)}
           />
         </Field>
-        <Field label="Signing Secret" hint={conn ? "留空保持不变" : undefined}>
+        <Field
+          label="Signing Secret"
+          hint={
+            secretIsToken ? (
+              <span className="text-bad">
+                这是 Slack 的令牌，不是 Signing Secret（xapp- 开头的是 App-Level Token）。Signing Secret 在 Basic
+                Information → App Credentials 中，是 32 位十六进制字符。
+              </span>
+            ) : secretOdd ? (
+              <span className="text-wait">
+                Signing Secret 通常是 32 位十六进制字符，请确认复制的是 App Credentials 中的 Signing Secret。
+              </span>
+            ) : conn ? (
+              "留空保持不变"
+            ) : undefined
+          }
+        >
           <input
             type="password"
             className="mono"
@@ -405,15 +434,41 @@ function CredentialsStep({
   );
 }
 
-function EventsStep({ conn, onNext }: { conn: Connection; onNext: () => void }) {
+function EventsStep({
+  conn: initial,
+  onNext,
+  onFixSecret,
+}: {
+  conn: Connection;
+  onNext: () => void;
+  onFixSecret: () => void;
+}) {
+  const [conn, setConn] = useState(initial);
+  // Follow Slack's calls to the events URL while this step is open.
+  useEffect(() => {
+    let stopped = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const fresh = (await api.get<Connection[]>("/api/connections")).find((c) => c.id === initial.id);
+        if (fresh && !stopped) setConn(fresh);
+      } catch {
+        // the next poll retries
+      }
+    }, 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [initial.id]);
   const url = conn.events_url ?? "";
+  const rejected = lastRejected(conn);
   return (
     <>
       <p>让 Slack 把消息推送给 witden：在应用中填写 witden 的事件地址，并订阅需要的事件。</p>
       {reachableBySlack(url) ? null : (
         <div className="callout callout-wait">
-          Slack 只能把事件发到公网可以访问的 HTTPS 地址，下面的地址不满足，Slack 会验证失败。请让部署 witden 的人把{" "}
-          <code>WITDEN_PUBLIC_URL</code> 设置为公网 HTTPS 地址（例如经过反向代理）并重启 witden，再回到这一步。
+          Slack 只能把事件发到公网可以访问的 HTTPS 地址，下面的地址不满足，Slack 会验证失败。请回到第 {ADDRESS + 1}{" "}
+          步准备公网事件地址。
         </div>
       )}
       <div className="setup-field">
@@ -447,6 +502,22 @@ function EventsStep({ conn, onNext }: { conn: Connection; onNext: () => void }) 
           点击页面底部的 <b>Save Changes</b>。如果页面顶部提示重新安装应用（reinstall your app），按提示重新安装。
         </li>
       </ol>
+      {rejected ? (
+        <div className="callout callout-bad" role="alert">
+          {fmtRelative(rejected.at)}，witden 收到了 Slack 的请求，但校验没有通过：{rejected.reason}。这通常是第{" "}
+          {CREDENTIALS + 1} 步的 Signing Secret 填错了：它在应用的 Basic Information → App Credentials 中，是 32
+          位十六进制字符，不是 xapp- 开头的 App-Level Token。改好后在 Slack 中点击 Request URL 旁的 Retry。{" "}
+          <button type="button" className="btn btn-xs" onClick={onFixSecret}>
+            重新填写 Signing Secret
+          </button>
+        </div>
+      ) : conn.webhook?.verified_at ? (
+        <div className="callout">{fmtRelative(conn.webhook.verified_at)}，Slack 验证了事件地址，可以继续订阅事件。</div>
+      ) : (
+        <div className="small muted setup-events">
+          还没有收到 Slack 的请求。在 Slack 中填写 Request URL 后，这里会显示验证结果（每 3 秒刷新）。
+        </div>
+      )}
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
           已显示 Verified 并保存，下一步

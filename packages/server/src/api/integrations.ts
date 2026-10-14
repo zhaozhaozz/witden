@@ -16,6 +16,7 @@ import {
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
+import { webhookStatus } from "../integrations/webhook-status.js";
 import { secretBox } from "../security/crypto.js";
 import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
@@ -46,8 +47,14 @@ function connOut(conn: Connection, base: string) {
     has_credentials: !!conn.credentialsEncrypted,
     capabilities: CAPABILITIES[conn.platform] ?? {},
     events_url: `${base}/api/integrations/${conn.platform}/${conn.id}/events`,
+    // Whether the platform has reached the events URL, and whether its signature matched.
+    webhook: webhookStatus(conn.id),
   };
 }
+
+/** Pasted credentials often carry stray spaces or line breaks. */
+const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
+  Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, String(v ?? "").trim()]));
 
 function cleanSettings(s: Record<string, any>): Record<string, any> {
   const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k));
@@ -111,10 +118,11 @@ export async function integrationRoutes(app: FastifyInstance) {
         throw new BadRequest(
           `platform must be one of ${Object.keys(PLATFORMS).join(", ")} (see /api/integrations/capabilities)`,
         );
-      const creds: Record<string, string> = b.credentials ?? {};
+      const creds = trimmed(b.credentials ?? {});
       const missing = required.filter((k) => !creds[k]);
       if (missing.length) throw new BadRequest(`missing credentials: ${missing.join(", ")}`);
       if (b.platform === "github") (await import("../integrations/github.js")).checkCredentials(creds);
+      if (b.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(creds);
       if ((await db.select().from(connections).where(eq(connections.name, b.name)).limit(1)).length)
         throw new BadRequest("a connection with this name exists");
       const [conn] = await db
@@ -148,7 +156,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (b.name) update.name = b.name;
       if (b.credentials) {
         const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
-        const given = Object.fromEntries(Object.entries(b.credentials).filter(([, v]) => v)) as Record<string, string>;
+        const given = Object.fromEntries(Object.entries(trimmed(b.credentials)).filter(([, v]) => v));
         if (conn.platform === "github") {
           // Switching between a GitHub App and a bot account drops the other way's credentials.
           if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
@@ -156,6 +164,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         }
         for (const [k, v] of Object.entries(given)) current[k] = v;
         if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
+        if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(given);
         update.credentialsEncrypted = secretBox().encrypt(JSON.stringify(current));
       }
       if (b.settings) update.settings = cleanSettings({ ...conn.settings, ...b.settings });

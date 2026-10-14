@@ -697,6 +697,13 @@ export interface Connection {
   /** GitHub: acting as a GitHub App or as a bot account. */
   github_auth?: "app" | "token";
   external_workspace_id: string | null;
+  /** How the platform's calls to the events URL went lately (kept in the server's memory). */
+  webhook?: {
+    verified_at?: string;
+    received_at?: string;
+    rejected_at?: string;
+    rejected_reason?: string;
+  } | null;
   bot_user_id: string | null;
   capabilities?: unknown;
   events_url?: string | null;

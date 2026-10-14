@@ -21,6 +21,25 @@ export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "ba
   failed: ["处理失败", "bad"],
 };
 
+/** Why the server refused a signed call to the events URL. */
+export const REJECTED: Record<string, string> = {
+  "bad Slack signature": "签名不对",
+  "stale Slack request": "请求时间与服务器时间相差超过 5 分钟",
+  "connection has no signing secret": "还没有保存 Signing Secret",
+  "bad GitHub signature": "签名不对",
+  "connection has no webhook secret": "还没有保存 Webhook Secret",
+  "bad Feishu verification token": "Verification Token 不对",
+};
+
+/** The platform's latest call to the events URL was refused (after any accepted one). */
+export function lastRejected(conn: Connection): { at: string; reason: string } | null {
+  const w = conn.webhook;
+  if (!w?.rejected_at) return null;
+  const accepted = [w.verified_at, w.received_at].filter(Boolean).sort().at(-1);
+  if (accepted && accepted > w.rejected_at) return null;
+  return { at: w.rejected_at, reason: REJECTED[w.rejected_reason ?? ""] ?? w.rejected_reason ?? "" };
+}
+
 export interface InboundEvent {
   id: string;
   event_key: string;

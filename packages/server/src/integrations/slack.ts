@@ -89,6 +89,19 @@ export class SlackClient {
 }
 
 /** Slack request signing (v0). Old timestamps are rejected to stop replays. */
+/**
+ * Catch the usual mix-ups when Slack credentials are entered: Slack shows several tokens and secrets, and an
+ * app-level token (xapp-) pasted as the signing secret makes every event fail its signature check.
+ */
+export function checkCredentials(creds: Record<string, string>): void {
+  if (creds.bot_token && !creds.bot_token.startsWith("xoxb-"))
+    throw new BadRequest("bot_token must be the Bot User OAuth Token (xoxb-…) from OAuth & Permissions");
+  if (creds.signing_secret && /^(xapp-|xox[a-z]-)/.test(creds.signing_secret.trim()))
+    throw new BadRequest(
+      "signing_secret is a Slack token, not the Signing Secret: copy it from Basic Information → App Credentials",
+    );
+}
+
 export function verifySignature(
   signingSecret: string,
   timestamp: string,

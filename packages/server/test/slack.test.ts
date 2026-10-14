@@ -160,6 +160,44 @@ describe("slack", () => {
     expect(tampered.status).toBe(401);
   });
 
+  it("the console sees whether Slack reached the events URL and whether its signature matched", async () => {
+    const status = async () =>
+      (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find((c: any) => c.id === conn.id).webhook;
+    // a request without Slack's signature (e.g. a scanner) is refused and leaves no trace
+    const unsigned = await w.api("POST", `/api/integrations/slack/${conn.id}/events`, {
+      payload: JSON.stringify({ type: "url_verification", challenge: "c" }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(unsigned.status).toBe(401);
+    expect(await status()).toBeNull();
+    // Slack signing with another secret than the one saved: the usual sign of a wrong Signing Secret
+    expect((await send({ type: "url_verification", challenge: "x" }, { secret: "other" })).status).toBe(401);
+    expect(await status()).toMatchObject({ rejected_reason: "bad Slack signature", rejected_at: expect.any(String) });
+    expect((await send({ type: "url_verification", challenge: "x" })).body).toEqual({ challenge: "x" });
+    expect((await status()).verified_at).toEqual(expect.any(String));
+  });
+
+  it("Slack's other tokens are refused in place of the bot token or the signing secret", async () => {
+    const create = (credentials: Record<string, string>) =>
+      w.api("POST", "/api/connections", { token: w.adminToken, json: { platform: "slack", name: "x", credentials } });
+    const appToken =
+      "xapp-1-A0123456789-1234567890123-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    expect((await create({ bot_token: BOT_TOKEN, signing_secret: appToken })).raw).toContain("Signing Secret");
+    expect((await create({ bot_token: "xoxp-user-token", signing_secret: SECRET })).raw).toContain("xoxb-");
+    const patch = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { credentials: { signing_secret: appToken } },
+    });
+    expect(patch.status).toBe(400);
+    // pasted values are trimmed
+    const ok = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { credentials: { signing_secret: `  ${SECRET}\n` } },
+    });
+    expect(ok.status, ok.raw).toBe(200);
+    expect((await send({ type: "url_verification", challenge: "t" })).body).toEqual({ challenge: "t" });
+  });
+
   it("acknowledged events survive a crash before or during processing; text is not kept", async () => {
     const [row] = await db().select().from(connections).where(eq(connections.id, conn.id));
     const adapter = await getAdapter(row);

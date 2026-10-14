@@ -7,7 +7,14 @@ import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
 import { CopyText, Empty, Field, JsonBlock, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag } from "../ui/kit";
 import { ResizeHandle } from "../ui/resize";
-import { ConnectionSettingsFields, Identities, INBOUND_STATUS, type InboundEvent, settingsOf } from "./connectionParts";
+import {
+  ConnectionSettingsFields,
+  Identities,
+  INBOUND_STATUS,
+  type InboundEvent,
+  lastRejected,
+  settingsOf,
+} from "./connectionParts";
 import { SlackSetup } from "./SlackSetup";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
@@ -33,7 +40,7 @@ const CAP_STATUS: Record<string, { label: string; tone: "ok" | "wait" | "off" }>
 const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
   slack: [
     ["bot_token", "Bot Token（xoxb-…）"],
-    ["signing_secret", "Signing Secret"],
+    ["signing_secret", "Signing Secret（Basic Information → App Credentials，32 位十六进制；不是 xapp- 开头的令牌）"],
   ],
   feishu: [
     ["app_id", "App ID"],
@@ -296,6 +303,7 @@ function ConnectionDetail({
   const { run, busy } = useAction();
   const [tab, setTab] = useState("conversations");
   const [editing, setEditing] = useState(false);
+  const rejected = lastRejected(conn);
 
   if (editing)
     return (
@@ -409,6 +417,14 @@ function ConnectionDetail({
             <button type="button" className="btn btn-xs" onClick={onGuide}>
               继续设置
             </button>
+          </div>
+        ) : null}
+        {rejected ? (
+          <div className="callout callout-bad" role="alert">
+            {fmtRelative(rejected.at)}，witden 收到了 {PLATFORM_LABEL[conn.platform] ?? conn.platform}{" "}
+            发来的请求，但校验没有通过：
+            {rejected.reason}。请检查接入的密钥（Slack 的 Signing Secret、GitHub 的 Webhook Secret、飞书的 Verification
+            Token）是否与平台后台一致，可以点击“编辑”重新填写。
           </div>
         ) : null}
         <KV
