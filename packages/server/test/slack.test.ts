@@ -9,6 +9,7 @@ import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import {
   connections,
+  externalConversations,
   externalIdentities,
   externalThreadLinks,
   processedEvents,
@@ -103,7 +104,11 @@ class FakeSlack {
       case "conversations.members":
         return json({ ok: true, members: ["UALICE", "UBOT"] });
       case "users.info":
-        return json({ ok: true, user: { name: params.user } });
+        // UNINA has a display name; everyone else only the login name Slack always has
+        return json({
+          ok: true,
+          user: { name: params.user, ...(params.user === "UNINA" ? { profile: { display_name: "Nina" } } : {}) },
+        });
       case "chat.postMessage":
         this.ts += 1;
         this.posts.push(params);
@@ -418,6 +423,49 @@ describe("slack", () => {
       json: { settings: { default_sync_mode: "mentions" } },
     });
     expect(refused.status).toBe(400);
+  });
+
+  it("names come from Slack, and what was titled by an id takes the name once it is known", async () => {
+    // a channel recorded before its name was looked up, with a thread titled by the channel's id
+    const [conv] = await db()
+      .insert(externalConversations)
+      .values({ id: newId("conv"), connectionId: conn.id, externalId: "C8", kind: "public", name: null })
+      .returning();
+    const [old] = await db()
+      .insert(topics)
+      .values({ id: newId("top"), title: "#C8: hi", kind: "group", source: "slack", createdBy: w.ids.alice })
+      .returning();
+    await db()
+      .insert(externalThreadLinks)
+      .values({
+        id: newId("lnk"),
+        connectionId: conn.id,
+        conversationId: conv.id,
+        threadKey: "800.1",
+        topicId: old.id,
+      });
+    // an external member first seen without a name, with its DM
+    const [nina] = await db()
+      .insert(users)
+      .values({ id: newId("usr"), name: "slack-UNINA", externalConnectionId: conn.id })
+      .returning();
+    await link(conn.id, "UNINA", nina.id);
+    const [dm] = await db()
+      .insert(topics)
+      .values({ id: newId("top"), title: "slack-UNINA", kind: "dm", source: "slack", createdBy: nina.id })
+      .returning();
+
+    // events tell the channel's type, not its name: the name is asked for
+    await send(event("next one", { ts: "801.1", channel: "C8", etype: "message" }, { channel_type: "channel" }));
+    await send(
+      event("hello", { user: "UNINA", ts: "802.1", channel: "C8", etype: "message" }, { channel_type: "channel" }),
+    );
+    await settle();
+    const [named] = await db().select().from(externalConversations).where(eq(externalConversations.id, conv.id));
+    expect(named.name).toBe("c8");
+    expect((await db().select().from(topics).where(eq(topics.id, old.id)))[0].title).toBe("#c8: hi");
+    expect((await db().select().from(users).where(eq(users.id, nina.id)))[0].name).toBe("Nina");
+    expect((await db().select().from(topics).where(eq(topics.id, dm.id)))[0].title).toBe("Nina");
   });
 
   it("Markdown answers reach Slack as mrkdwn; Slack formatting arrives as Markdown", async () => {

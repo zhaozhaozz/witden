@@ -202,6 +202,16 @@ export async function resolveIdentity(
   }
   if (!ident.userId) return null;
   const [user] = await db.select().from(users).where(eq(users.id, ident.userId)).limit(1);
+  // An external member first seen without a name takes it once the platform tells it, and so does its DM.
+  const placeholder = `${conn.platform}-${externalUserId}`;
+  if (user && displayName && user.externalConnectionId === conn.id && user.name === placeholder) {
+    await db.update(users).set({ name: displayName }).where(eq(users.id, user.id));
+    await db
+      .update(topics)
+      .set({ title: displayName })
+      .where(and(eq(topics.createdBy, user.id), eq(topics.kind, "dm"), eq(topics.title, placeholder)));
+    user.name = displayName;
+  }
   return user?.isActive ? user : null;
 }
 
@@ -228,13 +238,28 @@ async function upsertConversation(db: Db, conn: Connection, msg: InboundMessage)
   }
   const update: Partial<ExternalConversation> = {};
   if (msg.conversationKind && existing.kind !== msg.conversationKind) update.kind = msg.conversationKind; // e.g. made private
-  if (msg.conversationName) update.name = msg.conversationName;
+  if (msg.conversationName && msg.conversationName !== existing.name) update.name = msg.conversationName;
   if (!Object.keys(update).length) return existing;
   const [row] = await db
     .update(externalConversations)
     .set(update)
     .where(eq(externalConversations.id, existing.id))
     .returning();
+  if (!existing.name && update.name) {
+    // Topics titled by the conversation's id before its name was known take the name.
+    const prefix = `#${existing.externalId}:`;
+    const linked = await db
+      .select({ id: topics.id, title: topics.title })
+      .from(externalThreadLinks)
+      .innerJoin(topics, eq(topics.id, externalThreadLinks.topicId))
+      .where(eq(externalThreadLinks.conversationId, existing.id));
+    for (const t of linked)
+      if (t.title.startsWith(prefix))
+        await db
+          .update(topics)
+          .set({ title: `#${update.name}:${t.title.slice(prefix.length)}` })
+          .where(eq(topics.id, t.id));
+  }
   return row;
 }
 

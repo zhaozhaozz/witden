@@ -31,6 +31,8 @@ const API = "https://slack.com/api/";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const MEMBERS_TTL_MS = 10 * 60_000;
 const KIND: Record<string, string> = { channel: "public", group: "private", im: "im", mpim: "mpim" };
+const USER_NAME_TTL_MS = 60 * 60_000;
+const userNames = new Map<string, { name: string | null; at: number }>();
 
 /** Tests replace this to intercept HTTP. */
 export let slackFetch: typeof fetch = (...args) => fetch(...args);
@@ -261,23 +263,50 @@ export class SlackAdapter implements Adapter {
     return this.client(conn).download(f.url_private, MAX_FILE_BYTES);
   }
 
+  /**
+   * A conversation's kind and name. Events carry the kind (channel_type) but never the name, so the name is
+   * asked for once and then kept with the conversation.
+   */
   async conversationKind(
     db: Db,
     conn: Connection,
     channel: string,
     hint: string | null,
   ): Promise<[string, string | null]> {
-    if (hint && KIND[hint]) return [KIND[hint], null];
     const [conv] = await db
       .select()
       .from(externalConversations)
       .where(and(eq(externalConversations.connectionId, conn.id), eq(externalConversations.externalId, channel)))
       .limit(1);
-    if (conv) return [conv.kind, conv.name];
-    const info = (await this.client(conn).get("conversations.info", { channel })).channel;
-    if (info.is_im) return ["im", null];
-    if (info.is_mpim) return ["mpim", info.name];
-    return [info.is_private ? "private" : "public", info.name];
+    if (conv && (conv.name || conv.kind === "im")) return [conv.kind, conv.name];
+    if (hint === "im") return ["im", null];
+    try {
+      const info = (await this.client(conn).get("conversations.info", { channel })).channel;
+      if (info.is_im) return ["im", null];
+      if (info.is_mpim) return ["mpim", info.name];
+      return [info.is_private ? "private" : "public", info.name];
+    } catch (err) {
+      // Without the name (e.g. a missing scope) the conversation still works, titled by its id.
+      if (conv) return [conv.kind, null];
+      if (hint && KIND[hint]) return [KIND[hint], null];
+      throw err;
+    }
+  }
+
+  /** A person's name in the workspace, asked for once an hour at most; null when Slack does not say. */
+  private async userName(conn: Connection, userId: string): Promise<string | null> {
+    const key = `${conn.id}:${userId}`;
+    const known = userNames.get(key);
+    if (known && Date.now() - known.at < USER_NAME_TTL_MS) return known.name;
+    let name: string | null = null;
+    try {
+      const user = (await this.client(conn).get("users.info", { user: userId })).user;
+      name = user?.profile?.display_name || user?.real_name || user?.name || null;
+    } catch {
+      // keep the id: names are only for display
+    }
+    userNames.set(key, { name, at: Date.now() });
+    return name;
   }
 
   /** Private conversations: their member list defines who can see what is posted there. */
@@ -344,7 +373,7 @@ export class SlackAdapter implements Adapter {
           threadKey: kind === "im" ? "__dm__" : (event.thread_ts ?? ts),
           messageTs: ts,
           userId: event.user,
-          userName: null,
+          userName: await this.userName(conn, event.user),
           text: await clean(db, conn, text),
           addressed,
           files: (event.files ?? []).map((f: any) => ({
