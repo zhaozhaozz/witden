@@ -22,7 +22,7 @@ import {
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
-import { publicBase } from "../services/public-url.js";
+import { consoleBase, webhookBase } from "../services/public-url.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 
@@ -141,7 +141,7 @@ export class SlackAdapter implements Adapter {
   }
 
   private async render(db: Db, conn: Connection, msg: Message): Promise<[string, Record<string, string>]> {
-    const base = await publicBase(db);
+    const base = consoleBase();
     // System notices are plain text; everything else is Markdown written for the console.
     let text =
       msg.authorType === "system"
@@ -177,8 +177,8 @@ export class SlackAdapter implements Adapter {
       const name = role ? `${role.name} (@${role.handle})` : "role";
       if (conn.settings.custom_identity) {
         extra.username = name;
-        // Slack fetches the icon itself: uploaded avatars need the platform's public address.
-        const icon = absoluteAvatarUrl(role?.avatarUrl, base);
+        // Slack fetches the icon itself, through the public address (avatars are served on the webhook listener).
+        const icon = absoluteAvatarUrl(role?.avatarUrl, await webhookBase(db));
         if (icon) extra.icon_url = icon;
       } else text = signed(`*${escapeSlack(name)}*`, text);
     } else if (msg.authorType === "user") {

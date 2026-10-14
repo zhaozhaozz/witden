@@ -56,39 +56,31 @@ function explain(c: UrlCheck): string {
       return "这个地址能访问，但回答的不是 witden：反向代理可能转发到了别的服务。";
     case "other_instance":
       return "这个地址转发到了另一个 witden，而不是当前这个。";
+    case "console_exposed":
+      return "通过这个地址能打开 witden 的控制台，整个控制台会暴露到公网。请改为只转发到事件端口 8325（Cloudflare Tunnel 的 Service URL 为 http://api:8325）。";
     default:
       return "检查没有通过。";
   }
 }
 
-const NGINX = `map $http_upgrade $connection_upgrade {
-    default upgrade;
-    ''      close;
-}
-
-server {
+// Both forward to witden's event webhook port, which serves platform events only and never the console.
+const NGINX = `server {
     listen 443 ssl;
-    server_name witden.example.com;
-    ssl_certificate     /etc/letsencrypt/live/witden.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/witden.example.com/privkey.pem;
-    client_max_body_size 60m;
+    server_name hooks.example.com;
+    ssl_certificate     /etc/letsencrypt/live/hooks.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/hooks.example.com/privkey.pem;
+    client_max_body_size 25m;
 
     location / {
-        proxy_pass http://127.0.0.1:8320;
+        proxy_pass http://127.0.0.1:8325;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # remote desktops use WebSocket, live updates use Server-Sent Events
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
-        proxy_buffering off;
-        proxy_read_timeout 1h;
     }
 }`;
 
-const CADDY = `witden.example.com {
-    reverse_proxy 127.0.0.1:8320
+const CADDY = `hooks.example.com {
+    reverse_proxy 127.0.0.1:8325
 }`;
 
 /**
@@ -148,11 +140,13 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
   return (
     <>
       <p>
-        Slack 会把消息推送到 witden 的<b>事件地址</b>，即这里的公网地址加上固定路径。所以先准备一个满足以下条件的地址：
+        Slack 会把消息推送到 witden 的<b>事件地址</b>，即这里的公网地址加上固定路径。控制台不对公网开放：witden
+        有一个单独的<b>事件端口 8325</b>，只接收 Slack、GitHub、飞书推送的事件（另外提供角色头像给 Slack
+        下载），不提供控制台和任何其他接口。公网地址需要满足：
       </p>
       <ul className="setup-list">
         <li>以 https:// 开头，证书有效（Slack 不接受自签名证书）；</li>
-        <li>能从公网访问，并且转发到这个 witden。</li>
+        <li>能从公网访问，并且只转发到 witden 的事件端口，不能转发到控制台端口 8320。</li>
       </ul>
       <div className="setup-events">
         当前公网地址 {current ? <code>{current.url}</code> : <span className="muted">读取中…</span>}{" "}
@@ -170,7 +164,7 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
       </div>
       {ready && !changing ? (
         <p className="small muted">
-          witden 已经通过这个地址访问到自己；订阅事件时 Slack 还会再验证一次。{" "}
+          witden 已经通过这个地址访问到自己的事件端口，并确认从这个地址打不开控制台；订阅事件时 Slack 还会再验证一次。{" "}
           <button type="button" className="btn btn-xs" onClick={() => setChanging(true)}>
             更换地址
           </button>
@@ -235,7 +229,11 @@ function CheckResult({
 }) {
   if (!tried?.check) return null;
   if (tried.check.ok)
-    return <div className="callout">已通过检查：{tried.url} 能访问，并且转发到这个 witden。已保存为公网地址。</div>;
+    return (
+      <div className="callout">
+        已通过检查：{tried.url} 转发到这个 witden 的事件端口，打不开控制台。已保存为公网地址。
+      </div>
+    );
   if (tried.saved) return null;
   return (
     <div className="callout callout-bad" role="alert">
@@ -273,14 +271,18 @@ function ProxySetup({
   return (
     <>
       <ol className="setup-list">
-        <li>准备一个域名，把它的 DNS 记录（A 或 AAAA）指向这台服务器的公网 IP，并在防火墙中放行 443 端口。</li>
         <li>
-          用反向代理提供 HTTPS，把请求转发到 witden（docker compose 部署时为本机的 8320 端口，即 WITDEN_PORT）。
-          常用写法见下面的示例，把 witden.example.com 换成你的域名。
+          准备一个专用于接收事件的域名（例如 hooks.example.com），把它的 DNS 记录（A 或 AAAA）指向这台服务器的公网
+          IP，并在防火墙中放行 443 端口。
         </li>
         <li>
-          把地址（例如 https://witden.example.com）填到下面，点击“检查并使用”。witden
-          会通过这个地址访问自己，确认能回到当前这个 witden。
+          用反向代理提供 HTTPS，<b>只转发到事件端口</b>：docker compose 部署时为本机的
+          127.0.0.1:8325，不要转发到控制台端口 8320。常用写法见下面的示例，把 hooks.example.com
+          换成你的域名。反向代理在另一台机器上时，在 .env 中设置 WITDEN_WEBHOOK_BIND 让事件端口对那台机器可见。
+        </li>
+        <li>
+          把地址（例如 https://hooks.example.com）填到下面，点击“检查并使用”。witden
+          会通过这个地址访问自己的事件端口，并确认从这个地址打不开控制台。
         </li>
       </ol>
       <details className="setup-more">
@@ -289,13 +291,12 @@ function ProxySetup({
         <pre className="mono-block">{CADDY}</pre>
       </details>
       <details className="setup-more">
-        <summary>nginx（证书可用 certbot 申请：certbot --nginx -d witden.example.com）</summary>
+        <summary>nginx（证书可用 certbot 申请：certbot --nginx -d hooks.example.com）</summary>
         <CopyText text={NGINX} label="nginx 配置" />
         <pre className="mono-block">{NGINX}</pre>
       </details>
       <p className="small muted">
-        只想让外部平台访问、不对公网开放控制台时，可以只转发 <code>/api/integrations/</code>{" "}
-        开头的路径（检查也走这个路径）；但 Slack 消息中“在 witden 中查看”的链接需要能打开控制台。
+        Slack 消息中“在 witden 中查看”等链接仍然指向控制台的内网地址，只有能访问内网的人可以打开。
       </p>
       <form
         className="form form-narrow"
@@ -305,7 +306,7 @@ function ProxySetup({
         }}
       >
         <Field label="公网地址">
-          <input value={url} placeholder="https://witden.example.com" onChange={(e) => setUrl(e.target.value)} />
+          <input value={url} placeholder="https://hooks.example.com" onChange={(e) => setUrl(e.target.value)} />
         </Field>
         <div className="setup-next">
           <button type="submit" className="btn" disabled={!url.trim() || busy}>
@@ -411,7 +412,7 @@ function TunnelSetup({
     <>
       <p className="small muted">
         Cloudflare Tunnel 由 witden 旁边的 tunnel 服务主动连到 Cloudflare，不需要公网
-        IP、开放端口或自己管理证书。需要一个托管在 Cloudflare 的域名。
+        IP、开放端口或自己管理证书。需要一个托管在 Cloudflare 的域名。tunnel 只转发到事件端口，控制台不经过它。
       </p>
       <ol className="setup-list">
         <li>
@@ -482,17 +483,19 @@ function TunnelSetup({
         </li>
         <li>
           在这个 tunnel 的 <b>Routes</b> 标签中点击 <b>Add route → Published application</b>：填写子域名（例如
-          witden）并选择域名，<b>Service URL</b> 填 {origin ? <CopyText text={origin} /> : null}，点击 <b>Add route</b>
-          。 路由生效后，witden 会自动发现它、检查并保存为公网地址。
+          hooks）并选择域名，<b>Service URL</b> 填 {origin ? <CopyText text={origin} /> : null}，点击 <b>Add route</b>。
+          路由生效后，witden 会自动发现它、检查并保存为公网地址。
           {routes.length ? (
             <ul className="plain-list setup-routes">
               {routes.map((r) => (
                 <li key={r.hostname}>
                   <code>https://{r.hostname}</code> → <code>{r.service}</code>{" "}
                   {r.service.replace(/\/+$/, "") === origin ? (
-                    <Tag tone="ok">指向 witden</Tag>
+                    <Tag tone="ok">只转发到事件端口</Tag>
                   ) : (
-                    <Tag tone="bad">Service URL 应为 {origin}</Tag>
+                    <Tag tone="bad">
+                      {/:8320\b/.test(r.service) ? "会把控制台暴露到公网，" : ""}Service URL 应为 {origin}
+                    </Tag>
                   )}
                 </li>
               ))}

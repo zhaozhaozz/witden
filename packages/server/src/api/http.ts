@@ -2,10 +2,10 @@
  * HTTP plumbing shared by all routes: authentication, one transaction per request (committed before the
  * response is sent), work scheduled after commit, and the snake_case JSON contract of the REST API.
  */
-import type { FastifyReply, FastifyRequest } from "fastify";
+import type { FastifyError, FastifyReply, FastifyRequest } from "fastify";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import type { User } from "../db/schema.js";
-import { Unauthorized } from "../errors.js";
+import { Unauthorized, WitdenError } from "../errors.js";
 import { resolveToken } from "../services/users.js";
 
 export interface Ctx {
@@ -23,6 +23,18 @@ export function extractToken(req: FastifyRequest): string | null {
   // EventSource / WebSocket clients cannot set headers.
   const q = (req.query as Record<string, string> | undefined)?.access_token;
   return q || null;
+}
+
+/** Error responses in the API's shape, for every server (console and webhook listener). */
+export function sendError(err: FastifyError | Error, _req: FastifyRequest, reply: FastifyReply) {
+  if (err instanceof WitdenError) {
+    return reply.code(err.status).send({ error: { code: err.code, message: err.message, detail: err.detail } });
+  }
+  const status = (err as FastifyError).statusCode ?? 500;
+  if (status >= 500) console.error("[witden] request failed", err);
+  return reply.code(status).send({
+    error: { code: status >= 500 ? "internal" : "bad_request", message: err.message, detail: {} },
+  });
 }
 
 type Handler<T> = (ctx: Ctx) => Promise<T>;

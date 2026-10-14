@@ -18,6 +18,7 @@ import { adminRoutes } from "./api/admin.js";
 import { authRoutes } from "./api/auth.js";
 import { computerRoutes } from "./api/computers.js";
 import { eventRoutes } from "./api/events.js";
+import { sendError } from "./api/http.js";
 import { integrationRoutes } from "./api/integrations.js";
 import { liveRoutes } from "./api/live.js";
 import { modelRoutes } from "./api/models.js";
@@ -26,12 +27,12 @@ import { roleRoutes } from "./api/roles.js";
 import { knowledgeRoutes, ruleRoutes } from "./api/rules-knowledge.js";
 import { taskRoutes } from "./api/tasks.js";
 import { topicRoutes } from "./api/topics.js";
+import { buildWebhookApp, webhookRoutes } from "./api/webhooks.js";
 import { ExecutionGateway, type GatewayClient, HttpGatewayClient } from "./compute/gateway.js";
 import { RunnerHub, stdioTransport } from "./compute/hub.js";
 import { handleProxyMessage } from "./compute/model-proxy.js";
 import { type Settings, setSettings } from "./config.js";
 import { openDatabase, setDatabase, transaction } from "./db/client.js";
-import { WitdenError } from "./errors.js";
 import { deliverPending } from "./integrations/delivery.js";
 import { processInbound } from "./integrations/inbound.js";
 import { Runtime, setRuntime } from "./runtime.js";
@@ -55,6 +56,8 @@ export interface StartOptions {
 export interface Witden {
   runtime: Runtime;
   app: FastifyInstance | null;
+  /** The listener for event webhooks only (settings.webhookPort); the public address forwards here. */
+  webhookApp: FastifyInstance | null;
   worker: Worker | null;
   close(): Promise<void>;
 }
@@ -90,16 +93,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 60 * 1024 * 1024 });
   await app.register(websocket);
   await app.register(multipart, { limits: { fileSize: 60 * 1024 * 1024 } });
-  app.setErrorHandler((err, _req, reply) => {
-    if (err instanceof WitdenError) {
-      return reply.code(err.status).send({ error: { code: err.code, message: err.message, detail: err.detail } });
-    }
-    const status = (err as any).statusCode ?? 500;
-    if (status >= 500) console.error("[witden] request failed", err);
-    return reply.code(status).send({
-      error: { code: status >= 500 ? "internal" : "bad_request", message: (err as Error).message, detail: {} },
-    });
-  });
+  app.setErrorHandler(sendError);
   app.get("/api/health", async () => ({ ok: true, version: "0.2.0" }));
   for (const routes of [
     authRoutes,
@@ -113,6 +107,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     knowledgeRoutes,
     eventRoutes,
     integrationRoutes,
+    (a: FastifyInstance) => webhookRoutes(a, "console"),
     publicUrlRoutes,
     liveRoutes,
   ]) {
@@ -153,6 +148,7 @@ export async function start(opts: StartOptions): Promise<Witden> {
 
   const hostsApi = settings.processRole !== "worker";
   let app: FastifyInstance | null = null;
+  let webhookApp: FastifyInstance | null = null;
   const timers: NodeJS.Timeout[] = [];
   if (hostsApi) {
     rt.hub = new RunnerHub(async (containerId) => stdioTransport(await manager.openRunnerChannel(containerId)));
@@ -162,6 +158,7 @@ export async function start(opts: StartOptions): Promise<Witden> {
     rt.hub.welcomeExtras = async (instanceId) => ({ modelProxy: await proxyConfigFor(instanceId) });
     if (opts.listenHub !== false) await rt.hub.listen(settings.hubPort, settings.hubHost);
     app = await buildApp(rt);
+    webhookApp = await buildWebhookApp();
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
     void reconcile().catch(() => {});
     timers.push(setInterval(() => void reconcile().catch(() => {}), 30_000));
@@ -184,11 +181,13 @@ export async function start(opts: StartOptions): Promise<Witden> {
   return {
     runtime: rt,
     app,
+    webhookApp,
     worker,
     async close() {
       for (const t of timers) clearInterval(t);
       await worker?.stop();
       await app?.close();
+      await webhookApp?.close();
       await rt.hub?.close();
       await rt.drain();
       await bus.close();

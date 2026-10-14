@@ -1,8 +1,8 @@
 /** Chat connections, conversations, deliveries, publishing topics outward, and the platform webhooks. */
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { recheckActiveTasks } from "../agent/revocation.js";
-import { type Db, db as getDb, transaction } from "../db/client.js";
+import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   type Connection,
@@ -14,16 +14,14 @@ import {
   processedEvents,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
-import { CAPABILITIES, getAdapter, type InboundAction } from "../integrations/base.js";
+import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
-import { enqueueInbound, processInbound } from "../integrations/inbound.js";
-import { runtime } from "../runtime.js";
 import { secretBox } from "../security/crypto.js";
 import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
-import { publicBase } from "../services/public-url.js";
+import { webhookBase } from "../services/public-url.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
@@ -65,24 +63,10 @@ function cleanSettings(s: Record<string, any>): Record<string, any> {
 }
 
 /** ``db`` must be the request transaction when there is one: PGlite has one connection, so a query outside it waits forever. */
-async function getConn(db: Db, id: string): Promise<Connection> {
+export async function getConn(db: Db, id: string): Promise<Connection> {
   const [conn] = await db.select().from(connections).where(eq(connections.id, id)).limit(1);
   if (!conn) throw new NotFound("connection not found");
   return conn;
-}
-
-/**
- * Platforms retry slow webhooks, so events are stored durably first, then acknowledged, then processed from
- * the queue (a periodic sweep picks up anything a crash left behind).
- */
-async function acceptEvents(connectionId: string, actions: InboundAction[]): Promise<void> {
-  if (!actions.length) return;
-  await enqueueInbound(getDb(), connectionId, actions);
-  runtime().background("inbound", async () => {
-    while (await processInbound()) {
-      /* drain */
-    }
-  });
 }
 
 export async function integrationRoutes(app: FastifyInstance) {
@@ -95,7 +79,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections",
     authed(async ({ db, user }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const base = await publicBase(db);
+      const base = await webhookBase(db);
       return (await db.select().from(connections).orderBy(connections.name)).map((c) => connOut(c, base));
     }),
   );
@@ -150,7 +134,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { platform: conn.platform, name: conn.name },
       });
-      return connOut(conn, await publicBase(db));
+      return connOut(conn, await webhookBase(db));
     }),
   );
 
@@ -189,7 +173,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { fields: Object.keys(b), status: updated.status },
       });
-      return connOut(updated, await publicBase(db));
+      return connOut(updated, await webhookBase(db));
     }),
   );
 
@@ -398,63 +382,6 @@ export async function integrationRoutes(app: FastifyInstance) {
       return { ok: true, thread_key: root, conversation_id: conv.id };
     }),
   );
-
-  // --- webhooks: no user auth; verified by platform signatures / tokens ---
-  app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req: FastifyRequest, raw: Buffer, done) => {
-    // Keep the raw body for signature checks; parse JSON for everything else.
-    (req as any).rawBody = raw;
-    try {
-      done(null, raw.length ? JSON.parse(raw.toString("utf8")) : {});
-    } catch (err) {
-      done(err as Error, undefined);
-    }
-  });
-
-  app.post("/api/integrations/slack/:id/events", async (req, reply) => {
-    const { verifySignature, credentials } = await import("../integrations/slack.js");
-    const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
-    const conn = await getConn(getDb(), params(req).id);
-    if (conn.platform !== "slack") throw new NotFound("unknown connection");
-    verifySignature(
-      credentials(conn).signing_secret ?? "",
-      String(req.headers["x-slack-request-timestamp"] ?? ""),
-      raw,
-      String(req.headers["x-slack-signature"] ?? ""),
-    );
-    const payload: any = req.body ?? {};
-    if (payload.type === "url_verification") return reply.send({ challenge: payload.challenge });
-    if (payload.type !== "event_callback" || conn.status !== "active") return { ok: true };
-    if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
-      throw new Forbidden("event from another workspace");
-    await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
-    return { ok: true };
-  });
-
-  app.post("/api/integrations/github/:id/events", async (req) => {
-    const { verifySignature } = await import("../integrations/github.js");
-    const { credentials } = await import("../integrations/slack.js");
-    const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
-    const conn = await getConn(getDb(), params(req).id);
-    if (conn.platform !== "github") throw new NotFound("unknown connection");
-    verifySignature(credentials(conn).webhook_secret ?? "", raw, String(req.headers["x-hub-signature-256"] ?? ""));
-    const event = String(req.headers["x-github-event"] ?? "");
-    if (event === "ping" || conn.status !== "active") return { ok: true };
-    const input = { event, delivery: String(req.headers["x-github-delivery"] ?? ""), payload: req.body ?? {} };
-    await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, input));
-    return { ok: true };
-  });
-
-  app.post("/api/integrations/feishu/:id/events", async (req, reply) => {
-    const conn = await getConn(getDb(), params(req).id);
-    if (conn.platform !== "feishu") throw new NotFound("unknown connection");
-    const adapter = (await getAdapter(conn)) as import("../integrations/feishu.js").FeishuAdapter;
-    const payload: any = req.body ?? {};
-    adapter.verify(conn, payload);
-    if (payload.type === "url_verification") return reply.send({ challenge: payload.challenge });
-    if (conn.status !== "active") return { ok: true };
-    await acceptEvents(conn.id, await adapter.parse(getDb(), conn, payload));
-    return { ok: true };
-  });
 
   app.post(
     "/api/integrations/deliver",

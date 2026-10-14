@@ -50,13 +50,19 @@ services:
       WITDEN_MANAGER_URL: http://manager:8340
       # fixed inside the container; WITDEN_PORT only chooses the published host port
       WITDEN_PORT: "8320"
+      WITDEN_WEBHOOK_PORT: "8325"
       WITDEN_HUB_PORT: "8330"
       # Cloudflare Tunnel (the "tunnel" service below): the console writes its token here
       WITDEN_TUNNEL_TOKEN_FILE: /tunnel/token
       WITDEN_TUNNEL_METRICS_URL: http://tunnel:2000
-      WITDEN_TUNNEL_ORIGIN: http://api:8320
+      # the tunnel forwards to the webhook listener only, never to the console
+      WITDEN_TUNNEL_ORIGIN: http://api:8325
     ports:
+      # Console and API: keep it on the internal network.
       - "${WITDEN_PORT:-8320}:8320"
+      # Event webhooks only (Slack, GitHub, Feishu): the one port a public address may forward to. Bound to
+      # loopback for a reverse proxy on this host; set WITDEN_WEBHOOK_BIND to publish it elsewhere.
+      - "${WITDEN_WEBHOOK_BIND:-127.0.0.1}:8325:8325"
       # Runner hub: computers reach it as witden-hub (host gateway). Bind to the Docker bridge address to
       # keep it off other interfaces, e.g. WITDEN_HUB_BIND=172.17.0.1
       - "${WITDEN_HUB_BIND:-0.0.0.0}:8330:8330"

@@ -43,8 +43,10 @@ async function main(argv: string[]): Promise<number> {
     const witden = await start({ settings });
     if (witden.app) {
       await witden.app.listen({ port: settings.port, host: settings.host });
+      if (witden.webhookApp && settings.webhookPort)
+        await witden.webhookApp.listen({ port: settings.webhookPort, host: settings.webhookHost });
       console.log(
-        `[witden] ${settings.processRole} listening on ${settings.host}:${settings.port}, runner hub on :${settings.hubPort}`,
+        `[witden] ${settings.processRole} listening on ${settings.host}:${settings.port}, event webhooks on :${settings.webhookPort || "(off)"}, runner hub on :${settings.hubPort}`,
       );
     } else {
       console.log("[witden] worker started");

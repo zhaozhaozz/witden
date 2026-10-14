@@ -1,6 +1,9 @@
 /**
- * The public address of this deployment: what Slack, GitHub and Feishu send events to, and the base of links
- * in messages sent out. An address set in the console (checked first) takes precedence over WITDEN_PUBLIC_URL.
+ * Two addresses. The console address (WITDEN_PUBLIC_URL) is where people open the console; links in messages
+ * point there, and it is not meant to be reachable from the internet. The public address is what Slack,
+ * GitHub and Feishu send events to: it must forward to the webhook listener (api/webhooks.ts), which serves
+ * the event webhooks and nothing else. It is set in the console after a check, and falls back to the console
+ * address for deployments that never set one.
  *
  * Also manages the optional Cloudflare Tunnel: the console writes the tunnel token to a file the "tunnel"
  * compose service reads (cloudflared --token-file), and reads the tunnel's state from its metrics server.
@@ -16,17 +19,20 @@ import { getSetting, putSetting } from "./platform-settings.js";
 export const PUBLIC_URL = "public_url";
 const PROBE_PURPOSE = "public-url-probe";
 
-/** The public address without a trailing slash. */
-export async function publicBase(db: Db): Promise<string> {
+/** The public address platforms send events to (and fetch role avatars from), without a trailing slash. */
+export async function webhookBase(db: Db): Promise<string> {
   const saved = await getSetting<{ url: string }>(db, PUBLIC_URL);
   return (saved?.url ?? settings().publicUrl).replace(/\/+$/, "");
 }
+
+/** Where people open the console: the base of links in messages, never the public address. */
+export const consoleBase = (): string => settings().publicUrl.replace(/\/+$/, "");
 
 export async function savePublicUrl(db: Db, url: string | null, userId: string): Promise<void> {
   await putSetting(db, PUBLIC_URL, url ? { url } : {}, userId);
 }
 
-/** Answer for GET /api/integrations/probe: proves the request reached this deployment. */
+/** The webhook listener's answer to GET /api/integrations/probe: proves the request reached this deployment. */
 export const probeAnswer = (nonce: string) => ({ witden: true, proof: secretBox().proof(PROBE_PURPOSE, nonce) });
 
 let probeFetch: typeof fetch = (...args) => fetch(...args);
@@ -46,7 +52,8 @@ export type CheckProblem =
   | "redirect"
   | "http"
   | "not_witden"
-  | "other_instance";
+  | "other_instance"
+  | "console_exposed";
 
 export interface UrlCheck {
   ok: boolean;
@@ -79,7 +86,8 @@ const privateHost = (host: string) =>
 
 /**
  * Check that platforms can send events to ``raw``: an https origin on a public host that answers, through
- * whatever proxy or tunnel is in front, with this deployment's own proof for a fresh nonce.
+ * whatever proxy or tunnel is in front, with this deployment's own proof for a fresh nonce from the webhook
+ * listener, and that does not reach the console.
  */
 export async function checkPublicUrl(raw: string): Promise<UrlCheck> {
   let u: URL;
@@ -116,9 +124,21 @@ export async function checkPublicUrl(raw: string): Promise<UrlCheck> {
   if (res.status >= 300 && res.status < 400)
     return { ok: false, url, problem: "redirect", detail: res.headers.get("location") ?? "" };
   if (!res.ok) return { ok: false, url, problem: "http", detail: `HTTP ${res.status}` };
-  const body = (await res.json().catch(() => null)) as { witden?: boolean; proof?: string } | null;
+  const body = (await res.json().catch(() => null)) as { witden?: boolean; proof?: string; listener?: string } | null;
+  // Forwarded to the console's port: the whole console would be public.
+  if (body?.witden && body.listener === "console")
+    return { ok: false, url, problem: "console_exposed", detail: "console port" };
   if (!body?.witden || typeof body.proof !== "string") return { ok: false, url, problem: "not_witden" };
   if (body.proof !== secretBox().proof(PROBE_PURPOSE, nonce)) return { ok: false, url, problem: "other_instance" };
+  // The proxy may still route other paths to the console; the webhook listener has no /api/health.
+  try {
+    const hit = await probeFetch(`${url}/api/health`, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    const health = (await hit.json().catch(() => null)) as { ok?: boolean; version?: string } | null;
+    if (hit.ok && health?.ok && health.version)
+      return { ok: false, url, problem: "console_exposed", detail: "/api/health" };
+  } catch {
+    // nothing answered there: fine
+  }
   return { ok: true, url };
 }
 

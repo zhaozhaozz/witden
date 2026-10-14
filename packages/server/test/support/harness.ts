@@ -36,6 +36,8 @@ export interface Harness {
     url: string,
     opts?: { token?: string; json?: unknown; headers?: Record<string, string>; payload?: string | Buffer },
   ): Promise<{ status: number; body: any; raw: string }>;
+  /** The same, on the webhook listener (the only server a public address may reach). */
+  webhooks: Harness["api"];
   login(email: string, password: string): Promise<string>;
   adminToken: string;
   /** Run background operations and tasks until nothing is runnable. */
@@ -60,25 +62,28 @@ export async function startHarness(overrides: Partial<Settings> = {}): Promise<H
   manager.hub = witden.runtime.hub!;
   const worker = new Worker(witden.runtime.gateway!);
   witden.runtime.worker = worker;
-  const app = witden.app!;
-  const api: Harness["api"] = async (method, url, opts = {}) => {
-    const headers: Record<string, string> = { ...(opts.headers ?? {}) };
-    if (opts.token) headers.authorization = `Bearer ${opts.token}`;
-    const res = await app.inject({
-      method: method as any,
-      url,
-      headers,
-      ...(opts.json !== undefined ? { payload: opts.json as any } : {}),
-      ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
-    });
-    let body: any = null;
-    try {
-      body = res.json();
-    } catch {
-      body = res.body;
-    }
-    return { status: res.statusCode, body, raw: res.body };
-  };
+  const injector =
+    (app: NonNullable<Witden["app"]>): Harness["api"] =>
+    async (method, url, opts = {}) => {
+      const headers: Record<string, string> = { ...(opts.headers ?? {}) };
+      if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+      const res = await app.inject({
+        method: method as any,
+        url,
+        headers,
+        ...(opts.json !== undefined ? { payload: opts.json as any } : {}),
+        ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
+      });
+      let body: any = null;
+      try {
+        body = res.json();
+      } catch {
+        body = res.body;
+      }
+      return { status: res.statusCode, body, raw: res.body };
+    };
+  const api = injector(witden.app!);
+  const webhooks = injector(witden.webhookApp!);
   const login = async (email: string, password: string) => {
     const res = await api("POST", "/api/auth/login", { json: { email, password } });
     if (res.status !== 200) throw new Error(`login failed: ${res.raw}`);
@@ -104,6 +109,7 @@ export async function startHarness(overrides: Partial<Settings> = {}): Promise<H
     worker,
     settings,
     api,
+    webhooks,
     login,
     adminToken: await login(ADMIN.email, ADMIN.password),
     drain,

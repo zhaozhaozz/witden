@@ -89,7 +89,7 @@ function missingSetup(r: Role): string | undefined {
 }
 
 const STEPS = [
-  "准备公网地址",
+  "准备公网事件地址",
   "在 Slack 中创建应用",
   "填写凭据并测试连接",
   "在 Slack 中订阅事件",
@@ -169,7 +169,7 @@ export function SlackSetup({
     conn ? <TryStep key="try" conn={conn} bot={bot} onDone={() => onClose(conn)} /> : null,
   ];
   const summary = [
-    address ? `公网地址：${address}` : null,
+    address ? `公网事件地址：${address}` : null,
     initial ? null : `应用名称：${botName}`,
     tested?.ok ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}` : conn ? conn.name : null,
     null,

@@ -1,7 +1,7 @@
 import "@fastify/multipart";
 import fs from "node:fs";
 import { and, eq } from "drizzle-orm";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { DEFAULT_ALLOWED_TOOLS, DEFAULT_APPROVAL_REQUIRED, TOOL_GROUPS, TOOLS } from "../agent/tools.js";
 import { type Db, transaction } from "../db/client.js";
 import {
@@ -83,6 +83,17 @@ async function roleOut(db: Db, role: Role, full: boolean) {
     data.tokens_today = await tokensToday(db, { roleId: role.id });
   }
   return data;
+}
+
+/** An uploaded avatar, without login: also served on the webhook listener, as Slack fetches role icons itself. */
+export async function serveAvatar(req: FastifyRequest, reply: FastifyReply) {
+  const found = avatarFile(params(req).file);
+  if (!found) return reply.code(404).send({ error: { code: "not_found", message: "no such avatar", detail: {} } });
+  return reply
+    .header("content-type", found.type)
+    .header("cache-control", "public, max-age=31536000, immutable")
+    .header("x-content-type-options", "nosniff")
+    .send(fs.createReadStream(found.file));
 }
 
 export async function roleRoutes(app: FastifyInstance) {
@@ -195,15 +206,7 @@ export async function roleRoutes(app: FastifyInstance) {
       return { avatar_url: saveAvatar(await file.toBuffer()) };
     }),
   );
-  app.get("/api/avatars/:file", async (req, reply) => {
-    const found = avatarFile(params(req).file);
-    if (!found) return reply.code(404).send({ error: { code: "not_found", message: "no such avatar", detail: {} } });
-    return reply
-      .header("content-type", found.type)
-      .header("cache-control", "public, max-age=31536000, immutable")
-      .header("x-content-type-options", "nosniff")
-      .send(fs.createReadStream(found.file));
-  });
+  app.get("/api/avatars/:file", serveAvatar);
 
   /** A role's agent sessions: one per topic, listed only for topics the viewer can read. */
   app.get(

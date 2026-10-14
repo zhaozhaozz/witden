@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -7,12 +8,12 @@ import { type Harness, startHarness } from "./support/harness.js";
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** A proxy in front of this deployment: requests to the public address are answered by the harness. */
-const throughProxy =
-  (h: Harness): typeof fetch =>
+/** A proxy in front of this deployment, forwarding the public address to one of its servers. */
+const forwardTo =
+  (server: Harness["api"]): typeof fetch =>
   async (input) => {
     const u = new URL(String(input));
-    const res = await h.api("GET", u.pathname + u.search);
+    const res = await server("GET", u.pathname + u.search);
     return new Response(res.raw, { status: res.status, headers: { "content-type": "application/json" } });
   };
 
@@ -62,8 +63,8 @@ describe("public address", () => {
     });
     expect((await put("https://unchecked.example.com", { force: true })).body).toMatchObject({ saved: true });
 
-    // through a proxy to this deployment (the probe needs no login)
-    setProbeFetch(throughProxy(h));
+    // through a proxy to this deployment's webhook listener (the probe needs no login)
+    setProbeFetch(forwardTo(h.webhooks));
     expect((await put("https://witden.example.com/")).body).toMatchObject({
       saved: true,
       url: "https://witden.example.com",
@@ -84,6 +85,69 @@ describe("public address", () => {
     expect((await h.api("GET", "/api/settings/public-url", { token: h.adminToken })).body.url).toBe(
       h.settings.publicUrl,
     );
+  });
+});
+
+describe("webhook listener", () => {
+  it("is the only server a public address may reach, and serves nothing but events", async () => {
+    h = await startHarness();
+    const put = (url: string) =>
+      h.api("PUT", "/api/settings/public-url", { token: h.adminToken, json: { url, force: true } });
+    // forwarded to the console's port: the whole console would be public, even when asked to save anyway
+    setProbeFetch(forwardTo(h.api));
+    expect((await put("https://witden.example.com")).body).toMatchObject({
+      saved: false,
+      check: { problem: "console_exposed" },
+    });
+    // events to the webhook listener, but other paths still to the console
+    setProbeFetch(async (input, init) =>
+      forwardTo(new URL(String(input)).pathname.startsWith("/api/integrations/") ? h.webhooks : h.api)(input, init),
+    );
+    expect((await put("https://witden.example.com")).body.check).toMatchObject({
+      problem: "console_exposed",
+      detail: "/api/health",
+    });
+
+    // the probe proves itself only on the webhook listener
+    expect((await h.webhooks("GET", "/api/integrations/probe?nonce=abc")).body).toMatchObject({
+      witden: true,
+      listener: "webhooks",
+      proof: expect.any(String),
+    });
+    expect((await h.api("GET", "/api/integrations/probe?nonce=abc")).body).toEqual({
+      witden: true,
+      listener: "console",
+    });
+    // nothing of the console there
+    for (const [method, url] of [
+      ["GET", "/"],
+      ["GET", "/api/health"],
+      ["POST", "/api/auth/login"],
+      ["GET", "/api/connections"],
+      ["GET", "/api/topics"],
+      ["GET", "/api/settings/public-url"],
+      ["POST", "/internal/gateway/exec"],
+    ]) {
+      expect((await h.webhooks(method, url, { token: h.adminToken })).status, `${method} ${url}`).toBe(404);
+    }
+    // a Slack event reaches its connection there
+    const conn = await h.api("POST", "/api/connections", {
+      token: h.adminToken,
+      json: { platform: "slack", name: "acme", credentials: { bot_token: "xoxb-1", signing_secret: "s3cret" } },
+    });
+    const raw = JSON.stringify({ type: "url_verification", challenge: "c-123" });
+    const ts = String(Math.floor(Date.now() / 1000));
+    const sig = `v0=${createHmac("sha256", "s3cret").update(`v0:${ts}:${raw}`).digest("hex")}`;
+    const verified = await h.webhooks("POST", `/api/integrations/slack/${conn.body.id}/events`, {
+      payload: raw,
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": ts, "x-slack-signature": sig },
+    });
+    expect(verified.body).toEqual({ challenge: "c-123" });
+    const forged = await h.webhooks("POST", `/api/integrations/slack/${conn.body.id}/events`, {
+      payload: raw,
+      headers: { "content-type": "application/json", "x-slack-request-timestamp": ts, "x-slack-signature": "v0=00" },
+    });
+    expect(forged.status).toBe(401);
   });
 });
 

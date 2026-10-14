@@ -9,24 +9,20 @@ import {
   checkPublicUrl,
   PUBLIC_URL,
   parseTunnelToken,
-  probeAnswer,
-  publicBase,
   savePublicUrl,
   tunnelStatus,
+  webhookBase,
   writeTunnelToken,
 } from "../services/public-url.js";
-import { authed, authedNoTx, body, query } from "./http.js";
+import { authed, authedNoTx, body } from "./http.js";
 
 export async function publicUrlRoutes(app: FastifyInstance) {
-  // No login: a deployment checking an address calls this through that address to see it comes back here.
-  app.get("/api/integrations/probe", async (req) => probeAnswer(String(query(req).nonce ?? "").slice(0, 64)));
-
   app.get(
     "/api/settings/public-url",
     authed(async ({ db, user }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const saved = await getSetting<{ url?: string }>(db, PUBLIC_URL);
-      return { url: await publicBase(db), saved: saved?.url ?? null, default: settings().publicUrl };
+      return { url: await webhookBase(db), saved: saved?.url ?? null, default: settings().publicUrl };
     }),
   );
 
@@ -35,7 +31,7 @@ export async function publicUrlRoutes(app: FastifyInstance) {
     "/api/settings/public-url/check",
     authedNoTx(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      return checkPublicUrl(String(body(req).url ?? (await publicBase(db))));
+      return checkPublicUrl(String(body(req).url ?? (await webhookBase(db))));
     }),
   );
 
@@ -47,12 +43,12 @@ export async function publicUrlRoutes(app: FastifyInstance) {
       if (!b.url) {
         await savePublicUrl(db, null, user.id);
         await audit(db, "settings.public_url", { actorType: "user", actorId: user.id, detail: { url: null } });
-        return { saved: true, url: await publicBase(db), check: null };
+        return { saved: true, url: await webhookBase(db), check: null };
       }
       const check = await checkPublicUrl(String(b.url));
       // A failed check is saved only when asked to and when this server's own network may be the cause.
       const forced = !check.ok && !!b.force && !!check.overridable;
-      if (!check.ok && !forced) return { saved: false, url: await publicBase(db), check };
+      if (!check.ok && !forced) return { saved: false, url: await webhookBase(db), check };
       await savePublicUrl(db, check.url, user.id);
       await audit(db, "settings.public_url", {
         actorType: "user",

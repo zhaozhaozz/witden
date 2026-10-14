@@ -17,6 +17,10 @@ export interface Settings {
   tunnelTokenFile: string | null;
   tunnelMetricsUrl: string | null;
   tunnelOrigin: string | null;
+  /** Listener for the routes the internet may reach (event webhooks, the address check, avatars) and
+   * nothing else; the public address forwards here. 0 = no such listener. */
+  webhookPort: number;
+  webhookHost: string;
   /** Port of the runner hub (computers dial in here); separate from the API port. */
   hubPort: number;
   hubHost: string;
@@ -82,6 +86,8 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     tunnelTokenFile: env("TUNNEL_TOKEN_FILE") ?? null,
     tunnelMetricsUrl: env("TUNNEL_METRICS_URL") ?? null,
     tunnelOrigin: env("TUNNEL_ORIGIN") ?? null,
+    webhookPort: int("WEBHOOK_PORT", 8325),
+    webhookHost: env("WEBHOOK_HOST") ?? env("HOST") ?? "0.0.0.0",
     hubPort: int("HUB_PORT", 8330),
     hubHost: env("HUB_HOST") ?? "0.0.0.0",
     hubUrlForComputers: env("HUB_URL_FOR_COMPUTERS") ?? "ws://witden-hub:8330/runner",
