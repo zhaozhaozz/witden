@@ -315,6 +315,23 @@ describe("slack", () => {
     }
   });
 
+  it("switching ways: the new credential is tried before it is saved, so a wrong one changes nothing", async () => {
+    const tryIt = (credentials: Record<string, string>) =>
+      w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken, json: { credentials } });
+    const state = async () =>
+      (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find((c: any) => c.id === conn.id);
+    expect((await tryIt({ app_token: "xapp-1-wrong" })).body).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("invalid_auth"),
+    });
+    expect((await tryIt({ app_token: APP_TOKEN })).body).toMatchObject({ ok: true, team: "Acme" });
+    // nothing was saved: still the events URL, still working, not marked as failing
+    expect(await state()).toMatchObject({ slack_mode: "http", status: "active", socket: null });
+    expect((await send({ type: "url_verification", challenge: "still" })).body).toEqual({ challenge: "still" });
+    // a credential in the wrong place is refused outright
+    expect((await tryIt({ app_token: BOT_TOKEN })).status).toBe(400);
+  });
+
   it("Socket Mode credentials: an app-level token, refused in place of the others", async () => {
     const create = (credentials: Record<string, string>) =>
       w.api("POST", "/api/connections", { token: w.adminToken, json: { platform: "slack", name: "s", credentials } });

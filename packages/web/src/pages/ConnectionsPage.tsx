@@ -94,6 +94,8 @@ const SETUP_HINT: Record<string, string> = {
 interface Setup {
   platform: string | null;
   conn: Connection | null;
+  /** Slack: open the guide on this way of connecting (to switch an existing connection). */
+  mode?: "socket" | "http";
 }
 
 export default function ConnectionsPage() {
@@ -147,6 +149,7 @@ export default function ConnectionsPage() {
       {setup?.platform === "slack" ? (
         <SlackSetup
           initial={setup.conn}
+          initialMode={setup.mode}
           onCreated={(c) => {
             setSelected(c.id);
             void res.reload();
@@ -214,7 +217,7 @@ export default function ConnectionsPage() {
                       setSelected(null);
                       void res.reload();
                     }}
-                    onGuide={() => setSetup({ platform: current.platform, conn: current })}
+                    onGuide={(mode) => setSetup({ platform: current.platform, conn: current, mode })}
                   />
                 ) : null}
               </div>
@@ -306,8 +309,8 @@ function ConnectionDetail({
   conn: Connection;
   onChanged: (c: Connection) => void;
   onDeleted: () => void;
-  /** Open the step-by-step setup (Slack). */
-  onGuide: () => void;
+  /** Open the step-by-step setup (Slack), optionally on the other way of connecting. */
+  onGuide: (mode?: "socket" | "http") => void;
 }) {
   const { can } = useAuth();
   const dir = useDirectory();
@@ -345,7 +348,7 @@ function ConnectionDetail({
         actions={
           <div className="btn-row">
             {conn.platform === "slack" ? (
-              <button type="button" className="btn btn-sm" onClick={onGuide}>
+              <button type="button" className="btn btn-sm" onClick={() => onGuide()}>
                 设置引导
               </button>
             ) : null}
@@ -426,8 +429,17 @@ function ConnectionDetail({
         {conn.platform === "slack" && !conn.bot_user_id ? (
           <div className="callout callout-wait">
             这个接入还没有完成设置：凭据还没有通过测试。{" "}
-            <button type="button" className="btn btn-xs" onClick={onGuide}>
+            <button type="button" className="btn btn-xs" onClick={() => onGuide()}>
               继续设置
+            </button>
+          </div>
+        ) : null}
+        {conn.platform === "slack" && conn.slack_mode === "http" ? (
+          <div className="callout">
+            这个接入使用事件地址，需要公网地址。改用 Socket Mode 后，witden 主动连到
+            Slack，不需要公网地址；设置引导会说明如何让原来的 Slack 应用打开 Socket Mode。{" "}
+            <button type="button" className="btn btn-xs" onClick={() => onGuide("socket")}>
+              改用 Socket Mode
             </button>
           </div>
         ) : null}

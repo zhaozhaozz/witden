@@ -58,6 +58,27 @@ function connOut(conn: Connection, base: string) {
   };
 }
 
+/**
+ * A connection's credentials with newly entered ones applied, checked and encrypted. Switching to the other
+ * way of connecting drops the credentials of the way left behind.
+ */
+async function mergedCredentials(conn: Connection, entered: Record<string, unknown>): Promise<string> {
+  const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
+  const given = Object.fromEntries(Object.entries(trimmed(entered)).filter(([, v]) => v));
+  if (conn.platform === "github") {
+    if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
+    if (given.app_id || given.private_key) delete current.token;
+  }
+  if (conn.platform === "slack") {
+    if (given.app_token) delete current.signing_secret;
+    if (given.signing_secret) delete current.app_token;
+  }
+  for (const [k, v] of Object.entries(given)) current[k] = v;
+  if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
+  if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(current);
+  return secretBox().encrypt(JSON.stringify(current));
+}
+
 /** Pasted credentials often carry stray spaces or line breaks. */
 const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, String(v ?? "").trim()]));
@@ -161,23 +182,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       const b = body(req);
       const update: Partial<Connection> = {};
       if (b.name) update.name = b.name;
-      if (b.credentials) {
-        const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
-        const given = Object.fromEntries(Object.entries(trimmed(b.credentials)).filter(([, v]) => v));
-        // Switching to the other way of connecting drops the credentials of the way left behind.
-        if (conn.platform === "github") {
-          if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
-          if (given.app_id || given.private_key) delete current.token;
-        }
-        if (conn.platform === "slack") {
-          if (given.app_token) delete current.signing_secret;
-          if (given.signing_secret) delete current.app_token;
-        }
-        for (const [k, v] of Object.entries(given)) current[k] = v;
-        if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
-        if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(current);
-        update.credentialsEncrypted = secretBox().encrypt(JSON.stringify(current));
-      }
+      if (b.credentials) update.credentialsEncrypted = await mergedCredentials(conn, b.credentials);
       if (b.settings) update.settings = cleanSettings({ ...conn.settings, ...b.settings });
       if (b.status) {
         if (!["active", "paused"].includes(b.status)) throw new BadRequest("status must be active or paused");
@@ -214,6 +219,17 @@ export async function integrationRoutes(app: FastifyInstance) {
     authedNoTx(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const conn = await getConn(db, params(req).id);
+      const entered = body(req).credentials;
+      if (entered) {
+        // Credentials not saved yet (e.g. switching ways): try them, keep the connection as it is.
+        try {
+          const candidate = { ...conn, credentialsEncrypted: await mergedCredentials(conn, entered) };
+          return { ok: true, ...(await (await getAdapter(conn)).test(db, candidate)) };
+        } catch (err) {
+          if (err instanceof BadRequest) throw err;
+          return { ok: false, error: (err as Error).message };
+        }
+      }
       try {
         const info = await (await getAdapter(conn)).test(db, conn);
         await db
