@@ -14,6 +14,8 @@ interface UrlCheck {
   problem?: string;
   detail?: string;
   overridable?: boolean;
+  /** This server's DNS did not resolve the host; it was checked at this address from public DNS. */
+  publicDns?: string;
 }
 
 interface SaveResult {
@@ -41,7 +43,7 @@ function explain(c: UrlCheck): string {
     case "private":
       return "这是本机或内网地址，Slack 访问不到。";
     case "dns":
-      return `witden 服务器解析不到这个域名${d}。检查 DNS 记录是否已经生效。`;
+      return `解析不到这个域名${d}，公共 DNS 中也没有查到。检查 DNS 记录是否已经生效。`;
     case "tls":
       return `HTTPS 证书无效${d}。Slack 不接受自签名或过期的证书。`;
     case "unreachable":
@@ -153,7 +155,10 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
         {!current || !check ? (
           <span className="muted small">正在检查…</span>
         ) : check.ok ? (
-          <Tag tone="ok">已通过检查</Tag>
+          <>
+            <Tag tone="ok">已通过检查</Tag>
+            {check.publicDns ? <PublicDnsNote address={check.publicDns} /> : null}
+          </>
         ) : forced ? (
           <Tag tone="wait">未通过检查，按你的选择继续使用</Tag>
         ) : (
@@ -216,6 +221,16 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
   );
 }
 
+/** The server's own DNS could not resolve the address; it was checked where public DNS points. */
+function PublicDnsNote({ address }: { address: string }) {
+  return (
+    <span className="small muted">
+      （服务器所在网络的 DNS 解析不到这个域名，已按公共 DNS 中的地址 {address} 检查；Slack 等平台使用公共
+      DNS，不受影响）
+    </span>
+  );
+}
+
 function CheckResult({
   tried,
   busy,
@@ -232,6 +247,7 @@ function CheckResult({
     return (
       <div className="callout">
         已通过检查：{tried.url} 转发到这个 witden 的事件端口，打不开控制台。已保存为公网地址。
+        {tried.check.publicDns ? <PublicDnsNote address={tried.check.publicDns} /> : null}
       </div>
     );
   if (tried.saved) return null;

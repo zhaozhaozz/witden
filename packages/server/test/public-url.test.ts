@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { setProbeFetch, setTunnelMetricsFetch } from "../src/services/public-url.js";
+import { setPinnedFetch, setProbeFetch, setTunnelMetricsFetch } from "../src/services/public-url.js";
 import { type Harness, startHarness } from "./support/harness.js";
 
 const json = (body: unknown, status = 200) =>
@@ -26,6 +26,7 @@ const failing =
 let h: Harness;
 afterEach(async () => {
   setProbeFetch((...args) => fetch(...args));
+  setPinnedFetch((url, address) => Promise.reject(new Error(`no network in tests (${url} at ${address})`)));
   setTunnelMetricsFetch((...args) => fetch(...args));
   await h.close();
 });
@@ -85,6 +86,43 @@ describe("public address", () => {
     expect((await h.api("GET", "/api/settings/public-url", { token: h.adminToken })).body.url).toBe(
       h.settings.publicUrl,
     );
+  });
+});
+
+describe("public address when this server's DNS cannot resolve it", () => {
+  it("is checked at the address public DNS gives, which is what the platforms use", async () => {
+    h = await startHarness();
+    let answer: { type: number; data: string }[] = [{ type: 1, data: "203.0.113.7" }];
+    // This server's resolver knows nothing of the name; Cloudflare's DNS over HTTPS does.
+    setProbeFetch(async (input) => {
+      const u = new URL(String(input));
+      if (u.hostname === "1.1.1.1" && u.searchParams.get("name") === "hooks.example.com")
+        return json({ Status: 0, Answer: answer });
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ENOTFOUND", message: "getaddrinfo ENOTFOUND" },
+      });
+    });
+    const connected: string[] = [];
+    setPinnedFetch(async (url, address) => {
+      connected.push(address);
+      return forwardTo(h.webhooks)(url);
+    });
+    const check = async () =>
+      (
+        await h.api("POST", "/api/settings/public-url/check", {
+          token: h.adminToken,
+          json: { url: "https://hooks.example.com" },
+        })
+      ).body;
+    expect(await check()).toMatchObject({ ok: true, url: "https://hooks.example.com", publicDns: "203.0.113.7" });
+    // both the probe and the console check went to that address
+    expect(connected).toEqual(["203.0.113.7", "203.0.113.7"]);
+    // the console reached that way is refused just the same
+    setPinnedFetch(async (url) => forwardTo(h.api)(url));
+    expect(await check()).toMatchObject({ ok: false, problem: "console_exposed", publicDns: "203.0.113.7" });
+    // not in public DNS either
+    answer = [];
+    expect(await check()).toMatchObject({ ok: false, problem: "dns", overridable: true });
   });
 });
 

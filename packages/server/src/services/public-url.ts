@@ -10,6 +10,7 @@
  */
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import https from "node:https";
 import path from "node:path";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -63,6 +64,8 @@ export interface UrlCheck {
   detail?: string;
   /** The failure may come from this server's own network (e.g. no hairpin NAT), so saving anyway is allowed. */
   overridable?: boolean;
+  /** This server's DNS did not resolve the host; it was checked at this address from public DNS. */
+  publicDns?: string;
 }
 
 const TLS_CODES = new Set([
@@ -84,10 +87,74 @@ const privateHost = (host: string) =>
     host,
   );
 
+/** A failed request, in the words of the check (fetch reports the cause's code). */
+function failure(url: string, err: unknown): UrlCheck {
+  const e = err as Error & { cause?: { code?: string; message?: string } };
+  const code = e.cause?.code ?? "";
+  const detail = e.cause?.message ?? e.message;
+  if (e.name === "TimeoutError" || e.name === "AbortError")
+    return { ok: false, url, problem: "timeout", overridable: true };
+  if (code === "ENOTFOUND" || code === "EAI_AGAIN")
+    return { ok: false, url, problem: "dns", detail, overridable: true };
+  if (TLS_CODES.has(code) || /certificate|self.signed/i.test(detail)) return { ok: false, url, problem: "tls", detail };
+  return { ok: false, url, problem: "unreachable", detail: code || detail, overridable: true };
+}
+
+/** An IPv4 address of ``host`` in public DNS (Cloudflare's DNS over HTTPS, reached by IP), or null. */
+async function publicIPv4(host: string): Promise<string | null> {
+  try {
+    const res = await probeFetch(`https://1.1.1.1/dns-query?name=${encodeURIComponent(host)}&type=A`, {
+      headers: { accept: "application/dns-json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    const data = (await res.json()) as { Answer?: { type: number; data: string }[] };
+    return data.Answer?.find((a) => a.type === 1)?.data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** GET ``url`` connected to ``address`` instead of resolving its host; the TLS name and Host header stay. */
+function fetchAt(url: string, address: string): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      url,
+      {
+        lookup: ((_host: string, opts: { all?: boolean }, cb: (...args: unknown[]) => void) =>
+          opts.all ? cb(null, [{ address, family: 4 }]) : cb(null, address, 4)) as never,
+        timeout: 10_000,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("error", reject);
+        res.on("end", () => {
+          const headers = new Headers();
+          for (const [k, v] of Object.entries(res.headers)) if (typeof v === "string") headers.set(k, v);
+          const status = res.statusCode ?? 502;
+          resolve(new Response([204, 304].includes(status) ? null : Buffer.concat(chunks), { status, headers }));
+        });
+      },
+    );
+    // Fail the way fetch does, so the failure is described the same.
+    req.on("timeout", () => req.destroy(Object.assign(new Error("timed out"), { name: "TimeoutError" })));
+    req.on("error", (err) =>
+      reject(err.name === "TimeoutError" ? err : Object.assign(new TypeError("fetch failed"), { cause: err })),
+    );
+  });
+}
+
+let pinnedFetch = fetchAt;
+/** Tests replace the connection to a given address. */
+export function setPinnedFetch(f: typeof fetchAt): void {
+  pinnedFetch = f;
+}
+
 /**
  * Check that platforms can send events to ``raw``: an https origin on a public host that answers, through
  * whatever proxy or tunnel is in front, with this deployment's own proof for a fresh nonce from the webhook
- * listener, and that does not reach the console.
+ * listener, and that does not reach the console. When this server's own DNS cannot resolve the host (some
+ * networks drop records), the host is looked up in public DNS, which is what the platforms use.
  */
 export async function checkPublicUrl(raw: string): Promise<UrlCheck> {
   let u: URL;
@@ -102,44 +169,47 @@ export async function checkPublicUrl(raw: string): Promise<UrlCheck> {
     return { ok: false, url, problem: "format", detail: "only the scheme and host, without a path" };
   if (privateHost(u.hostname)) return { ok: false, url, problem: "private" };
 
-  const nonce = randomBytes(16).toString("hex");
+  const probe = `/api/integrations/probe?nonce=${randomBytes(16).toString("hex")}`;
+  const nonce = probe.split("=")[1];
+  let get = (p: string) => probeFetch(`${url}${p}`, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+  let publicDns: string | undefined;
   let res: Response;
   try {
-    res = await probeFetch(`${url}/api/integrations/probe?nonce=${nonce}`, {
-      redirect: "manual",
-      signal: AbortSignal.timeout(10_000),
-    });
+    res = await get(probe);
   } catch (err) {
-    const e = err as Error & { cause?: { code?: string; message?: string } };
-    const code = e.cause?.code ?? "";
-    const detail = e.cause?.message ?? e.message;
-    if (e.name === "TimeoutError" || e.name === "AbortError")
-      return { ok: false, url, problem: "timeout", overridable: true };
-    if (code === "ENOTFOUND" || code === "EAI_AGAIN")
-      return { ok: false, url, problem: "dns", detail, overridable: true };
-    if (TLS_CODES.has(code) || /certificate|self.signed/i.test(detail))
-      return { ok: false, url, problem: "tls", detail };
-    return { ok: false, url, problem: "unreachable", detail: code || detail, overridable: true };
+    const failed = failure(url, err);
+    if (failed.problem !== "dns") return failed;
+    const address = await publicIPv4(u.hostname);
+    if (!address) return failed;
+    publicDns = address;
+    get = (p) => pinnedFetch(`${url}${p}`, address);
+    try {
+      res = await get(probe);
+    } catch (again) {
+      return { ...failure(url, again), publicDns };
+    }
   }
+  const via = publicDns ? { publicDns } : {};
   if (res.status >= 300 && res.status < 400)
-    return { ok: false, url, problem: "redirect", detail: res.headers.get("location") ?? "" };
-  if (!res.ok) return { ok: false, url, problem: "http", detail: `HTTP ${res.status}` };
+    return { ok: false, url, problem: "redirect", detail: res.headers.get("location") ?? "", ...via };
+  if (!res.ok) return { ok: false, url, problem: "http", detail: `HTTP ${res.status}`, ...via };
   const body = (await res.json().catch(() => null)) as { witden?: boolean; proof?: string; listener?: string } | null;
   // Forwarded to the console's port: the whole console would be public.
   if (body?.witden && body.listener === "console")
-    return { ok: false, url, problem: "console_exposed", detail: "console port" };
-  if (!body?.witden || typeof body.proof !== "string") return { ok: false, url, problem: "not_witden" };
-  if (body.proof !== secretBox().proof(PROBE_PURPOSE, nonce)) return { ok: false, url, problem: "other_instance" };
+    return { ok: false, url, problem: "console_exposed", detail: "console port", ...via };
+  if (!body?.witden || typeof body.proof !== "string") return { ok: false, url, problem: "not_witden", ...via };
+  if (body.proof !== secretBox().proof(PROBE_PURPOSE, nonce))
+    return { ok: false, url, problem: "other_instance", ...via };
   // The proxy may still route other paths to the console; the webhook listener has no /api/health.
   try {
-    const hit = await probeFetch(`${url}/api/health`, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    const hit = await get("/api/health");
     const health = (await hit.json().catch(() => null)) as { ok?: boolean; version?: string } | null;
     if (hit.ok && health?.ok && health.version)
-      return { ok: false, url, problem: "console_exposed", detail: "/api/health" };
+      return { ok: false, url, problem: "console_exposed", detail: "/api/health", ...via };
   } catch {
     // nothing answered there: fine
   }
-  return { ok: true, url };
+  return { ok: true, url, ...via };
 }
 
 // --- Cloudflare Tunnel ------------------------------------------------------------------------------------
