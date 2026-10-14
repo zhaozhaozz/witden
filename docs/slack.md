@@ -66,8 +66,10 @@ settings:
 
 1. 在引导中填写接入名称，以及应用的两项凭据：
    - **Bot User OAuth Token**：应用的 OAuth & Permissions 页面，以 `xoxb-` 开头。
-   - **Signing Secret**：应用的 Basic Information 页面 → App Credentials。
+   - **Signing Secret**：应用的 Basic Information 页面 → App Credentials，是 32 位十六进制字符。同一页面上还有 Client Secret、Verification Token 和 App-Level Token（`xapp-` 开头），都不是 Signing Secret；填入 Slack 的令牌时，witden 会直接提示。
 2. 点击“保存并测试连接”。witden 加密保存凭据，并读取工作区和机器人的信息，用于拒绝来自其他工作区的事件、忽略机器人自己发出的消息。测试失败时，页面会说明原因，例如 Token 不正确或应用已被卸载。
+
+这一步的测试只用到 Bot Token；Signing Secret 是否正确，要到下一步 Slack 验证事件地址时才能知道。
 
 ## 4. 订阅事件
 
@@ -76,6 +78,11 @@ settings:
 1. 打开 **Enable Events**，在 **Request URL** 中填写事件地址，等待显示 Verified。
 2. 在 **Subscribe to bot events** 中添加：`app_mention`、`message.channels`、`message.groups`、`message.im`、`message.mpim`。
 3. 点击 **Save Changes**。如果 Slack 提示重新安装应用，按提示操作。
+
+引导会实时显示 Slack 的验证结果。Slack 提示 “Your URL didn't respond with the value of the challenge parameter” 时：
+
+- 如果引导显示“witden 收到了 Slack 的请求，但校验没有通过”，说明地址是通的，是 Signing Secret 不对。点击“重新填写 Signing Secret”填入 App Credentials 中的 Signing Secret，再在 Slack 中点击 Request URL 旁的 **Retry**。
+- 如果引导显示还没有收到 Slack 的请求，说明请求没有到达 witden，回到第 1 步检查公网事件地址。
 
 ## 5. 配置分配规则
 
