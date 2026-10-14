@@ -137,7 +137,7 @@ export class SlackAdapter implements Adapter {
     const data = await this.client(conn).call("auth.test", {});
     conn.externalWorkspaceId = data.team_id;
     conn.botUserId = data.user_id;
-    return { team: data.team, team_id: data.team_id, bot_user_id: data.user_id };
+    return { team: data.team, team_id: data.team_id, bot_user_id: data.user_id, bot: data.user };
   }
 
   private async render(db: Db, conn: Connection, msg: Message): Promise<[string, Record<string, string>]> {

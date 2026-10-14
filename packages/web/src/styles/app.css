@@ -3457,6 +3457,172 @@ img.avatar-role.avatar-colored {
   min-width: 0;
 }
 
+/* Choosing a platform and the step-by-step setup guides, shown in the page. */
+.platform-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.platform-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  text-align: left;
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+.platform-card:hover {
+  border-color: var(--harbor-2);
+  box-shadow: 0 0 0 1px var(--harbor-2);
+}
+.platform-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.setup-intro {
+  max-width: 80ch;
+  margin: 0 0 12px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+.setup-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.setup-step {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.setup-current {
+  border-color: var(--harbor-2);
+  box-shadow: 0 0 0 1px var(--harbor-2);
+}
+.setup-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.setup-head:disabled {
+  cursor: default;
+}
+.setup-todo .setup-head {
+  color: var(--ink-3);
+}
+.setup-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: var(--off-bg);
+  color: var(--ink-2);
+}
+.setup-current .setup-num {
+  background: var(--harbor-2);
+  color: #fff;
+}
+.setup-done .setup-num {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.setup-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.setup-summary {
+  margin-left: auto;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.setup-body {
+  padding: 0 14px 14px 46px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+.setup-body > p {
+  margin: 0 0 10px;
+  max-width: 80ch;
+}
+.setup-list {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  max-width: 80ch;
+}
+.setup-list li + li {
+  margin-top: 6px;
+}
+.setup-body .form {
+  margin-bottom: 12px;
+}
+.setup-body > .field {
+  max-width: 560px;
+  margin-bottom: 12px;
+}
+.setup-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.setup-more {
+  margin: 0 0 10px;
+  max-width: 80ch;
+}
+.setup-more summary {
+  cursor: pointer;
+  color: var(--harbor-2);
+  font-size: 13px;
+}
+.setup-more[open] summary {
+  margin-bottom: 8px;
+}
+.setup-table {
+  margin: 6px 0 2px;
+  max-width: 640px;
+}
+.setup-sub {
+  margin: 16px 0 4px;
+  font-size: 13.5px;
+}
+.setup-events {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  background: var(--paper-2);
+}
+.setup-next {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 /* --- admin -------------------------------------------------------------------------------------- */
 
 .stop-all {

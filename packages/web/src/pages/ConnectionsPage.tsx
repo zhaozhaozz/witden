@@ -1,28 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { Connection, ExternalConversation, ExternalIdentity, OutboundMessage } from "../api/types";
+import type { Connection, ExternalConversation, OutboundMessage } from "../api/types";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL, SYNC_MODE } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
-import {
-  CopyText,
-  Empty,
-  Field,
-  FieldGroup,
-  FormModal,
-  JsonBlock,
-  KV,
-  Loaded,
-  MultiPick,
-  PageHeader,
-  Section,
-  StatusChip,
-  Tabs,
-  Tag,
-  Toggle,
-} from "../ui/kit";
+import { CopyText, Empty, Field, JsonBlock, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag } from "../ui/kit";
 import { ResizeHandle } from "../ui/resize";
+import { ConnectionSettingsFields, Identities, INBOUND_STATUS, type InboundEvent, settingsOf } from "./connectionParts";
+import { SlackSetup } from "./SlackSetup";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
 
@@ -71,11 +57,31 @@ const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
   ],
 };
 
+const PLATFORM_CHOICES: [string, string, string][] = [
+  ["slack", "Slack", "在频道和私信中 @ 机器人。按步骤引导完成设置。"],
+  ["github", "GitHub", "在 issue 和 pull request 中 @ 机器人，以 GitHub App 或机器人账号的身份回复。"],
+  ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。"],
+];
+
+// What to prepare on the platform before filling in the form (Slack has its own step-by-step guide).
+const SETUP_HINT: Record<string, string> = {
+  github:
+    "先在 GitHub 中创建 GitHub App（Settings → Developer settings → GitHub Apps → New GitHub App）：Webhook URL 先填控制台地址，Webhook secret 填一个随机字符串；权限给 Issues、Pull requests 读写和 Metadata 只读；订阅 Issues、Issue comment、Pull request 事件。创建后生成私钥，并把应用安装到需要的仓库或组织。也可以改用一个机器人账号的 Token。创建接入后，把详情中的事件地址填回 GitHub。",
+  feishu:
+    "先在飞书开放平台创建企业自建应用并启用机器人能力，记下 App ID、App Secret 和事件订阅中的 Verification Token。创建接入后，把详情中的事件地址填到飞书的事件订阅请求地址。",
+};
+
+/** A new connection (``conn`` null) or the Slack guide resumed for an existing one. */
+interface Setup {
+  platform: string | null;
+  conn: Connection | null;
+}
+
 export default function ConnectionsPage() {
   const res = useResource(() => api.get<Connection[]>("/api/connections"), []);
   const caps = useResource(() => api.get<CapabilityMatrix>("/api/integrations/capabilities"), []);
   const [selected, setSelected] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [setup, setSetup] = useState<Setup | null>(null);
   const [showCaps, setShowCaps] = useState(false);
 
   useEffect(() => {
@@ -83,20 +89,31 @@ export default function ConnectionsPage() {
   }, [res.data, selected]);
 
   const current = res.data?.find((c) => c.id === selected) ?? null;
+  const closeSetup = (c: Connection | null) => {
+    setSetup(null);
+    if (c) setSelected(c.id);
+    void res.reload();
+  };
 
   return (
     <div className="page">
       <PageHeader
         title="通讯接入"
-        sub="把 Slack、飞书等平台的机器人接入进来。接入平台不等于导入全部消息：每个会话可以单独设置同步范围，外部请求还要经过分配规则。"
+        sub="把 Slack、飞书、GitHub 的机器人接入进来。接入平台不等于导入全部消息：每个会话可以单独设置同步范围，外部请求还要经过分配规则。"
         actions={
           <>
             <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
               {showCaps ? "收起能力对照" : "各平台能力对照"}
             </button>
-            <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
-              新建接入
-            </button>
+            {setup ? null : (
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => setSetup({ platform: null, conn: null })}
+              >
+                新建接入
+              </button>
+            )}
           </>
         }
       />
@@ -108,69 +125,105 @@ export default function ConnectionsPage() {
           <Loaded res={caps}>{(m) => <CapabilityTable matrix={m} />}</Loaded>
         </Section>
       ) : null}
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <div className="split">
-              <ResizeHandle name="connections" side="start" min={180} max={480} />
-              <ul className="conn-list">
-                {rows.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      className={`conn-item${c.id === selected ? " conn-on" : ""}`}
-                      onClick={() => setSelected(c.id)}
-                    >
-                      <span className="conn-name">
-                        {c.name}
-                        <Tag>{PLATFORM_LABEL[c.platform] ?? c.platform}</Tag>
-                      </span>
-                      <StatusChip meta={genericStatus(c.status)} compact />
-                      {c.status_reason ? (
-                        <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>
-                          {c.status_reason}
-                        </span>
-                      ) : null}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {current ? (
-                <ConnectionDetail
-                  key={current.id}
-                  conn={current}
-                  onChanged={(c) => res.setData((prev) => prev?.map((x) => (x.id === c.id ? c : x)))}
-                  onDeleted={() => {
-                    setSelected(null);
-                    void res.reload();
-                  }}
-                />
-              ) : null}
-            </div>
-          ) : (
-            <Empty
-              title="还没有接入任何通讯平台"
-              hint="创建 Slack 应用（或飞书应用）并填写凭据，再把事件地址配置到平台后台。"
-              action={
-                <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-                  新建接入
-                </button>
-              }
-            />
-          )
-        }
-      </Loaded>
-      {creating ? (
-        <ConnectionEditor
-          conn={null}
-          onClose={() => setCreating(false)}
-          onSaved={(c) => {
-            setCreating(false);
+      {setup?.platform === "slack" ? (
+        <SlackSetup
+          initial={setup.conn}
+          onCreated={(c) => {
             setSelected(c.id);
             void res.reload();
           }}
+          onClose={closeSetup}
         />
-      ) : null}
+      ) : setup?.platform ? (
+        <Section
+          title={`接入 ${PLATFORM_LABEL[setup.platform] ?? setup.platform}`}
+          actions={
+            <button type="button" className="btn btn-sm" onClick={() => setSetup(null)}>
+              取消
+            </button>
+          }
+        >
+          <p className="setup-intro">{SETUP_HINT[setup.platform]}</p>
+          <ConnectionForm conn={null} platform={setup.platform} onCancel={() => setSetup(null)} onSaved={closeSetup} />
+        </Section>
+      ) : setup ? (
+        <Section
+          title="新建接入"
+          actions={
+            <button type="button" className="btn btn-sm" onClick={() => setSetup(null)}>
+              取消
+            </button>
+          }
+        >
+          <p className="setup-intro">选择要接入的平台。</p>
+          <PlatformPicker onPick={(platform) => setSetup({ platform, conn: null })} />
+        </Section>
+      ) : (
+        <Loaded res={res}>
+          {(rows) =>
+            rows.length ? (
+              <div className="split">
+                <ResizeHandle name="connections" side="start" min={180} max={480} />
+                <ul className="conn-list">
+                  {rows.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        className={`conn-item${c.id === selected ? " conn-on" : ""}`}
+                        onClick={() => setSelected(c.id)}
+                      >
+                        <span className="conn-name">
+                          {c.name}
+                          <Tag>{PLATFORM_LABEL[c.platform] ?? c.platform}</Tag>
+                        </span>
+                        <StatusChip meta={genericStatus(c.status)} compact />
+                        {c.status_reason ? (
+                          <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>
+                            {c.status_reason}
+                          </span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {current ? (
+                  <ConnectionDetail
+                    key={current.id}
+                    conn={current}
+                    onChanged={(c) => res.setData((prev) => prev?.map((x) => (x.id === c.id ? c : x)))}
+                    onDeleted={() => {
+                      setSelected(null);
+                      void res.reload();
+                    }}
+                    onGuide={() => setSetup({ platform: current.platform, conn: current })}
+                  />
+                ) : null}
+              </div>
+            ) : (
+              <Section title="还没有接入任何通讯平台">
+                <p className="setup-intro">
+                  接入后，角色以机器人的身份在这些平台上工作：大家在频道、私信、issue 中 @ 机器人，就能把工作交给 witden
+                  中的角色。选择要接入的平台开始设置：
+                </p>
+                <PlatformPicker onPick={(platform) => setSetup({ platform, conn: null })} />
+              </Section>
+            )
+          }
+        </Loaded>
+      )}
+    </div>
+  );
+}
+
+function PlatformPicker({ onPick }: { onPick: (platform: string) => void }) {
+  return (
+    <div className="platform-cards">
+      {PLATFORM_CHOICES.map(([key, label, hint]) => (
+        <button type="button" key={key} className="platform-card" onClick={() => onPick(key)}>
+          <span className="platform-name">{label}</span>
+          <span className="small muted">{hint}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -229,10 +282,13 @@ function ConnectionDetail({
   conn,
   onChanged,
   onDeleted,
+  onGuide,
 }: {
   conn: Connection;
   onChanged: (c: Connection) => void;
   onDeleted: () => void;
+  /** Open the step-by-step setup (Slack). */
+  onGuide: () => void;
 }) {
   const { can } = useAuth();
   const dir = useDirectory();
@@ -240,6 +296,23 @@ function ConnectionDetail({
   const { run, busy } = useAction();
   const [tab, setTab] = useState("conversations");
   const [editing, setEditing] = useState(false);
+
+  if (editing)
+    return (
+      <div className="conn-detail">
+        <Section title={`编辑 ${conn.name}`}>
+          <ConnectionForm
+            conn={conn}
+            platform={conn.platform}
+            onCancel={() => setEditing(false)}
+            onSaved={(c) => {
+              setEditing(false);
+              onChanged(c);
+            }}
+          />
+        </Section>
+      </div>
+    );
 
   return (
     <div className="conn-detail">
@@ -251,6 +324,11 @@ function ConnectionDetail({
         }
         actions={
           <div className="btn-row">
+            {conn.platform === "slack" ? (
+              <button type="button" className="btn btn-sm" onClick={onGuide}>
+                设置引导
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-sm"
@@ -325,6 +403,14 @@ function ConnectionDetail({
             {conn.status_reason ?? (conn.status === "active" ? "正在接收和发送消息" : "")}
           </div>
         </div>
+        {conn.platform === "slack" && !conn.bot_user_id ? (
+          <div className="callout callout-wait">
+            这个接入还没有完成设置：凭据还没有通过测试。{" "}
+            <button type="button" className="btn btn-xs" onClick={onGuide}>
+              继续设置
+            </button>
+          </div>
+        ) : null}
         <KV
           items={[
             ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
@@ -369,10 +455,7 @@ function ConnectionDetail({
           ]}
         />
         {conn.platform === "slack" ? (
-          <p className="small muted">
-            把事件地址填到 Slack 应用的 Event Subscriptions，并订阅
-            app_mention、message.channels、message.groups、message.im 等事件。
-          </p>
+          <p className="small muted">Slack 应用的事件订阅、权限和试用步骤见“设置引导”。</p>
         ) : null}
         {conn.platform === "github" && conn.github_auth === "app" ? (
           <p className="small muted">
@@ -404,16 +487,6 @@ function ConnectionDetail({
       {tab === "identities" ? <Identities conn={conn} /> : null}
       {tab === "outbound" ? <Outbound conn={conn} /> : null}
       {tab === "inbound" ? <Inbound conn={conn} /> : null}
-      {editing ? (
-        <ConnectionEditor
-          conn={conn}
-          onClose={() => setEditing(false)}
-          onSaved={(c) => {
-            setEditing(false);
-            onChanged(c);
-          }}
-        />
-      ) : null}
     </div>
   );
 }
@@ -482,76 +555,6 @@ function Conversations({ conn }: { conn: Connection }) {
         )
       }
     </Loaded>
-  );
-}
-
-function Identities({ conn }: { conn: Connection }) {
-  const dir = useDirectory();
-  const { run } = useAction();
-  const res = useResource(() => api.get<ExternalIdentity[]>("/api/identities", { connection_id: conn.id }), [conn.id]);
-  return (
-    <>
-      <p className="small muted side-note">
-        外部账号按平台用户 ID
-        关联到内部成员，不按显示名称判断身份。未关联的人在连接开启“允许未关联的人使用”时成为外部成员，否则不能使用角色。
-      </p>
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>外部账号</th>
-                    <th>平台用户 ID</th>
-                    <th>关联成员</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((i) => (
-                    <tr key={i.id}>
-                      <td>
-                        {i.display_name ?? <span className="muted">（无显示名）</span>}
-                        {i.is_bot ? <Tag tone="off">机器人</Tag> : null}
-                      </td>
-                      <td>
-                        <code className="id">{i.external_user_id}</code>
-                      </td>
-                      <td>
-                        <select
-                          value={i.user_id ?? ""}
-                          aria-label="关联成员"
-                          onChange={async (e) => {
-                            const out = await run(
-                              () =>
-                                api.patch<ExternalIdentity>(`/api/identities/${i.id}`, {
-                                  user_id: e.target.value || null,
-                                }),
-                              e.target.value ? "已关联" : "已解除关联",
-                            );
-                            if (out) res.setData((prev) => prev?.map((x) => (x.id === i.id ? out : x)));
-                          }}
-                        >
-                          <option value="">未关联</option>
-                          {dir.users.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.name}
-                              {u.email ? `（${u.email}）` : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <Empty title="还没有外部账号" hint="有人在平台上与机器人互动后，账号会出现在这里等待关联。" />
-          )
-        }
-      </Loaded>
-    </>
   );
 }
 
@@ -640,27 +643,6 @@ function Outbound({ conn }: { conn: Connection }) {
   );
 }
 
-// Outcomes recorded by the server's inbound handler (integrations/inbound.ts).
-const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "bad"]> = {
-  processing: ["处理中", "wait"],
-  dispatched: ["已交给角色", "ok"],
-  stored: ["已同步（未 @ 机器人）", "ok"],
-  ignored: ["已忽略（不在同步范围）", "off"],
-  sync_off: ["会话不同步", "off"],
-  connection_paused: ["接入已暂停", "off"],
-  unknown_connection: ["接入不存在", "bad"],
-  unlinked_user: ["账号未关联成员", "bad"],
-  failed: ["处理失败", "bad"],
-};
-
-interface InboundEvent {
-  id: string;
-  event_key: string;
-  status: string;
-  detail: string | null;
-  received_at: string;
-}
-
 function Inbound({ conn }: { conn: Connection }) {
   const res = useResource(() => api.get<InboundEvent[]>(`/api/connections/${conn.id}/inbound`), [conn.id]);
   return (
@@ -704,24 +686,22 @@ function Inbound({ conn }: { conn: Connection }) {
   );
 }
 
-function ConnectionEditor({
+/** Create (``conn`` null) or edit a connection, shown in the page. */
+function ConnectionForm({
   conn,
-  onClose,
+  platform,
+  onCancel,
   onSaved,
 }: {
   conn: Connection | null;
-  onClose: () => void;
+  platform: string;
+  onCancel: () => void;
   onSaved: (c: Connection) => void;
 }) {
   const { run, busy } = useAction();
-  const [platform, setPlatform] = useState(conn?.platform ?? "slack");
   const [name, setName] = useState(conn?.name ?? "");
   const [creds, setCreds] = useState<Record<string, string>>({});
-  const dir = useDirectory();
-  const [autoProvision, setAutoProvision] = useState(!!conn?.settings?.auto_provision_users);
-  const [externalRoles, setExternalRoles] = useState<string[]>(conn?.settings?.external_role_ids ?? []);
-  const [customIdentity, setCustomIdentity] = useState(!!conn?.settings?.custom_identity);
-  const [syncMode, setSyncMode] = useState(conn?.settings?.default_sync_mode ?? "mentions");
+  const [settings, setSettings] = useState(settingsOf(conn));
   const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
   const fields = platform === "github" ? GITHUB_FIELDS[githubAuth] : (CREDENTIAL_FIELDS[platform] ?? []);
   // Switching an existing GitHub connection to the other way needs that way's keys (its webhook secret stays).
@@ -729,53 +709,44 @@ function ConnectionEditor({
   // New connections need every field; an existing one keeps what is left empty.
   const required = fields.filter(([k]) => !conn || (switching && k !== "webhook_secret"));
   const missing = required.some(([k]) => !creds[k]?.trim());
+  const disabled = busy || !name.trim() || missing;
+
+  const submit = async () => {
+    const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
+    const out = await run(
+      () =>
+        conn
+          ? api.patch<Connection>(`/api/connections/${conn.id}`, {
+              name: name.trim(),
+              settings,
+              ...(Object.keys(filled).length ? { credentials: filled } : {}),
+            })
+          : api.post<Connection>("/api/connections", {
+              platform,
+              name: name.trim(),
+              credentials: filled,
+              settings,
+            }),
+      conn ? "已保存" : "接入已创建，请把事件地址配置到平台后台，然后测试连接",
+    );
+    if (out) onSaved(out);
+  };
 
   return (
-    <FormModal
-      title={conn ? `编辑 ${conn.name}` : "新建接入"}
-      busy={busy}
-      width={620}
-      disabled={!name.trim() || missing}
-      onClose={onClose}
-      onSubmit={async () => {
-        const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
-        const settings = {
-          auto_provision_users: autoProvision,
-          external_role_ids: externalRoles,
-          custom_identity: customIdentity,
-          default_sync_mode: syncMode,
-        };
-        const out = await run(
-          () =>
-            conn
-              ? api.patch<Connection>(`/api/connections/${conn.id}`, {
-                  name: name.trim(),
-                  settings,
-                  ...(Object.keys(filled).length ? { credentials: filled } : {}),
-                })
-              : api.post<Connection>("/api/connections", {
-                  platform,
-                  name: name.trim(),
-                  credentials: filled,
-                  settings,
-                }),
-          conn ? "已保存" : "接入已创建，请把事件地址配置到平台后台，然后测试连接",
-        );
-        if (out) onSaved(out);
+    <form
+      className="form form-narrow"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!disabled) void submit();
       }}
     >
-      <div className="form-row">
-        <Field label="平台">
-          <select value={platform} disabled={!!conn} onChange={(e) => (setPlatform(e.target.value), setCreds({}))}>
-            <option value="slack">Slack</option>
-            <option value="feishu">飞书（实验性）</option>
-            <option value="github">GitHub</option>
-          </select>
-        </Field>
-        <Field label="名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：公司 Slack" />
-        </Field>
-      </div>
+      <Field label="名称" hint="在 witden 中区分不同的接入。">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={`例如：公司 ${PLATFORM_LABEL[platform] ?? platform}`}
+        />
+      </Field>
       {platform === "github" ? (
         <Field
           label="接入方式"
@@ -814,43 +785,15 @@ function ConnectionEditor({
           )}
         </Field>
       ))}
-      <Field label="新会话默认同步范围" hint="接入平台不等于导入全部消息">
-        <select value={syncMode} onChange={(e) => setSyncMode(e.target.value as typeof syncMode)}>
-          {Object.entries(SYNC_MODE).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Toggle
-        checked={autoProvision}
-        onChange={setAutoProvision}
-        label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
-      />
-      {autoProvision ? (
-        <FieldGroup
-          label="外部成员可以使用的角色"
-          hint="只对外部成员生效；其他授权（包括授予所有人的）不适用于外部成员。"
-        >
-          <MultiPick
-            columns={3}
-            options={dir.roles
-              .filter((r) => r.status === "active")
-              .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
-            value={externalRoles}
-            onChange={setExternalRoles}
-            empty="还没有可用的角色"
-          />
-        </FieldGroup>
-      ) : null}
-      {platform !== "github" ? (
-        <Toggle
-          checked={customIdentity}
-          onChange={setCustomIdentity}
-          label="以角色自己的名称和头像发送消息（Slack 需要 chat:write.customize）"
-        />
-      ) : null}
-    </FormModal>
+      <ConnectionSettingsFields platform={platform} value={settings} onChange={setSettings} />
+      <div className="btn-row">
+        <button type="submit" className="btn btn-primary" disabled={disabled}>
+          {busy ? "处理中…" : conn ? "保存" : "创建接入"}
+        </button>
+        <button type="button" className="btn" onClick={onCancel}>
+          取消
+        </button>
+      </div>
+    </form>
   );
 }

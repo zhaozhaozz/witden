@@ -110,7 +110,7 @@ export async function processInbound(limit = 20): Promise<number> {
     let status: string;
     let detail: string | null = null;
     try {
-      status = await processOne(row.kind, row.payload);
+      ({ status, detail = null } = await processOne(row.kind, row.payload));
     } catch (err) {
       console.error("[witden] inbound event failed", err);
       detail = `${(err as Error).name}: ${(err as Error).message}`;
@@ -132,21 +132,24 @@ export async function processInbound(limit = 20): Promise<number> {
   return rows.length;
 }
 
-async function processOne(kind: string, action: any): Promise<string> {
-  if (kind === "edit")
-    return (await handleEdit(action.connectionId, action.conversationId, action.ts, action.text))
-      ? "edited"
-      : "ignored";
+async function processOne(kind: string, action: any): Promise<{ status: string; detail?: string | null }> {
+  if (kind === "edit") {
+    const done = await handleEdit(action.connectionId, action.conversationId, action.ts, action.text);
+    return { status: done ? "edited" : "ignored" };
+  }
   if (kind === "delete")
-    return (await handleDelete(action.connectionId, action.conversationId, action.ts)) ? "deleted" : "ignored";
+    return {
+      status: (await handleDelete(action.connectionId, action.conversationId, action.ts)) ? "deleted" : "ignored",
+    };
   const msg = action.message as InboundMessage;
   const [conn] = await getDb().select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);
-  if (!conn) return "unknown_connection";
+  if (!conn) return { status: "unknown_connection" };
   const adapter = await getAdapter(conn);
   const reply: Reply | undefined = adapter.reply
     ? (text) => adapter.reply!(conn, msg.conversationId, msg.threadKey, text)
     : undefined;
-  return String((await handleMessage(msg, reply)).status);
+  const out = await handleMessage(msg, reply);
+  return { status: String(out.status), detail: (out.detail as string | undefined) ?? null };
 }
 
 export async function resolveIdentity(
@@ -335,9 +338,16 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
         .where(eq(messages.id, stored.id))
         .returning();
     }
+    let refused: string[] = [];
     const created = await dispatchHumanMessage(db, topic, stored, user, {
       idempotencyPrefix: `${conn.id}:${msg.eventKey}`,
+      onRefused: (reasons) => {
+        refused = reasons;
+      },
     });
+    // Nothing started because the rules or the roles refused: the connection page shows why.
+    if (!created.length && refused.length)
+      return { status: "not_assigned", topic_id: topic.id, detail: refused.join("; ") };
     return { status: "dispatched", topic_id: topic.id, tasks: created.map((t) => t.id) };
   });
   if (notice && reply) await reply(notice).catch(() => {});

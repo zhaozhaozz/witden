@@ -401,7 +401,7 @@ export async function dispatchHumanMessage(
   topic: Topic,
   msg: Message,
   user: User,
-  opts: { idempotencyPrefix?: string } = {},
+  opts: { idempotencyPrefix?: string; onRefused?: (reasons: string[]) => void } = {},
 ): Promise<Task[]> {
   const mentioned = msg.mentions.filter((m) => m.type === "role").map((m) => m.id);
   await hintUnknownMentions(db, topic, msg, user);
@@ -463,6 +463,7 @@ export async function dispatchHumanMessage(
     await systemMessage(db, topic, `Request not assigned: ${[...new Set(refusals)].join("; ")}`, {
       mentions: [{ type: "user", id: user.id }],
     });
+    opts.onRefused?.([...new Set(refusals)]);
   }
   return created;
 }

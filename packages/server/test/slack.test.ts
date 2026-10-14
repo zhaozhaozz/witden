@@ -42,7 +42,7 @@ class FakeSlack {
       init?.method === "POST" ? JSON.parse(String(init.body ?? "{}")) : Object.fromEntries(url.searchParams);
     switch (method) {
       case "auth.test":
-        return json({ ok: true, team_id: "T1", user_id: "UBOT", team: "Acme" });
+        return json({ ok: true, team_id: "T1", user_id: "UBOT", team: "Acme", user: "witden" });
       case "conversations.info": {
         const ch = String(params.channel);
         const info = { id: ch, name: ch.toLowerCase(), is_private: ch.startsWith("G"), is_im: ch.startsWith("D") };
@@ -128,7 +128,9 @@ describe("slack", () => {
     expect(res.status, res.raw).toBe(200);
     expect(res.raw).not.toContain("xoxb");
     conn = res.body;
-    expect((await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body.ok).toBe(true);
+    // The setup guide shows which workspace and bot the credentials belong to.
+    const tested = await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken });
+    expect(tested.body).toMatchObject({ ok: true, team: "Acme", bot: "witden", bot_user_id: "UBOT" });
     // Slack accounts are linked to members by their Slack user id.
     await link(conn.id, "UALICE", w.ids.alice);
     await link(conn.id, "UBOB", w.ids.bob);
@@ -166,10 +168,12 @@ describe("slack", () => {
     await enqueueInbound(db(), conn.id, await adapter.parse(db(), row, event("<@UBOT> @dev second", { ts: "701.1" })));
     expect(await allTasks()).toHaveLength(0);
     // ...and another one was being processed when it died
-    await db()
+    const stalled = await db()
       .update(processedEvents)
       .set({ status: "processing", claimedAt: new Date(Date.now() - 10 * 60_000) })
-      .where(eq(processedEvents.eventKey, "Ev701.1app_mention"));
+      .where(eq(processedEvents.eventKey, "msg:C1:701.1"))
+      .returning();
+    expect(stalled).toHaveLength(1);
     expect(await processInbound()).toBe(2);
     expect(await allTasks()).toHaveLength(2);
     expect(await processInbound()).toBe(0);
@@ -328,6 +332,12 @@ describe("slack", () => {
     });
     expect(slack.posts.find((p) => p.text.includes("not assigned"))?.thread_ts).toBe("400.1");
     expect(await allTasks()).toEqual([]);
+    // The connection's event list says the request was not handed to a role, and why.
+    const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
+    expect(inbound.find((e: any) => e.event_key === "msg:C1:400.1")).toMatchObject({
+      status: "not_assigned",
+      detail: expect.stringContaining("no assignment rule"),
+    });
   });
 
   it("edits and deletes follow Slack", async () => {
