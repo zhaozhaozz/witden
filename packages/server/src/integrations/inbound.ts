@@ -33,7 +33,7 @@ import { audit } from "../services/audit.js";
 import { saveArtifact } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
-import { getAdapter, type InboundAction } from "./base.js";
+import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
 
 const ROLE_TOKEN = /(?:(?<![\w@])@|\brole:)([a-z0-9][a-z0-9_.-]{0,31})/gi;
 
@@ -45,6 +45,11 @@ export interface InboundMessage {
   conversationKind: string; // public | private | im | mpim
   conversationName: string | null;
   threadKey: string; // thread root id; "__dm__" for a whole DM
+  /**
+   * The topic the message belongs to, when it is not one topic per thread: "__channel__" puts a whole Slack
+   * channel into one topic, as Slack shows it. Defaults to the thread.
+   */
+  topicKey?: string;
   messageTs: string;
   userId: string;
   userName: string | null;
@@ -161,7 +166,14 @@ async function processOne(kind: string, action: any): Promise<{ status: string; 
   if (!conn) return { status: "unknown_connection" };
   const adapter = await getAdapter(conn);
   const reply: Reply | undefined = adapter.reply
-    ? (text) => adapter.reply!(conn, msg.conversationId, msg.threadKey, text)
+    ? // in a channel, a message posted in the channel itself is answered in the channel
+      (text) =>
+        adapter.reply!(
+          conn,
+          msg.conversationId,
+          msg.topicKey === CHANNEL && msg.threadKey === msg.messageTs ? "" : msg.threadKey,
+          text,
+        )
     : undefined;
   const out = await handleMessage(msg, reply);
   return { status: String(out.status), detail: (out.detail as string | undefined) ?? null };
@@ -247,17 +259,17 @@ async function upsertConversation(db: Db, conn: Connection, msg: InboundMessage)
     .returning();
   if (!existing.name && update.name) {
     // Topics titled by the conversation's id before its name was known take the name.
-    const prefix = `#${existing.externalId}:`;
+    const prefix = `#${existing.externalId}`;
     const linked = await db
       .select({ id: topics.id, title: topics.title })
       .from(externalThreadLinks)
       .innerJoin(topics, eq(topics.id, externalThreadLinks.topicId))
       .where(eq(externalThreadLinks.conversationId, existing.id));
     for (const t of linked)
-      if (t.title.startsWith(prefix))
+      if (t.title === prefix || t.title.startsWith(`${prefix}:`))
         await db
           .update(topics)
-          .set({ title: `#${update.name}:${t.title.slice(prefix.length)}` })
+          .set({ title: `#${update.name}${t.title.slice(prefix.length)}` })
           .where(eq(topics.id, t.id));
   }
   return row;
@@ -270,20 +282,30 @@ async function threadTopic(
   msg: InboundMessage,
   starter: User,
 ): Promise<Topic> {
-  const [link] = await db
-    .select()
-    .from(externalThreadLinks)
-    .where(and(eq(externalThreadLinks.conversationId, conv.id), eq(externalThreadLinks.threadKey, msg.threadKey)))
-    .limit(1);
+  const linkFor = async (key: string) =>
+    (
+      await db
+        .select()
+        .from(externalThreadLinks)
+        .where(and(eq(externalThreadLinks.conversationId, conv.id), eq(externalThreadLinks.threadKey, key)))
+        .limit(1)
+    )[0];
+  const key = msg.topicKey ?? msg.threadKey;
+  // A thread an internal topic was published to keeps going to that topic, even inside a channel topic.
+  const own = key !== msg.threadKey ? await linkFor(msg.threadKey) : undefined;
+  const link = own ?? (await linkFor(key));
   if (link) return topicSvc.getTopic(db, link.topicId);
   const isDm = conv.kind === "im";
   const first = (msg.text.trim().split("\n")[0] || "thread").replace(/\*\*/g, "").slice(0, 80);
-  // A DM is named after its person; an issue / PR after itself; a channel thread after its first line.
+  // A DM is named after its person, a channel after itself, an issue / PR after itself, a thread after its
+  // first line.
   const title = isDm
     ? starter.name
-    : msg.thread?.title
-      ? `${conv.name ?? conv.externalId}#${msg.threadKey} ${msg.thread.title}`.slice(0, 200)
-      : `#${conv.name ?? conv.externalId}: ${first}`;
+    : key === CHANNEL
+      ? `#${conv.name ?? conv.externalId}`
+      : msg.thread?.title
+        ? `${conv.name ?? conv.externalId}#${msg.threadKey} ${msg.thread.title}`.slice(0, 200)
+        : `#${conv.name ?? conv.externalId}: ${first}`;
   const [topic] = await db
     .insert(topics)
     .values({
@@ -299,11 +321,31 @@ async function threadTopic(
     id: newId("lnk"),
     connectionId: conn.id,
     conversationId: conv.id,
-    threadKey: msg.threadKey,
+    threadKey: key,
     topicId: topic.id,
-    meta: msg.thread ?? {},
+    meta: key === CHANNEL ? { kind: "channel" } : (msg.thread ?? {}),
   });
   return topic;
+}
+
+/**
+ * A reply inside a thread of a channel topic points at the thread's first message, as Slack shows replies
+ * under it; messages posted in the channel itself point at nothing.
+ */
+async function threadRoot(db: Db, topic: Topic, msg: InboundMessage): Promise<string | null> {
+  if (msg.topicKey !== CHANNEL || msg.threadKey === msg.messageTs) return null;
+  const [root] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.topicId, topic.id),
+        sql`${messages.externalRef}->>'conversation' = ${msg.conversationId}`,
+        sql`${messages.externalRef}->>'ts' = ${msg.threadKey}`,
+      ),
+    )
+    .limit(1);
+  return root?.id ?? null;
 }
 
 async function roleMentions(db: Db, text: string): Promise<string[]> {
@@ -358,6 +400,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     for (const rid of roleIds) if (await topicSvc.participant(db, topic.id, "role", rid)) present.push(rid);
     let stored = await saveMessage(db, topic, "user", user.id, msg.text, {
       mentions: present.map((id) => ({ type: "role" as const, id })),
+      replyToId: await threadRoot(db, topic, msg),
       source: conn.platform,
       externalRef: { conversation: msg.conversationId, ts: msg.messageTs, thread: msg.threadKey },
     });

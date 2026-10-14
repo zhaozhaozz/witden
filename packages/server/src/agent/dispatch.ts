@@ -1,11 +1,12 @@
 /** Turning messages into work: who should respond, is it allowed, and what may the work touch. */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   agentSessions,
   computerInstances,
+  externalThreadLinks,
   type Mention,
   type Message,
   messageRoutes,
@@ -20,6 +21,7 @@ import {
   users,
 } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
+import { CHANNEL } from "../integrations/base.js";
 import { externalContext } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
 import { topicLabel } from "../security/labels.js";
@@ -114,11 +116,12 @@ export function systemMessage(
   db: Db,
   topic: Topic,
   content: string,
-  opts: { taskId?: string | null; mentions?: Mention[] } = {},
+  opts: { taskId?: string | null; mentions?: Mention[]; replyToId?: string | null } = {},
 ) {
   return saveMessage(db, topic, "system", null, content, {
     mentions: opts.mentions ?? [],
     taskId: opts.taskId ?? null,
+    replyToId: opts.replyToId ?? null,
   });
 }
 
@@ -358,7 +361,13 @@ async function resumeWaiting(
   return resumed;
 }
 
-export async function lastActiveRole(db: Db, topic: Topic): Promise<string | null> {
+export async function lastActiveRole(db: Db, topic: Topic, msg?: Message): Promise<string | null> {
+  const [channel] = await db
+    .select({ id: externalThreadLinks.id })
+    .from(externalThreadLinks)
+    .where(and(eq(externalThreadLinks.topicId, topic.id), eq(externalThreadLinks.threadKey, CHANNEL)))
+    .limit(1);
+  if (channel) return threadRole(db, topic, msg?.replyToId ?? null);
   const [last] = await db
     .select({ authorId: messages.authorId })
     .from(messages)
@@ -372,6 +381,31 @@ export async function lastActiveRole(db: Db, topic: Topic): Promise<string | nul
     .select({ roleId: tasks.ownerRoleId })
     .from(tasks)
     .where(eq(tasks.topicId, topic.id))
+    .orderBy(desc(tasks.createdAt))
+    .limit(1);
+  if (recent && (await topicSvc.participant(db, topic.id, "role", recent.roleId))) return recent.roleId;
+  return null;
+}
+
+/**
+ * In a channel topic only a Slack thread carries on with the role working in it (the last one that answered
+ * there, or whose task was asked there); a message posted in the channel itself goes to the role the
+ * assignment rules pick.
+ */
+async function threadRole(db: Db, topic: Topic, root: string | null): Promise<string | null> {
+  if (!root) return null;
+  const [last] = await db
+    .select({ authorId: messages.authorId })
+    .from(messages)
+    .where(and(eq(messages.topicId, topic.id), eq(messages.authorType, "role"), eq(messages.replyToId, root)))
+    .orderBy(desc(messages.createdAt))
+    .limit(1);
+  if (last?.authorId && (await topicSvc.participant(db, topic.id, "role", last.authorId))) return last.authorId;
+  const [recent] = await db
+    .select({ roleId: tasks.ownerRoleId })
+    .from(tasks)
+    .innerJoin(messages, eq(messages.id, tasks.sourceMessageId))
+    .where(and(eq(tasks.topicId, topic.id), or(eq(messages.id, root), eq(messages.replyToId, root))))
     .orderBy(desc(tasks.createdAt))
     .limit(1);
   if (recent && (await topicSvc.participant(db, topic.id, "role", recent.roleId))) return recent.roleId;
@@ -420,7 +454,7 @@ export async function dispatchHumanMessage(
   } else if (external) {
     // Follow-ups in an external thread go to the role already working there; the first request gets the
     // default role from the assignment rules (empty candidate list).
-    const last = await lastActiveRole(db, topic);
+    const last = await lastActiveRole(db, topic, msg);
     candidates = last ? [last] : [];
   } else {
     // Nobody was @-mentioned. "mention" topics stay quiet. In "auto" topics a single role sees the message and
@@ -462,6 +496,8 @@ export async function dispatchHumanMessage(
     });
     await systemMessage(db, topic, `Request not assigned: ${[...new Set(refusals)].join("; ")}`, {
       mentions: [{ type: "user", id: user.id }],
+      // in the Slack thread the request came from, if it came from one
+      replyToId: msg.replyToId,
     });
     opts.onRefused?.([...new Set(refusals)]);
   }

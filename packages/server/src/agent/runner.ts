@@ -5,13 +5,13 @@
  * computer operations go through the execution gateway. Database transactions stay short: model calls and
  * computer operations happen outside them.
  */
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { GatewayClient, RecoverResult } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { approvals, roles, type Task, tasks, topics, usageRecords } from "../db/schema.js";
+import { approvals, messages, roles, type Task, tasks, topics, usageRecords } from "../db/schema.js";
 import { InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
 import { redact } from "../security/crypto.js";
 import { Perm, usersWithPermission } from "../security/permissions.js";
@@ -393,7 +393,32 @@ export class TaskRunner {
       if (task?.status !== "running") return;
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
-      const text = redact(content.trim()) || "(no answer)";
+      const said = redact(content.trim());
+      // Everything may already have been said with send_message: then the empty final answer posts nothing.
+      const [sent] = said
+        ? []
+        : await tx
+            .select({ content: messages.content })
+            .from(messages)
+            .where(and(eq(messages.taskId, task.id), eq(messages.authorType, "role")))
+            .orderBy(desc(messages.createdAt))
+            .limit(1);
+      if (sent) {
+        const done = await setStatus(tx, task, "completed", null, { result: sent.content });
+        if (!(await textRestricted(tx, done))) await recordSessionNote(tx, done, sent.content);
+        await audit(tx, "task.complete", {
+          actorType: "role",
+          actorId: role.id,
+          taskId,
+          topicId: topic.id,
+          roleId: role.id,
+          instanceId: task.instanceId,
+          detail: { steps: task.usage?.steps },
+        });
+        await notifyParent(tx, done);
+        return;
+      }
+      const text = said || "(no answer)";
       const delivery = await deliver(tx, task, role, topic, text, { final: true });
       if (delivery.approval) {
         await setStatus(tx, task, "waiting_approval", "final answer waiting for disclosure approval", {

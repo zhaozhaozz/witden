@@ -7,6 +7,9 @@ import type { Db } from "../db/client.js";
 import type { Connection, ExternalConversation, Message, OutboundMessage } from "../db/schema.js";
 import type { InboundMessage } from "./inbound.js";
 
+/** The topic key of a whole channel: one topic per channel instead of per thread (InboundMessage.topicKey). */
+export const CHANNEL = "__channel__";
+
 export type InboundAction =
   | { kind: "message"; message: InboundMessage }
   | { kind: "edit"; connectionId: string; conversationId: string; ts: string; text: string }

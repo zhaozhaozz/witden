@@ -7,9 +7,35 @@ import {
   externalConversations,
   externalThreadLinks,
   type Message,
+  messages,
   outboundMessages,
+  tasks,
 } from "../db/schema.js";
 import { wake } from "../services/events.js";
+import { CHANNEL } from "./base.js";
+
+/**
+ * Where a message goes in a channel topic: into the thread it replies to, or into the thread of the message
+ * its task answers; otherwise straight into the channel. So a role answers where it was asked.
+ */
+async function answerThread(db: Db, msg: Message, conversation: string): Promise<string | null> {
+  const ref = (m: Message | undefined) =>
+    m?.externalRef?.conversation === conversation ? (m.externalRef as { ts?: string; thread?: string }) : null;
+  if (msg.replyToId) {
+    const [root] = await db.select().from(messages).where(eq(messages.id, msg.replyToId)).limit(1);
+    const r = ref(root);
+    if (r?.thread) return r.thread;
+  }
+  if (msg.taskId) {
+    const [task] = await db.select().from(tasks).where(eq(tasks.id, msg.taskId)).limit(1);
+    const [source] = task?.sourceMessageId
+      ? await db.select().from(messages).where(eq(messages.id, task.sourceMessageId)).limit(1)
+      : [];
+    const r = ref(source);
+    if (r?.thread && r.thread !== r.ts) return r.thread;
+  }
+  return null;
+}
 
 export async function mirrorMessage(db: Db, msg: Message): Promise<number> {
   const links = await db.select().from(externalThreadLinks).where(eq(externalThreadLinks.topicId, msg.topicId));
@@ -32,11 +58,17 @@ export async function mirrorMessage(db: Db, msg: Message): Promise<number> {
       .limit(1);
     if (existing) continue;
     const active = conn.status === "active";
+    const threadKey =
+      link.threadKey === "__dm__"
+        ? null
+        : link.threadKey === CHANNEL
+          ? await answerThread(db, msg, conv.externalId)
+          : link.threadKey;
     await db.insert(outboundMessages).values({
       id: newId("out"),
       connectionId: conn.id,
       conversationExternalId: conv.externalId,
-      threadKey: link.threadKey === "__dm__" ? null : link.threadKey,
+      threadKey,
       messageId: msg.id,
       idempotencyKey: key,
       payload: { author_type: msg.authorType, author_id: msg.authorId },

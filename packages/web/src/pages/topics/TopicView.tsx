@@ -350,11 +350,18 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                   m.author_type !== "system" &&
                   (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) < 5 * 60_000;
                 const author = authorOf(m);
+                // a reply inside a Slack thread shows the thread's first message, as Slack does
+                const root = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
                 return (
                   <MessageItem
                     key={m.id}
                     msg={m}
                     author={author}
+                    replyTo={
+                      m.reply_to_id
+                        ? { author: root ? authorOf(root).name : null, excerpt: root?.content.slice(0, 80) ?? null }
+                        : null
+                    }
                     mentionTokens={mentionTokens(m)}
                     compact={compact}
                     files={fileMap}

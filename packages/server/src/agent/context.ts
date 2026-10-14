@@ -3,11 +3,14 @@
  * from earlier runs whose results were delivered here), recent topic messages it may read, and the brief.
  * Nothing from other topics is included unless the role explicitly references it (read_topic).
  */
-import { and, desc, eq, isNull, lte } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   agentSessions,
   computerInstances,
+  externalConversations,
+  externalThreadLinks,
+  type Message,
   memories,
   messages,
   type Role,
@@ -30,9 +33,10 @@ export const PLATFORM_RULES = `## How you work (enforced by the platform)
 - The desktop is shared with people who may be watching. Hold it only while you need it (release_desktop when done) and prefer a background browser session for work nobody needs to watch.
 - If a tool result says an earlier action's outcome is uncertain, look (screenshot, read the file, check the page) before repeating it.
 - When you hand work to another role use delegate_task with a self-contained brief, the expected output and only the materials needed. Do not forward unrelated context.
-- Use post_progress for long tasks so people can follow along.
+- Talk like a person in a chat: use send_message to answer right away ("looking into it", a partial result, a follow-up) and keep working; you can send several messages for one request. Use post_progress for long tasks so people can follow along.
+- You are given the latest messages of this topic; use topic_history to read further back, search it or read a whole thread.
 - Never claim something is done if it is not. Report errors and partial results plainly.
-- When you are finished, reply with your final answer (no tool call). It is posted to the topic and rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message.`;
+- When you are finished, reply with your final answer (no tool call). If you already said everything with send_message, the final answer may be empty and nothing more is posted. Otherwise it is posted to the topic and rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message.`;
 
 export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic): Promise<string> {
   const [inst] = task.instanceId
@@ -99,9 +103,7 @@ export async function firstUserMessage(db: Db, task: Task, topic: Topic): Promis
   const lines: string[] = [];
   for (const m of recent) {
     if (m.id === task.sourceMessageId) continue;
-    lines.push(
-      `[${m.createdAt.toISOString().slice(5, 16).replace("T", " ")}] ${await authorName(db, m.authorType, m.authorId)}: ${m.content}`,
-    );
+    lines.push(await historyLine(db, m));
   }
   let who = "a teammate";
   if (task.requesterUserId) {
@@ -119,7 +121,78 @@ export async function firstUserMessage(db: Db, task: Task, topic: Topic): Promis
   const auto = task.envelope?.auto
     ? "\n\n(Nobody @-mentioned you: this message reached you because the topic answers automatically. Answer only if it needs you; if it is small talk, addressed to someone else, not your responsibility or already handled, call stay_silent instead.)"
     : "";
-  return `${sessionPart}Recent messages in this topic:\n${lines.join("\n") || "(no earlier messages)"}\n\n---\nRequest from ${who}:\n${task.instruction}${auto}`;
+  const trigger = await triggerInfo(db, task, topic);
+  return `${sessionPart}Recent messages in this topic:\n${lines.join("\n") || "(no earlier messages)"}\n\n---\n${trigger}Request from ${who}:\n${task.instruction}${auto}`;
+}
+
+const PLATFORMS: Record<string, string> = { slack: "Slack", github: "GitHub", feishu: "Feishu" };
+const THREAD_MESSAGES = 20;
+
+async function historyLine(db: Db, m: Message): Promise<string> {
+  const where = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
+  return `[${m.id} ${m.createdAt.toISOString().slice(5, 16).replace("T", " ")}] ${await authorName(db, m.authorType, m.authorId)}${where}: ${m.content}`;
+}
+
+/**
+ * The message being answered: who sent it, where (console, a channel, a Slack thread, a DM, an issue) and
+ * when; and the thread so far when it was asked in one. The role's messages go back to the same place.
+ */
+async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
+  if (!task.sourceMessageId) return "";
+  const [src] = await db.select().from(messages).where(eq(messages.id, task.sourceMessageId)).limit(1);
+  if (!src) return "";
+  const ref = src.externalRef as { conversation?: string } | null;
+  let where = "this topic, in the witden console";
+  if (ref?.conversation) {
+    const [conv] = await db
+      .select({
+        name: externalConversations.name,
+        kind: externalConversations.kind,
+        meta: externalThreadLinks.meta,
+      })
+      .from(externalThreadLinks)
+      .innerJoin(externalConversations, eq(externalConversations.id, externalThreadLinks.conversationId))
+      .where(and(eq(externalThreadLinks.topicId, topic.id), eq(externalConversations.externalId, ref.conversation)))
+      .limit(1);
+    const platform = PLATFORMS[src.source] ?? src.source;
+    const place = conv?.name ?? ref.conversation;
+    const meta = (conv?.meta ?? {}) as { kind?: string; title?: string };
+    where =
+      conv?.kind === "im"
+        ? `a ${platform} direct message`
+        : meta.kind === "channel"
+          ? `${platform} #${place}, posted directly in the channel`
+          : meta.kind
+            ? `${platform} ${place}, ${meta.kind.replace("_", " ")} «${meta.title ?? ""}»`
+            : `${platform} ${place}`;
+  }
+  let thread = "";
+  if (src.replyToId) {
+    const posts = await db
+      .select()
+      .from(messages)
+      .where(
+        and(
+          or(eq(messages.id, src.replyToId), eq(messages.replyToId, src.replyToId)),
+          isNull(messages.deletedAt),
+          lte(messages.createdAt, src.createdAt),
+        ),
+      )
+      .orderBy(desc(messages.createdAt))
+      .limit(THREAD_MESSAGES);
+    const shown: string[] = [];
+    for (const m of posts.reverse()) if (m.id !== src.id) shown.push(await historyLine(db, m));
+    where = where.replace(", posted directly in the channel", "") + `, as a reply in the thread of ${src.replyToId}`;
+    thread = `The thread so far:\n${shown.join("\n") || "(its first message is not in this topic)"}\n\n`;
+  }
+  return `${thread}The message you are answering:
+- From: ${await authorName(db, src.authorType, src.authorId)}
+- Where: ${where}
+- Sent: ${src.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC
+- Message id: ${src.id}
+Your messages (send_message and the final answer) go to the same place.
+
+`;
 }
 
 export async function initialMessages(db: Db, task: Task, role: Role, topic: Topic): Promise<ChatMessage[]> {

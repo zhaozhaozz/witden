@@ -3629,6 +3629,15 @@ img.avatar-role.avatar-colored {
 .setup-routes {
   margin-top: 6px;
 }
+.msg-reply {
+  margin: 0 0 3px;
+  font-size: 12px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 60ch;
+}
 .setup-chip {
   display: inline-block;
   margin: 4px 6px 0 0;

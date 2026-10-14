@@ -7,7 +7,7 @@
  * computer; the worker never executes anything itself.
  */
 import type { RunnerOp } from "@witden/shared";
-import { and, eq, gte, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
@@ -360,6 +360,75 @@ async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise
     if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a message");
     return { content: `message posted; @${handle} will respond in the topic` };
   });
+}
+
+/** Post in this topic now and keep working: a person answers in several messages, so may a role. */
+async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const text = String(args.text ?? "").trim();
+  if (!text) throw new BadRequest("text is required");
+  return transaction(async (db) => {
+    const { task, role, topic } = await load(ctx, db);
+    const result = await deliver(db, task, role, topic, text.slice(0, 20_000), {
+      final: false,
+      toolCallId: ctx.toolCallId,
+    });
+    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a message");
+    return { content: "sent" };
+  });
+}
+
+const HISTORY_LIMIT = 100;
+
+/**
+ * Read this topic beyond the recent messages given at the start: page back, search, or read one Slack thread.
+ * Lines carry message ids, so a thread or an earlier page can be asked for next.
+ */
+async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const db = ctx.db();
+  const { topic } = await load(ctx, db);
+  const conds = [eq(messages.topicId, topic.id), isNull(messages.deletedAt)];
+  if (args.query) conds.push(ilike(messages.content, `%${String(args.query)}%`));
+  if (args.thread) {
+    // a thread: its first message and the replies pointing at it
+    const root = String(args.thread);
+    conds.push(or(eq(messages.id, root), eq(messages.replyToId, root))!);
+  }
+  if (args.before) {
+    const [mark] = await db
+      .select()
+      .from(messages)
+      .where(eq(messages.id, String(args.before)))
+      .limit(1);
+    const at = mark?.createdAt ?? new Date(String(args.before));
+    if (Number.isNaN(at.getTime())) throw new BadRequest("before must be a message id or a time");
+    conds.push(lt(messages.createdAt, at));
+  }
+  const limit = Math.max(1, Math.min(Number(args.limit ?? 30), HISTORY_LIMIT));
+  const rows = (
+    await db
+      .select()
+      .from(messages)
+      .where(and(...conds))
+      .orderBy(desc(messages.createdAt))
+      .limit(limit)
+  ).reverse();
+  const lines: string[] = [];
+  for (const m of rows) {
+    const where = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
+    lines.push(
+      `[${m.id} ${m.createdAt.toISOString().slice(0, 16).replace("T", " ")}] ${await authorName(db, m.authorType, m.authorId)}${where}: ${m.content}`,
+    );
+  }
+  const total = (
+    await db
+      .select({ n: sql<number>`count(*)` })
+      .from(messages)
+      .where(and(...conds))
+  )[0].n;
+  return {
+    content: `${Number(total)} matching message(s) in this topic, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`,
+    labels: [topicLabel(topic.id)],
+  };
 }
 
 async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -820,6 +889,20 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       "Ask people in this topic a question (clarification, a decision, a login or approval) and wait for the answer. Defaults to the requester.",
       obj({ question: str, people: { type: "array", items: str } }, ["question"]),
       askHuman,
+    ),
+    spec(
+      "send_message",
+      null,
+      "Post a message in this topic right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. It goes where the request was asked (the channel, or the Slack thread).",
+      obj({ text: str }, ["text"]),
+      sendMessage,
+    ),
+    spec(
+      "topic_history",
+      null,
+      "Read more of this topic than the recent messages you were given: page back (before a message id or time), search for words (query), or read one Slack thread (thread = the id of its first message). Lines start with message ids.",
+      obj({ query: str, before: str, thread: str, limit: int }),
+      topicHistory,
     ),
     spec(
       "post_progress",

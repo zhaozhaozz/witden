@@ -94,9 +94,12 @@ export function MessageItem({
   onEdit,
   onDelete,
   mentionTokens,
+  replyTo,
 }: {
   msg: Message;
   author: Author;
+  /** The first message of the Slack thread this one replies in (null when it is not loaded). */
+  replyTo?: { author: string | null; excerpt: string | null } | null;
   compact: boolean;
   files: Map<string, Artifact>;
   /** "@" tokens of the participants this message really mentions (highlighted; other "@…" are text). */
@@ -173,6 +176,12 @@ export function MessageItem({
                 第 {msg.round} 轮
               </span>
             ) : null}
+          </div>
+        ) : null}
+        {replyTo ? (
+          <div className="msg-reply" title="在 Slack 的 thread 中回复">
+            ↳ 回复 {replyTo.author ?? "一条较早的消息"}
+            {replyTo.excerpt ? `：${replyTo.excerpt}` : ""}
           </div>
         ) : null}
         {msg.deleted ? (

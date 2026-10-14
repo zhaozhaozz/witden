@@ -120,6 +120,13 @@
       "when": 1791965465418,
       "tag": "0016_record_all_threads",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1791967623234,
+      "tag": "0017_slack_channel_topics",
+      "breakpoints": true
     }
   ]
 }

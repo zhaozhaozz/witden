@@ -17,6 +17,7 @@ export function conversationKind(t: Topic): string {
   if (c.thread_kind === "issue") return "Issue";
   if (c.conversation_kind === "im") return "私信";
   if (c.conversation_kind === "mpim") return "多人私信";
+  if (c.thread_kind === "channel") return c.conversation_kind === "private" ? "私有频道" : "频道";
   return c.platform === "feishu" ? "群聊" : "频道 thread";
 }
 

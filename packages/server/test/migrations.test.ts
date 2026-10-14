@@ -238,3 +238,90 @@ describe("0016_record_all_threads", () => {
     await db.close();
   });
 });
+
+describe("0017_slack_channel_topics", () => {
+  it("merges a Slack channel's thread topics into one topic for the channel, keeping published threads", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0017")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into users (id, name) values ('usr_a', 'alice'), ('usr_b', 'bob');
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into connections (id, platform, name) values ('conn_1', 'slack', 'acme');
+      insert into external_conversations (id, connection_id, external_id, kind, name) values
+        ('conv_c', 'conn_1', 'C1', 'public', 'general'), ('conv_d', 'conn_1', 'D1', 'im', null);
+      insert into topics (id, title, kind, source, created_by, created_at) values
+        ('top_1', '#general: nihao', 'group', 'slack', 'usr_a', '2026-10-14 08:08'),
+        ('top_2', '#general: 你好', 'group', 'slack', 'usr_b', '2026-10-14 08:09'),
+        ('top_3', '#general: 你是谁', 'group', 'slack', 'usr_a', '2026-10-14 08:10'),
+        ('top_pub', 'Release plan', 'group', 'web', 'usr_a', '2026-10-14 07:00'),
+        ('top_dm', 'alice', 'dm', 'slack', 'usr_a', '2026-10-14 08:00');
+      insert into external_thread_links (id, connection_id, conversation_id, thread_key, topic_id) values
+        ('lnk_1', 'conn_1', 'conv_c', '100.1', 'top_1'),
+        ('lnk_2', 'conn_1', 'conv_c', '200.1', 'top_2'),
+        ('lnk_3', 'conn_1', 'conv_c', '300.1', 'top_3'),
+        ('lnk_pub', 'conn_1', 'conv_c', '50.1', 'top_pub'),
+        ('lnk_dm', 'conn_1', 'conv_d', '__dm__', 'top_dm');
+      insert into topic_participants (id, topic_id, participant_type, participant_id) values
+        ('tp_1', 'top_1', 'user', 'usr_a'), ('tp_2', 'top_2', 'user', 'usr_b'), ('tp_2r', 'top_2', 'role', 'role_dev'),
+        ('tp_3', 'top_3', 'user', 'usr_a');
+      insert into messages (id, topic_id, author_type, author_id, content, source, external_ref, created_at) values
+        ('msg_1', 'top_1', 'user', 'usr_a', 'nihao', 'slack', '{"conversation": "C1", "ts": "100.1", "thread": "100.1"}', '2026-10-14 08:08'),
+        ('msg_1r', 'top_1', 'role', 'role_dev', 'hi alice', 'web', null, '2026-10-14 08:08:30'),
+        ('msg_2', 'top_2', 'user', 'usr_b', '你好', 'slack', '{"conversation": "C1", "ts": "200.1", "thread": "200.1"}', '2026-10-14 08:09'),
+        ('msg_2b', 'top_2', 'user', 'usr_a', 'in the thread', 'slack', '{"conversation": "C1", "ts": "200.5", "thread": "200.1"}', '2026-10-14 08:09:30'),
+        ('msg_3', 'top_3', 'user', 'usr_a', '你是谁', 'slack', '{"conversation": "C1", "ts": "300.1", "thread": "300.1"}', '2026-10-14 08:10'),
+        ('msg_pub', 'top_pub', 'user', 'usr_a', 'plan', 'web', null, '2026-10-14 07:00');
+      insert into agent_sessions (id, topic_id, role_id, notes, runs, created_at) values
+        ('ses_2', 'top_2', 'role_dev', '[{"task_id": "tsk_2", "request": "你好", "result": "b", "at": "2"}]', 1, '2026-10-14 08:09'),
+        ('ses_3', 'top_3', 'role_dev', '[{"task_id": "tsk_3", "request": "你是谁", "result": "c", "at": "3"}]', 1, '2026-10-14 08:10');
+      insert into tasks (id, topic_id, owner_role_id, title, instruction, session_id, labels) values
+        ('tsk_3', 'top_3', 'role_dev', '你是谁', '你是谁', 'ses_3', '["topic:top_3", "user:usr_a"]');
+    `);
+    await apply(db, "0017_slack_channel_topics");
+    const q = async (sql: string) => (await db.query(sql)).rows as any[];
+    // one topic for the channel, named after it; the published topic and the DM stay as they were
+    expect(await q("select id, title from topics order by id")).toEqual([
+      { id: "top_1", title: "#general" },
+      { id: "top_dm", title: "alice" },
+      { id: "top_pub", title: "Release plan" },
+    ]);
+    expect(await q("select thread_key, topic_id from external_thread_links order by thread_key")).toEqual([
+      { thread_key: "50.1", topic_id: "top_pub" },
+      { thread_key: "__channel__", topic_id: "top_1" },
+      { thread_key: "__dm__", topic_id: "top_dm" },
+    ]);
+    // every message is in the channel topic; what was inside a thread points at its first message
+    expect(
+      await q("select id, topic_id, reply_to_id from messages where topic_id <> 'top_pub' order by created_at"),
+    ).toEqual([
+      { id: "msg_1", topic_id: "top_1", reply_to_id: null },
+      { id: "msg_1r", topic_id: "top_1", reply_to_id: "msg_1" },
+      { id: "msg_2", topic_id: "top_1", reply_to_id: null },
+      { id: "msg_2b", topic_id: "top_1", reply_to_id: "msg_2" },
+      { id: "msg_3", topic_id: "top_1", reply_to_id: null },
+    ]);
+    // one session for the role, with both threads' notes in order; its task follows, labels too
+    const sessions = await q("select id, topic_id, runs, notes from agent_sessions");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ topic_id: "top_1", runs: 2 });
+    expect(sessions[0].notes.map((n: any) => n.task_id)).toEqual(["tsk_2", "tsk_3"]);
+    expect(await q("select topic_id, session_id, labels from tasks")).toEqual([
+      { topic_id: "top_1", session_id: sessions[0].id, labels: expect.arrayContaining(["topic:top_1", "user:usr_a"]) },
+    ]);
+    // everyone who took part in a thread takes part in the channel topic
+    expect(
+      await q(
+        "select participant_type, participant_id from topic_participants where topic_id = 'top_1' order by participant_id",
+      ),
+    ).toEqual([
+      { participant_type: "role", participant_id: "role_dev" },
+      { participant_type: "user", participant_id: "usr_a" },
+      { participant_type: "user", participant_id: "usr_b" },
+    ]);
+    await db.close();
+  });
+});

@@ -377,7 +377,7 @@ describe("slack", () => {
     expect(stored.every((e) => e.payload === null)).toBe(true);
   });
 
-  it("a thread maps to one topic; retries and duplicate event types do not duplicate work", async () => {
+  it("a channel is one topic; replies go where they were asked; retries do not duplicate work", async () => {
     w.scripts.dev = () => reply("build is green");
     const ev = event("<@UBOT> @dev check the build", { ts: "100.1" });
     await send(ev);
@@ -388,24 +388,74 @@ describe("slack", () => {
     expect(await allTasks()).toHaveLength(1);
     const topicId = (await allTasks())[0].topicId;
 
-    // Bob follows up in the same thread: same topic, the role already working there answers.
+    // Bob follows up inside the thread of that message: same topic, the role already working there answers.
     await send(event("<@UBOT> also run the linters", { user: "UBOB", ts: "100.5", thread_ts: "100.1" }));
     await w.waitFor(async () => (await allTasks()).length === 2);
-    expect(new Set((await allTasks()).map((t) => t.topicId))).toEqual(new Set([topicId]));
-    // Another thread in the same channel is a different topic.
+    // A new message straight in the channel: still the same topic, as Slack shows one channel.
     await send(event("<@UBOT> unrelated question", { ts: "200.1" }));
     await w.waitFor(async () => (await allTasks()).length === 3);
-    expect(new Set((await allTasks()).map((t) => t.topicId)).size).toBe(2);
+    expect(new Set((await allTasks()).map((t) => t.topicId))).toEqual(new Set([topicId]));
+    const [topic] = await db().select().from(topics).where(eq(topics.id, topicId));
+    expect(topic.title).toBe("#c1");
+    // the reply inside the thread points at the thread's first message
+    const asked = (await w.messages(topicId, w.alice)).filter((m: any) => m.author_type === "user");
+    const root = asked.find((m: any) => m.content.includes("check the build"));
+    expect(asked.find((m: any) => m.content.includes("linters")).reply_to_id).toBe(root.id);
+    expect(asked.find((m: any) => m.content.includes("unrelated")).reply_to_id).toBeNull();
 
     await w.drain();
     await deliverPending();
-    const replies = slack.posts.filter((p) => p.thread_ts === "100.1");
-    expect(replies).toHaveLength(2);
-    for (const p of replies) expect(p.text.startsWith("*Dev (@dev)*: build is green")).toBe(true);
-    expect(slack.posts.filter((p) => p.thread_ts === "200.1")).toHaveLength(1);
+    // answered where asked: two straight in the channel, one in the thread
+    expect(slack.posts.filter((p) => p.text.includes("build is green") && !p.thread_ts)).toHaveLength(2);
+    expect(slack.posts.filter((p) => p.text.includes("build is green") && p.thread_ts === "100.1")).toHaveLength(1);
     const before = slack.posts.length;
     await deliverPending(); // nothing is sent twice
     expect(slack.posts.length).toBe(before);
+  });
+
+  it("a role can send several messages for one request, read further back, and knows what it answers", async () => {
+    let firstPrompt = "";
+    let history = "";
+    w.scripts.dev = (messages, turn) => {
+      if (turn === 0) {
+        firstPrompt = String(messages.find((m) => m.role === "user")?.content ?? "");
+        return reply("", [
+          call("send_message", { text: "looking into it" }),
+          call("topic_history", { query: "deploy" }),
+        ]);
+      }
+      history = String(
+        messages
+          .filter((m) => m.role === "tool")
+          .map((m) => m.content)
+          .join("\n"),
+      );
+      if (turn === 1) return reply("", [call("send_message", { text: "found it: the deploy on Monday" })]);
+      return reply(""); // everything said already: nothing more is posted
+    };
+    await send(event("we deploy on Monday", { user: "UBOB", ts: "810.1", etype: "message" }));
+    await send(event("<@UBOT> @dev when do we deploy?", { ts: "811.1", thread_ts: "810.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+    const [task] = await allTasks();
+    expect(task.status).toBe("completed");
+    expect(task.result).toBe("found it: the deploy on Monday");
+    // both messages reached the thread they were asked in; no "(no answer)"
+    const posted = slack.posts.filter((p) => p.channel === "C1").map((p) => [p.thread_ts, p.text]);
+    expect(posted).toEqual([
+      ["810.1", expect.stringContaining("looking into it")],
+      ["810.1", expect.stringContaining("found it: the deploy on Monday")],
+    ]);
+    // the role was told who asked, where and in which thread, and saw the thread so far
+    expect(firstPrompt).toContain("The message you are answering:");
+    expect(firstPrompt).toContain("- From: alice");
+    expect(firstPrompt).toMatch(/Slack #c1, as a reply in the thread of msg_/);
+    expect(firstPrompt).toContain("The thread so far:");
+    expect(firstPrompt).toContain("we deploy on Monday");
+    // and it could search the topic
+    expect(history).toContain("2 matching message(s)"); // the earlier message and the question itself
+    expect(history).toContain("bob: we deploy on Monday");
   });
 
   it("every thread the bot can see is recorded; only messages addressed to it reach roles", async () => {
@@ -414,8 +464,8 @@ describe("slack", () => {
     await settle();
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
     expect(inbound.find((e: any) => e.event_key === "msg:C1:950.1")).toMatchObject({ status: "stored" });
-    const threads = await db().select().from(externalThreadLinks).where(eq(externalThreadLinks.threadKey, "950.1"));
-    expect(threads).toHaveLength(1);
+    const links = await db().select().from(externalThreadLinks).where(eq(externalThreadLinks.connectionId, conn.id));
+    expect(links.map((l) => l.threadKey)).toEqual(["__channel__"]);
     expect(await allTasks()).toEqual([]);
     // there is no setting to narrow it down any more
     const refused = await w.api("PATCH", `/api/connections/${conn.id}`, {
@@ -481,7 +531,7 @@ describe("slack", () => {
 
     await w.drain();
     await deliverPending();
-    const answer = slack.posts.find((p) => p.thread_ts === "900.1")!.text as string;
+    const answer = slack.posts.find((p) => p.channel === "C1" && !p.thread_ts)!.text as string;
     expect(answer.startsWith("*Dev (@dev)*:\n*结果*")).toBe(true);
     expect(answer).toContain("*构建*\u200b通过，详见 <http://localhost:8320/tasks|任务>");
     expect(answer).toContain("```\n项 | 值\n---|---\na  | 1\n```");
@@ -493,7 +543,8 @@ describe("slack", () => {
   it("unlinked people and bots cannot trigger work", async () => {
     await send(event("<@UBOT> @dev delete prod", { user: "UMALLORY", ts: "300.1" }));
     await w.waitFor(async () => slack.posts.some((p) => p.text.includes("not linked")));
-    expect(slack.posts.find((p) => p.text.includes("not linked"))?.thread_ts).toBe("300.1");
+    expect(slack.posts.find((p) => p.text.includes("not linked"))).toMatchObject({ channel: "C1" });
+    expect(slack.posts.find((p) => p.text.includes("not linked"))?.thread_ts).toBeUndefined();
     await send(event("<@UBOT> @dev hi", { user: "UBOT", ts: "300.2" }, { bot_id: "B1" }));
     await send(event("<@UBOT> hi", { user: "UOTHERBOT", ts: "300.3" }, { bot_id: "B2" }));
     // an app posting on behalf of a linked member is still a bot
@@ -575,7 +626,7 @@ describe("slack", () => {
     expect(people[0][0]).not.toBe(people[1][0]);
   });
 
-  it("no rule means a refusal visible in the thread", async () => {
+  it("no rule means a refusal visible where the request was", async () => {
     const rules = (await w.api("GET", "/api/rules", { token: w.adminToken })).body;
     for (const r of rules) await w.api("DELETE", `/api/rules/${r.id}`, { token: w.adminToken });
     await send(event("<@UBOT> @dev hello", { ts: "400.1" }));
@@ -583,7 +634,7 @@ describe("slack", () => {
       await deliverPending();
       return slack.posts.some((p) => p.text.includes("not assigned"));
     });
-    expect(slack.posts.find((p) => p.text.includes("not assigned"))?.thread_ts).toBe("400.1");
+    expect(slack.posts.find((p) => p.text.includes("not assigned"))?.thread_ts).toBeUndefined();
     expect(await allTasks()).toEqual([]);
     // The connection's event list says the request was not handed to a role, and why.
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
@@ -633,9 +684,7 @@ describe("slack", () => {
     await w.waitFor(async () => (await allTasks()).length === 1);
     await w.drain();
     expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 1 });
-    expect(slack.posts).toEqual([
-      expect.objectContaining({ thread_ts: "700.1", text: "on it", username: "Dev (@dev)" }),
-    ]);
+    expect(slack.posts).toEqual([expect.objectContaining({ channel: "C1", text: "on it", username: "Dev (@dev)" })]);
 
     const paused = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,

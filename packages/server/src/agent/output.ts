@@ -9,6 +9,7 @@ import {
   knowledgeSpaces,
   type Mention,
   type Message,
+  messages,
   type Role,
   type Task,
   type Topic,
@@ -44,6 +45,17 @@ export async function describeLabel(db: Db, label: string): Promise<string> {
   return label;
 }
 
+/** A request asked inside a Slack thread is answered in that thread (messages there point at its root). */
+async function answeredThread(db: Db, task: Task): Promise<string | null> {
+  if (!task.sourceMessageId) return null;
+  const [source] = await db
+    .select({ replyToId: messages.replyToId })
+    .from(messages)
+    .where(eq(messages.id, task.sourceMessageId))
+    .limit(1);
+  return source?.replyToId ?? null;
+}
+
 export async function deliver(
   db: Db,
   task: Task,
@@ -61,6 +73,7 @@ export async function deliver(
       attachments: opts.attachments ?? [],
       round: opts.round ?? task.round + 1,
       taskId: task.id,
+      replyToId: await answeredThread(db, task),
     });
     await audit(db, "message.post", {
       actorType: "role",
@@ -135,6 +148,7 @@ export async function releaseApproved(
     attachments: detail.attachments ?? [],
     round: task.round + 1,
     taskId: task.id,
+    replyToId: await answeredThread(db, task),
   });
   await dispatchRoleMessage(db, topic, msg, role, task);
   return msg;

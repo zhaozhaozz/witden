@@ -23,7 +23,7 @@ import { BadRequest, Forbidden, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
 import { consoleBase, webhookBase } from "../services/public-url.js";
-import { type Adapter, getAdapter, type InboundAction, register } from "./base.js";
+import { type Adapter, CHANNEL, getAdapter, type InboundAction, register } from "./base.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 import { noteWebhook } from "./webhook-status.js";
 
@@ -371,6 +371,8 @@ export class SlackAdapter implements Adapter {
           conversationKind: kind,
           conversationName: name,
           threadKey: kind === "im" ? "__dm__" : (event.thread_ts ?? ts),
+          // A channel is one topic, as Slack shows it; its threads stay visible as replies.
+          ...(kind === "im" ? {} : { topicKey: CHANNEL }),
           messageTs: ts,
           userId: event.user,
           userName: await this.userName(conn, event.user),

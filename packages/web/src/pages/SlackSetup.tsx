@@ -253,7 +253,7 @@ export function SlackSetup({
       <p className="setup-intro">
         {switching
           ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、分配规则和已关联的账号都保持不变。`
-          : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的角色：每个 Slack thread 对应 witden 中的一个话题，角色的回复发回同一个 thread。`}
+          : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的角色：一个频道是 witden 中的一个话题，和 Slack 中看到的一致，角色在提问的地方（频道里或 thread 里）回答。`}
       </p>
       <div className="setup-modes">
         <div className="segmented">
@@ -1022,7 +1022,7 @@ function TryStep({
       </div>
       {latest?.status === "dispatched" ? (
         <div className="callout">
-          已交给角色处理。角色的回复会出现在 Slack 的同一个 thread 中，也可以在 witden 的会话列表中查看。
+          已交给角色处理。角色会在提问的地方（频道里或 thread 里）回复，也可以在 witden 的会话列表中查看。
         </div>
       ) : null}
       {latest?.status === "not_assigned" ? (
