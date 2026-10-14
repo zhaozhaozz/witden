@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Connection, ExternalConversation, OutboundMessage } from "../api/types";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL, SYNC_MODE } from "../lib/format";
@@ -15,6 +15,7 @@ import {
   lastRejected,
   SLACK_FIELD_HELP,
   settingsOf,
+  socketText,
 } from "./connectionParts";
 import { SlackSetup } from "./SlackSetup";
 
@@ -39,10 +40,8 @@ const CAP_STATUS: Record<string, { label: string; tone: "ok" | "wait" | "off" }>
 };
 
 const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
-  slack: [
-    ["bot_token", "Bot User OAuth Token"],
-    ["signing_secret", "Signing Secret"],
-  ],
+  // Slack: see SLACK_FIELDS (Socket Mode, or the events URL)
+  slack: [],
   feishu: [
     ["app_id", "App ID"],
     ["app_secret", "App Secret"],
@@ -50,6 +49,18 @@ const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
   ],
   // GitHub: see GITHUB_FIELDS (a GitHub App, or a bot account's token)
   github: [],
+};
+
+/** Socket Mode (recommended: no public address) or the events URL; the bot token is the same for both. */
+const SLACK_FIELDS: Record<"socket" | "http", [string, string][]> = {
+  socket: [
+    ["bot_token", "Bot User OAuth Token"],
+    ["app_token", "App-Level Token"],
+  ],
+  http: [
+    ["bot_token", "Bot User OAuth Token"],
+    ["signing_secret", "Signing Secret"],
+  ],
 };
 
 /** A GitHub App (recommended) or a bot account; the private key is a multi-line PEM. */
@@ -66,7 +77,7 @@ const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
 };
 
 const PLATFORM_CHOICES: [string, string, string][] = [
-  ["slack", "Slack", "在频道和私信中 @ 机器人。按步骤引导完成设置。"],
+  ["slack", "Slack", "在频道和私信中 @ 机器人。按步骤引导完成设置，默认不需要公网地址。"],
   ["github", "GitHub", "在 issue 和 pull request 中 @ 机器人，以 GitHub App 或机器人账号的身份回复。"],
   ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。"],
 ];
@@ -431,7 +442,22 @@ function ConnectionDetail({
         <KV
           items={[
             ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
-            ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
+            ...(conn.platform === "slack"
+              ? [
+                  ["接入方式", conn.slack_mode === "socket" ? "Socket Mode（不需要公网地址）" : "事件地址（HTTP）"] as [
+                    string,
+                    ReactNode,
+                  ],
+                ]
+              : []),
+            conn.slack_mode === "socket"
+              ? [
+                  "与 Slack 的连接",
+                  <Tag key="socket" tone={socketText(conn.socket).tone}>
+                    {socketText(conn.socket).text}
+                  </Tag>,
+                ]
+              : ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
             [
               "外部工作空间",
               conn.external_workspace_id ? (
@@ -720,11 +746,21 @@ function ConnectionForm({
   const [creds, setCreds] = useState<Record<string, string>>({});
   const [settings, setSettings] = useState(settingsOf(conn));
   const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
-  const fields = platform === "github" ? GITHUB_FIELDS[githubAuth] : (CREDENTIAL_FIELDS[platform] ?? []);
-  // Switching an existing GitHub connection to the other way needs that way's keys (its webhook secret stays).
-  const switching = !!conn && platform === "github" && (conn.github_auth ?? "token") !== githubAuth;
+  const [slackMode, setSlackMode] = useState<"socket" | "http">(conn?.slack_mode ?? "socket");
+  const fields =
+    platform === "github"
+      ? GITHUB_FIELDS[githubAuth]
+      : platform === "slack"
+        ? SLACK_FIELDS[slackMode]
+        : (CREDENTIAL_FIELDS[platform] ?? []);
+  // Switching an existing connection to the other way needs that way's keys; the key both ways share stays.
+  const switching =
+    !!conn &&
+    ((platform === "github" && (conn.github_auth ?? "token") !== githubAuth) ||
+      (platform === "slack" && (conn.slack_mode ?? "http") !== slackMode));
+  const shared = platform === "github" ? "webhook_secret" : "bot_token";
   // New connections need every field; an existing one keeps what is left empty.
-  const required = fields.filter(([k]) => !conn || (switching && k !== "webhook_secret"));
+  const required = fields.filter(([k]) => !conn || (switching && k !== shared));
   const missing = required.some(([k]) => !creds[k]?.trim());
   const disabled = busy || !name.trim() || missing;
 
@@ -779,12 +815,27 @@ function ConnectionForm({
           </select>
         </Field>
       ) : null}
+      {platform === "slack" ? (
+        <Field
+          label="接入方式"
+          hint={
+            slackMode === "socket"
+              ? "witden 主动连到 Slack 接收消息，不需要公网地址。"
+              : "Slack 把消息推送到 witden 的公网事件地址，需要 Signing Secret。"
+          }
+        >
+          <select value={slackMode} onChange={(e) => (setSlackMode(e.target.value as "socket" | "http"), setCreds({}))}>
+            <option value="socket">Socket Mode（推荐）</option>
+            <option value="http">事件地址（HTTP）</option>
+          </select>
+        </Field>
+      ) : null}
       {fields.map(([k, label]) => (
         <Field
           key={k}
           label={label}
           description={platform === "slack" ? SLACK_FIELD_HELP[k] : undefined}
-          hint={conn && !switching ? "留空保持不变" : undefined}
+          hint={conn && (!switching || k === shared) ? "留空保持不变" : undefined}
         >
           {k === "private_key" ? (
             <textarea

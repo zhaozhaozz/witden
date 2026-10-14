@@ -16,6 +16,7 @@ import {
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
+import { slackSockets } from "../integrations/slack-socket.js";
 import { webhookStatus } from "../integrations/webhook-status.js";
 import { secretBox } from "../security/crypto.js";
 import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/labels.js";
@@ -27,7 +28,8 @@ import * as topicSvc from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
 const PLATFORMS: Record<string, string[]> = {
-  slack: ["bot_token", "signing_secret"],
+  // Socket Mode (app_token) or the events URL (signing_secret); checked by checkCredentials.
+  slack: ["bot_token"],
   feishu: ["app_id", "app_secret", "verification_token"],
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
@@ -37,13 +39,17 @@ const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "cus
 /** ``base``: the public address (services/public-url.ts). */
 function connOut(conn: Connection, base: string) {
   const creds =
-    conn.platform === "github" && conn.credentialsEncrypted
+    ["github", "slack"].includes(conn.platform) && conn.credentialsEncrypted
       ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
       : {};
   return {
     ...row(conn),
-    // GitHub: acting as an app or as a bot account (never the credentials themselves)
+    // How it connects, never the credentials themselves. GitHub: an app or a bot account.
     ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : "token" } : {}),
+    // Slack: Socket Mode, with the state of this process's socket, or the events URL.
+    ...(conn.platform === "slack"
+      ? { slack_mode: creds.app_token ? "socket" : "http", socket: slackSockets.state(conn.id) }
+      : {}),
     has_credentials: !!conn.credentialsEncrypted,
     capabilities: CAPABILITIES[conn.platform] ?? {},
     events_url: `${base}/api/integrations/${conn.platform}/${conn.id}/events`,
@@ -110,7 +116,7 @@ export async function integrationRoutes(app: FastifyInstance) {
 
   app.post(
     "/api/connections",
-    authed(async ({ db, user, req }) => {
+    authed(async ({ db, user, req, after }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const b = body(req);
       const required = PLATFORMS[b.platform];
@@ -142,13 +148,14 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { platform: conn.platform, name: conn.name },
       });
+      after(() => slackSockets.sync());
       return connOut(conn, await webhookBase(db));
     }),
   );
 
   app.patch(
     "/api/connections/:id",
-    authed(async ({ db, user, req }) => {
+    authed(async ({ db, user, req, after }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const conn = await getConn(db, params(req).id);
       const b = body(req);
@@ -157,14 +164,18 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (b.credentials) {
         const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
         const given = Object.fromEntries(Object.entries(trimmed(b.credentials)).filter(([, v]) => v));
+        // Switching to the other way of connecting drops the credentials of the way left behind.
         if (conn.platform === "github") {
-          // Switching between a GitHub App and a bot account drops the other way's credentials.
           if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
           if (given.app_id || given.private_key) delete current.token;
         }
+        if (conn.platform === "slack") {
+          if (given.app_token) delete current.signing_secret;
+          if (given.signing_secret) delete current.app_token;
+        }
         for (const [k, v] of Object.entries(given)) current[k] = v;
         if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
-        if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(given);
+        if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(current);
         update.credentialsEncrypted = secretBox().encrypt(JSON.stringify(current));
       }
       if (b.settings) update.settings = cleanSettings({ ...conn.settings, ...b.settings });
@@ -182,16 +193,18 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { fields: Object.keys(b), status: updated.status },
       });
+      after(() => slackSockets.sync());
       return connOut(updated, await webhookBase(db));
     }),
   );
 
   app.delete(
     "/api/connections/:id",
-    authed(async ({ db, user, req }) => {
+    authed(async ({ db, user, req, after }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       await db.delete(connections).where(eq(connections.id, params(req).id));
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
+      after(() => slackSockets.sync());
       return { ok: true };
     }),
   );
@@ -212,6 +225,8 @@ export async function integrationRoutes(app: FastifyInstance) {
             ...(conn.status === "error" ? { status: "active" } : {}),
           })
           .where(eq(connections.id, conn.id));
+        // A Socket Mode connection that just passed connects (again) right away.
+        void slackSockets.sync();
         return { ok: true, ...info };
       } catch (err) {
         await db

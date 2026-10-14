@@ -697,6 +697,10 @@ export interface Connection {
   /** GitHub: acting as a GitHub App or as a bot account. */
   github_auth?: "app" | "token";
   external_workspace_id: string | null;
+  /** Slack: events over a socket witden keeps open (Socket Mode), or sent to the events URL. */
+  slack_mode?: "socket" | "http";
+  /** Slack Socket Mode: the state of the server's socket. */
+  socket?: { state: "connecting" | "connected" | "error"; since: string; error?: string } | null;
   /** How the platform's calls to the events URL went lately (kept in the server's memory). */
   webhook?: {
     verified_at?: string;

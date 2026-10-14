@@ -27,6 +27,7 @@ import {
   type User,
   users,
 } from "../db/schema.js";
+import { runtime } from "../runtime.js";
 import { topicLabel } from "../security/labels.js";
 import { audit } from "../services/audit.js";
 import { saveArtifact } from "../services/files.js";
@@ -63,6 +64,20 @@ function eventKeyOf(action: InboundAction): string {
   if (action.kind === "delete") return `delete:${action.conversationId}:${action.ts}`;
   const digest = createHash("sha256").update(action.text).digest("hex").slice(0, 16);
   return `edit:${action.conversationId}:${action.ts}:${digest}`;
+}
+
+/**
+ * Platforms retry what they could not deliver, so events are stored durably first, then acknowledged, then processed from
+ * the queue (a periodic sweep picks up anything a crash left behind).
+ */
+export async function acceptEvents(connectionId: string, actions: InboundAction[]): Promise<void> {
+  if (!actions.length) return;
+  await enqueueInbound(getDb(), connectionId, actions);
+  runtime().background("inbound", async () => {
+    while (await processInbound()) {
+      /* drain */
+    }
+  });
 }
 
 /** Store verified events before the webhook acknowledges. Platform retries of the same event are dropped. */

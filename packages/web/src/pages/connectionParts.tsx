@@ -22,6 +22,22 @@ export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "ba
   failed: ["处理失败", "bad"],
 };
 
+/** The state of a Slack Socket Mode connection, in words. */
+export function socketText(socket: Connection["socket"]): { text: string; tone: "ok" | "wait" | "bad" } {
+  if (!socket) return { text: "未连接（接入已暂停，或还没有保存 App-Level Token）", tone: "wait" };
+  if (socket.state === "connected") return { text: "已连接", tone: "ok" };
+  if (socket.state === "connecting") return { text: "正在连接", tone: "wait" };
+  const e = socket.error ?? "";
+  const why = /link_disabled/.test(e)
+    ? "应用没有打开 Socket Mode：在应用的 Socket Mode 页面打开 Enable Socket Mode"
+    : /missing_scope/.test(e)
+      ? "App-Level Token 缺少 connections:write 权限：在 App-Level Tokens 中重新生成并添加这个权限"
+      : /invalid_auth|not_authed|token_revoked|not_allowed_token_type/.test(e)
+        ? "App-Level Token 不正确或已撤销"
+        : e;
+  return { text: `连接失败，正在重试：${why}`, tone: "bad" };
+}
+
 /** Why the server refused a signed call to the events URL. */
 export const REJECTED: Record<string, string> = {
   "bad Slack signature": "签名不对",
@@ -58,6 +74,12 @@ export const SLACK_FIELD_HELP: Record<string, ReactNode> = {
     <>
       在应用的 <b>OAuth &amp; Permissions</b> 页面（安装应用后才有），以 <code>xoxb-</code> 开头。创建应用后 Slack
       列出的令牌中，只有 <code>xoxb-</code> 开头的这一个填在这里。witden 用它读取消息、发送回复。
+    </>
+  ),
+  app_token: (
+    <>
+      <code>xapp-</code> 开头。在应用的 <b>Basic Information</b> 页面 → <b>App-Level Tokens</b> 中生成，必须带{" "}
+      <code>connections:write</code> 权限。witden 用它主动连到 Slack 接收消息，所以不需要公网地址。
     </>
   ),
   signing_secret: (

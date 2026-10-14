@@ -15,6 +15,7 @@ import {
   lastRejected,
   SLACK_FIELD_HELP,
   settingsOf,
+  socketText,
 } from "./connectionParts";
 import { PublicAddressStep } from "./PublicAddress";
 
@@ -43,10 +44,11 @@ const BOT_EVENTS: [string, string][] = [
 ];
 
 /**
- * Everything the Slack app needs except the event subscription: Slack rejects bot events without a
- * Request URL, and the URL only works once this connection holds the app's signing secret.
+ * The Slack app's manifest. With Socket Mode it subscribes to the events too; through the events URL it
+ * cannot: Slack rejects bot events without a Request URL, and the URL only works once this connection holds
+ * the app's signing secret.
  */
-function slackManifest(name: string) {
+function slackManifest(name: string, mode: Mode) {
   return {
     display_information: { name },
     features: {
@@ -55,7 +57,15 @@ function slackManifest(name: string) {
       bot_user: { display_name: name, always_online: true },
     },
     oauth_config: { scopes: { bot: BOT_SCOPES.map(([s]) => s) } },
-    settings: { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: false },
+    settings:
+      mode === "socket"
+        ? {
+            event_subscriptions: { bot_events: BOT_EVENTS.map(([e]) => e) },
+            org_deploy_enabled: false,
+            socket_mode_enabled: true,
+            token_rotation_enabled: false,
+          }
+        : { org_deploy_enabled: false, socket_mode_enabled: false, token_rotation_enabled: false },
   };
 }
 
@@ -74,8 +84,17 @@ function reachableBySlack(url: string): boolean {
   }
 }
 
-// Slack's error codes from auth.test, explained.
+// Slack's error codes from the connection test, explained (the app-level token's first).
 const SLACK_ERRORS: [RegExp, string][] = [
+  [
+    /apps\.connections\.open failed: (invalid_auth|not_authed|token_revoked)/,
+    "App-Level Token 不正确或已撤销。请复制 Basic Information → App-Level Tokens 中 xapp- 开头的令牌。",
+  ],
+  [
+    /apps\.connections\.open failed: missing_scope/,
+    "App-Level Token 缺少 connections:write 权限。请在 App-Level Tokens 中重新生成，并添加 connections:write。",
+  ],
+  [/apps\.connections\.open failed: not_allowed_token_type/, "这里要填 App-Level Token（xapp- 开头）。"],
   [
     /invalid_auth|not_authed/,
     "Bot Token 不正确。请复制 OAuth & Permissions 页面中以 xoxb- 开头的 Bot User OAuth Token。",
@@ -96,15 +115,26 @@ function missingSetup(r: Role): string | undefined {
   return missing.length ? `还没有${missing.join("和")}，暂时不能工作` : undefined;
 }
 
-const STEPS = [
-  "准备公网事件地址",
-  "在 Slack 中创建应用",
-  "填写凭据并测试连接",
-  "在 Slack 中订阅事件",
-  "选择处理请求的角色",
-  "在 Slack 中试一试",
-];
-const [ADDRESS, APP, CREDENTIALS, EVENTS, ACCESS, TRY] = STEPS.map((_, i) => i);
+type Mode = "socket" | "http";
+type StepKey = "address" | "app" | "credentials" | "events" | "access" | "try";
+
+const STEP_TITLES: Record<StepKey, string> = {
+  address: "准备公网事件地址",
+  app: "在 Slack 中创建应用",
+  credentials: "填写凭据并测试连接",
+  events: "在 Slack 中订阅事件",
+  access: "选择处理请求的角色",
+  try: "在 Slack 中试一试",
+};
+
+/** Socket Mode needs no public address and subscribes to events in the manifest. */
+const FLOW: Record<Mode, StepKey[]> = {
+  socket: ["app", "credentials", "access", "try"],
+  http: ["address", "app", "credentials", "events", "access", "try"],
+};
+
+/** A step's number in the current flow, for texts that point at another step. */
+type StepNumber = (k: StepKey) => number;
 
 interface TestResult {
   ok: boolean;
@@ -114,9 +144,9 @@ interface TestResult {
 }
 
 /**
- * Guided Slack setup shown in the page itself. It starts with the public address Slack will send events to;
- * the connection is created at the credentials step, once the app exists; ``initial`` resumes the guide
- * for an existing connection.
+ * Guided Slack setup shown in the page itself. Socket Mode (the default) needs no public address; the events
+ * URL starts with one. The connection is created at the credentials step, once the app exists; ``initial``
+ * resumes the guide for an existing connection, in that connection's mode.
  */
 export function SlackSetup({
   initial,
@@ -128,64 +158,73 @@ export function SlackSetup({
   onClose: (c: Connection | null) => void;
 }) {
   const [conn, setConn] = useState(initial);
-  const start = initial ? (initial.bot_user_id ? EVENTS : CREDENTIALS) : ADDRESS;
-  const [step, setStep] = useState(start);
-  const [reached, setReached] = useState(start);
+  const [mode, setMode] = useState<Mode>(initial?.slack_mode ?? "socket");
+  const flow = FLOW[mode];
+  const first: StepKey = initial
+    ? initial.bot_user_id
+      ? mode === "socket"
+        ? "access"
+        : "events"
+      : "credentials"
+    : flow[0];
+  const [step, setStep] = useState<StepKey>(first);
+  const [reached, setReached] = useState(flow.indexOf(first));
   const [botName, setBotName] = useState("witden");
   const [address, setAddress] = useState<string | null>(null);
   const [tested, setTested] = useState<TestResult | null>(null);
-  const go = (n: number) => {
-    setStep(n);
-    setReached((r) => Math.max(r, n));
+  const go = (k: StepKey) => {
+    setStep(k);
+    setReached((r) => Math.max(r, flow.indexOf(k)));
   };
+  const num: StepNumber = (k) => flow.indexOf(k) + 1;
   const bot = tested?.bot ?? (initial ? null : botName);
+  const afterCredentials = mode === "socket" ? "access" : "events";
 
-  const body: ReactNode[] = [
-    <PublicAddressStep
-      key="address"
-      onNext={(url) => {
-        setAddress(url);
-        go(APP);
-      }}
-    />,
-    <AppStep key="app" name={botName} onName={setBotName} onNext={() => go(CREDENTIALS)} />,
-    <CredentialsStep
-      key="credentials"
-      conn={conn}
-      result={tested}
-      onCreated={(c) => {
-        setConn(c);
-        onCreated(c);
-      }}
-      onTested={(c, r) => {
-        setConn(c);
-        setTested(r);
-        if (r.ok) go(EVENTS);
-      }}
-    />,
-    conn ? (
-      <EventsStep key="events" conn={conn} onNext={() => go(ACCESS)} onFixSecret={() => setStep(CREDENTIALS)} />
+  const body: Record<StepKey, ReactNode> = {
+    address: (
+      <PublicAddressStep
+        onNext={(url) => {
+          setAddress(url);
+          go("app");
+        }}
+      />
+    ),
+    app: <AppStep mode={mode} name={botName} onName={setBotName} num={num} onNext={() => go("credentials")} />,
+    credentials: (
+      <CredentialsStep
+        mode={mode}
+        conn={conn}
+        result={tested}
+        onCreated={(c) => {
+          setConn(c);
+          onCreated(c);
+        }}
+        onTested={(c, r) => {
+          setConn(c);
+          setTested(r);
+          if (r.ok) go(afterCredentials);
+        }}
+      />
+    ),
+    events: conn ? (
+      <EventsStep conn={conn} num={num} onNext={() => go("access")} onFixSecret={() => setStep("credentials")} />
     ) : null,
-    conn ? (
+    access: conn ? (
       <AccessStep
-        key="access"
         conn={conn}
         onSaved={(c) => {
           setConn(c);
-          go(TRY);
+          go("try");
         }}
       />
     ) : null,
-    conn ? <TryStep key="try" conn={conn} bot={bot} onDone={() => onClose(conn)} /> : null,
-  ];
-  const summary = [
-    address ? `公网事件地址：${address}` : null,
-    initial ? null : `应用名称：${botName}`,
-    tested?.ok ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}` : conn ? conn.name : null,
-    null,
-    null,
-    null,
-  ];
+    try: conn ? <TryStep conn={conn} bot={bot} num={num} onDone={() => onClose(conn)} /> : null,
+  };
+  const summary: Partial<Record<StepKey, string>> = {
+    address: address ? `公网事件地址：${address}` : undefined,
+    app: initial ? undefined : `应用名称：${botName}`,
+    credentials: tested?.ok ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}` : conn?.name,
+  };
 
   return (
     <Section
@@ -197,26 +236,63 @@ export function SlackSetup({
       }
     >
       <p className="setup-intro">
-        按下面 {STEPS.length} 步把 Slack 接入 witden，需要 Slack
+        按下面 {flow.length} 步把 Slack 接入 witden，需要 Slack
         工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给
         witden 中的角色：每个 Slack thread 对应 witden 中的一个话题，角色的回复发回同一个 thread。
       </p>
+      {conn ? (
+        <p className="small muted">
+          接入方式：{mode === "socket" ? "Socket Mode" : "事件地址（HTTP）"}。要更换，在接入详情中点击“编辑”。
+        </p>
+      ) : (
+        <div className="setup-modes">
+          <div className="segmented">
+            {(
+              [
+                ["socket", "Socket Mode（推荐，不需要公网地址）"],
+                ["http", "事件地址（HTTP，需要公网地址）"],
+              ] as [Mode, string][]
+            ).map(([m, label]) => (
+              <button
+                type="button"
+                key={m}
+                className={m === mode ? "seg seg-on" : "seg"}
+                onClick={() => {
+                  setMode(m);
+                  setStep(FLOW[m][0]);
+                  setReached(0);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="small muted">
+            {mode === "socket"
+              ? "witden 主动连到 Slack 接收消息：不需要公网地址，witden 在公网上什么都不暴露。"
+              : "Slack 把消息推送到 witden 的公网事件地址：需要一个只转发到事件端口的 HTTPS 地址。"}
+          </p>
+        </div>
+      )}
       <ol className="setup-steps">
-        {STEPS.map((title, i) => {
-          const state = i === step ? "current" : i < reached ? "done" : "todo";
+        {flow.map((key, i) => {
+          const at = flow.indexOf(step);
+          const state = key === step ? "current" : i < reached ? "done" : "todo";
           // Steps after the credentials need a connection that works; from then on any of them can be opened.
           const open =
-            i !== step && (i <= reached || (i >= EVENTS && !!conn?.bot_user_id)) ? () => setStep(i) : undefined;
+            i !== at && (i <= reached || (i > flow.indexOf("credentials") && !!conn?.bot_user_id))
+              ? () => setStep(key)
+              : undefined;
           return (
-            <li key={title} className={`setup-step setup-${state}`}>
+            <li key={key} className={`setup-step setup-${state}`}>
               <button type="button" className="setup-head" disabled={!open} onClick={open}>
                 <span className="setup-num" aria-hidden>
                   {state === "done" ? "✓" : i + 1}
                 </span>
-                <span className="setup-title">{title}</span>
-                {state === "done" && summary[i] ? <span className="setup-summary">{summary[i]}</span> : null}
+                <span className="setup-title">{STEP_TITLES[key]}</span>
+                {state === "done" && summary[key] ? <span className="setup-summary">{summary[key]}</span> : null}
               </button>
-              {state === "current" ? <div className="setup-body">{body[i]}</div> : null}
+              {state === "current" ? <div className="setup-body">{body[key]}</div> : null}
             </li>
           );
         })}
@@ -225,14 +301,27 @@ export function SlackSetup({
   );
 }
 
-function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) => void; onNext: () => void }) {
-  const manifest = JSON.stringify(slackManifest(name.trim() || "witden"), null, 2);
+function AppStep({
+  mode,
+  name,
+  onName,
+  num,
+  onNext,
+}: {
+  mode: Mode;
+  name: string;
+  onName: (v: string) => void;
+  num: StepNumber;
+  onNext: () => void;
+}) {
+  const manifest = JSON.stringify(slackManifest(name.trim() || "witden", mode), null, 2);
   const url = `https://api.slack.com/apps?new_app=1&manifest_json=${encodeURIComponent(manifest)}`;
   return (
     <>
       <p>
         先在 Slack 中为 witden 创建一个应用。下面的按钮会打开
-        Slack，并预先填好应用清单：名称、机器人用户、需要的权限，以及允许大家私信机器人。
+        Slack，并预先填好应用清单：名称、机器人用户、需要的权限、允许大家私信机器人
+        {mode === "socket" ? "，以及 Socket Mode 和要订阅的事件" : ""}。
       </p>
       <Field
         label="机器人名称"
@@ -252,12 +341,28 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
           在应用页面左侧打开 <b>Install App</b>，点击 <b>Install to Workspace</b>，再点击 <b>Allow</b>。
           如果工作区要求审批，等工作区管理员批准后再继续。
         </li>
+        {mode === "socket" ? (
+          <li>
+            生成 App-Level Token：打开应用的 <b>Basic Information</b> 页面 → <b>App-Level Tokens</b>，点击{" "}
+            <b>Generate Token and Scopes</b>，名称随意（例如 witden），点击 <b>Add Scope</b> 选择{" "}
+            <code>connections:write</code>，再点击 <b>Generate</b>，复制 <code>xapp-</code> 开头的令牌。如果创建应用时
+            Slack 已经弹出 <code>xapp-</code> 开头、带 <code>connections:write</code> 的令牌，直接用它即可。
+          </li>
+        ) : null}
       </ol>
-      <div className="callout callout-wait">
-        <b>安装完成后先停在这里，回到 witden。</b>下一步要把 Bot Token 和 Signing Secret 填到 witden。Slack
-        列出的令牌中只用得到 xoxb- 开头的 Bot Token；Signing Secret 不在其中，下一步会说明在哪里复制。先不要设置 Event
-        Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证，放在第 {EVENTS + 1} 步。
-      </div>
+      {mode === "socket" ? (
+        <div className="callout callout-wait">
+          <b>拿到两个令牌后回到 witden：</b>OAuth &amp; Permissions 页面中 <code>xoxb-</code> 开头的 Bot User OAuth
+          Token，和 <code>xapp-</code> 开头的 App-Level Token。Socket Mode 不需要 Signing Secret、Request URL
+          或公网地址。
+        </div>
+      ) : (
+        <div className="callout callout-wait">
+          <b>安装完成后先停在这里，回到 witden。</b>下一步要把 Bot Token 和 Signing Secret 填到 witden。Slack
+          列出的令牌中只用得到 xoxb- 开头的 Bot Token；Signing Secret 不在其中，下一步会说明在哪里复制。先不要设置 Event
+          Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证，放在第 {num("events")} 步。
+        </div>
+      )}
       <details className="setup-more">
         <summary>按钮打不开预填页面？手动粘贴清单</summary>
         <p className="small">
@@ -290,7 +395,7 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
       </details>
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
-          已安装，去填写凭据
+          {mode === "socket" ? "已安装并生成令牌，去填写凭据" : "已安装，去填写凭据"}
         </button>
       </div>
     </>
@@ -298,11 +403,13 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
 }
 
 function CredentialsStep({
+  mode,
   conn,
   result,
   onCreated,
   onTested,
 }: {
+  mode: Mode;
   conn: Connection | null;
   result: TestResult | null;
   onCreated: (c: Connection) => void;
@@ -311,17 +418,25 @@ function CredentialsStep({
   const { run, busy } = useAction();
   const [name, setName] = useState(conn?.name ?? "Slack");
   const [token, setToken] = useState("");
+  // The second credential: the app-level token (Socket Mode) or the signing secret (events URL).
   const [secret, setSecret] = useState("");
+  const key = mode === "socket" ? "app_token" : "signing_secret";
   const wrongToken = !!token.trim() && !token.trim().startsWith("xoxb-");
+  const wrongAppToken = mode === "socket" && !!secret.trim() && !secret.trim().startsWith("xapp-");
   // Slack shows several tokens and secrets; an app-level token here fails every event's signature check.
-  const secretIsToken = /^(xapp-|xox[a-z]-)/.test(secret.trim());
-  const secretOdd = !!secret.trim() && !secretIsToken && !/^[0-9a-f]{32}$/.test(secret.trim());
-  const ready = !!name.trim() && !wrongToken && !secretIsToken && (conn ? true : !!token.trim() && !!secret.trim());
+  const secretIsToken = mode === "http" && /^(xapp-|xox[a-z]-)/.test(secret.trim());
+  const secretOdd = mode === "http" && !!secret.trim() && !secretIsToken && !/^[0-9a-f]{32}$/.test(secret.trim());
+  const ready =
+    !!name.trim() &&
+    !wrongToken &&
+    !wrongAppToken &&
+    !secretIsToken &&
+    (conn ? true : !!token.trim() && !!secret.trim());
   const hint = result && !result.ok ? SLACK_ERRORS.find(([re]) => re.test(result.error ?? ""))?.[1] : null;
 
   const submit = async () => {
     const credentials = Object.fromEntries(
-      Object.entries({ bot_token: token.trim(), signing_secret: secret.trim() }).filter(([, v]) => v),
+      Object.entries({ bot_token: token.trim(), [key]: secret.trim() }).filter(([, v]) => v),
     );
     let saved = conn;
     if (!saved) {
@@ -351,7 +466,10 @@ function CredentialsStep({
 
   return (
     <>
-      <p>把应用的两项凭据填到这里。witden 加密保存它们，保存后不能再查看。</p>
+      <p>
+        把应用的两项凭据填到这里。witden 加密保存它们，保存后不能再查看。
+        {mode === "socket" ? "保存后 witden 会测试令牌，并与 Slack 建立连接。" : ""}
+      </p>
       <form
         className="form form-narrow"
         onSubmit={(e) => {
@@ -384,32 +502,55 @@ function CredentialsStep({
             onChange={(e) => setToken(e.target.value)}
           />
         </Field>
-        <Field
-          label="Signing Secret"
-          description={SLACK_FIELD_HELP.signing_secret}
-          hint={
-            secretIsToken ? (
-              <span className="text-bad">
-                这是 Slack 的令牌，不是 Signing Secret（xapp- 开头的是 App-Level Token）。Signing Secret 在 Basic
-                Information → App Credentials 中，是 32 位十六进制字符。
-              </span>
-            ) : secretOdd ? (
-              <span className="text-wait">
-                Signing Secret 通常是 32 位十六进制字符，请确认复制的是 App Credentials 中的 Signing Secret。
-              </span>
-            ) : conn ? (
-              "留空保持不变"
-            ) : undefined
-          }
-        >
-          <input
-            type="password"
-            className="mono"
-            autoComplete="off"
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-          />
-        </Field>
+        {mode === "socket" ? (
+          <Field
+            label="App-Level Token"
+            description={SLACK_FIELD_HELP.app_token}
+            hint={
+              wrongAppToken ? (
+                <span className="text-bad">这不是 App-Level Token：它以 xapp- 开头（xoxb- 开头的是 Bot Token）。</span>
+              ) : conn ? (
+                "留空保持不变"
+              ) : undefined
+            }
+          >
+            <input
+              type="password"
+              className="mono"
+              autoComplete="off"
+              placeholder="xapp-…"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <Field
+            label="Signing Secret"
+            description={SLACK_FIELD_HELP.signing_secret}
+            hint={
+              secretIsToken ? (
+                <span className="text-bad">
+                  这是 Slack 的令牌，不是 Signing Secret（xapp- 开头的是 App-Level Token）。Signing Secret 在 Basic
+                  Information → App Credentials 中，是 32 位十六进制字符。
+                </span>
+              ) : secretOdd ? (
+                <span className="text-wait">
+                  Signing Secret 通常是 32 位十六进制字符，请确认复制的是 App Credentials 中的 Signing Secret。
+                </span>
+              ) : conn ? (
+                "留空保持不变"
+              ) : undefined
+            }
+          >
+            <input
+              type="password"
+              className="mono"
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          </Field>
+        )}
         <div className="setup-next">
           <button type="submit" className="btn btn-primary" disabled={!ready || busy}>
             {busy ? "正在测试…" : "保存并测试连接"}
@@ -429,10 +570,12 @@ function CredentialsStep({
 
 function EventsStep({
   conn: initial,
+  num,
   onNext,
   onFixSecret,
 }: {
   conn: Connection;
+  num: StepNumber;
   onNext: () => void;
   onFixSecret: () => void;
 }) {
@@ -460,7 +603,7 @@ function EventsStep({
       <p>让 Slack 把消息推送给 witden：在应用中填写 witden 的事件地址，并订阅需要的事件。</p>
       {reachableBySlack(url) ? null : (
         <div className="callout callout-wait">
-          Slack 只能把事件发到公网可以访问的 HTTPS 地址，下面的地址不满足，Slack 会验证失败。请回到第 {ADDRESS + 1}{" "}
+          Slack 只能把事件发到公网可以访问的 HTTPS 地址，下面的地址不满足，Slack 会验证失败。请回到第 {num("address")}{" "}
           步准备公网事件地址。
         </div>
       )}
@@ -498,7 +641,7 @@ function EventsStep({
       {rejected ? (
         <div className="callout callout-bad" role="alert">
           {fmtRelative(rejected.at)}，witden 收到了 Slack 的请求，但校验没有通过：{rejected.reason}。这通常是第{" "}
-          {CREDENTIALS + 1} 步的 Signing Secret 填错了：它在应用的 Basic Information → App Credentials 中，是 32
+          {num("credentials")} 步的 Signing Secret 填错了：它在应用的 Basic Information → App Credentials 中，是 32
           位十六进制字符，不是 xapp- 开头的 App-Level Token。改好后在 Slack 中点击 Request URL 旁的 Retry。{" "}
           <button type="button" className="btn btn-xs" onClick={onFixSecret}>
             重新填写 Signing Secret
@@ -628,15 +771,33 @@ function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connecti
   );
 }
 
-function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; onDone: () => void }) {
+function TryStep({
+  conn: initial,
+  bot,
+  num,
+  onDone,
+}: {
+  conn: Connection;
+  bot: string | null;
+  num: StepNumber;
+  onDone: () => void;
+}) {
   const [events, setEvents] = useState<InboundEvent[] | null>(null);
-  // Watch the connection's inbound events while this step is open.
+  const [conn, setConn] = useState(initial);
+  const socket = conn.slack_mode === "socket";
+  // Watch the connection's inbound events (and, in Socket Mode, its socket) while this step is open.
   useEffect(() => {
     let stopped = false;
     const load = async () => {
       try {
-        const rows = await api.get<InboundEvent[]>(`/api/connections/${conn.id}/inbound`);
-        if (!stopped) setEvents(rows);
+        const [rows, all] = await Promise.all([
+          api.get<InboundEvent[]>(`/api/connections/${initial.id}/inbound`),
+          api.get<Connection[]>("/api/connections"),
+        ]);
+        if (stopped) return;
+        setEvents(rows);
+        const fresh = all.find((c) => c.id === initial.id);
+        if (fresh) setConn(fresh);
       } catch {
         // keep the last list; the next poll retries
       }
@@ -647,14 +808,20 @@ function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; 
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [conn.id]);
+  }, [initial.id]);
   const recent = (events ?? []).slice(0, 5);
+  const link = socketText(conn.socket);
   // What to do next depends on how the latest message was handled.
   const latest = recent[0];
   const name = bot ? `@${bot}` : "@机器人";
 
   return (
     <>
+      {socket ? (
+        <p className="small">
+          与 Slack 的连接（Socket Mode）：<Tag tone={link.tone}>{link.text}</Tag>
+        </p>
+      ) : null}
       <ol className="setup-list">
         <li>
           在 Slack 的一个频道中发送 <code>/invite {name}</code>，把机器人邀请进来。
@@ -679,8 +846,10 @@ function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; 
           </ul>
         ) : (
           <span className="muted small">
-            还没有收到消息。发了消息后这里一直没有变化时，检查第 {EVENTS + 1} 步的 Request URL 是否显示
-            Verified，事件是否已订阅并保存。
+            还没有收到消息。
+            {socket
+              ? "发了消息后这里一直没有变化时，检查上面的连接状态，以及机器人是否已被邀请进频道。"
+              : `发了消息后这里一直没有变化时，检查第 ${num("events")} 步的 Request URL 是否显示 Verified，事件是否已订阅并保存。`}
           </span>
         )}
       </div>
@@ -703,7 +872,7 @@ function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; 
         <>
           <div className="callout callout-wait">
             发消息的 Slack 账号还没有关联 witden 账号，所以没有交给角色。在下面把你自己的 Slack 账号关联到你的 witden
-            账号，然后在 Slack 中再发一次；其他人可以在第 {ACCESS + 1} 步开启“允许未关联的人使用”。
+            账号，然后在 Slack 中再发一次；其他人可以在第 {num("access")} 步开启“允许未关联的人使用”。
           </div>
           <Identities key={events?.length} conn={conn} />
         </>

@@ -9,29 +9,14 @@
  */
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { db as getDb } from "../db/client.js";
-import { Forbidden, NotFound, WitdenError } from "../errors.js";
-import { getAdapter, type InboundAction } from "../integrations/base.js";
-import { enqueueInbound, processInbound } from "../integrations/inbound.js";
+import { NotFound, WitdenError } from "../errors.js";
+import { getAdapter } from "../integrations/base.js";
+import { acceptEvents } from "../integrations/inbound.js";
 import { noteWebhook } from "../integrations/webhook-status.js";
-import { runtime } from "../runtime.js";
 import { probeAnswer } from "../services/public-url.js";
 import { params, query, sendError } from "./http.js";
 import { getConn } from "./integrations.js";
 import { serveAvatar } from "./roles.js";
-
-/**
- * Platforms retry slow webhooks, so events are stored durably first, then acknowledged, then processed from
- * the queue (a periodic sweep picks up anything a crash left behind).
- */
-async function acceptEvents(connectionId: string, actions: InboundAction[]): Promise<void> {
-  if (!actions.length) return;
-  await enqueueInbound(getDb(), connectionId, actions);
-  runtime().background("inbound", async () => {
-    while (await processInbound()) {
-      /* drain */
-    }
-  });
-}
 
 /** Run a platform's verification; a signed call that fails it is remembered for the console. */
 function rejectedIf(connectionId: string, signed: boolean, verify: () => void): void {
@@ -63,7 +48,7 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
   );
 
   app.post("/api/integrations/slack/:id/events", async (req, reply) => {
-    const { verifySignature, credentials } = await import("../integrations/slack.js");
+    const { verifySignature, credentials, acceptSlackEvent } = await import("../integrations/slack.js");
     const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
     const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "slack") throw new NotFound("unknown connection");
@@ -81,11 +66,7 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
       noteWebhook(conn.id, "verified");
       return reply.send({ challenge: payload.challenge });
     }
-    if (payload.type !== "event_callback" || conn.status !== "active") return { ok: true };
-    if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
-      throw new Forbidden("event from another workspace");
-    noteWebhook(conn.id, "received");
-    await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
+    await acceptSlackEvent(conn, payload);
     return { ok: true };
   });
 

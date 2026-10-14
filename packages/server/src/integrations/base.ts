@@ -27,7 +27,10 @@ export interface Adapter {
 export const CAPABILITIES: Record<string, Record<string, any>> = {
   slack: {
     status: "supported",
-    account_types: ["Slack app bot user (one bot can front many roles)"],
+    account_types: [
+      "Slack app bot user (one bot can front many roles)",
+      "Socket Mode with an app-level token (no public address), or events sent to a public URL",
+    ],
     conversations: ["public channel", "private channel", "direct message", "group DM"],
     threads: "a thread (root message + replies) maps to one topic",
     mentions: "@bot plus @role-handle or role:handle in the text to choose a role",

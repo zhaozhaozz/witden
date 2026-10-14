@@ -1,7 +1,10 @@
 /** Chat integrations end to end: signed Slack webhooks in, Web API calls out (and a small Feishu check). */
 import { createHmac } from "node:crypto";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type WebSocket, WebSocketServer } from "ws";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import {
@@ -18,12 +21,53 @@ import { deliverPending } from "../src/integrations/delivery.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
 import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
+import { socketTiming } from "../src/integrations/slack-socket.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "slack-signing-secret";
 const BOT_TOKEN = "xoxb-test-token-123";
+const APP_TOKEN = "xapp-1-A1-1-0123456789abcdef";
+
+/**
+ * Slack's Socket Mode end: apps.connections.open hands out its address; each socket gets hello unless held
+ * back, and acknowledgements are recorded.
+ */
+class FakeSocketMode {
+  private server!: WebSocketServer;
+  sockets: WebSocket[] = [];
+  closed: WebSocket[] = [];
+  acks: string[] = [];
+  hello = true;
+
+  async start() {
+    this.server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+    await once(this.server, "listening");
+    this.server.on("connection", (ws) => {
+      this.sockets.push(ws);
+      ws.on("message", (data) => {
+        const msg = JSON.parse(String(data));
+        if (msg.envelope_id) this.acks.push(msg.envelope_id);
+      });
+      ws.on("close", () => this.closed.push(ws));
+      if (this.hello) ws.send(JSON.stringify({ type: "hello", num_connections: 1 }));
+    });
+  }
+
+  url = () => `ws://127.0.0.1:${(this.server.address() as AddressInfo).port}/link/?ticket=${this.sockets.length + 1}`;
+
+  latest = () => this.sockets[this.sockets.length - 1];
+
+  send(ws: WebSocket, msg: unknown) {
+    ws.send(JSON.stringify(msg));
+  }
+
+  async stop() {
+    for (const ws of this.sockets) ws.terminate();
+    this.server.close();
+  }
+}
 
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
@@ -31,12 +75,19 @@ const json = (body: unknown) =>
 /** Slack Web API stand-in: channel ids starting with G are private, D are DMs; every post is recorded. */
 class FakeSlack {
   posts: Record<string, any>[] = [];
+  /** Socket Mode, when a test uses it. */
+  sockets: FakeSocketMode | null = null;
   private ts = 1000;
 
   fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     const method = url.pathname.split("/").pop();
     const headers = (init?.headers ?? {}) as Record<string, string>;
+    // Socket Mode is opened with the app-level token, everything else uses the bot token.
+    if (method === "apps.connections.open") {
+      if (headers.authorization !== `Bearer ${APP_TOKEN}`) return json({ ok: false, error: "invalid_auth" });
+      return json({ ok: true, url: this.sockets?.url() });
+    }
     if (headers.authorization !== `Bearer ${BOT_TOKEN}`) return json({ ok: false, error: "invalid_auth" });
     const params: Record<string, any> =
       init?.method === "POST" ? JSON.parse(String(init.body ?? "{}")) : Object.fromEntries(url.searchParams);
@@ -196,6 +247,87 @@ describe("slack", () => {
     });
     expect(ok.status, ok.raw).toBe(200);
     expect((await send({ type: "url_verification", challenge: "t" })).body).toEqual({ challenge: "t" });
+  });
+
+  it("Socket Mode: events arrive over a socket witden opens, with no events URL involved", async () => {
+    const fake = new FakeSocketMode();
+    await fake.start();
+    slack.sockets = fake;
+    const saved = { ...socketTiming };
+    socketTiming.firstRetryMs = 20;
+    try {
+      const socketOf = async () =>
+        (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find((c: any) => c.id === conn.id);
+      // switching to Socket Mode drops the signing secret
+      const switched = await w.api("PATCH", `/api/connections/${conn.id}`, {
+        token: w.adminToken,
+        json: { credentials: { app_token: APP_TOKEN } },
+      });
+      expect(switched.status, switched.raw).toBe(200);
+      expect(switched.body.slack_mode).toBe("socket");
+      await w.waitFor(async () => (await socketOf()).socket?.state === "connected");
+      // the events URL no longer accepts anything: there is no signing secret
+      expect((await send({ type: "url_verification", challenge: "c" })).status).toBe(401);
+
+      // an event over the socket is queued, acknowledged and handled like one sent to the events URL
+      fake.send(fake.latest(), {
+        type: "events_api",
+        envelope_id: "env-1",
+        payload: event("<@UBOT> @dev over the socket", { ts: "900.1" }),
+      });
+      await w.waitFor(async () => fake.acks.includes("env-1"));
+      await settle();
+      expect((await allTasks()).map((t) => t.instruction)).toEqual(["@dev over the socket"]);
+      // Slack sends an unacknowledged envelope again: the same event is not handled twice
+      fake.send(fake.latest(), {
+        type: "events_api",
+        envelope_id: "env-1b",
+        payload: event("<@UBOT> @dev over the socket", { ts: "900.1" }),
+      });
+      await w.waitFor(async () => fake.acks.includes("env-1b"));
+      await settle();
+      expect(await allTasks()).toHaveLength(1);
+
+      // Slack warns before replacing a socket: the next one is open before the old one goes
+      const first = fake.latest();
+      fake.send(first, { type: "disconnect", reason: "warning" });
+      await w.waitFor(async () => fake.sockets.length === 2 && fake.closed.includes(first));
+      expect((await socketOf()).socket.state).toBe("connected");
+      fake.send(fake.latest(), {
+        type: "events_api",
+        envelope_id: "env-2",
+        payload: event("<@UBOT> @dev on the new socket", { ts: "901.1" }),
+      });
+      await w.waitFor(async () => fake.acks.includes("env-2"));
+
+      // a dropped socket is reopened
+      fake.latest().terminate();
+      await w.waitFor(async () => fake.sockets.length === 3);
+      await w.waitFor(async () => (await socketOf()).socket?.state === "connected");
+
+      // pausing the connection closes its socket
+      await w.api("PATCH", `/api/connections/${conn.id}`, { token: w.adminToken, json: { status: "paused" } });
+      await w.waitFor(async () => fake.closed.includes(fake.latest()));
+      expect((await socketOf()).socket).toBeNull();
+    } finally {
+      Object.assign(socketTiming, saved);
+      await fake.stop();
+    }
+  });
+
+  it("Socket Mode credentials: an app-level token, refused in place of the others", async () => {
+    const create = (credentials: Record<string, string>) =>
+      w.api("POST", "/api/connections", { token: w.adminToken, json: { platform: "slack", name: "s", credentials } });
+    expect((await create({ bot_token: BOT_TOKEN })).raw).toContain("app_token");
+    expect((await create({ bot_token: BOT_TOKEN, app_token: BOT_TOKEN })).raw).toContain("xapp-");
+    // a token without connections:write (or a wrong one) fails the test with Slack's reason
+    const made = await create({ bot_token: BOT_TOKEN, app_token: "xapp-1-wrong" });
+    expect(made.status, made.raw).toBe(200);
+    const tested = await w.api("POST", `/api/connections/${made.body.id}/test`, { token: w.adminToken });
+    expect(tested.body).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("apps.connections.open failed: invalid_auth"),
+    });
   });
 
   it("acknowledged events survive a crash before or during processing; text is not kept", async () => {

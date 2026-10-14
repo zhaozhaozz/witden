@@ -1,5 +1,5 @@
 /**
- * Slack adapter: Events API in, Web API out.
+ * Slack adapter: Events API in (over Socket Mode, or HTTP to the events URL), Web API out.
  *
  * A Slack thread (root message + replies) is one topic; a 1:1 DM with the bot is one topic. One bot user fronts
  * any number of roles; replies carry the role's name (and icon with ``chat:write.customize``) so people
@@ -7,7 +7,7 @@
  */
 import { createHmac } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
-import type { Db } from "../db/client.js";
+import { type Db, db as getDb } from "../db/client.js";
 import {
   artifacts,
   type Connection,
@@ -19,12 +19,13 @@ import {
   roles,
   users,
 } from "../db/schema.js";
-import { BadRequest, Unauthorized } from "../errors.js";
+import { BadRequest, Forbidden, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
 import { consoleBase, webhookBase } from "../services/public-url.js";
-import { type Adapter, type InboundAction, register } from "./base.js";
+import { type Adapter, getAdapter, type InboundAction, register } from "./base.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
+import { noteWebhook } from "./webhook-status.js";
 
 const API = "https://slack.com/api/";
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -88,20 +89,40 @@ export class SlackClient {
   }
 }
 
-/** Slack request signing (v0). Old timestamps are rejected to stop replays. */
+/** Socket Mode (an app-level token) or HTTP to the events URL (a signing secret). */
+export const slackMode = (creds: Record<string, string>): "socket" | "http" => (creds.app_token ? "socket" : "http");
+
 /**
- * Catch the usual mix-ups when Slack credentials are entered: Slack shows several tokens and secrets, and an
- * app-level token (xapp-) pasted as the signing secret makes every event fail its signature check.
+ * Check Slack credentials when they are entered, catching the usual mix-ups: Slack shows several tokens and
+ * secrets, and an app-level token (xapp-) saved as the signing secret fails every event's signature check.
  */
 export function checkCredentials(creds: Record<string, string>): void {
   if (creds.bot_token && !creds.bot_token.startsWith("xoxb-"))
     throw new BadRequest("bot_token must be the Bot User OAuth Token (xoxb-…) from OAuth & Permissions");
-  if (creds.signing_secret && /^(xapp-|xox[a-z]-)/.test(creds.signing_secret.trim()))
+  if (creds.app_token && !creds.app_token.startsWith("xapp-"))
+    throw new BadRequest("app_token must be an app-level token (xapp-…) with the connections:write scope");
+  if (creds.signing_secret && /^(xapp-|xox[a-z]-)/.test(creds.signing_secret))
     throw new BadRequest(
       "signing_secret is a Slack token, not the Signing Secret: copy it from Basic Information → App Credentials",
     );
+  if (!creds.app_token && !creds.signing_secret)
+    throw new BadRequest("an app_token (Socket Mode) or a signing_secret (events URL) is required");
 }
 
+/**
+ * A Slack Events API payload, from the events URL or a Socket Mode socket: checked against the connection
+ * and queued for processing.
+ */
+export async function acceptSlackEvent(conn: Connection, payload: any): Promise<void> {
+  if (payload?.type !== "event_callback" || conn.status !== "active") return;
+  if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
+    throw new Forbidden("event from another workspace");
+  noteWebhook(conn.id, "received");
+  const { acceptEvents } = await import("./inbound.js");
+  await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
+}
+
+/** Slack request signing (v0). Old timestamps are rejected to stop replays. */
 export function verifySignature(
   signingSecret: string,
   timestamp: string,
@@ -148,6 +169,9 @@ export class SlackAdapter implements Adapter {
 
   async test(_db: Db, conn: Connection) {
     const data = await this.client(conn).call("auth.test", {});
+    // Socket Mode: the app-level token must be able to open a socket (it needs connections:write).
+    const appToken = credentials(conn).app_token;
+    if (appToken) await new SlackClient(appToken).call("apps.connections.open", {});
     conn.externalWorkspaceId = data.team_id;
     conn.botUserId = data.user_id;
     return { team: data.team, team_id: data.team_id, bot_user_id: data.user_id, bot: data.user };
