@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { api } from "../api/client";
 import type { Connection, ExternalIdentity } from "../api/types";
 import { SYNC_MODE } from "../lib/format";
@@ -47,6 +48,26 @@ export interface InboundEvent {
   detail: string | null;
   received_at: string;
 }
+
+/**
+ * What goes into each Slack credential and where it is, shown right above the inputs. After an app is created
+ * Slack shows a couple of tokens, and the app-level one (xapp-) is easily taken for the signing secret.
+ */
+export const SLACK_FIELD_HELP: Record<string, ReactNode> = {
+  bot_token: (
+    <>
+      在应用的 <b>OAuth &amp; Permissions</b> 页面（安装应用后才有），以 <code>xoxb-</code> 开头。创建应用后 Slack
+      列出的令牌中，只有 <code>xoxb-</code> 开头的这一个填在这里。witden 用它读取消息、发送回复。
+    </>
+  ),
+  signing_secret: (
+    <>
+      <b>不在 Slack 弹出的令牌里。</b>到应用的 <b>Basic Information</b> 页面 → <b>App Credentials</b>，点击 Signing
+      Secret 旁的 Show 后复制，是 32 位十六进制字符。不要填 <code>xapp-</code> 开头的 App-Level Token，也不要填 Client
+      Secret 或 Verification Token。witden 用它确认事件确实来自 Slack。
+    </>
+  ),
+};
 
 /** A connection's settings as edited in the console. */
 export interface ConnSettings {

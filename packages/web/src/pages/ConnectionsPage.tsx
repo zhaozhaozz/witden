@@ -13,6 +13,7 @@ import {
   INBOUND_STATUS,
   type InboundEvent,
   lastRejected,
+  SLACK_FIELD_HELP,
   settingsOf,
 } from "./connectionParts";
 import { SlackSetup } from "./SlackSetup";
@@ -39,8 +40,8 @@ const CAP_STATUS: Record<string, { label: string; tone: "ok" | "wait" | "off" }>
 
 const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
   slack: [
-    ["bot_token", "Bot Token（xoxb-…）"],
-    ["signing_secret", "Signing Secret（Basic Information → App Credentials，32 位十六进制；不是 xapp- 开头的令牌）"],
+    ["bot_token", "Bot User OAuth Token"],
+    ["signing_secret", "Signing Secret"],
   ],
   feishu: [
     ["app_id", "App ID"],
@@ -779,7 +780,12 @@ function ConnectionForm({
         </Field>
       ) : null}
       {fields.map(([k, label]) => (
-        <Field key={k} label={label} hint={conn && !switching ? "留空保持不变" : undefined}>
+        <Field
+          key={k}
+          label={label}
+          description={platform === "slack" ? SLACK_FIELD_HELP[k] : undefined}
+          hint={conn && !switching ? "留空保持不变" : undefined}
+        >
           {k === "private_key" ? (
             <textarea
               rows={4}

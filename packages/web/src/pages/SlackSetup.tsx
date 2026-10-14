@@ -13,6 +13,7 @@ import {
   INBOUND_STATUS,
   type InboundEvent,
   lastRejected,
+  SLACK_FIELD_HELP,
   settingsOf,
 } from "./connectionParts";
 import { PublicAddressStep } from "./PublicAddress";
@@ -253,7 +254,8 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
         </li>
       </ol>
       <div className="callout callout-wait">
-        <b>安装完成后先停在这里，回到 witden。</b>下一步要把 Bot Token 和 Signing Secret 填到 witden。先不要设置 Event
+        <b>安装完成后先停在这里，回到 witden。</b>下一步要把 Bot Token 和 Signing Secret 填到 witden。Slack
+        列出的令牌中只用得到 xoxb- 开头的 Bot Token；Signing Secret 不在其中，下一步会说明在哪里复制。先不要设置 Event
         Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证，放在第 {EVENTS + 1} 步。
       </div>
       <details className="setup-more">
@@ -350,17 +352,6 @@ function CredentialsStep({
   return (
     <>
       <p>把应用的两项凭据填到这里。witden 加密保存它们，保存后不能再查看。</p>
-      <ul className="setup-list">
-        <li>
-          <b>Bot User OAuth Token</b>：应用的 <b>OAuth &amp; Permissions</b> 页面，以 <code>xoxb-</code> 开头。witden
-          用它读取消息和发送回复。
-        </li>
-        <li>
-          <b>Signing Secret</b>：应用的 <b>Basic Information</b> 页面 → <b>App Credentials</b>，点击 Show 后复制。witden
-          用它确认收到的事件确实来自 Slack。注意不要填 App-Level Token（xapp- 开头）、Client Secret 或 Verification
-          Token，Signing Secret 是 32 位十六进制字符。
-        </li>
-      </ul>
       <form
         className="form form-narrow"
         onSubmit={(e) => {
@@ -373,6 +364,7 @@ function CredentialsStep({
         </Field>
         <Field
           label="Bot User OAuth Token"
+          description={SLACK_FIELD_HELP.bot_token}
           hint={
             wrongToken ? (
               <span className="text-bad">
@@ -394,6 +386,7 @@ function CredentialsStep({
         </Field>
         <Field
           label="Signing Secret"
+          description={SLACK_FIELD_HELP.signing_secret}
           hint={
             secretIsToken ? (
               <span className="text-bad">

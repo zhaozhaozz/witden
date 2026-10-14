@@ -315,11 +315,14 @@ export function Tabs({ tabs, value, onChange }: { tabs: TabDef[]; value: string;
 
 export function Field({
   label,
+  description,
   hint,
   children,
   wide,
 }: {
   label: ReactNode;
+  /** What to enter and where to find it, shown right above the input. */
+  description?: ReactNode;
   hint?: ReactNode;
   children: ReactNode;
   wide?: boolean;
@@ -327,6 +330,7 @@ export function Field({
   return (
     <label className={`field${wide ? " field-wide" : ""}`}>
       <span className="field-label">{label}</span>
+      {description ? <span className="field-desc">{description}</span> : null}
       {children}
       {hint ? <span className="field-hint">{hint}</span> : null}
     </label>
