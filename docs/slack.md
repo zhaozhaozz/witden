@@ -2,68 +2,81 @@
 
 接入后，团队成员可以在 Slack 中 @ 机器人，把工作交给 witden 中的角色。每个 Slack thread 对应 witden 中的一个话题，角色的回复会发回同一个 thread。
 
-配置需要同时具备 witden 的“管理通讯接入”权限和 Slack 工作区的应用管理权限。
+配置需要 witden 管理员账号，以及 Slack 工作区的应用管理权限（或由工作区管理员批准安装应用）。
+
+在“设置 → 通讯接入”中点击“新建接入”并选择 **Slack**，页面会按以下步骤引导完成设置，每一步都给出需要在 Slack 中点击的位置；已有的 Slack 接入可以在详情中点击“设置引导”继续。下面各节与引导中的步骤一一对应。
+
+Slack 只能把事件发送到公网可以访问的 HTTPS 地址。部署 witden 时请把 `WITDEN_PUBLIC_URL` 设置为这样的地址（例如经过反向代理），否则 Slack 无法验证事件地址，引导页面也会给出提示。
 
 ## 1. 创建 Slack App
 
-1. 打开 <https://api.slack.com/apps>，选择 **Create New App → From an app manifest**，选择工作区，粘贴以下清单：
+1. 在引导中填写机器人名称（在 Slack 中显示、被 @ 的名字），点击“在 Slack 中创建应用”。Slack 会打开创建页面并预先填好应用清单；选择工作区，确认后点击 **Create**。
+2. 在应用的 **Install App** 页面点击 **Install to Workspace**，再点击 **Allow**。
 
-   ```yaml
-   display_information:
-     name: witden
-   features:
-     bot_user:
-       display_name: witden
-       always_online: true
-   oauth_config:
-     scopes:
-       bot:
-         - app_mentions:read
-         - channels:history
-         - channels:read
-         - groups:history
-         - groups:read
-         - im:history
-         - im:read
-         - mpim:history
-         - mpim:read
-         - chat:write
-         - chat:write.customize   # 可选：以角色自己的名称和头像发言
-         - users:read
-         - files:read
-   settings:
-     org_deploy_enabled: false
-     socket_mode_enabled: false
-   ```
+预填页面打不开时，可以打开 <https://api.slack.com/apps>，选择 **Create New App → From a manifest**，选择工作区，粘贴以下清单（引导中也可以复制同样内容的 JSON）：
 
-2. 把应用安装到工作区，记下 **Bot User OAuth Token**（以 `xoxb-` 开头）和 **Signing Secret**（在 Basic Information 页面）。
+```yaml
+display_information:
+  name: witden
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true          # 允许大家私信机器人
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: witden
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - channels:history
+      - groups:history
+      - im:history
+      - mpim:history
+      - channels:read
+      - groups:read
+      - im:read
+      - mpim:read
+      - chat:write
+      - chat:write.customize   # 可选：以角色自己的名称和头像发言
+      - users:read
+      - files:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
+```
 
-## 2. 在 witden 中创建连接
+清单不包含事件订阅：Slack 要求事件订阅带有已验证的事件地址，而事件地址要在下一步创建 witden 接入之后才能验证，见第 3 节。
 
-1. 进入“设置 → 通讯接入”，新建 Slack 连接，填写 Bot User OAuth Token 和 Signing Secret。
-2. 点击“测试连接”。witden 会读取工作区和机器人的信息，用于拒绝来自其他工作区的事件，并忽略机器人自己发出的消息。
-3. 复制连接详情中显示的**事件地址**。
+## 2. 填写凭据并测试连接
 
-连接的可选设置：
-
-| 设置 | 说明 |
-|---|---|
-| 以角色自己的名称和头像发送消息 | 需要 `chat:write.customize` 权限。未开启时，回复以“角色名称 (@名称):”开头。 |
-| 允许未关联的人使用（外部成员） | 默认关闭。关闭时，Slack 用户需要关联到 witden 管理员账号后才能使用。开启后，未关联的人第一次与机器人对话时自动成为这个连接的**外部成员**，见第 5 节。 |
-| 外部成员可以使用的角色 | 开启上一项后选择。外部成员只能使用这里列出的角色。 |
-| 新会话默认同步范围 | “仅 @ 机器人的 thread”（默认）、“全部 thread”或“不同步”。 |
+1. 在引导中填写接入名称，以及应用的两项凭据：
+   - **Bot User OAuth Token**：应用的 OAuth & Permissions 页面，以 `xoxb-` 开头。
+   - **Signing Secret**：应用的 Basic Information 页面 → App Credentials。
+2. 点击“保存并测试连接”。witden 加密保存凭据，并读取工作区和机器人的信息，用于拒绝来自其他工作区的事件、忽略机器人自己发出的消息。测试失败时，页面会说明原因，例如 Token 不正确或应用已被卸载。
 
 ## 3. 订阅事件
 
-回到 Slack App 的 **Event Subscriptions** 页面：
+引导会显示这个接入的**事件地址**。在 Slack App 的 **Event Subscriptions** 页面：
 
-1. 打开 **Enable Events**，在 **Request URL** 中填写上一步复制的事件地址，等待显示 Verified。
+1. 打开 **Enable Events**，在 **Request URL** 中填写事件地址，等待显示 Verified。
 2. 在 **Subscribe to bot events** 中添加：`app_mention`、`message.channels`、`message.groups`、`message.im`、`message.mpim`。
-3. 保存。如果 Slack 提示重新安装应用，按提示操作。
+3. 点击 **Save Changes**。如果 Slack 提示重新安装应用，按提示操作。
 
 ## 4. 配置分配规则
 
-来自外部会话的请求**没有匹配的分配规则时一律拒绝**。请在“设置 → 分配规则”中至少为这个连接添加一条规则，例如：
+来自外部会话的请求**没有匹配的分配规则时一律拒绝**。引导的第 4 步可以直接为这个接入添加一条规则：选择可以处理 Slack 请求的角色和默认角色。同一步还可以设置以下选项（之后可以在接入详情中点击“编辑”修改）：
+
+| 设置 | 说明 |
+|---|---|
+| 新会话默认同步范围 | “仅 @ 机器人的 thread”（默认）、“全部 thread”或“不同步”。 |
+| 允许未关联的人使用（外部成员） | 默认关闭。关闭时，Slack 用户需要关联到 witden 管理员账号后才能使用。开启后，未关联的人第一次与机器人对话时自动成为这个连接的**外部成员**，见第 5 节。 |
+| 外部成员可以使用的角色 | 开启上一项后选择。外部成员只能使用这里列出的角色。 |
+| 以角色自己的名称和头像发送消息 | 需要 `chat:write.customize` 权限。未开启时，回复以“角色名称 (@名称):”开头。 |
+
+更细的规则在“设置 → 分配规则”中添加，例如：
 
 - 匹配该连接，允许角色 `dev` 和 `test`，默认角色 `dev`；
 - 匹配 #qa 频道，允许角色 `test`，默认角色 `test`。多条规则同时匹配时，允许的角色取交集，因此在 #qa 中只能使用 `test`。
@@ -73,6 +86,8 @@
 ## 5. 关联身份
 
 witden 只按 **Slack 用户 ID** 识别 Slack 用户，不使用显示名称。在“设置 → 通讯接入 → 身份关联”中，把 Slack 账号关联到对应的 witden 管理员账号；关联后，这个 Slack 用户发出的请求视为该管理员的请求。
+
+引导的最后一步“在 Slack 中试一试”会实时显示 witden 收到的消息和处理结果。管理员第一次在 Slack 中 @ 机器人时，账号还没有关联，可以直接在这一步把自己的 Slack 账号关联到自己的 witden 账号，再发一次即可。请求没有交给角色时（例如角色还没有分配电脑或模型），这里和 Slack 的 thread 中都会说明原因；接入详情的“收到的事件”中也保留这些记录。
 
 未关联的人：
 
