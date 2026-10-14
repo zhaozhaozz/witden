@@ -83,8 +83,9 @@ describe("appearance", () => {
       (await admin("PATCH", `/api/roles/${w.ids.dev}`, { avatar_url: stored.body.avatar_url })).body.avatar_url,
     ).toBe(up.body.avatar_url);
     // Slack fetches icons itself: uploaded avatars go out with the platform's address
-    expect(absoluteAvatarUrl(up.body.avatar_url)).toBe(`http://localhost:8320${up.body.avatar_url}`);
-    expect(absoluteAvatarUrl("https://img.example/a.png")).toBe("https://img.example/a.png");
+    const base = "https://witden.example.com";
+    expect(absoluteAvatarUrl(up.body.avatar_url, base)).toBe(`${base}${up.body.avatar_url}`);
+    expect(absoluteAvatarUrl("https://img.example/a.png", base)).toBe("https://img.example/a.png");
   });
 
   it("computers take a colour; it shows wherever the computer is referenced", async () => {

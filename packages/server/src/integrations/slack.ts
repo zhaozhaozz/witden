@@ -7,7 +7,6 @@
  */
 import { createHmac } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
   artifacts,
@@ -23,6 +22,7 @@ import {
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
+import { publicBase } from "../services/public-url.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 
@@ -141,7 +141,7 @@ export class SlackAdapter implements Adapter {
   }
 
   private async render(db: Db, conn: Connection, msg: Message): Promise<[string, Record<string, string>]> {
-    const base = settings().publicUrl.replace(/\/+$/, "");
+    const base = await publicBase(db);
     // System notices are plain text; everything else is Markdown written for the console.
     let text =
       msg.authorType === "system"
@@ -178,7 +178,7 @@ export class SlackAdapter implements Adapter {
       if (conn.settings.custom_identity) {
         extra.username = name;
         // Slack fetches the icon itself: uploaded avatars need the platform's public address.
-        const icon = absoluteAvatarUrl(role?.avatarUrl);
+        const icon = absoluteAvatarUrl(role?.avatarUrl, base);
         if (icon) extra.icon_url = icon;
       } else text = signed(`*${escapeSlack(name)}*`, text);
     } else if (msg.authorType === "user") {

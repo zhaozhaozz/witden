@@ -2,7 +2,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { recheckActiveTasks } from "../agent/revocation.js";
-import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -24,6 +23,7 @@ import { conversationReaders, describeReaders, isSubset, topicReaders } from "..
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
+import { publicBase } from "../services/public-url.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
@@ -35,8 +35,8 @@ const PLATFORMS: Record<string, string[]> = {
 };
 const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "default_sync_mode"]);
 
-function connOut(conn: Connection) {
-  const base = settings().publicUrl.replace(/\/+$/, "");
+/** ``base``: the public address (services/public-url.ts). */
+function connOut(conn: Connection, base: string) {
   const creds =
     conn.platform === "github" && conn.credentialsEncrypted
       ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
@@ -95,7 +95,8 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections",
     authed(async ({ db, user }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      return (await db.select().from(connections).orderBy(connections.name)).map(connOut);
+      const base = await publicBase(db);
+      return (await db.select().from(connections).orderBy(connections.name)).map((c) => connOut(c, base));
     }),
   );
 
@@ -149,7 +150,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { platform: conn.platform, name: conn.name },
       });
-      return connOut(conn);
+      return connOut(conn, await publicBase(db));
     }),
   );
 
@@ -188,7 +189,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { fields: Object.keys(b), status: updated.status },
       });
-      return connOut(updated);
+      return connOut(updated, await publicBase(db));
     }),
   );
 

@@ -23,7 +23,8 @@ FROM node:22-bookworm-slim
 ENV NODE_ENV=production WITDEN_DATA_DIR=/data WITDEN_WEB_DIST=/app/packages/web/dist
 WORKDIR /app
 COPY --from=build /app /app
-RUN mkdir -p /data && chown node:node /data
+# /tunnel: the Cloudflare Tunnel token, shared read-only with the optional "tunnel" service
+RUN mkdir -p /data /tunnel && chown node:node /data /tunnel
 USER node
 VOLUME ["/data"]
 EXPOSE 8320 8330

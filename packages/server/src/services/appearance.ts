@@ -71,8 +71,8 @@ export function avatarFile(name: string): { file: string; type: string } | null 
   return fs.existsSync(file) ? { file, type: TYPES[m[1]] } : null;
 }
 
-/** Absolute form of an avatar URL for places outside the console (e.g. Slack icons). */
-export function absoluteAvatarUrl(url: string | null | undefined): string | null {
+/** Absolute form of an avatar URL for places outside the console (e.g. Slack icons); ``base`` is the public address. */
+export function absoluteAvatarUrl(url: string | null | undefined, base: string): string | null {
   if (!url) return null;
-  return url.startsWith("/") ? settings().publicUrl.replace(/\/+$/, "") + url : url;
+  return url.startsWith("/") ? base + url : url;
 }

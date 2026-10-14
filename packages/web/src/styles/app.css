@@ -3615,6 +3615,15 @@ img.avatar-role.avatar-colored {
   border-radius: var(--radius);
   background: var(--paper-2);
 }
+.setup-modes {
+  margin-bottom: 12px;
+}
+.setup-inline-form {
+  margin: 8px 0 6px;
+}
+.setup-routes {
+  margin-top: 6px;
+}
 .setup-next {
   display: flex;
   align-items: center;

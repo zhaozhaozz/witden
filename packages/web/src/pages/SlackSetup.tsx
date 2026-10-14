@@ -8,6 +8,7 @@ import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
 import { CopyText, Field, FieldGroup, Loaded, MultiPick, Section, Tag } from "../ui/kit";
 import { ConnectionSettingsFields, Identities, INBOUND_STATUS, type InboundEvent, settingsOf } from "./connectionParts";
+import { PublicAddressStep } from "./PublicAddress";
 
 const BOT_SCOPES: [string, string][] = [
   ["app_mentions:read", "收到频道中 @机器人 的消息"],
@@ -88,12 +89,14 @@ function missingSetup(r: Role): string | undefined {
 }
 
 const STEPS = [
+  "准备公网地址",
   "在 Slack 中创建应用",
   "填写凭据并测试连接",
   "在 Slack 中订阅事件",
   "选择处理请求的角色",
   "在 Slack 中试一试",
 ];
+const [ADDRESS, APP, CREDENTIALS, EVENTS, ACCESS, TRY] = STEPS.map((_, i) => i);
 
 interface TestResult {
   ok: boolean;
@@ -103,8 +106,9 @@ interface TestResult {
 }
 
 /**
- * Guided Slack setup shown in the page itself. The connection is created at step 2, once the app's
- * credentials exist; ``initial`` resumes the guide for an existing connection.
+ * Guided Slack setup shown in the page itself. It starts with the public address Slack will send events to;
+ * the connection is created at the credentials step, once the app exists; ``initial`` resumes the guide
+ * for an existing connection.
  */
 export function SlackSetup({
   initial,
@@ -116,10 +120,11 @@ export function SlackSetup({
   onClose: (c: Connection | null) => void;
 }) {
   const [conn, setConn] = useState(initial);
-  const start = initial ? (initial.bot_user_id ? 2 : 1) : 0;
+  const start = initial ? (initial.bot_user_id ? EVENTS : CREDENTIALS) : ADDRESS;
   const [step, setStep] = useState(start);
   const [reached, setReached] = useState(start);
   const [botName, setBotName] = useState("witden");
+  const [address, setAddress] = useState<string | null>(null);
   const [tested, setTested] = useState<TestResult | null>(null);
   const go = (n: number) => {
     setStep(n);
@@ -128,7 +133,14 @@ export function SlackSetup({
   const bot = tested?.bot ?? (initial ? null : botName);
 
   const body: ReactNode[] = [
-    <AppStep key="app" name={botName} onName={setBotName} onNext={() => go(1)} />,
+    <PublicAddressStep
+      key="address"
+      onNext={(url) => {
+        setAddress(url);
+        go(APP);
+      }}
+    />,
+    <AppStep key="app" name={botName} onName={setBotName} onNext={() => go(CREDENTIALS)} />,
     <CredentialsStep
       key="credentials"
       conn={conn}
@@ -140,23 +152,24 @@ export function SlackSetup({
       onTested={(c, r) => {
         setConn(c);
         setTested(r);
-        if (r.ok) go(2);
+        if (r.ok) go(EVENTS);
       }}
     />,
-    conn ? <EventsStep key="events" conn={conn} onNext={() => go(3)} /> : null,
+    conn ? <EventsStep key="events" conn={conn} onNext={() => go(ACCESS)} /> : null,
     conn ? (
       <AccessStep
         key="access"
         conn={conn}
         onSaved={(c) => {
           setConn(c);
-          go(4);
+          go(TRY);
         }}
       />
     ) : null,
     conn ? <TryStep key="try" conn={conn} bot={bot} onDone={() => onClose(conn)} /> : null,
   ];
   const summary = [
+    address ? `公网地址：${address}` : null,
     initial ? null : `应用名称：${botName}`,
     tested?.ok ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}` : conn ? conn.name : null,
     null,
@@ -174,7 +187,7 @@ export function SlackSetup({
       }
     >
       <p className="setup-intro">
-        按下面 5 步把 Slack 接入 witden，需要 Slack
+        按下面 {STEPS.length} 步把 Slack 接入 witden，需要 Slack
         工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给
         witden 中的角色：每个 Slack thread 对应 witden 中的一个话题，角色的回复发回同一个 thread。
       </p>
@@ -182,7 +195,8 @@ export function SlackSetup({
         {STEPS.map((title, i) => {
           const state = i === step ? "current" : i < reached ? "done" : "todo";
           // Steps after the credentials need a connection that works; from then on any of them can be opened.
-          const open = i !== step && (i <= reached || (i >= 2 && !!conn?.bot_user_id)) ? () => setStep(i) : undefined;
+          const open =
+            i !== step && (i <= reached || (i >= EVENTS && !!conn?.bot_user_id)) ? () => setStep(i) : undefined;
           return (
             <li key={title} className={`setup-step setup-${state}`}>
               <button type="button" className="setup-head" disabled={!open} onClick={open}>
@@ -190,7 +204,7 @@ export function SlackSetup({
                   {state === "done" ? "✓" : i + 1}
                 </span>
                 <span className="setup-title">{title}</span>
-                {state !== "current" && summary[i] ? <span className="setup-summary">{summary[i]}</span> : null}
+                {state === "done" && summary[i] ? <span className="setup-summary">{summary[i]}</span> : null}
               </button>
               {state === "current" ? <div className="setup-body">{body[i]}</div> : null}
             </li>
@@ -229,6 +243,10 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
           如果工作区要求审批，等工作区管理员批准后再继续。
         </li>
       </ol>
+      <div className="callout callout-wait">
+        <b>安装完成后先停在这里，回到 witden。</b>下一步要把 Bot Token 和 Signing Secret 填到 witden。先不要设置 Event
+        Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证，放在第 {EVENTS + 1} 步。
+      </div>
       <details className="setup-more">
         <summary>按钮打不开预填页面？手动粘贴清单</summary>
         <p className="small">
@@ -261,7 +279,7 @@ function AppStep({ name, onName, onNext }: { name: string; onName: (v: string) =
       </details>
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
-          已创建并安装，下一步
+          已安装，去填写凭据
         </button>
       </div>
     </>
@@ -597,7 +615,7 @@ function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; 
           </ul>
         ) : (
           <span className="muted small">
-            还没有收到消息。发了消息后这里一直没有变化时，检查第 3 步的 Request URL 是否显示
+            还没有收到消息。发了消息后这里一直没有变化时，检查第 {EVENTS + 1} 步的 Request URL 是否显示
             Verified，事件是否已订阅并保存。
           </span>
         )}
@@ -621,7 +639,7 @@ function TryStep({ conn, bot, onDone }: { conn: Connection; bot: string | null; 
         <>
           <div className="callout callout-wait">
             发消息的 Slack 账号还没有关联 witden 账号，所以没有交给角色。在下面把你自己的 Slack 账号关联到你的 witden
-            账号，然后在 Slack 中再发一次；其他人可以在第 4 步开启“允许未关联的人使用”。
+            账号，然后在 Slack 中再发一次；其他人可以在第 {ACCESS + 1} 步开启“允许未关联的人使用”。
           </div>
           <Identities key={events?.length} conn={conn} />
         </>

@@ -51,6 +51,10 @@ services:
       # fixed inside the container; WITDEN_PORT only chooses the published host port
       WITDEN_PORT: "8320"
       WITDEN_HUB_PORT: "8330"
+      # Optional Cloudflare Tunnel (the "tunnel" service below): the console writes its token here
+      WITDEN_TUNNEL_TOKEN_FILE: /tunnel/token
+      WITDEN_TUNNEL_METRICS_URL: http://tunnel:2000
+      WITDEN_TUNNEL_ORIGIN: http://api:8320
     ports:
       - "${WITDEN_PORT:-8320}:8320"
       # Runner hub: computers reach it as witden-hub (host gateway). Bind to the Docker bridge address to
@@ -58,6 +62,7 @@ services:
       - "${WITDEN_HUB_BIND:-0.0.0.0}:8330:8330"
     volumes:
       - witden-data:/data
+      - witden-tunnel:/tunnel
     depends_on:
       db: { condition: service_healthy }
       manager: { condition: service_started }
@@ -93,6 +98,22 @@ services:
       - witden-laya-cache:/home/laya/.cache/huggingface
     networks: [control]
 
+  # Optional: a Cloudflare Tunnel that gives the platform a public HTTPS address (needed for Slack, GitHub
+  # and Feishu events) without opening ports or managing certificates. Turned on by COMPOSE_PROFILES=tunnel
+  # in .env. The tunnel token is pasted in the console (Connections → Slack guide → public address), which
+  # writes it to the witden-tunnel volume; until then this service exits and is restarted about once a
+  # minute. After replacing the token: docker compose restart tunnel.
+  tunnel:
+    image: cloudflare/cloudflared:2026.10.0
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: ["tunnel", "--metrics", "0.0.0.0:2000", "run", "--token-file", "/etc/witden-tunnel/token"]
+    volumes:
+      - witden-tunnel:/etc/witden-tunnel:ro
+    depends_on:
+      api: { condition: service_started }
+    networks: [control]
+
   # Build-only services for the computer images used by the built-in templates.
   computer-shell:
     build: { context: ., dockerfile: images/shell/Dockerfile }
@@ -111,3 +132,4 @@ volumes:
   witden-data:
   witden-manager:
   witden-laya-cache:
+  witden-tunnel:

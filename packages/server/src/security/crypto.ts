@@ -1,4 +1,12 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { Settings } from "../config.js";
@@ -32,6 +40,15 @@ export class SecretBox {
     const cipher = createCipheriv("aes-256-gcm", this.key, iv);
     const data = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
     return ["v1", iv.toString("base64"), cipher.getAuthTag().toString("base64"), data.toString("base64")].join(".");
+  }
+
+  /**
+   * A keyed proof over ``data`` for one purpose, under a key derived from the master key, so a public
+   * endpoint can prove it belongs to this deployment without exposing anything usable elsewhere.
+   */
+  proof(purpose: string, data: string): string {
+    const derived = createHmac("sha256", this.key).update(`witden:${purpose}`).digest();
+    return createHmac("sha256", derived).update(data).digest("hex");
   }
 
   decrypt(token: string): string {

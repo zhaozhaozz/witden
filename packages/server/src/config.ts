@@ -9,8 +9,14 @@ export interface Settings {
   secretKey: string | null;
   host: string;
   port: number;
+  /** Default public address; an address set in the console (services/public-url.ts) takes precedence. */
   publicUrl: string;
   corsOrigins: string[];
+  /** Cloudflare Tunnel (the optional "tunnel" compose service): where to write its token, where its metrics
+   * server answers, and the address its routes should point at. Empty file path = no tunnel service. */
+  tunnelTokenFile: string | null;
+  tunnelMetricsUrl: string | null;
+  tunnelOrigin: string | null;
   /** Port of the runner hub (computers dial in here); separate from the API port. */
   hubPort: number;
   hubHost: string;
@@ -73,6 +79,9 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     port,
     publicUrl: env("PUBLIC_URL") ?? `http://localhost:${port}`,
     corsOrigins: list("CORS_ORIGINS", []),
+    tunnelTokenFile: env("TUNNEL_TOKEN_FILE") ?? null,
+    tunnelMetricsUrl: env("TUNNEL_METRICS_URL") ?? null,
+    tunnelOrigin: env("TUNNEL_ORIGIN") ?? null,
     hubPort: int("HUB_PORT", 8330),
     hubHost: env("HUB_HOST") ?? "0.0.0.0",
     hubUrlForComputers: env("HUB_URL_FOR_COMPUTERS") ?? "ws://witden-hub:8330/runner",

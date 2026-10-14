@@ -10,7 +10,6 @@
  */
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
   artifacts,
@@ -25,6 +24,7 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual } from "../security/crypto.js";
+import { publicBase } from "../services/public-url.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
 import type { InboundMessage } from "./inbound.js";
 import { credentials } from "./slack.js";
@@ -159,7 +159,7 @@ export class GithubAdapter implements Adapter {
   }
 
   private async render(db: Db, conn: Connection, msg: Message): Promise<string> {
-    const base = settings().publicUrl.replace(/\/+$/, "");
+    const base = await publicBase(db);
     // GitHub renders Markdown itself; system notices are set in italics.
     let text =
       msg.authorType === "system"

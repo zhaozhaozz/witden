@@ -21,6 +21,7 @@ import { eventRoutes } from "./api/events.js";
 import { integrationRoutes } from "./api/integrations.js";
 import { liveRoutes } from "./api/live.js";
 import { modelRoutes } from "./api/models.js";
+import { publicUrlRoutes } from "./api/public-url.js";
 import { roleRoutes } from "./api/roles.js";
 import { knowledgeRoutes, ruleRoutes } from "./api/rules-knowledge.js";
 import { taskRoutes } from "./api/tasks.js";
@@ -112,6 +113,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     knowledgeRoutes,
     eventRoutes,
     integrationRoutes,
+    publicUrlRoutes,
     liveRoutes,
   ]) {
     await routes(app);
