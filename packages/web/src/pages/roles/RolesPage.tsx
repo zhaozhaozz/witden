@@ -44,6 +44,7 @@ export default function RolesPage() {
                           <div>
                             <div className="strong">
                               {r.name} <Handle handle={r.handle} />
+                              {r.system_admin ? <Tag tone="info">系统管理员</Tag> : null}
                             </div>
                             {r.description ? <div className="small muted clamp-1">{r.description}</div> : null}
                           </div>
@@ -67,6 +68,8 @@ export default function RolesPage() {
                               <StatusChip meta={instanceStatus(r.instance.status)} compact />
                             </div>
                           </>
+                        ) : r.system_admin ? (
+                          <span className="muted">不需要</span>
                         ) : (
                           <span className="text-bad">未分配</span>
                         )}

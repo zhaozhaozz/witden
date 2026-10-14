@@ -78,8 +78,10 @@ async function enable(modelIds: string[]) {
     model_ids: modelIds,
   });
   expect(res.status, res.raw).toBe(200);
-  await w.waitFor(async () => pc.modelProxy?.key === res.body.key && pc.modelProxy);
-  return res.body;
+  // The key is never shown; the computer receives it from its runner, and programs there use it.
+  expect(res.body.has_key).toBe(true);
+  await w.waitFor(async () => !!pc.modelProxy?.key);
+  return { ...res.body, key: pc.modelProxy!.key as string };
 }
 
 const auth = (key: string) => ({ authorization: `Bearer ${key}` });
@@ -94,10 +96,12 @@ describe("model proxy", () => {
     expect(out.key).toMatch(/^wdm_/);
     expect(out.endpoints.openai).toBe("http://127.0.0.1:8686/v1");
     expect(JSON.stringify(pc.modelProxy)).not.toContain("sk-openai");
-    // the key is shown on the computer's model access page only, never in the computer listing
-    const listed = (await admin("GET", `/api/instances/${w.ids.instance}`)).raw;
-    expect(listed).not.toContain("model_proxy_key_encrypted");
-    expect(listed).not.toContain(out.key);
+    // the key is never shown: not on the model access page, not in the computer's details
+    for (const path of [`/api/instances/${w.ids.instance}`, `/api/instances/${w.ids.instance}/model-proxy`]) {
+      const shown = (await admin("GET", path)).raw;
+      expect(shown).not.toContain("model_proxy_key_encrypted");
+      expect(shown).not.toContain(out.key);
+    }
 
     expect((await pc.proxy("GET", "/v1/models", { headers: auth("wdm_wrong") })).status).toBe(401);
     const models = await pc.proxy("GET", "/v1/models", { headers: { "x-api-key": out.key } });
@@ -202,9 +206,10 @@ describe("model proxy", () => {
   it("a new key replaces the old one at once; turning it off reaches the computer", async () => {
     const p = await provider("openai", "openai", "https://api.openai.example/v1", ["gpt-x"]);
     const { key } = await enable([p.models[0].id]);
-    const rotated = (await admin("POST", `/api/instances/${w.ids.instance}/model-proxy/rotate-key`)).body;
-    expect(rotated.key).not.toBe(key);
-    await w.waitFor(async () => pc.modelProxy?.key === rotated.key);
+    const res = await admin("POST", `/api/instances/${w.ids.instance}/model-proxy/rotate-key`);
+    expect(res.raw).not.toContain("wdm_");
+    await w.waitFor(async () => !!pc.modelProxy?.key && pc.modelProxy.key !== key);
+    const rotated = { key: pc.modelProxy!.key as string };
     expect((await pc.proxy("GET", "/v1/models", { headers: auth(key) })).status).toBe(401);
     expect((await pc.proxy("GET", "/v1/models", { headers: auth(rotated.key) })).status).toBe(200);
     await admin("PUT", `/api/instances/${w.ids.instance}/model-proxy`, { enabled: false });

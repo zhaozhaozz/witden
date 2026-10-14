@@ -833,7 +833,8 @@ function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connecti
   const dir = useDirectory();
   const { run, busy } = useAction();
   const [settings, setSettings] = useState(settingsOf(conn));
-  const roles = dir.roles.filter((r) => r.status === "active" || r.id === settings.role_id);
+  // A system administrator works only in the console, never as a bot.
+  const roles = dir.roles.filter((r) => !r.system_admin && (r.status === "active" || r.id === settings.role_id));
 
   const save = async () => {
     const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { settings }), "已保存");

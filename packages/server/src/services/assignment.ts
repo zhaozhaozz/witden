@@ -7,14 +7,15 @@
  *    @-mention or hand-over.
  * 3. Each role is then checked: it exists and is enabled, in a console topic it takes part, the person may use
  *    it (external members only their connection's role; when a role asks another role, its contacts decide
- *    instead), and it has a computer.
+ *    instead), and it has a computer. A system administrator role works only in the console, only for people
+ *    (never for another role) and needs no computer: its tools act on witden itself.
  *
  * The steps are recorded in a trace, kept with the task, so every assignment can be explained.
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { computerInstances, connections, roles, users } from "../db/schema.js";
-import { hasPermission, Perm } from "../security/permissions.js";
+import { hasPermission, isConsoleUser, Perm } from "../security/permissions.js";
 import { participant } from "./topics.js";
 
 export interface RequestContext {
@@ -113,8 +114,14 @@ async function checkRole(
   }
   if (!ctx.byRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, roleId)))
     d.reasons.push(`you do not have permission to use ${label}`);
+  if (role.systemAdmin) {
+    if (ctx.conversationKind !== "internal")
+      d.reasons.push(`${label} is a system administrator: it works only in the witden console`);
+    if (ctx.byRoleId) d.reasons.push(`${label} is a system administrator: it takes requests only from people`);
+    if (!isConsoleUser(user)) d.reasons.push(`${label} is a system administrator: only console accounts may ask it`);
+  }
   if (!role.instanceId) {
-    d.reasons.push(`${label} has no computer assigned`);
+    if (!role.systemAdmin) d.reasons.push(`${label} has no computer assigned`);
   } else {
     const [inst] = await db.select().from(computerInstances).where(eq(computerInstances.id, role.instanceId)).limit(1);
     if (!inst || inst.status === "deleted") d.reasons.push(`${label}'s computer no longer exists`);

@@ -23,6 +23,8 @@ export class Runtime {
   hub?: import("./compute/hub.js").RunnerHub;
   gateway?: import("./compute/gateway.js").GatewayClient;
   worker?: import("./agent/worker.js").Worker;
+  /** The console API, in the process that serves it (system administrator roles call it in-process). */
+  app?: import("fastify").FastifyInstance;
   private pending = new Set<Promise<unknown>>();
 
   constructor(parts: RuntimeParts) {

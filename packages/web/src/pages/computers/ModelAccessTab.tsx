@@ -21,7 +21,6 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
   const [picked, setPicked] = useState<string[]>([]);
-  const [showKey, setShowKey] = useState(false);
   useEffect(() => {
     setPicked(res.data?.model_ids ?? []);
   }, [res.data]);
@@ -63,12 +62,9 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                     ["System One 地址（Jev、Laya）", <CopyText key="s" text={p.endpoints.systemone} />],
                     [
                       "密钥",
-                      p.key ? (
-                        <span key="k" className="inline-list">
-                          {showKey ? <CopyText text={p.key} /> : <code className="id">wdm_••••••••</code>}
-                          <button type="button" className="btn btn-xs" onClick={() => setShowKey((v) => !v)}>
-                            {showKey ? "隐藏" : "显示"}
-                          </button>
+                      <span key="k" className="inline-list">
+                        {p.has_key ? "已签发（不可查看）" : <span className="muted">未签发</span>}
+                        {manage && p.has_key ? (
                           <button
                             type="button"
                             className="btn btn-xs btn-danger-ghost"
@@ -93,15 +89,11 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
                           >
                             更换
                           </button>
-                          {p.key_issued_at ? (
-                            <span className="small muted">{fmtRelative(p.key_issued_at)}签发</span>
-                          ) : null}
-                        </span>
-                      ) : (
-                        <span key="k" className="muted">
-                          只有能管理这台虚拟电脑的人可以查看
-                        </span>
-                      ),
+                        ) : null}
+                        {p.key_issued_at ? (
+                          <span className="small muted">{fmtRelative(p.key_issued_at)}签发</span>
+                        ) : null}
+                      </span>,
                     ],
                     [
                       "环境变量",

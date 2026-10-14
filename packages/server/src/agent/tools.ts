@@ -9,6 +9,7 @@
 import type { RunnerOp } from "@witden/shared";
 import { and, desc, eq, gte, ilike, isNull, lt, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
+import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -16,6 +17,7 @@ import { memories, messages, modelConfigs, roles, type Task, tasks, topics, user
 import { BadRequest, Forbidden } from "../errors.js";
 import { spaceLabel, topicLabel, userLabel } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
+import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
 import * as topicSvc from "../services/topics.js";
@@ -32,14 +34,20 @@ export const TOOL_GROUPS: Record<string, string> = {
   collaborate: "Message and delegate to other roles (limited by contacts)",
   memory: "Remember and recall scoped notes on the platform",
   topics: "Reference other topics the requester can read",
+  config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
 };
+
+/** Groups only system administrator roles may have. */
+export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
  * into the topic, is always allowed; reaching other roles, platform memory or other topics asks a person
  * first. (Shared files still pass the information-flow check like any other output.)
  */
-export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS);
+export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
+/** A new system administrator: the configuration tools; it needs no computer. */
+export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
 export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics"];
 
 export interface ToolResult {
@@ -680,6 +688,38 @@ export async function authorName(db: Db, type: string, id: string | null): Promi
   return "system";
 }
 
+// --- witden's configuration (system administrators) -----------------------------------------------------
+
+const CONFIG_RESULT_LIMIT = 30_000;
+
+/** One call to witden's own API, run by the API process as the person who asked (services/config-access.ts). */
+async function configCall(ctx: ToolContext, method: string, path: string, body?: unknown): Promise<ToolResult> {
+  let res: { status: number; body: unknown };
+  try {
+    res = await ctx.gateway.config({ taskId: ctx.taskId, toolCallId: ctx.toolCallId, method, path, body });
+  } catch (err) {
+    // Not a computer: there is nothing to wait for, but a change may have gone through.
+    if (err instanceof OutcomeUncertain)
+      return {
+        content: `error: witden's API could not be reached (${err.message}); a change may or may not have been made, read the configuration before trying again`,
+      };
+    throw err;
+  }
+  const text = typeof res.body === "string" ? res.body : JSON.stringify(res.body);
+  return { content: clip(`HTTP ${res.status}\n${text}`, CONFIG_RESULT_LIMIT) };
+}
+
+async function readConfig(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return configCall(ctx, "GET", String(args.path ?? ""));
+}
+
+async function changeConfig(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const method = String(args.method ?? "").toUpperCase();
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method))
+    throw new BadRequest("method must be POST, PUT, PATCH or DELETE (read with read_config)");
+  return configCall(ctx, method, String(args.path ?? ""), args.body ?? {});
+}
+
 // --- registry ---------------------------------------------------------------------------------------------
 
 const spec = (
@@ -884,6 +924,27 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       readTopic,
     ),
     spec(
+      "read_config",
+      "config",
+      `Read witden's configuration through its API, as the person who asked you. Secrets (keys, tokens, passwords) are never returned. Paths (query strings allowed):\n${configCatalog("read")}`,
+      obj({ path: { type: "string", description: "e.g. /api/roles" } }, ["path"]),
+      readConfig,
+    ),
+    spec(
+      "change_config",
+      "config",
+      `Change witden's configuration through its API, as the person who asked you, with the same checks as in the console. Bodies are JSON with snake_case fields; read the current state first and say what you changed. Secrets (model API keys, connection credentials, tunnel tokens, passwords) can be neither read nor set: tell the person to enter them in the console. Endpoints:\n${configCatalog("change")}`,
+      obj(
+        {
+          method: { type: "string", enum: ["POST", "PUT", "PATCH", "DELETE"] },
+          path: { type: "string", description: "e.g. /api/roles/role_123" },
+          body: { type: "object", description: "JSON body (omit for DELETE)" },
+        },
+        ["method", "path"],
+      ),
+      changeConfig,
+    ),
+    spec(
       "ask_human",
       null,
       "Ask people in this topic a question (clarification, a decision, a login or approval) and wait for the answer. Defaults to the requester.",
@@ -931,8 +992,12 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
 export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   const groups = new Set<string>(envelope.tools ?? []);
   return [...TOOLS.values()].filter(
-    // Declining to answer is for messages that reached the role without an @-mention.
-    (t) => (t.group === null || groups.has(t.group)) && (t.name !== "stay_silent" || !!envelope.auto),
+    (t) =>
+      (t.group === null || groups.has(t.group)) &&
+      // Declining to answer is for messages that reached the role without an @-mention.
+      (t.name !== "stay_silent" || !!envelope.auto) &&
+      // The configuration tools only for a system administrator's own work.
+      (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin),
   );
 }
 

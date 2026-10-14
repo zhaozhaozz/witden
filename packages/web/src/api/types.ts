@@ -476,6 +476,8 @@ export interface Role {
   max_steps: number | null;
   max_tokens_per_task: number | null;
   daily_token_limit: number | null;
+  /** Works only in the console and may read and change witden's configuration (never its secrets). */
+  system_admin: boolean;
   status: "active" | "disabled";
   config_version: number;
   created_by?: string | null;
@@ -573,8 +575,8 @@ export interface ModelProxyInfo {
   enabled: boolean;
   model_ids: string[];
   models: { id: string; alias: string; label: string; protocol: ModelProtocol; usable: boolean }[];
-  /** Only for people who manage the computer; useless outside it. */
-  key: string | null;
+  /** Whether a key was issued. The key itself is never shown: the runner writes it into the computer. */
+  has_key: boolean;
   key_issued_at: string | null;
   endpoints: { openai: string; anthropic: string; systemone: string };
   env_file: string;

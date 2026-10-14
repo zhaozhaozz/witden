@@ -134,6 +134,13 @@
       "when": 1791971894536,
       "tag": "0018_connection_role",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791973284744,
+      "tag": "0019_system_admin_role",
+      "breakpoints": true
     }
   ]
 }

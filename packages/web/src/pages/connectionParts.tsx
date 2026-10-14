@@ -134,7 +134,8 @@ export function ConnectionSettingsFields({
               </option>
             )}
             {dir.roles
-              .filter((r) => r.status === "active" || r.id === value.role_id)
+              // A system administrator works only in the console, never as a bot.
+              .filter((r) => !r.system_admin && (r.status === "active" || r.id === value.role_id))
               .map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name} @{r.handle}

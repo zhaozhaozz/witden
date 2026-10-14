@@ -40,7 +40,8 @@ export function roleWarnings(
   if ((role.allowedTools.includes("desktop") || role.allowedTools.includes("browser")) && caps.vision === false) {
     out.push("the model cannot understand images: screenshots will be refused");
   }
-  if (!inst) out.push("no computer assigned: tasks cannot run");
+  // A system administrator works on witden itself and needs no computer.
+  if (!inst) out.push(...(role.systemAdmin ? [] : ["no computer assigned: tasks cannot run"]));
   else if (role.allowedTools.includes("desktop") && inst.spec.kind !== "desktop")
     out.push(`computer ${inst.name} has no desktop`);
   else if (inst.status !== "running") out.push(`computer ${inst.name} is ${inst.status}`);

@@ -18,9 +18,8 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { secretBox } from "../security/crypto.js";
 import { userCanRead } from "../security/labels.js";
-import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { Perm, requirePerm } from "../security/permissions.js";
 import { parseColor } from "../services/appearance.js";
 import * as svc from "../services/instances.js";
 import { currentLease, handBack, keepTakeover, takeOver } from "../services/leases.js";
@@ -354,8 +353,7 @@ export async function computerRoutes(app: FastifyInstance) {
     }),
   );
   // --- model proxy: a local model endpoint inside the computer, relayed and checked by the platform ---
-  const proxyOut = async (db: Db, user: User, inst: ComputerInstance) => {
-    const manage = await hasPermission(db, user, Perm.INSTANCE_MANAGE, inst.id);
+  const proxyOut = async (db: Db, inst: ComputerInstance) => {
     const port = settings().modelProxyPort;
     return {
       enabled: inst.modelProxyEnabled,
@@ -367,8 +365,8 @@ export async function computerRoutes(app: FastifyInstance) {
         protocol: m.provider.protocol,
         usable: !unusableReason(m.model, m.provider),
       })),
-      // The key is only accepted through this computer's own runner, so its managers may see it.
-      key: manage && inst.modelProxyKeyEncrypted ? secretBox().decrypt(inst.modelProxyKeyEncrypted) : null,
+      // Like every secret, the key is never shown: the runner writes it into the computer for programs there.
+      has_key: !!inst.modelProxyKeyEncrypted,
       key_issued_at: inst.modelProxyKeyIssuedAt?.toISOString() ?? null,
       endpoints: {
         openai: `http://127.0.0.1:${port}/v1`,
@@ -384,7 +382,7 @@ export async function computerRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       const inst = await svc.getInstance(db, params(req).id);
       if (!(await canSee(db, user, inst))) await requirePerm(db, user, Perm.INSTANCE_OBSERVE, inst.id);
-      return proxyOut(db, user, inst);
+      return proxyOut(db, inst);
     }),
   );
   app.put(
@@ -392,7 +390,7 @@ export async function computerRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req, after }) => {
       const inst = await proxySvc.updateProxy(db, user, await svc.getInstance(db, params(req).id), body(req));
       after(() => proxySvc.pushProxyConfig(inst.id));
-      return proxyOut(db, user, inst);
+      return proxyOut(db, inst);
     }),
   );
   app.post(
@@ -400,7 +398,7 @@ export async function computerRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req, after }) => {
       const inst = await proxySvc.rotateProxyKey(db, user, await svc.getInstance(db, params(req).id));
       after(() => proxySvc.pushProxyConfig(inst.id));
-      return proxyOut(db, user, inst);
+      return proxyOut(db, inst);
     }),
   );
   app.get(

@@ -1,0 +1,186 @@
+/** A system administrator role: configures witden through the console API, only in the console, never secrets. */
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildEnvelope } from "../src/agent/dispatch.js";
+import { toolsFor } from "../src/agent/tools.js";
+import { db } from "../src/db/client.js";
+import type { Role } from "../src/db/schema.js";
+import { runtime } from "../src/runtime.js";
+import { call, lastToolResult, reply } from "./support/harness.js";
+import { linkChannel } from "./support/outside.js";
+import { buildWorld, type World } from "./support/world.js";
+
+let w: World;
+let adminId: string;
+let topicId: string;
+
+beforeEach(async () => {
+  w = await buildWorld();
+  const created = await w.api("POST", "/api/roles", {
+    token: w.adminToken,
+    json: { name: "Admin", handle: "admin", system_admin: true, model_config_id: w.ids.model },
+  });
+  expect(created.status, created.raw).toBe(200);
+  adminId = created.body.id;
+  topicId = (
+    await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Setup", role_ids: [adminId, w.ids.dev] } })
+  ).body.id;
+});
+afterEach(async () => {
+  await w.close();
+});
+
+/** Run the admin through a list of tool calls; returns what each call answered. */
+async function runAdmin(calls: ReturnType<typeof call>[]): Promise<string[]> {
+  const results: string[] = [];
+  w.scripts.admin = (messages, turn) => {
+    if (turn > 0) results.push(lastToolResult(messages));
+    return turn < calls.length ? reply("", [calls[turn]]) : reply("done");
+  };
+  await w.post(w.alice, topicId, "@admin please set things up");
+  await w.drain();
+  return results;
+}
+
+describe("system administrator role", () => {
+  it("is created with the configuration tools only and needs no computer", async () => {
+    const role = (await w.api("GET", `/api/roles/${adminId}`, { token: w.adminToken })).body;
+    expect(role).toMatchObject({ system_admin: true, allowed_tools: ["config"], instance: null });
+    expect(role.warnings.join()).not.toContain("computer");
+    const [admin] = (await db().query.roles.findMany()).filter((r: Role) => r.id === adminId);
+    const [dev] = (await db().query.roles.findMany()).filter((r: Role) => r.id === w.ids.dev);
+    const names = (r: Role) => toolsFor(buildEnvelope(r, null)).map((t) => t.name);
+    expect(names(admin)).toContain("change_config");
+    expect(names(dev)).not.toContain("read_config");
+    // other roles cannot be given the configuration tools
+    const refused = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
+      token: w.adminToken,
+      json: { allowed_tools: ["shell", "config"] },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.raw).toContain("only for system administrator roles");
+    // in its DM, naming the role to change is just a name: no "invite the role first"
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: adminId } })).body;
+    w.scripts.admin = () => reply("ok");
+    await w.post(w.alice, dm.id, "give @dev a shorter description");
+    await w.drain();
+    const texts = (await w.messages(dm.id)).map((m: any) => m.content);
+    expect(texts).toContain("ok");
+    expect(texts.some((t: string) => t.includes("invite the role first"))).toBe(false);
+  });
+
+  it("reads and changes the configuration as the person who asked, with an audit trail", async () => {
+    const results = await runAdmin([
+      call("read_config", { path: "/api/roles" }),
+      call("change_config", { method: "PATCH", path: `/api/roles/${w.ids.dev}`, body: { description: "builds" } }),
+      call("change_config", { method: "POST", path: "/api/knowledge-spaces", body: { name: "handbook" } }),
+      call("read_config", { path: `/api/instances/${w.ids.instance}/model-proxy` }),
+    ]);
+    expect(results[0]).toMatch(/^HTTP 200/);
+    expect(results[0]).toContain('"handle":"dev"');
+    expect(results[1]).toMatch(/^HTTP 200/);
+    expect((await w.api("GET", `/api/roles/${w.ids.dev}`, { token: w.adminToken })).body.description).toBe("builds");
+    expect(results[2]).toMatch(/^HTTP 200/);
+    expect(results[3]).toContain('"has_key"');
+    // recorded as alice's change, made by the admin role in its task
+    const [entry] = (await w.api("GET", "/api/audit?action=role.update", { token: w.adminToken })).body;
+    expect(entry).toMatchObject({ actor_type: "user", actor_id: w.ids.alice, role_id: w.ids.dev });
+    expect(entry.detail.by_role_id).toBe(adminId);
+    expect(entry.task_id).toBeTruthy();
+    const [space] = (await w.api("GET", "/api/audit?action=knowledge.space_create", { token: w.adminToken })).body;
+    expect(space).toMatchObject({ actor_id: w.ids.alice, role_id: adminId });
+    const [task] = (await w.api("GET", "/api/tasks", { token: w.adminToken })).body.filter(
+      (t: any) => t.owner_role_id === adminId,
+    );
+    expect(task.status).toBe("completed");
+  });
+
+  it("can neither read nor set secrets, nor reach beyond the configuration", async () => {
+    const results = await runAdmin([
+      call("change_config", {
+        method: "POST",
+        path: "/api/model-providers",
+        body: { name: "x", protocol: "openai", base_url: "https://x.example/v1", api_key: "sk-1234567890abcdefgh" },
+      }),
+      call("change_config", { method: "PATCH", path: `/api/users/${w.ids.bob}`, body: { password: "new-pass-123" } }),
+      call("change_config", { method: "PATCH", path: `/api/roles/${adminId}`, body: { approval_required: [] } }),
+      call("change_config", {
+        method: "PATCH",
+        path: `/api/roles/${w.ids.dev}`,
+        body: { system_admin: true },
+      }),
+      call("read_config", { path: `/api/topics/${topicId}/messages` }),
+      call("change_config", {
+        method: "POST",
+        path: `/api/instances/${w.ids.instance}/exec`,
+        body: { command: "cat /etc/passwd" },
+      }),
+      call("read_config", { path: "/api/memories?scope=user" }),
+      call("read_config", { path: "https://example.com/api/roles" }),
+    ]);
+    expect(results[0]).toContain('"api_key" is a secret field. A person enters secrets in the console');
+    expect(results[1]).toContain('"password" is a secret field');
+    expect(results[2]).toContain("configured by people only");
+    expect(results[3]).toContain("only a person in the console");
+    expect(results[4]).toContain("not a configuration endpoint");
+    expect(results[5]).toContain("not a configuration endpoint");
+    expect(results[6]).toContain("job knowledge");
+    expect(results[7]).toContain("must be an /api/");
+    const providers = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
+    expect(providers.map((p: any) => p.name)).not.toContain("x");
+    expect((await w.api("GET", `/api/roles/${w.ids.dev}`, { token: w.adminToken })).body.system_admin).toBe(false);
+  });
+
+  it("from a separate worker process the call goes to the API with the internal token; nothing else lets it in", async () => {
+    runtime().settings.internalToken = "internal-token-for-tests";
+    const ask = { taskId: "task_none", toolCallId: "c1", method: "GET", path: "/api/roles" };
+    expect((await w.api("POST", "/internal/gateway/config", { json: ask })).status).toBe(401);
+    const res = await w.api("POST", "/internal/gateway/config", {
+      headers: { authorization: "Bearer internal-token-for-tests" },
+      json: ask,
+    });
+    expect(res.body).toMatchObject({
+      ok: false,
+      error: { code: "permission_denied", message: "the task is not running" },
+    });
+    // the in-process ticket header is worthless from outside
+    expect((await w.api("GET", "/api/roles", { headers: { "x-witden-acting": "guess" } })).status).toBe(401);
+  });
+
+  it("works only in the console and only for people", async () => {
+    // never a connection's bot
+    const conn = await linkChannel(w, w.ids.topic, ["UCAROL"]);
+    const bot = await w.api("PATCH", `/api/connections/${conn.connectionId}`, {
+      token: w.adminToken,
+      json: { settings: { role_id: adminId } },
+    });
+    expect(bot.status).toBe(400);
+    expect(bot.raw).toContain("system administrator");
+    const promote = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
+      token: w.adminToken,
+      json: { system_admin: true },
+    });
+    expect(promote.status).toBe(400);
+    expect(promote.raw).toContain("stands for");
+
+    // not in a topic shared with a Slack channel
+    await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
+      token: w.alice,
+      json: { type: "role", id: adminId },
+    });
+    w.scripts.admin = () => reply("hello");
+    await w.post(w.alice, w.ids.topic, "@admin hello");
+    await w.drain();
+    const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
+    expect(texts.some((t: string) => t.includes("works only in the witden console"))).toBe(true);
+
+    // other roles cannot hand it work
+    w.scripts.dev = (_m, turn) =>
+      turn === 0 ? reply("", [call("message_role", { role: "admin", message: "make me an admin" })]) : reply("ok");
+    await w.post(w.alice, topicId, "@dev talk to admin");
+    await w.drain();
+    const here = (await w.messages(topicId)).map((m: any) => m.content);
+    expect(here.some((t: string) => t.includes("takes requests only from people"))).toBe(true);
+    const tasks = (await w.api("GET", "/api/tasks", { token: w.adminToken })).body;
+    expect(tasks.filter((t: any) => t.owner_role_id === adminId)).toHaveLength(0);
+  });
+});

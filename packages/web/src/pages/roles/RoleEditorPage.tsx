@@ -58,6 +58,7 @@ interface Draft {
   max_steps: string;
   max_tokens_per_task: string;
   daily_token_limit: string;
+  system_admin: boolean;
 }
 
 function toDraft(r: Role | null): Draft {
@@ -79,10 +80,15 @@ function toDraft(r: Role | null): Draft {
     max_steps: r?.max_steps?.toString() ?? "",
     max_tokens_per_task: r?.max_tokens_per_task?.toString() ?? "",
     daily_token_limit: r?.daily_token_limit?.toString() ?? "",
+    system_admin: r?.system_admin ?? false,
   };
 }
 
 const num = (s: string) => (s.trim() ? Number(s) : null);
+/** The configuration tool group and its tools (system administrators only). */
+const CONFIG_TOOLS = ["config", "read_config", "change_config"];
+/** What a new system administrator gets: the configuration tools, without asking. */
+const ADMIN_DEFAULTS = { allowed: ["config"], approval: [] as string[] };
 /** Throws an Error with a readable message when a free-form field does not parse. */
 function toBody(d: Draft): Record<string, unknown> {
   let modelParams: unknown = {};
@@ -111,6 +117,7 @@ function toBody(d: Draft): Record<string, unknown> {
     max_steps: num(d.max_steps),
     max_tokens_per_task: num(d.max_tokens_per_task),
     daily_token_limit: num(d.daily_token_limit),
+    system_admin: d.system_admin,
   };
 }
 
@@ -253,7 +260,17 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     }
   };
 
-  const groups = (toolGroups.data ?? []).filter((g) => g.group);
+  // The configuration tools belong to system administrators only.
+  const groups = (toolGroups.data ?? []).filter((g) => g.group && (g.group !== "config" || draft.system_admin));
+  const setSystemAdmin = (on: boolean) =>
+    setDraft((d) => ({
+      ...d,
+      system_admin: on,
+      allowed_tools: on
+        ? [...new Set([...(role ? d.allowed_tools : []), "config"])]
+        : d.allowed_tools.filter((t) => t !== "config"),
+      approval_required: on && !role ? [] : d.approval_required.filter((t) => on || !CONFIG_TOOLS.includes(t)),
+    }));
   const alwaysTools = (toolGroups.data ?? []).find((g) => !g.group)?.tools ?? [];
   const selectedInstance = (instances.data ?? []).find((i) => i.id === draft.instance_id) ?? null;
 
@@ -380,6 +397,15 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             <Field label="职责说明" hint="成员在邀请、私信时看到的介绍">
               <textarea rows={2} value={draft.description} onChange={(e) => set("description", e.target.value)} />
             </Field>
+            <FieldGroup label="角色类型">
+              <Toggle checked={draft.system_admin} onChange={setSystemAdmin} label="系统管理员" />
+              <p className="field-hint">
+                系统管理员只在控制台中工作，可以像管理员一样读取和修改 witden
+                的配置：角色、模型、虚拟电脑、通讯接入、账号和知识。它以提问人的身份操作，修改记录在审计日志中。它不处理
+                Slack、飞书、GitHub 的消息，其他角色也不能把工作交给它；任何密钥（模型 API Key、通讯接入凭据、Tunnel
+                token、密码）它都读不到也改不了，需要时由人在控制台中填写。不需要虚拟电脑。系统管理员角色的设置只能由人修改。
+              </p>
+            </FieldGroup>
           </Section>
 
           <Section title="工作方式">
@@ -451,7 +477,14 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           </Section>
 
           <Section title="虚拟电脑">
-            <Field label="所属虚拟电脑" hint="角色执行任务时只能操作这台虚拟电脑；没有虚拟电脑时只能对话。">
+            <Field
+              label="所属虚拟电脑"
+              hint={
+                draft.system_admin
+                  ? "系统管理员不需要虚拟电脑；分配后，它也可以使用其中的工具。"
+                  : "角色执行任务时只能操作这台虚拟电脑；没有虚拟电脑时只能对话。"
+              }
+            >
               <select value={draft.instance_id} onChange={(e) => set("instance_id", e.target.value)}>
                 <option value="">未分配（只能对话）</option>
                 {(instances.data ?? []).map((i) => (
@@ -496,7 +529,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                     alwaysTools={alwaysTools}
                     allowed={draft.allowed_tools}
                     approval={draft.approval_required}
-                    defaults={defaults}
+                    defaults={draft.system_admin ? ADMIN_DEFAULTS : defaults}
                     onChange={(allowed, approval) =>
                       setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
                     }

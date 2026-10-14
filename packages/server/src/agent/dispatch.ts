@@ -140,6 +140,8 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
     contacts: [...role.allowedContacts],
     spaces: [...new Set(role.knowledgeSpaceIds)].sort(),
     approval_required: [...role.approvalRequired],
+    // The configuration tools are open only to a system administrator's own work, never delegated.
+    ...(role.systemAdmin && !parent ? { system_admin: true } : {}),
   };
   if (parent) {
     const p = parent.envelope ?? {};
@@ -414,9 +416,13 @@ async function threadRole(db: Db, topic: Topic, root: string | null): Promise<st
   return null;
 }
 
-/** `@handle` of an existing role that is not in this (internal) topic: say so instead of staying silent. */
+/**
+ * `@handle` of an existing role that is not in this (internal) topic: say so instead of staying silent. Not in
+ * a DM, which is with one role only: there a role's name is just a name (e.g. asking the system administrator
+ * to change that role).
+ */
 async function hintUnknownMentions(db: Db, topic: Topic, msg: Message, user: User): Promise<void> {
-  if (topic.source !== "internal") return;
+  if (topic.source !== "internal" || topic.kind === "dm") return;
   const present = await topicSvc.roleHandles(db, topic.id);
   const missing = new Set<string>();
   for (const m of msg.content.matchAll(MENTION)) {

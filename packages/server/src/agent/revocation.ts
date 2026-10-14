@@ -11,6 +11,7 @@ import {
   topics,
   users,
 } from "../db/schema.js";
+import { externalContext } from "../integrations/links.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { participant } from "../services/topics.js";
 import { ACTIVE, cancelTree, pause } from "./control.js";
@@ -22,6 +23,8 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
   if (topic?.status !== "active") return "the topic was archived";
   if (!(await participant(db, topic.id, "role", role.id))) return `@${role.handle} was removed from the topic`;
+  if (role.systemAdmin && (await externalContext(db, topic.id)).conversationKind)
+    return `@${role.handle} is a system administrator and the topic is now shared outside the console`;
   if (task.requesterUserId) {
     const [user] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
     if (!user?.isActive) return "the requester is no longer an active member";

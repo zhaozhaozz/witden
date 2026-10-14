@@ -12,6 +12,7 @@ import {
   externalThreadLinks,
   outboundMessages,
   processedEvents,
+  roles,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
@@ -83,12 +84,18 @@ async function mergedCredentials(conn: Connection, entered: Record<string, unkno
 const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, String(v ?? "").trim()]));
 
-function cleanSettings(s: Record<string, any>): Record<string, any> {
+async function cleanSettings(db: Db, s: Record<string, any>): Promise<Record<string, any>> {
   const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k));
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
   // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");
+  if (s.role_id) {
+    const [role] = await db.select().from(roles).where(eq(roles.id, s.role_id)).limit(1);
+    if (!role) throw new NotFound("role not found");
+    if (role.systemAdmin)
+      throw new BadRequest(`@${role.handle} is a system administrator: it works only in the console, not as a bot`);
+  }
   return s;
 }
 
@@ -155,7 +162,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           platform: b.platform,
           name: String(b.name),
           credentialsEncrypted: secretBox().encrypt(JSON.stringify(creds)),
-          settings: cleanSettings(b.settings ?? {}),
+          settings: await cleanSettings(db, b.settings ?? {}),
           createdBy: user.id,
         })
         .returning();
@@ -179,7 +186,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       const update: Partial<Connection> = {};
       if (b.name) update.name = b.name;
       if (b.credentials) update.credentialsEncrypted = await mergedCredentials(conn, b.credentials);
-      if (b.settings) update.settings = cleanSettings({ ...conn.settings, ...b.settings });
+      if (b.settings) update.settings = await cleanSettings(db, { ...conn.settings, ...b.settings });
       if (b.status) {
         if (!["active", "paused"].includes(b.status)) throw new BadRequest("status must be active or paused");
         update.status = b.status;

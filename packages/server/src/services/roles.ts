@@ -1,10 +1,18 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ACTIVE, cancelTree, pause } from "../agent/control.js";
-import { DEFAULT_ALLOWED_TOOLS, DEFAULT_APPROVAL_REQUIRED, TOOL_GROUPS, TOOLS } from "../agent/tools.js";
+import {
+  ADMIN_TOOL_GROUPS,
+  DEFAULT_ADMIN_TOOLS,
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_APPROVAL_REQUIRED,
+  TOOL_GROUPS,
+  TOOLS,
+} from "../agent/tools.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   computerInstances,
+  connections,
   knowledgeSpaces,
   memories,
   modelConfigs,
@@ -21,7 +29,14 @@ import { getProvider, isSystemOne } from "./model-configs.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
-const BEHAVIOUR_FIELDS = new Set(["systemPrompt", "modelConfigId", "modelParams", "instanceId", "allowedTools"]);
+const BEHAVIOUR_FIELDS = new Set([
+  "systemPrompt",
+  "modelConfigId",
+  "modelParams",
+  "instanceId",
+  "allowedTools",
+  "systemAdmin",
+]);
 /** Field names as the REST API spells them. */
 const apiName = (field: string) => field.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 
@@ -82,6 +97,21 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
       out.instanceId = inst.id;
     } else out.instanceId = null;
   }
+  if ("systemAdmin" in data) {
+    out.systemAdmin = !!data.systemAdmin;
+    if (out.systemAdmin && current) {
+      // A connection's bot answers people outside; a system administrator never does.
+      const bots = await db
+        .select({ name: connections.name })
+        .from(connections)
+        .where(sql`${connections.settings}->>'role_id' = ${current.id}`);
+      if (bots.length)
+        throw new BadRequest(
+          `@${current.handle} is the role the bot of ${bots.map((b) => b.name).join(", ")} stands for; choose another role there first`,
+        );
+    }
+  }
+  const admin = out.systemAdmin ?? current?.systemAdmin ?? false;
   if ("allowedTools" in data) {
     const unknown = (data.allowedTools ?? []).filter((t: string) => !(t in TOOL_GROUPS));
     if (unknown.length)
@@ -89,7 +119,13 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
         `unknown tool groups ${unknown.join(", ")}; available: ${Object.keys(TOOL_GROUPS).join(", ")}`,
       );
     out.allowedTools = [...new Set<string>(data.allowedTools)].sort();
+  } else if ("systemAdmin" in data && current) {
+    // Becoming (or no longer being) a system administrator brings (or takes away) the configuration tools.
+    const kept = current.allowedTools.filter((t) => !ADMIN_TOOL_GROUPS.has(t));
+    out.allowedTools = (admin ? [...kept, ...DEFAULT_ADMIN_TOOLS] : kept).sort();
   }
+  if (!admin && (out.allowedTools ?? current?.allowedTools ?? []).some((t) => ADMIN_TOOL_GROUPS.has(t)))
+    throw new BadRequest("the config tools are only for system administrator roles");
   if ("approvalRequired" in data) {
     const unknown = (data.approvalRequired ?? []).filter((t: string) => !(t in TOOL_GROUPS) && !TOOLS.has(t));
     if (unknown.length) throw new BadRequest(`unknown tools ${unknown.join(", ")}`);
@@ -123,8 +159,9 @@ export async function createRole(db: Db, user: User, data: Record<string, any>):
   await requirePerm(db, user, Perm.ROLE_MANAGE);
   if (!data.name || !data.handle) throw new BadRequest("name and handle are required");
   const clean = await validate(db, user, {
-    allowedTools: DEFAULT_ALLOWED_TOOLS,
-    approvalRequired: DEFAULT_APPROVAL_REQUIRED,
+    ...(data.systemAdmin
+      ? { allowedTools: DEFAULT_ADMIN_TOOLS, approvalRequired: [] }
+      : { allowedTools: DEFAULT_ALLOWED_TOOLS, approvalRequired: DEFAULT_APPROVAL_REQUIRED }),
     ...data,
   });
   const [role] = await db
@@ -231,6 +268,7 @@ export async function copyRole(
     maxSteps: role.maxSteps,
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,
+    systemAdmin: role.systemAdmin,
   });
   for (const m of await db
     .select()

@@ -15,6 +15,7 @@ import { computerInstances } from "../db/schema.js";
 import { runtime } from "../runtime.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import type { ConfigRequest } from "../services/config-access.js";
 import { canObserveInstance, ensureUsable } from "../services/instances.js";
 import { currentLease } from "../services/leases.js";
 import { resolveToken } from "../services/users.js";
@@ -98,10 +99,13 @@ export async function liveRoutes(app: FastifyInstance) {
     try {
       if (!gateway) throw new Error("no execution gateway in this process");
       const b: any = req.body ?? {};
+      const op = params(req).op;
       const result =
-        params(req).op === "execute"
+        op === "execute"
           ? await gateway.execute(b as GatewayRequest)
-          : await gateway.recover(String(b.taskId), String(b.toolCallId));
+          : op === "config"
+            ? await gateway.config(b as ConfigRequest)
+            : await gateway.recover(String(b.taskId), String(b.toolCallId));
       return { ok: true, result };
     } catch (err) {
       return { ok: false, error: serializeError(err) };

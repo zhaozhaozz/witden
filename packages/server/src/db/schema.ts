@@ -251,6 +251,8 @@ export const roles = pgTable("roles", {
   maxSteps: integer("max_steps"),
   maxTokensPerTask: integer("max_tokens_per_task"),
   dailyTokenLimit: integer("daily_token_limit"),
+  /** Works only in the console and may read and change witden's configuration (never its secrets). */
+  systemAdmin: boolean("system_admin").notNull().default(false),
   status: text("status").notNull().default("active"),
   configVersion: integer("config_version").notNull().default(1),
   createdBy: text("created_by"),

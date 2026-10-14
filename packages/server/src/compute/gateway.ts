@@ -24,6 +24,7 @@ import {
 } from "../errors.js";
 import { runtime } from "../runtime.js";
 import { safeEqual } from "../security/crypto.js";
+import { type ConfigRequest, type ConfigResponse, configRequest } from "../services/config-access.js";
 import { ensureUsable } from "../services/instances.js";
 import { acquire } from "../services/leases.js";
 import { OutcomeUncertain, RunnerOpError } from "./hub.js";
@@ -46,6 +47,8 @@ export interface GatewayClient {
   execute(req: GatewayRequest): Promise<unknown>;
   /** What happened to a call that was in flight when the worker lost track of it. */
   recover(taskId: string, toolCallId: string): Promise<RecoverResult>;
+  /** A system administrator role's configuration call, run by the API process (services/config-access.ts). */
+  config(req: ConfigRequest): Promise<ConfigResponse>;
 }
 
 /** Tool group (permission unit in the task envelope) that each runner operation belongs to. */
@@ -138,6 +141,10 @@ export class ExecutionGateway implements GatewayClient {
       await finishCall(callId, uncertain ? "uncertain" : "failed");
       throw err;
     }
+  }
+
+  config(req: ConfigRequest): Promise<ConfigResponse> {
+    return configRequest(req);
   }
 
   async recover(taskId: string, toolCallId: string): Promise<RecoverResult> {
@@ -293,6 +300,10 @@ export class HttpGatewayClient implements GatewayClient {
 
   execute(req: GatewayRequest): Promise<unknown> {
     return this.call("execute", req);
+  }
+
+  config(req: ConfigRequest): Promise<ConfigResponse> {
+    return this.call("config", req);
   }
 
   recover(taskId: string, toolCallId: string): Promise<RecoverResult> {

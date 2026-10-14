@@ -158,6 +158,7 @@ export async function start(opts: StartOptions): Promise<Witden> {
     rt.hub.welcomeExtras = async (instanceId) => ({ modelProxy: await proxyConfigFor(instanceId) });
     if (opts.listenHub !== false) await rt.hub.listen(settings.hubPort, settings.hubHost);
     app = await buildApp(rt);
+    rt.app = app;
     webhookApp = await buildWebhookApp();
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
     void reconcile().catch(() => {});

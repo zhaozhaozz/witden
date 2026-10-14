@@ -9,6 +9,7 @@ import type { PgDatabase, PgQueryResultHKT, PgTransaction } from "drizzle-orm/pg
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 import pg from "pg";
+import { acting, runActing } from "../services/acting.js";
 import * as schema from "./schema.js";
 
 export type Schema = typeof schema;
@@ -89,5 +90,7 @@ export function db(): Db {
 
 /** Run ``fn`` in a transaction. Inside, only use ``tx`` (PGlite serialises transactions on one connection). */
 export function transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
-  return db().transaction((tx) => fn(tx as unknown as Db));
+  // The embedded database runs queued transactions from its own queue: carry who a call acts for into it.
+  const as = acting();
+  return db().transaction((tx) => (as ? runActing(as, () => fn(tx as unknown as Db)) : fn(tx as unknown as Db)));
 }
