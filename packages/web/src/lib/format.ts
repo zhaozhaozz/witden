@@ -215,7 +215,8 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   collaborate: "给其他角色发消息、委派任务（受「可以联系的角色」限制），不在虚拟电脑里",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",
   topics: "读取请求者能看到的其他话题，不在虚拟电脑里",
-  config: "像管理员一样读取和修改 witden 的配置（角色、模型、虚拟电脑、通讯接入、账号、知识），读不到也改不了任何密钥",
+  config:
+    "像管理员一样读取和修改 witden 的配置（角色、模型、虚拟电脑、通讯接入、知识；不含账号），读不到也改不了任何密钥",
 };
 
 /** Tool names as actions ("正在" + label reads naturally too). */

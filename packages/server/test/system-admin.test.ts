@@ -94,14 +94,14 @@ describe("system administrator role", () => {
     expect(task.status).toBe("completed");
   });
 
-  it("can neither read nor set secrets, nor reach beyond the configuration", async () => {
+  it("can neither read nor set secrets, nor manage accounts, nor reach beyond the configuration", async () => {
     const results = await runAdmin([
       call("change_config", {
         method: "POST",
         path: "/api/model-providers",
         body: { name: "x", protocol: "openai", base_url: "https://x.example/v1", api_key: "sk-1234567890abcdefgh" },
       }),
-      call("change_config", { method: "PATCH", path: `/api/users/${w.ids.bob}`, body: { password: "new-pass-123" } }),
+      call("change_config", { method: "PATCH", path: `/api/users/${w.ids.bob}`, body: { is_active: false } }),
       call("change_config", { method: "PATCH", path: `/api/roles/${adminId}`, body: { approval_required: [] } }),
       call("change_config", {
         method: "PATCH",
@@ -116,9 +116,13 @@ describe("system administrator role", () => {
       }),
       call("read_config", { path: "/api/memories?scope=user" }),
       call("read_config", { path: "https://example.com/api/roles" }),
+      call("read_config", { path: "/api/users" }),
+      call("change_config", { method: "POST", path: "/api/users", body: { name: "eve", email: "eve@x.io" } }),
+      call("change_config", { method: "PATCH", path: "/api/identities/ext_1", body: { user_id: w.ids.bob } }),
     ]);
     expect(results[0]).toContain('"api_key" is a secret field. A person enters secrets in the console');
-    expect(results[1]).toContain('"password" is a secret field');
+    // accounts are managed by people only
+    for (const i of [1, 8, 9, 10]) expect(results[i]).toContain("not a configuration endpoint");
     expect(results[2]).toContain("configured by people only");
     expect(results[3]).toContain("only a person in the console");
     expect(results[4]).toContain("not a configuration endpoint");
@@ -128,6 +132,9 @@ describe("system administrator role", () => {
     const providers = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
     expect(providers.map((p: any) => p.name)).not.toContain("x");
     expect((await w.api("GET", `/api/roles/${w.ids.dev}`, { token: w.adminToken })).body.system_admin).toBe(false);
+    const users = (await w.api("GET", "/api/users", { token: w.adminToken })).body;
+    expect(users.find((u: any) => u.id === w.ids.bob).is_active).toBe(true);
+    expect(users.map((u: any) => u.name)).not.toContain("eve");
   });
 
   it("from a separate worker process the call goes to the API with the internal token; nothing else lets it in", async () => {

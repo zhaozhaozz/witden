@@ -401,7 +401,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               <Toggle checked={draft.system_admin} onChange={setSystemAdmin} label="系统管理员" />
               <p className="field-hint">
                 系统管理员只在控制台中工作，可以像管理员一样读取和修改 witden
-                的配置：角色、模型、虚拟电脑、通讯接入、账号和知识。它以提问人的身份操作，修改记录在审计日志中。它不处理
+                的配置：角色、模型、虚拟电脑、通讯接入和知识；账号只由人管理。它以提问人的身份操作，修改记录在审计日志中。它不处理
                 Slack、飞书、GitHub 的消息，其他角色也不能把工作交给它；任何密钥（模型 API Key、通讯接入凭据、Tunnel
                 token、密码）它都读不到也改不了，需要时由人在控制台中填写。不需要虚拟电脑。系统管理员角色的设置只能由人修改。
               </p>

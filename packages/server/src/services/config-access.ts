@@ -5,7 +5,8 @@
  * account): every check, validation and audit record applies as if that person had clicked it, and audit
  * records also name the role and task. Only the configuration endpoints listed here are open to it. Secrets
  * stay out of reach both ways: the API never returns them, request bodies naming a secret are refused (a
- * person enters keys in the console), and responses are scrubbed once more.
+ * person enters keys in the console), and responses are scrubbed once more. Accounts (console users and the
+ * platform accounts linked to them) are managed by people only.
  */
 import { eq } from "drizzle-orm";
 import { transaction } from "../db/client.js";
@@ -119,16 +120,6 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       { method: "POST", path: "/api/settings/public-url/check", note: "url" },
       { method: "PUT", path: "/api/settings/public-url", note: "url" },
       { method: "GET", path: "/api/settings/tunnel", note: "Cloudflare Tunnel status" },
-    ],
-  },
-  {
-    title: "Accounts",
-    endpoints: [
-      { method: "GET", path: "/api/users" },
-      { method: "POST", path: "/api/users", note: "name, email (a console account; a person sets its password)" },
-      { method: "PATCH", path: "/api/users/:id", note: "name, is_active" },
-      { method: "GET", path: "/api/identities", note: "platform accounts; ?connection_id=" },
-      { method: "PATCH", path: "/api/identities/:id", note: "user_id: link a platform account to a member, or null" },
     ],
   },
   {
