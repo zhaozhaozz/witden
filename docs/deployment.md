@@ -30,7 +30,7 @@ node packages/server/dist/cli.js serve
 
 ### 2.2 Docker Compose
 
-Compose 部署包含四个服务，另有一个可选服务：
+Compose 部署包含四个服务，另有两个可选服务：
 
 | 服务 | 作用 | 说明 |
 |---|---|---|
@@ -39,6 +39,7 @@ Compose 部署包含四个服务，另有一个可选服务：
 | `api` | 控制台、API、虚拟电脑连接入口 | 对外发布 8320（控制台）和 8330（虚拟电脑连接）端口。 |
 | `worker` | 运行 AI 角色、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
 | `laya`（可选） | 开源的 Laya 决策模型，用作话题调度模型 | 默认不启动，见 2.3。只在内部网络中可访问，不对外发布端口。 |
+| `tunnel`（可选） | Cloudflare Tunnel，为平台提供公网 HTTPS 地址 | 默认不启动，见 2.4。只主动连接 Cloudflare，不对外发布端口。 |
 
 部署步骤：
 
@@ -52,7 +53,7 @@ Compose 部署包含四个服务，另有一个可选服务：
    - `WITDEN_MANAGER_TOKEN`、`WITDEN_INTERNAL_TOKEN`、`POSTGRES_PASSWORD`：任意足够长的随机字符串，例如 `openssl rand -hex 24`。
    - `DOCKER_GID`：Docker socket 所属的组，`stat -c %g /var/run/docker.sock`。
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
-   - `WITDEN_PUBLIC_URL`：访问控制台的地址，用于生成链接和 Slack 事件地址。
+   - `WITDEN_PUBLIC_URL`：访问控制台的地址，用于生成链接和事件地址。Slack、GitHub、飞书需要公网 HTTPS 地址，也可以之后在控制台中设置和检查，见 2.4。
 
 2. 构建虚拟电脑镜像和平台镜像：
 
@@ -68,7 +69,7 @@ Compose 部署包含四个服务，另有一个可选服务：
 
 4. 访问 `WITDEN_PUBLIC_URL`，用管理员账号登录，按第 3 节完成首次配置。
 
-生产环境建议在控制台前放置 HTTPS 反向代理，并把 8330 端口只绑定到 Docker 网桥地址（设置 `WITDEN_HUB_BIND`，例如 `172.17.0.1`）。
+生产环境建议在控制台前放置 HTTPS 反向代理（见 2.4），并把 8330 端口只绑定到 Docker 网桥地址（设置 `WITDEN_HUB_BIND`，例如 `172.17.0.1`）。
 
 ### 2.3 可选：Laya 调度模型
 
@@ -87,6 +88,71 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 不再需要时，从 `.env` 中删除这三行，执行 `docker compose rm -sf laya` 停止并删除该服务，再在控制台中删除该服务商、重新选择调度模型。
 
 单进程部署也可以使用 Laya：自行运行 Laya 服务（`pip install "laya[serve]"` 后执行 `laya-serve`），并把 `WITDEN_LAYA_URL` 设为它的地址，例如 `http://127.0.0.1:8000`。
+
+### 2.4 公网地址
+
+Slack、GitHub、飞书把事件推送到 witden 的公网地址，消息中“在 witden 中查看”等链接也用这个地址。它必须满足：
+
+- 以 `https://` 开头，证书有效（这些平台不接受自签名证书）；
+- 能从公网访问，并转发到 witden（Compose 部署为本机的 `WITDEN_PORT`，默认 8320）；
+- 只包含协议和域名，不带路径。
+
+公网地址默认取 `WITDEN_PUBLIC_URL`，也可以在控制台中设置：接入 Slack 时引导的第一步“准备公网地址”。控制台中保存的地址优先于 `WITDEN_PUBLIC_URL`，保存后立即生效，不需要重启。保存前，witden 会通过这个地址请求自己的检查接口 `/api/integrations/probe`，并核对用主密钥派生的签名，确认请求回到的是当前这个部署；不是 HTTPS、证书无效、域名解析不到、发生重定向或转发到别的服务时都不能保存。服务器所在网络不能从内部访问自己的公网地址时（检查显示连不上或超时），可以确认后仍然保存。
+
+准备公网地址有两种方式。
+
+**方式一：自己的域名和反向代理。** 把域名的 DNS 记录指向服务器的公网 IP，在防火墙中放行 443 端口，用反向代理提供 HTTPS 并转发到 witden。控制台使用 Server-Sent Events 推送实时更新、使用 WebSocket 显示远程桌面，反向代理需要支持这两者。
+
+Caddy（自动申请证书）：
+
+```
+witden.example.com {
+    reverse_proxy 127.0.0.1:8320
+}
+```
+
+nginx（证书可用 `certbot --nginx -d witden.example.com` 申请）：
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name witden.example.com;
+    ssl_certificate     /etc/letsencrypt/live/witden.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/witden.example.com/privkey.pem;
+    client_max_body_size 60m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8320;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # remote desktops use WebSocket, live updates use Server-Sent Events
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+只想让外部平台访问、不对公网开放控制台时，可以只转发以 `/api/integrations/` 开头的路径：事件地址和地址检查都在这个路径下。此时消息中“在 witden 中查看”的链接在公网上打不开。
+
+**方式二：Cloudflare Tunnel。** 由 Compose 中的可选服务 `tunnel`（cloudflared）主动连接 Cloudflare，不需要公网 IP、开放端口或自己管理证书；域名需要托管在 Cloudflare。
+
+1. 在 `.env` 中加入 `COMPOSE_PROFILES=tunnel`（同时使用 Laya 时写成 `COMPOSE_PROFILES=laya,tunnel`），执行 `docker compose up -d`。
+2. 在 Cloudflare 控制台的 **Networking → Tunnels** 中点击 **Create a tunnel**，输入名称后创建；在安装说明中选择 Docker，复制命令中 `--token` 后面的内容（也可以复制整条命令）。不需要运行这条命令。
+3. 在 witden 控制台接入 Slack 的第一步选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务读取后连接 Cloudflare（在此之前它约每分钟重试一次），页面显示连接状态。
+4. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8320`。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网地址。
+
+更换 token 后需要执行 `docker compose restart tunnel`。不再使用时，从 `COMPOSE_PROFILES` 中去掉 `tunnel`，执行 `docker compose rm -sf tunnel`，并在 Cloudflare 中删除这个 tunnel。
+
+单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8320`），再在控制台中填写并检查地址。
 
 ## 3. 首次配置
 
@@ -109,7 +175,10 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 | `WITDEN_DATABASE_URL` | 嵌入式数据库 | PostgreSQL 连接地址，例如 `postgres://user:pass@db:5432/witden`。 |
 | `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
-| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 访问控制台的地址。 |
+| `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 访问控制台的地址。控制台中保存的公网地址优先，见 2.4。 |
+| `WITDEN_TUNNEL_TOKEN_FILE` | — | Cloudflare Tunnel token 的保存位置，`tunnel` 服务从这里读取。Compose 中已设置为 `/tunnel/token`；未设置时控制台不提供 Cloudflare Tunnel 选项。 |
+| `WITDEN_TUNNEL_METRICS_URL` | — | cloudflared 指标接口的地址，用于显示连接状态和读取路由。Compose 中为 `http://tunnel:2000`。 |
+| `WITDEN_TUNNEL_ORIGIN` | — | tunnel 路由应指向的地址，显示在控制台中。Compose 中为 `http://api:8320`。 |
 | `WITDEN_PROCESS_ROLE` | `all` | `all`、`api` 或 `worker`，也可用 `serve --role` 指定。 |
 | `WITDEN_HUB_HOST` / `WITDEN_HUB_PORT` | `0.0.0.0` / `8330` | 虚拟电脑连接平台的监听地址和端口。 |
 | `WITDEN_HUB_URL_FOR_COMPUTERS` | `ws://witden-hub:8330/runner` | 虚拟电脑内连接平台使用的地址（`witden-hub` 解析为宿主机网关）。 |

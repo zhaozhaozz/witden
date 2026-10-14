@@ -2,7 +2,7 @@
 
 接入后，角色可以作为机器人在 GitHub 仓库中工作：在 issue、pull request 或评论中 @ 机器人，就能把工作交给 witden 中的角色。每个 issue 或 pull request 对应 witden 中的一个会话，角色的回复以评论的形式发回同一个 issue 或 pull request。
 
-配置需要 witden 管理员账号，以及创建 GitHub App 或添加 webhook 所需的仓库或组织管理权限。
+配置需要 witden 管理员账号，以及创建 GitHub App 或添加 webhook 所需的仓库或组织管理权限。GitHub 把事件发送到 witden 的公网 HTTPS 地址，准备方法见[部署与配置](deployment.md#24-公网地址)；也可以先按[接入 Slack](slack.md#1-准备公网地址)的引导完成这一步。
 
 witden 支持两种接入方式：
 
@@ -28,7 +28,7 @@ witden 支持两种接入方式：
 2. 点击“测试连接”。witden 会读取应用名称和安装数量，用应用名识别 @ 并忽略应用自己发的评论。
 3. 复制连接详情中显示的**事件地址**，回到 GitHub App 的设置，把 **Webhook URL** 改为这个地址并保存。GitHub 会发送一次 ping，witden 返回成功即表示配置正确。
 
-连接的可选设置与 Slack 相同，见[接入 Slack](slack.md#4-配置分配规则)，包括“允许未关联的人使用（外部成员）”和“新会话默认同步范围”。
+连接的可选设置与 Slack 相同，见[接入 Slack](slack.md#5-配置分配规则)，包括“允许未关联的人使用（外部成员）”和“新会话默认同步范围”。
 
 ## 3. 改用机器人账号 Token
 
@@ -43,7 +43,7 @@ witden 支持两种接入方式：
 
 ## 4. 配置分配规则与身份
 
-- 和 Slack 一样，来自 GitHub 的请求**没有匹配的分配规则时一律拒绝**。请在“设置 → 分配规则”中为这个连接添加规则，指定允许的角色和默认角色，见[接入 Slack](slack.md#4-配置分配规则)。
+- 和 Slack 一样，来自 GitHub 的请求**没有匹配的分配规则时一律拒绝**。请在“设置 → 分配规则”中为这个连接添加规则，指定允许的角色和默认角色，见[接入 Slack](slack.md#5-配置分配规则)。
 - witden 按 **GitHub 用户 ID** 识别 GitHub 用户。在“设置 → 通讯接入 → 身份关联”中，把管理员自己的 GitHub 账号关联到 witden 管理员账号；其他人按连接的外部成员设置处理。
 
 ## 5. 在 GitHub 中使用
