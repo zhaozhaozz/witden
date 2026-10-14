@@ -395,7 +395,9 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     // Anyone who can see the thread may take part; their requests are still checked individually.
     if (!(await topicSvc.participant(db, topic.id, "user", user.id)))
       await topicSvc.addParticipant(db, topic, "user", user.id);
-    const roleIds = await roleMentions(db, msg.text);
+    // A bot that stands for one role hands that role everything addressed to it; otherwise roles are named.
+    const bound = typeof conn.settings.role_id === "string" ? conn.settings.role_id : null;
+    const roleIds = bound ? (msg.addressed ? [bound] : []) : await roleMentions(db, msg.text);
     const present = [];
     for (const rid of roleIds) if (await topicSvc.participant(db, topic.id, "role", rid)) present.push(rid);
     let stored = await saveMessage(db, topic, "user", user.id, msg.text, {

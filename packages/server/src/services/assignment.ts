@@ -15,7 +15,7 @@
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type AssignmentRule, assignmentRules, computerInstances, roles, users } from "../db/schema.js";
+import { type AssignmentRule, assignmentRules, computerInstances, connections, roles, users } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { participant } from "./topics.js";
@@ -95,11 +95,40 @@ function ctxJson(ctx: RequestContext) {
 const intersect = (current: Set<string> | null, next: string[] | null) =>
   next === null ? current : current === null ? new Set(next) : new Set([...current].filter((x) => next.includes(x)));
 
+/**
+ * A connection whose bot stands for one role assigns that role, as if a rule for the connection allowed only
+ * it and made it the default. Explicit rules still apply on top (their allowed roles intersect, a deny wins).
+ */
+async function connectionRole(db: Db, ctx: RequestContext): Promise<AssignmentRule | null> {
+  if (!ctx.connectionId) return null;
+  const [conn] = await db.select().from(connections).where(eq(connections.id, ctx.connectionId)).limit(1);
+  const roleId = conn?.settings?.role_id;
+  if (typeof roleId !== "string" || !roleId) return null;
+  return {
+    id: `connection:${conn.id}`,
+    name: `the role ${conn.name}'s bot stands for`,
+    description: "",
+    enabled: true,
+    priority: Number.MAX_SAFE_INTEGER,
+    match: { connection_id: conn.id },
+    effect: "allow",
+    allowRoleIds: [roleId],
+    denyRoleIds: [],
+    defaultRoleId: roleId,
+    allowInstanceIds: null,
+    createdBy: null,
+    createdAt: conn.createdAt,
+    updatedAt: conn.updatedAt,
+  };
+}
+
 export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
   const trace: Decision["trace"] = [{ step: "request", detail: ctxJson(ctx) }];
   const rules = (await db.select().from(assignmentRules).where(eq(assignmentRules.enabled, true)))
     .filter((r) => matches(r, ctx))
     .sort((a, b) => specificity(b) - specificity(a) || a.priority - b.priority || a.id.localeCompare(b.id));
+  const bound = await connectionRole(db, ctx);
+  if (bound) rules.push(bound);
   trace.push({
     step: "matched_rules",
     detail: rules.map((r) => ({ id: r.id, name: r.name, effect: r.effect, specificity: specificity(r) })),

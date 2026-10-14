@@ -50,7 +50,8 @@ export async function hasPermission(db: Db, user: User | null | undefined, perm:
 async function externalMemberMay(db: Db, connectionId: string, perm: Perm, roleId?: string | null): Promise<boolean> {
   if (!roleId || (perm !== Perm.ROLE_USE && perm !== Perm.ROLE_INVITE)) return false;
   const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
-  const allowed: unknown = conn?.settings?.external_role_ids;
+  // A connection bound to one role (its bot stands for that role) lets its external members use just that role.
+  const allowed: unknown = conn?.settings?.role_id ? [conn.settings.role_id] : conn?.settings?.external_role_ids;
   return Array.isArray(allowed) && allowed.includes(roleId);
 }
 

@@ -518,6 +518,34 @@ describe("slack", () => {
     expect((await db().select().from(topics).where(eq(topics.id, dm.id)))[0].title).toBe("Nina");
   });
 
+  it("a bot that stands for one role: that role takes everything addressed to it, and speaks as the bot", async () => {
+    // no assignment rules at all: binding the role is the assignment
+    for (const r of (await w.api("GET", "/api/rules", { token: w.adminToken })).body)
+      await w.api("DELETE", `/api/rules/${r.id}`, { token: w.adminToken });
+    const bound = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { settings: { role_id: w.ids.dev } },
+    });
+    expect(bound.status, bound.raw).toBe(200);
+    w.scripts.dev = () => reply("on it");
+    await send(event("<@UBOT> can you check the build", { ts: "970.1" }));
+    // naming another role changes nothing: this bot is dev
+    await send(event("<@UBOT> role:test run the tests", { ts: "971.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 2);
+    expect((await allTasks()).map((t) => t.ownerRoleId)).toEqual([w.ids.dev, w.ids.dev]);
+    await w.drain();
+    await deliverPending();
+    // no "*Dev (@dev)*:" heading: the bot's own name says who speaks
+    expect(slack.posts.filter((p) => p.channel === "C1").map((p) => p.text)).toEqual(["on it", "on it"]);
+    // external members of the connection may use that role
+    expect(
+      await hasPermission(db(), { isActive: true, externalConnectionId: conn.id } as any, Perm.ROLE_USE, w.ids.dev),
+    ).toBe(true);
+    expect(
+      await hasPermission(db(), { isActive: true, externalConnectionId: conn.id } as any, Perm.ROLE_USE, w.ids.test),
+    ).toBe(false);
+  });
+
   it("Markdown answers reach Slack as mrkdwn; Slack formatting arrives as Markdown", async () => {
     w.scripts.dev = () =>
       reply(

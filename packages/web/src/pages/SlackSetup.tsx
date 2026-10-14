@@ -6,7 +6,7 @@ import { fmtRelative } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
-import { CopyText, Field, FieldGroup, Loaded, MultiPick, Section, Tag } from "../ui/kit";
+import { CopyText, Field, Section, Tag } from "../ui/kit";
 import {
   ConnectionSettingsFields,
   Identities,
@@ -123,7 +123,7 @@ const STEP_TITLES: Record<StepKey, string> = {
   app: "在 Slack 中创建应用",
   credentials: "填写凭据并测试连接",
   events: "在 Slack 中订阅事件",
-  access: "选择处理请求的角色",
+  access: "选择机器人代表的角色",
   try: "在 Slack 中试一试",
 };
 
@@ -345,7 +345,7 @@ function AppStep({
       </p>
       <Field
         label="机器人名称"
-        hint="在 Slack 中显示的名字，大家用“@名称”召唤它；最多 35 个字符，之后也可以在 Slack 中修改。"
+        hint="在 Slack 中显示的名字，大家用“@名称”召唤它。这个机器人会代表 witden 中的一个角色，建议用那个角色的名字；最多 35 个字符，之后也可以在 Slack 中修改。"
       >
         <input value={name} maxLength={35} onChange={(e) => onName(e.target.value)} />
       </Field>
@@ -834,105 +834,71 @@ function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connecti
   const dir = useDirectory();
   const { run, busy } = useAction();
   const rules = useResource(() => api.get<Rule[]>("/api/rules"), []);
-  const [roles, setRoles] = useState<string[]>([]);
-  const [defaultRole, setDefaultRole] = useState("");
   const [settings, setSettings] = useState(settingsOf(conn));
-  // Rules for this connection, and rules with no conditions (they cover every request).
-  const covering = (rules.data ?? []).filter(
-    (r) => r.enabled && r.effect === "allow" && (r.match.connection_id === conn.id || !Object.keys(r.match).length),
-  );
-  const needRule = rules.data !== undefined && !covering.length;
-  const chosenDefault = roles.includes(defaultRole) ? defaultRole : (roles[0] ?? "");
+  const roles = dir.roles.filter((r) => r.status === "active" || r.id === settings.role_id);
+  // Rules written for this connection still apply on top of the bot's role.
+  const others = (rules.data ?? []).filter((r) => r.enabled && r.match.connection_id === conn.id);
 
   const save = async () => {
-    const out = await run(async () => {
-      if (needRule && roles.length)
-        await api.post("/api/rules", {
-          name: `${conn.name}：默认分配`,
-          match: { connection_id: conn.id },
-          allow_role_ids: roles,
-          default_role_id: chosenDefault,
-        });
-      return api.patch<Connection>(`/api/connections/${conn.id}`, { settings });
-    }, "已保存");
+    const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { settings }), "已保存");
     if (out) onSaved(out);
   };
 
   return (
     <>
       <p>
-        来自 Slack 的请求要经过<b>分配规则</b>
-        ：没有匹配的规则时一律拒绝。规则决定这个接入可以使用哪些角色，以及消息中没有指定角色时交给谁。
+        一个 Slack 应用就是工作区里的一个机器人。选择它代表 witden
+        中的哪个角色：发给这个机器人的消息都交给这个角色处理，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个
+        Slack 应用（在 witden 中各是一个接入）。
       </p>
-      <Loaded res={rules}>
-        {() =>
-          needRule ? (
-            <div className="form form-narrow">
-              <FieldGroup label="可以处理 Slack 请求的角色">
-                <MultiPick
-                  columns={2}
-                  options={dir.roles
-                    .filter((r) => r.status === "active")
-                    .map((r) => ({
-                      value: r.id,
-                      label: `${r.name} @${r.handle}`,
-                      hint: missingSetup(r),
-                    }))}
-                  value={roles}
-                  onChange={setRoles}
-                  empty="还没有可用的角色，请先在“角色”中创建"
-                />
-              </FieldGroup>
-              <Field label="默认角色" hint="消息中没有指定角色（例如 @机器人 role:dev）时交给它。">
-                <select value={chosenDefault} disabled={!roles.length} onChange={(e) => setDefaultRole(e.target.value)}>
-                  {roles.map((id) => (
-                    <option key={id} value={id}>
-                      {dir.roleLabel(id)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-          ) : (
-            <div className="callout">
-              已有覆盖这个接入的规则：
-              <ul>
-                {covering.map((r) => (
-                  <li key={r.id}>
-                    {r.name}：可以使用{" "}
-                    {r.allow_role_ids
-                      ? r.allow_role_ids.map((id) => dir.roleLabel(id)).join("、") || "（无）"
-                      : "所有角色"}
-                    ；默认角色 {r.default_role_id ? dir.roleLabel(r.default_role_id) : "无"}
-                    {Object.keys(r.match).length ? null : <Tag tone="off">对所有来源生效</Tag>}
-                  </li>
-                ))}
-              </ul>
-              需要调整时到 <Link to="/rules">分配规则</Link> 中修改。
-            </div>
-          )
-        }
-      </Loaded>
+      <div className="pick setup-roles" role="radiogroup" aria-label="机器人代表的角色">
+        {roles.length ? (
+          roles.map((r) => (
+            <label key={r.id} className={`pick-item${settings.role_id === r.id ? " pick-on" : ""}`}>
+              <input
+                type="radio"
+                name="bot-role"
+                checked={settings.role_id === r.id}
+                onChange={() => setSettings({ ...settings, role_id: r.id })}
+              />
+              <span className="pick-text">
+                <span>
+                  {r.name} @{r.handle}
+                </span>
+                {missingSetup(r) ? <span className="pick-hint">{missingSetup(r)}</span> : null}
+              </span>
+            </label>
+          ))
+        ) : (
+          <span className="muted small">
+            还没有可用的角色，请先在<Link to="/roles">角色管理</Link>中创建。
+          </span>
+        )}
+      </div>
+      {others.length ? (
+        <div className="callout">
+          这个接入另有分配规则，会在此基础上生效（例如限制某些频道）：{others.map((r) => r.name).join("、")}
+          。需要调整时到 <Link to="/rules">分配规则</Link> 中修改。
+        </div>
+      ) : null}
       <h3 className="setup-sub">谁可以使用</h3>
       <p className="small muted">
         默认只有把 Slack 账号关联到 witden
         管理员账号的人可以使用（最后一步可以直接关联你自己的账号）。要让工作区里的其他人也能使用，开启“允许未关联的人使用”。
       </p>
       <div className="form form-narrow">
-        <ConnectionSettingsFields platform="slack" value={settings} onChange={setSettings} />
+        <ConnectionSettingsFields platform="slack" value={settings} onChange={setSettings} chooseRole={false} />
       </div>
       <div className="setup-next">
         <button
           type="button"
           className="btn btn-primary"
-          disabled={busy || rules.data === undefined}
+          disabled={busy || !settings.role_id}
           onClick={() => void save()}
         >
           保存，下一步
         </button>
-        {needRule && !roles.length ? (
-          <span className="small text-bad">不选角色也可以继续，但添加规则之前，来自 Slack 的请求都会被拒绝。</span>
-        ) : null}
+        {settings.role_id ? null : <span className="small muted">选择一个角色后继续。</span>}
       </div>
     </>
   );

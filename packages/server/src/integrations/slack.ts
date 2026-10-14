@@ -214,12 +214,14 @@ export class SlackAdapter implements Adapter {
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
       const name = role ? `${role.name} (@${role.handle})` : "role";
-      if (conn.settings.custom_identity) {
+      // A bot that stands for this role needs no name: its own name and icon say who speaks.
+      const ownRole = !!role && role.id === conn.settings.role_id;
+      if (!ownRole && conn.settings.custom_identity) {
         extra.username = name;
         // Slack fetches the icon itself, through the public address (avatars are served on the webhook listener).
         const icon = absoluteAvatarUrl(role?.avatarUrl, await webhookBase(db));
         if (icon) extra.icon_url = icon;
-      } else text = signed(`*${escapeSlack(name)}*`, text);
+      } else if (!ownRole) text = signed(`*${escapeSlack(name)}*`, text);
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       text = signed(`*${escapeSlack(user?.name ?? "member")}* (witden)`, text);

@@ -4,7 +4,7 @@ import type { Connection, ExternalIdentity } from "../api/types";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
-import { Empty, FieldGroup, Loaded, MultiPick, Tag, Toggle } from "../ui/kit";
+import { Empty, Field, FieldGroup, Loaded, MultiPick, Tag, Toggle } from "../ui/kit";
 
 // Outcomes recorded by the server's inbound handler (integrations/inbound.ts).
 export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "bad"]> = {
@@ -93,12 +93,15 @@ export const SLACK_FIELD_HELP: Record<string, ReactNode> = {
 
 /** A connection's settings as edited in the console. */
 export interface ConnSettings {
+  /** The role the connection's bot stands for (null: the assignment rules choose roles). */
+  role_id: string | null;
   auto_provision_users: boolean;
   external_role_ids: string[];
   custom_identity: boolean;
 }
 
 export const settingsOf = (conn: Connection | null): ConnSettings => ({
+  role_id: typeof conn?.settings?.role_id === "string" ? conn.settings.role_id : null,
   auto_provision_users: !!conn?.settings?.auto_provision_users,
   external_role_ids: conn?.settings?.external_role_ids ?? [],
   custom_identity: !!conn?.settings?.custom_identity,
@@ -109,21 +112,45 @@ export function ConnectionSettingsFields({
   platform,
   value,
   onChange,
+  chooseRole = true,
 }: {
   platform: string;
   value: ConnSettings;
   onChange: (next: ConnSettings) => void;
+  /** Show the role choice (the setup guide asks for it on its own). */
+  chooseRole?: boolean;
 }) {
   const dir = useDirectory();
   const set = (patch: Partial<ConnSettings>) => onChange({ ...value, ...patch });
+  const bound = !!value.role_id;
   return (
     <>
+      {chooseRole ? (
+        <Field
+          label="机器人代表的角色"
+          hint="发给这个机器人的消息都交给这个角色，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个应用。"
+        >
+          <select value={value.role_id ?? ""} onChange={(e) => set({ role_id: e.target.value || null })}>
+            <option value="">（未选择：按分配规则选择角色）</option>
+            {dir.roles
+              .filter((r) => r.status === "active" || r.id === value.role_id)
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name} @{r.handle}
+                </option>
+              ))}
+          </select>
+        </Field>
+      ) : null}
       <Toggle
         checked={value.auto_provision_users}
         onChange={(v) => set({ auto_provision_users: v })}
         label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
       />
-      {value.auto_provision_users ? (
+      {value.auto_provision_users && bound ? (
+        <span className="field-hint">外部成员可以使用这个机器人代表的角色 {dir.roleLabel(value.role_id)}。</span>
+      ) : null}
+      {value.auto_provision_users && !bound ? (
         <FieldGroup label="外部成员可以使用的角色" hint="外部成员只能使用这里选中的角色。">
           <MultiPick
             columns={3}
@@ -136,7 +163,7 @@ export function ConnectionSettingsFields({
           />
         </FieldGroup>
       ) : null}
-      {platform !== "github" ? (
+      {platform !== "github" && !bound ? (
         <Toggle
           checked={value.custom_identity}
           onChange={(v) => set({ custom_identity: v })}

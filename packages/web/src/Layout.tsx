@@ -330,7 +330,10 @@ function ConnectionLists() {
                 <span className="side-icon" aria-hidden>
                   {conversationIcon(x)}
                 </span>
-                <span className="side-label">{x.title}</span>
+                {/* a channel's title already starts with "#", which the icon shows */}
+                <span className="side-label">
+                  {conversationIcon(x) === "#" ? x.title.replace(/^#\s*/, "") : x.title}
+                </span>
                 {t.unread(x) ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
               </NavLink>
             ))}

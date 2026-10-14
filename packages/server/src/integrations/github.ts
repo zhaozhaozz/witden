@@ -187,7 +187,9 @@ export class GithubAdapter implements Adapter {
     // One account fronts every role: say who is speaking. No "@handle" here: on GitHub that pings a person.
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      text = `**${role?.name ?? "role"}** (\`${role?.handle ?? "role"}\`)\n\n${text}`;
+      // the app stands for this role: no heading needed
+      if (!role || role.id !== conn.settings.role_id)
+        text = `**${role?.name ?? "role"}** (\`${role?.handle ?? "role"}\`)\n\n${text}`;
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       text = `**${user?.name ?? "member"}** (witden)\n\n${text}`;

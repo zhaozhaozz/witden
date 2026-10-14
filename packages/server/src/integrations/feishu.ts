@@ -141,7 +141,8 @@ export class FeishuAdapter implements Adapter {
     let text = msg.content;
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      text = `${role?.name ?? "role"} (@${role?.handle ?? "?"}): ${text}`;
+      if (!role || role.id !== conn.settings.role_id)
+        text = `${role?.name ?? "role"} (@${role?.handle ?? "?"}): ${text}`;
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       text = `${user?.name ?? "member"} (witden): ${text}`;

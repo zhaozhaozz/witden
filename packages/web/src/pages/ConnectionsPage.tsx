@@ -454,6 +454,14 @@ function ConnectionDetail({
         <KV
           items={[
             ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
+            [
+              "机器人代表的角色",
+              typeof conn.settings?.role_id === "string" ? (
+                dir.roleLabel(conn.settings.role_id)
+              ) : (
+                <span className="muted">未选择：按分配规则选择角色</span>
+              ),
+            ],
             ...(conn.platform === "slack"
               ? [
                   ["接入方式", conn.slack_mode === "socket" ? "Socket Mode（不需要公网地址）" : "事件地址（HTTP）"] as [
@@ -493,18 +501,22 @@ function ConnectionDetail({
               "外部成员",
               conn.settings?.auto_provision_users
                 ? `开启：未关联的人自动成为外部成员，可以使用 ${
-                    (conn.settings.external_role_ids ?? []).map((id) => dir.roleLabel(id)).join("、") ||
-                    "（还没有选择角色）"
+                    typeof conn.settings.role_id === "string"
+                      ? dir.roleLabel(conn.settings.role_id)
+                      : (conn.settings.external_role_ids ?? []).map((id) => dir.roleLabel(id)).join("、") ||
+                        "（还没有选择角色）"
                   }`
                 : "关闭：未关联的人不能使用，需要管理员关联身份",
             ],
             [
               "角色身份显示",
-              conn.platform === "github"
-                ? "评论开头写角色名称"
-                : conn.settings?.custom_identity
-                  ? "用角色自己的名称和头像发消息"
-                  : "在消息前加角色名称",
+              typeof conn.settings?.role_id === "string"
+                ? "机器人就是这个角色：回复以机器人的名字和头像发出，不另加角色名称"
+                : conn.platform === "github"
+                  ? "评论开头写角色名称"
+                  : conn.settings?.custom_identity
+                    ? "用角色自己的名称和头像发消息"
+                    : "在消息前加角色名称",
             ],
           ]}
         />
