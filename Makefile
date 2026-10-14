@@ -1,4 +1,4 @@
-.PHONY: install build dev test test-docker lint images platform laya
+.PHONY: install build dev test test-docker lint images platform tunnel laya
 
 install:
 	npm ci
@@ -28,9 +28,12 @@ images:
 	docker build -f images/shell/Dockerfile -t witden/computer-shell:latest .
 	docker build -f images/desktop/Dockerfile -t witden/computer-desktop:latest .
 
-# Platform image (api, worker and manager processes).
-platform:
+# Platform image (api, worker and manager processes) and the Cloudflare Tunnel image next to it.
+platform: tunnel
 	docker build -t witden/platform:latest .
+
+tunnel:
+	docker build -t witden/tunnel:latest images/tunnel
 
 # Optional Laya decision model for the topic dispatcher (the "laya" compose service).
 laya:

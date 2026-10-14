@@ -51,7 +51,7 @@ services:
       # fixed inside the container; WITDEN_PORT only chooses the published host port
       WITDEN_PORT: "8320"
       WITDEN_HUB_PORT: "8330"
-      # Optional Cloudflare Tunnel (the "tunnel" service below): the console writes its token here
+      # Cloudflare Tunnel (the "tunnel" service below): the console writes its token here
       WITDEN_TUNNEL_TOKEN_FILE: /tunnel/token
       WITDEN_TUNNEL_METRICS_URL: http://tunnel:2000
       WITDEN_TUNNEL_ORIGIN: http://api:8320
@@ -98,16 +98,14 @@ services:
       - witden-laya-cache:/home/laya/.cache/huggingface
     networks: [control]
 
-  # Optional: a Cloudflare Tunnel that gives the platform a public HTTPS address (needed for Slack, GitHub
-  # and Feishu events) without opening ports or managing certificates. Turned on by COMPOSE_PROFILES=tunnel
-  # in .env. The tunnel token is pasted in the console (Connections → Slack guide → public address), which
-  # writes it to the witden-tunnel volume; until then this service exits and is restarted about once a
-  # minute. After replacing the token: docker compose restart tunnel.
+  # Optional Cloudflare Tunnel: a public HTTPS address for the platform (Slack, GitHub and Feishu send events
+  # to it) without opening ports or managing certificates. Idle until a tunnel token is pasted in the console
+  # (Connections → Slack guide → public address), which writes it to the witden-tunnel volume; it then
+  # connects, and follows a replaced or removed token by itself. Reachable only on the control network.
   tunnel:
-    image: cloudflare/cloudflared:2026.10.0
-    profiles: ["tunnel"]
+    build: { context: images/tunnel }
+    image: witden/tunnel:latest
     restart: unless-stopped
-    command: ["tunnel", "--metrics", "0.0.0.0:2000", "run", "--token-file", "/etc/witden-tunnel/token"]
     volumes:
       - witden-tunnel:/etc/witden-tunnel:ro
     depends_on:

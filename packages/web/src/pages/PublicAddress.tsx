@@ -335,14 +335,17 @@ function TunnelSetup({
 }) {
   const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [stopping, setStopping] = useState(false);
+  // When the tunnel was first seen not running although a token is saved.
+  const [waitingSince, setWaitingSince] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   // Each detected route is checked automatically once.
   const attempted = useRef(new Set<string>());
 
   // Follow the tunnel while it starts, connects and receives its routes.
+  const tunnelId = status?.token?.tunnel;
   useEffect(() => {
-    if (!status?.token) return;
+    if (!tunnelId) return;
     const timer = window.setInterval(async () => {
       setNow(Date.now());
       try {
@@ -354,7 +357,7 @@ function TunnelSetup({
     return () => {
       window.clearInterval(timer);
     };
-  }, [status?.token, onStatus]);
+  }, [tunnelId, onStatus]);
 
   const origin = (status?.origin ?? "").replace(/\/+$/, "");
   const routes = status?.routes ?? [];
@@ -369,12 +372,17 @@ function TunnelSetup({
     void onUse(candidate);
   }, [status?.state, candidate, current, onUse]);
 
+  const notRunning = !!status?.token && status.state === "not_running";
+  useEffect(() => {
+    setWaitingSince((since) => (notRunning ? (since ?? Date.now()) : null));
+  }, [notRunning]);
+
   if (!status) return null;
   if (!status.available)
     return (
       <div className="callout callout-wait">
-        这个部署没有包含 Cloudflare Tunnel 服务。用代码仓中的 docker compose 部署时，在 .env 中加入{" "}
-        <code>COMPOSE_PROFILES=tunnel</code>，执行 <code>docker compose up -d</code> 后刷新本页。
+        这个部署没有配置 Cloudflare Tunnel 服务。用代码仓中的 docker compose 部署时它已包含在内；单进程部署可以自行运行
+        cloudflared（见部署文档），再选择“自己的域名和反向代理”填写地址。
       </div>
     );
 
@@ -382,14 +390,22 @@ function TunnelSetup({
     setError(null);
     try {
       onStatus(await api.put<TunnelStatus>("/api/settings/tunnel", { token }));
-      setSavedAt(Date.now());
       setToken("");
     } catch (err) {
       setError((err as Error).message);
     }
   };
-  // cloudflared retries about once a minute until it finds the token.
-  const waitedLong = savedAt !== null && now - savedAt > 90_000;
+  const removeToken = async () => {
+    setError(null);
+    try {
+      onStatus(await api.del<TunnelStatus>("/api/settings/tunnel"));
+      setStopping(false);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  // The tunnel service looks for a token every few seconds.
+  const waitedLong = waitingSince !== null && now - waitingSince > 30_000;
 
   return (
     <>
@@ -425,8 +441,23 @@ function TunnelSetup({
               </button>
               {status.token ? (
                 <span className="small muted">
-                  已保存 tunnel <code>{status.token.tunnel.slice(0, 8)}</code>。更换 token 后，需要在服务器上执行{" "}
-                  <code>docker compose restart tunnel</code>。
+                  已保存 tunnel <code>{status.token.tunnel.slice(0, 8)}</code>，更换后几秒内自动用新 token 重新连接。
+                </span>
+              ) : null}
+              {status.token && !stopping ? (
+                <button type="button" className="btn btn-xs btn-danger-ghost" onClick={() => setStopping(true)}>
+                  停用 tunnel
+                </button>
+              ) : null}
+              {stopping ? (
+                <span className="small">
+                  停用后，经过这个 tunnel 的公网地址将无法访问。{" "}
+                  <button type="button" className="btn btn-xs btn-danger" onClick={() => void removeToken()}>
+                    确认停用
+                  </button>{" "}
+                  <button type="button" className="btn btn-xs" onClick={() => setStopping(false)}>
+                    取消
+                  </button>
                 </span>
               ) : null}
             </div>
@@ -440,11 +471,11 @@ function TunnelSetup({
                 <Tag tone="wait">tunnel 服务已启动，正在连接 Cloudflare；一直停在这里时，检查 token 是否完整</Tag>
               ) : waitedLong ? (
                 <span className="text-bad">
-                  tunnel 服务没有运行：确认 .env 中有 <code>COMPOSE_PROFILES=tunnel</code>，并在服务器上执行{" "}
-                  <code>docker compose up -d</code>。
+                  tunnel 服务没有运行。它随代码仓中的 docker-compose.yml
+                  一起部署：如果这个部署用的是旧版本，更新后在服务器上执行 <code>docker compose up -d</code>。
                 </span>
               ) : (
-                <Tag tone="wait">等待 tunnel 服务读取 token（最长约 1 分钟）</Tag>
+                <Tag tone="wait">等待 tunnel 服务读取 token</Tag>
               )}
             </div>
           ) : null}
