@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 import { api } from "../api/client";
 import type { Connection, ExternalIdentity } from "../api/types";
-import { SYNC_MODE } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
-import { Empty, Field, FieldGroup, Loaded, MultiPick, Tag, Toggle } from "../ui/kit";
+import { Empty, FieldGroup, Loaded, MultiPick, Tag, Toggle } from "../ui/kit";
 
 // Outcomes recorded by the server's inbound handler (integrations/inbound.ts).
 export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "bad"]> = {
@@ -13,8 +12,9 @@ export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "ba
   processing: ["处理中", "wait"],
   dispatched: ["已交给角色", "ok"],
   not_assigned: ["没有交给角色", "bad"],
-  stored: ["已同步（未 @ 机器人）", "ok"],
-  ignored: ["已忽略（不在同步范围）", "off"],
+  stored: ["已记录（未 @ 机器人）", "ok"],
+  ignored: ["已忽略", "off"],
+  // recorded before every thread was synced (migration 0016)
   sync_off: ["会话不同步", "off"],
   connection_paused: ["接入已暂停", "off"],
   unknown_connection: ["接入不存在", "bad"],
@@ -96,17 +96,15 @@ export interface ConnSettings {
   auto_provision_users: boolean;
   external_role_ids: string[];
   custom_identity: boolean;
-  default_sync_mode: "mentions" | "all" | "off";
 }
 
 export const settingsOf = (conn: Connection | null): ConnSettings => ({
   auto_provision_users: !!conn?.settings?.auto_provision_users,
   external_role_ids: conn?.settings?.external_role_ids ?? [],
   custom_identity: !!conn?.settings?.custom_identity,
-  default_sync_mode: conn?.settings?.default_sync_mode ?? "mentions",
 });
 
-/** Who may use the bot, what gets synced and how roles appear; shared by the connection form and setup guides. */
+/** Who may use the bot and how roles appear; shared by the connection form and setup guides. */
 export function ConnectionSettingsFields({
   platform,
   value,
@@ -120,18 +118,6 @@ export function ConnectionSettingsFields({
   const set = (patch: Partial<ConnSettings>) => onChange({ ...value, ...patch });
   return (
     <>
-      <Field label="新会话默认同步范围" hint="接入平台不等于导入全部消息；每个会话之后还可以单独调整。">
-        <select
-          value={value.default_sync_mode}
-          onChange={(e) => set({ default_sync_mode: e.target.value as ConnSettings["default_sync_mode"] })}
-        >
-          {Object.entries(SYNC_MODE).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v}
-            </option>
-          ))}
-        </select>
-      </Field>
       <Toggle
         checked={value.auto_provision_users}
         onChange={(v) => set({ auto_provision_users: v })}

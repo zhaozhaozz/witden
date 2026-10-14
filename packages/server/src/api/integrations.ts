@@ -34,7 +34,7 @@ const PLATFORMS: Record<string, string[]> = {
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "default_sync_mode"]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity"]);
 
 /** ``base``: the public address (services/public-url.ts). */
 function connOut(conn: Connection, base: string) {
@@ -86,8 +86,6 @@ const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
 function cleanSettings(s: Record<string, any>): Record<string, any> {
   const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k));
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
-  if (!["mentions", "all", "off"].includes(s.default_sync_mode ?? "mentions"))
-    throw new BadRequest("default_sync_mode must be mentions, all or off");
   if (
     s.external_role_ids !== undefined &&
     !(Array.isArray(s.external_role_ids) && s.external_role_ids.every((x: unknown) => typeof x === "string"))
@@ -274,30 +272,6 @@ export async function integrationRoutes(app: FastifyInstance) {
     }),
   );
 
-  app.patch(
-    "/api/connections/:id/conversations/:cid",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const mode = body(req).syncMode;
-      if (!["mentions", "all", "off"].includes(mode)) throw new BadRequest("sync_mode must be mentions, all or off");
-      const [conv] = await db
-        .update(externalConversations)
-        .set({ syncMode: mode })
-        .where(
-          and(eq(externalConversations.id, params(req).cid), eq(externalConversations.connectionId, params(req).id)),
-        )
-        .returning();
-      if (!conv) throw new NotFound("conversation not found");
-      await audit(db, "conversation.sync_mode", {
-        actorType: "user",
-        actorId: user.id,
-        connectionId: conv.connectionId,
-        detail: { conversation: conv.externalId, sync_mode: mode },
-      });
-      return row(conv);
-    }),
-  );
-
   for (const [path, table, timeCol] of [
     ["outbound", outboundMessages, outboundMessages.createdAt],
     ["inbound", processedEvents, processedEvents.receivedAt],
@@ -372,7 +346,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           : ["private", null];
         [conv] = await db
           .insert(externalConversations)
-          .values({ id: newId("conv"), connectionId: conn.id, externalId: channel, kind, name, syncMode: "mentions" })
+          .values({ id: newId("conv"), connectionId: conn.id, externalId: channel, kind, name })
           .returning();
       }
       if (adapter.syncMembers) await adapter.syncMembers(db, conn, conv, true).catch(() => {});

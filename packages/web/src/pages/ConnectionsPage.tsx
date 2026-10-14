@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { Connection, ExternalConversation, OutboundMessage } from "../api/types";
-import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL, SYNC_MODE } from "../lib/format";
+import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
@@ -120,7 +120,7 @@ export default function ConnectionsPage() {
     <div className="page">
       <PageHeader
         title="通讯接入"
-        sub="把 Slack、飞书、GitHub 的机器人接入进来。接入平台不等于导入全部消息：每个会话可以单独设置同步范围，外部请求还要经过分配规则。"
+        sub="把 Slack、飞书、GitHub 的机器人接入进来。机器人所在频道和私信中的消息都会记录下来，只有 @ 机器人的消息才交给角色，并且要经过分配规则。"
         actions={
           <>
             <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
@@ -489,7 +489,6 @@ function ConnectionDetail({
             ...(conn.platform === "github"
               ? [["接入方式", conn.github_auth === "app" ? "GitHub App" : "机器人账号 Token"] as [string, string]]
               : []),
-            ["新会话默认同步", SYNC_MODE[conn.settings?.default_sync_mode ?? "mentions"]],
             [
               "外部成员",
               conn.settings?.auto_provision_users
@@ -532,7 +531,7 @@ function ConnectionDetail({
         value={tab}
         onChange={setTab}
         tabs={[
-          { key: "conversations", label: "会话与同步" },
+          { key: "conversations", label: "会话" },
           { key: "identities", label: "身份关联", hidden: !can("user.manage") },
           { key: "outbound", label: "投递记录" },
           { key: "inbound", label: "收到的事件" },
@@ -547,7 +546,6 @@ function ConnectionDetail({
 }
 
 function Conversations({ conn }: { conn: Connection }) {
-  const { run } = useAction();
   const res = useResource(
     () => api.get<(ExternalConversation & { threads?: number })[]>(`/api/connections/${conn.id}/conversations`),
     [conn.id],
@@ -563,7 +561,6 @@ function Conversations({ conn }: { conn: Connection }) {
                   <th>会话</th>
                   <th>类型</th>
                   <th>关联话题</th>
-                  <th>同步范围</th>
                 </tr>
               </thead>
               <tbody>
@@ -577,29 +574,6 @@ function Conversations({ conn }: { conn: Connection }) {
                     </td>
                     <td>{CONVERSATION_KIND[c.kind] ?? c.kind}</td>
                     <td>{c.threads ?? 0} 个</td>
-                    <td>
-                      <select
-                        value={c.sync_mode}
-                        aria-label="同步范围"
-                        onChange={async (e) => {
-                          const mode = e.target.value as ExternalConversation["sync_mode"];
-                          const out = await run(
-                            () =>
-                              api.patch<ExternalConversation>(`/api/connections/${conn.id}/conversations/${c.id}`, {
-                                sync_mode: mode,
-                              }),
-                            "同步范围已更新",
-                          );
-                          if (out) res.setData((prev) => prev?.map((x) => (x.id === c.id ? { ...x, ...out } : x)));
-                        }}
-                      >
-                        {Object.entries(SYNC_MODE).map(([k, v]) => (
-                          <option key={k} value={k}>
-                            {v}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
                   </tr>
                 ))}
               </tbody>

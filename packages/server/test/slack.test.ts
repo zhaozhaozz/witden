@@ -10,6 +10,7 @@ import { newId } from "../src/db/ids.js";
 import {
   connections,
   externalIdentities,
+  externalThreadLinks,
   processedEvents,
   tasks,
   topicParticipants,
@@ -400,6 +401,23 @@ describe("slack", () => {
     const before = slack.posts.length;
     await deliverPending(); // nothing is sent twice
     expect(slack.posts.length).toBe(before);
+  });
+
+  it("every thread the bot can see is recorded; only messages addressed to it reach roles", async () => {
+    // a message in a new thread that does not @ the bot
+    await send(event("lunch at noon?", { ts: "950.1", etype: "message" }));
+    await settle();
+    const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
+    expect(inbound.find((e: any) => e.event_key === "msg:C1:950.1")).toMatchObject({ status: "stored" });
+    const threads = await db().select().from(externalThreadLinks).where(eq(externalThreadLinks.threadKey, "950.1"));
+    expect(threads).toHaveLength(1);
+    expect(await allTasks()).toEqual([]);
+    // there is no setting to narrow it down any more
+    const refused = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { settings: { default_sync_mode: "mentions" } },
+    });
+    expect(refused.status).toBe(400);
   });
 
   it("Markdown answers reach Slack as mrkdwn; Slack formatting arrives as Markdown", async () => {

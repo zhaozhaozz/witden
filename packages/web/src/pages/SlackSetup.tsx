@@ -410,7 +410,8 @@ function AppStep({
           </tbody>
         </table>
         <p className="small muted">
-          机器人只能读到它所在频道和私信中的消息；witden 只同步有人 @ 机器人的 thread（可在设置中调整）。
+          机器人只能读到它所在频道和私信中的消息；witden 记录这些频道和私信中的所有 thread，只有 @
+          机器人的消息才交给角色。
         </p>
       </details>
       {mode === "socket" ? <SocketFaq /> : null}
@@ -1031,8 +1032,8 @@ function TryStep({
           允许的角色中。处理后在 Slack 中再发一次；Slack 的 thread 中也会收到这条说明。
         </div>
       ) : null}
-      {latest?.status === "ignored" ? (
-        <div className="callout">这条消息没有 @ 机器人。witden 默认只处理有人 @ 机器人的 thread。</div>
+      {latest?.status === "stored" ? (
+        <div className="callout">这条消息没有 @ 机器人：witden 记录了它，但只有 @ 机器人的消息才交给角色。</div>
       ) : null}
       {latest?.status === "unlinked_user" ? (
         <>

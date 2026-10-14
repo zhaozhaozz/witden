@@ -222,7 +222,6 @@ async function upsertConversation(db: Db, conn: Connection, msg: InboundMessage)
         externalId: msg.conversationId,
         kind: msg.conversationKind,
         name: msg.conversationName,
-        syncMode: conn.settings.default_sync_mode ?? "mentions",
       })
       .returning();
     return created;
@@ -302,7 +301,6 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     if (!conn) return { status: "unknown_connection" };
     if (conn.status !== "active") return { status: "connection_paused" };
     const conv = await upsertConversation(db, conn, msg);
-    if (conv.syncMode === "off") return { status: "sync_off" };
     const adapter = await getAdapter(conn);
     if (adapter.syncMembers) {
       // Unknown membership is treated as the whole workspace, so a failure here fails closed.
@@ -310,13 +308,8 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
         .syncMembers(db, conn, conv)
         .catch((err) => console.warn("[witden] member sync failed", err.message));
     }
+    // Every thread of a conversation the bot is in is recorded; only messages addressed to it reach roles.
     const user = await resolveIdentity(db, conn, msg.userId, msg.userName);
-    const [existing] = await db
-      .select()
-      .from(externalThreadLinks)
-      .where(and(eq(externalThreadLinks.conversationId, conv.id), eq(externalThreadLinks.threadKey, msg.threadKey)))
-      .limit(1);
-    if (!existing && !msg.addressed && conv.syncMode !== "all") return { status: "ignored" }; // only threads where someone asked for us
     if (!user) {
       await audit(db, "inbound.unlinked_user", {
         actorType: "external",

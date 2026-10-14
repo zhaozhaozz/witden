@@ -545,7 +545,6 @@ export const externalConversations = pgTable(
     externalId: text("external_id").notNull(),
     kind: text("kind").notNull().default("public"), // public | private | im | mpim
     name: text("name"),
-    syncMode: text("sync_mode").notNull().default("mentions"),
     memberIds: json<string[]>("member_ids").notNull().default([]),
     membersSyncedAt: ts("members_synced_at"),
     createdAt: created(),

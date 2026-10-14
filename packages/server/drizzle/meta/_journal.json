@@ -113,6 +113,13 @@
       "when": 1791877474863,
       "tag": "0015_thread_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791965465418,
+      "tag": "0016_record_all_threads",
+      "breakpoints": true
     }
   ]
 }

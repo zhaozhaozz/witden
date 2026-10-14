@@ -209,3 +209,32 @@ describe("0013_external_members", () => {
     await db.close();
   });
 });
+
+describe("0016_record_all_threads", () => {
+  it("drops the per-conversation sync mode and the connections' default for it", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0016")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into connections (id, platform, name, settings) values
+        ('conn_1', 'slack', 'acme', '{"default_sync_mode": "off", "custom_identity": true}');
+      insert into external_conversations (id, connection_id, external_id, sync_mode) values
+        ('conv_1', 'conn_1', 'C1', 'off');
+    `);
+    await apply(db, "0016_record_all_threads");
+    expect((await db.query("select settings from connections")).rows).toEqual([
+      { settings: { custom_identity: true } },
+    ]);
+    const columns = (
+      await db.query<{ column_name: string }>(
+        "select column_name from information_schema.columns where table_name = 'external_conversations'",
+      )
+    ).rows.map((r) => r.column_name);
+    expect(columns).not.toContain("sync_mode");
+    expect((await db.query("select id from external_conversations")).rows).toEqual([{ id: "conv_1" }]);
+    await db.close();
+  });
+});

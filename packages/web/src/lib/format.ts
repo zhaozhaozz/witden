@@ -193,12 +193,6 @@ export const PLATFORM_LABEL: Record<string, string> = {
   internal: "内部",
 };
 
-export const SYNC_MODE: Record<string, string> = {
-  mentions: "仅 @ 机器人的 thread",
-  all: "全部 thread",
-  off: "不同步",
-};
-
 export const TOOL_GROUP_LABEL: Record<string, string> = {
   shell: "命令行",
   terminal: "终端会话",

@@ -690,7 +690,6 @@ export interface Connection {
     /** Roles that external members of this connection may use. */
     external_role_ids?: string[];
     custom_identity?: boolean;
-    default_sync_mode?: "mentions" | "all" | "off";
     [key: string]: unknown;
   };
   has_credentials: boolean;
@@ -734,7 +733,6 @@ export interface ExternalConversation {
   external_id: string;
   kind: "public" | "private" | "im" | "mpim" | string;
   name: string | null;
-  sync_mode: "mentions" | "all" | "off";
   member_ids?: string[];
   members_synced_at?: string | null;
   created_at?: string;
