@@ -11,9 +11,9 @@ witden 支持两种接入方式：
 | 方式 | 说明 | 需要的凭据 |
 |---|---|---|
 | **Socket Mode**（默认，推荐） | witden 主动连到 Slack，通过这条连接接收消息。不需要公网地址，witden 在公网上什么都不暴露。 | Bot User OAuth Token（`xoxb-`）和 App-Level Token（`xapp-`，带 `connections:write`） |
-| 事件地址（HTTP） | Slack 把消息推送到 witden 的公网事件地址。需要一个只转发到事件端口的公网 HTTPS 地址，见第 7 节。 | Bot User OAuth Token 和 Signing Secret |
+| 事件地址（HTTP） | Slack 把消息推送到 witden 的公网事件地址。需要一个只转发到事件端口的公网 HTTPS 地址，见第 8 节。 | Bot User OAuth Token 和 Signing Secret |
 
-已有的接入可以在详情中点击“编辑”切换方式，切换时填写新方式的凭据，原方式的凭据会被删除。下面第 1–6 节按 Socket Mode 说明。
+下面第 1–6 节按 Socket Mode 说明；已有的接入如何切换方式见第 7 节，事件地址方式见第 8 节，Socket Mode 的常见问题见第 9 节。
 
 ## 1. 创建 Slack App
 
@@ -118,11 +118,34 @@ witden 中的消息使用 Markdown，Slack 使用自己的格式，两者会自�
 - **发送到 Slack**：粗体、斜体、删除线、链接、引用和代码块转换为 Slack 的写法；标题显示为粗体行；列表使用 `•`、`◦` 或序号，任务列表使用 ☐ / ☑；表格显示为对齐的等宽文本；图片和附件显示为指向 witden 的链接（打开时需要登录 witden）；Mermaid 流程图在 Slack 中显示源码，并附带在 witden 中查看图形的链接。
 - **从 Slack 接收**：Slack 的格式和链接转换为 Markdown；提及的 Slack 用户显示为已关联成员的名字，频道显示为 `#频道名`；Slack 的项目符号列表转换为列表；代码保持原样。
 
-## 7. 改用事件地址（HTTP）
+## 7. 切换接入方式
+
+已有的接入可以在设置引导中切换方式：在接入详情中点击“设置引导”，选择另一种方式（当前方式标有“当前”）；使用事件地址的接入，详情中还有“改用 Socket Mode”的按钮。切换沿用原来的 Slack 应用，频道、私信、分配规则和已关联的账号都保持不变。
+
+新方式的凭据先测试，通过后才保存；保存时原方式的凭据被删除。在此之前，原来的方式继续工作。
+
+### 7.1 让原来的 Slack 应用打开 Socket Mode
+
+在 <https://api.slack.com/apps> 中选择这个应用：
+
+1. 左侧打开 **Socket Mode**，打开 **Enable Socket Mode**。如果应用还没有 App-Level Token，Slack 会弹出窗口引导生成：名称随意，确认 scope 中有 `connections:write`，点击 **Generate**，复制 `xapp-` 开头的令牌。
+2. 左侧打开 **Event Subscriptions**：确认 **Enable Events** 已打开（Socket Mode 下不再需要 Request URL），在 **Subscribe to bot events** 中有 `app_mention`、`message.channels`、`message.groups`、`message.im`、`message.mpim`，缺的补上，点击 **Save Changes**。
+3. 如果页面顶部提示重新安装应用，按提示重新安装。
+4. 回到 witden 的引导，填入 App-Level Token 并测试。Bot Token 不变，可以留空。
+
+也可以在应用的 **App Manifest** 页面把 `settings` 换成第 1 节清单中的内容，再按第 1 步生成 App-Level Token。
+
+打开 Socket Mode 后，Slack 只通过连接发送消息，并保留原来的 Request URL 备用。在 witden 连上之前发给机器人的消息可能收不到，所以打开后请尽快完成第 4 步。
+
+### 7.2 改回事件地址
+
+在引导中选择“事件地址（HTTP）”：先准备公网事件地址，再在 Slack 应用的 Socket Mode 页面关闭 Enable Socket Mode，填入 Signing Secret，最后在 Event Subscriptions 中填写 Request URL。从关闭 Socket Mode 到 Slack 验证事件地址之前，发给机器人的消息会收不到。
+
+## 8. 事件地址方式（HTTP）
 
 在引导开头选择“事件地址（HTTP）”，引导会多出“准备公网事件地址”和“在 Slack 中订阅事件”两步，凭据改为 Bot Token 和 Signing Secret。
 
-### 7.1 准备公网事件地址
+### 8.1 准备公网事件地址
 
 Slack 把消息推送到 witden 的**事件地址**，即公网事件地址加上固定路径。控制台不对公网开放：公网地址只转发到 witden 的事件端口（默认 8325），这个端口只接收各平台的事件，不提供控制台。这个地址必须以 `https://` 开头、证书有效（Slack 不接受自签名证书），并且能从公网访问。
 
@@ -135,11 +158,11 @@ witden 会通过这个地址访问自己的事件端口，并确认从这个地�
 
 Slack 消息中“在 witden 中查看”等链接指向控制台的内网地址（`WITDEN_PUBLIC_URL`），只有能访问内网的人可以打开。
 
-### 7.2 创建 Slack App 并填写凭据
+### 8.2 创建 Slack App 并填写凭据
 
 1. 在引导中填写机器人名称（在 Slack 中显示、被 @ 的名字），点击“在 Slack 中创建应用”。Slack 会打开创建页面并预先填好应用清单；选择工作区，确认后点击 **Create**。
 2. 在应用的 **Install App** 页面点击 **Install to Workspace**，再点击 **Allow**。
-3. 安装完成后先回到 witden，不要先设置 Event Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证（7.3 节）。
+3. 安装完成后先回到 witden，不要先设置 Event Subscriptions：事件地址要等 witden 保存了 Signing Secret 后才能通过 Slack 的验证（8.3 节）。
 
 预填页面打不开时，手动粘贴第 1 节的清单，但把 `settings` 改为不打开 Socket Mode、不订阅事件：
 
@@ -150,7 +173,7 @@ settings:
   token_rotation_enabled: false
 ```
 
-清单不包含事件订阅：Slack 要求事件订阅带有已验证的事件地址，而事件地址要在下一步创建 witden 接入之后才能验证，见 7.3 节。
+清单不包含事件订阅：Slack 要求事件订阅带有已验证的事件地址，而事件地址要在下一步创建 witden 接入之后才能验证，见 8.3 节。
 
 然后在引导中填写凭据：
 
@@ -161,7 +184,7 @@ settings:
 
 这一步的测试只用到 Bot Token；Signing Secret 是否正确，要到下一步 Slack 验证事件地址时才能知道。
 
-### 7.3 订阅事件
+### 8.3 订阅事件
 
 引导会显示这个接入的**事件地址**。在 Slack App 的 **Event Subscriptions** 页面：
 
@@ -172,4 +195,17 @@ settings:
 引导会实时显示 Slack 的验证结果。Slack 提示 “Your URL didn't respond with the value of the challenge parameter” 时：
 
 - 如果引导显示“witden 收到了 Slack 的请求，但校验没有通过”，说明地址是通的，是 Signing Secret 不对。点击“重新填写 Signing Secret”填入 App Credentials 中的 Signing Secret，再在 Slack 中点击 Request URL 旁的 **Retry**。
-- 如果引导显示还没有收到 Slack 的请求，说明请求没有到达 witden，回到 7.1 节检查公网事件地址。
+- 如果引导显示还没有收到 Slack 的请求，说明请求没有到达 witden，回到 8.1 节检查公网事件地址。
+
+## 9. Socket Mode 常见问题
+
+| 现象 | 原因与处理 |
+|---|---|
+| 打开 Socket Mode 时 Slack 弹出一个窗口 | 这是在生成 App-Level Token。名称随意，确认 scope 中有 `connections:write`，生成后复制 `xapp-` 开头的令牌。 |
+| 已经有 `xapp-` 开头的令牌 | 只要带 `connections:write` 就可以直接用。在 Basic Information → App-Level Tokens 中点开令牌能看到它的 scope。 |
+| 测试提示缺少 `connections:write`，或令牌不正确 | 在 App-Level Tokens 中重新生成一个带 `connections:write` 的令牌，完整复制后再填。 |
+| 连接状态显示“应用没有打开 Socket Mode” | Slack 应用的 Socket Mode 开关是关着的。打开后，witden 会在一分钟内自动连上。 |
+| 已连接，但发消息没有反应 | Event Subscriptions 中 Enable Events 没打开，或 5 个事件没添加、没保存（之前用事件地址时，如果 Request URL 没验证通过，事件订阅很可能没保存成功）；页面顶部提示重新安装应用但还没有重新安装；机器人没被邀请进频道（`/invite @机器人名称`）。 |
+| 切换的一两分钟里消息丢失 | 打开 Socket Mode 后 Slack 只通过连接发送消息，在 witden 连上之前发出的消息可能收不到，连上后重发即可。 |
+| 两个 witden 用同一个 Slack 应用 | 多个程序同时用同一个应用的 Socket Mode 时，Slack 会把每条消息只发给其中一个连接，其他的收不到。演示环境和正式环境请各建一个 Slack 应用。 |
+| 服务器有防火墙 | Socket Mode 只需要 witden 服务器能访问 Slack（出站 443 端口），不需要公网地址，也不需要开放任何入站端口。 |
