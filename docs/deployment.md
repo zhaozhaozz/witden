@@ -30,7 +30,7 @@ node packages/server/dist/cli.js serve
 
 ### 2.2 Docker Compose
 
-Compose 部署包含四个服务，另有两个可选服务：
+Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在填写 token 之前不做任何事：
 
 | 服务 | 作用 | 说明 |
 |---|---|---|
@@ -39,7 +39,7 @@ Compose 部署包含四个服务，另有两个可选服务：
 | `api` | 控制台、API、虚拟电脑连接入口 | 对外发布 8320（控制台）和 8330（虚拟电脑连接）端口。 |
 | `worker` | 运行 AI 角色、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
 | `laya`（可选） | 开源的 Laya 决策模型，用作话题调度模型 | 默认不启动，见 2.3。只在内部网络中可访问，不对外发布端口。 |
-| `tunnel`（可选） | Cloudflare Tunnel，为平台提供公网 HTTPS 地址 | 默认不启动，见 2.4。只主动连接 Cloudflare，不对外发布端口。 |
+| `tunnel`（可选使用） | Cloudflare Tunnel，为平台提供公网 HTTPS 地址 | 在控制台填写 tunnel token 后才连接 Cloudflare，见 2.4。只主动向外连接，不对外发布端口。 |
 
 部署步骤：
 
@@ -143,14 +143,13 @@ server {
 
 只想让外部平台访问、不对公网开放控制台时，可以只转发以 `/api/integrations/` 开头的路径：事件地址和地址检查都在这个路径下。此时消息中“在 witden 中查看”的链接在公网上打不开。
 
-**方式二：Cloudflare Tunnel。** 由 Compose 中的可选服务 `tunnel`（cloudflared）主动连接 Cloudflare，不需要公网 IP、开放端口或自己管理证书；域名需要托管在 Cloudflare。
+**方式二：Cloudflare Tunnel。** Compose 中的 `tunnel` 服务（镜像 `witden/tunnel`，内含 cloudflared）主动连接 Cloudflare，不需要公网 IP、开放端口或自己管理证书；域名需要托管在 Cloudflare。它随 `docker compose up -d` 一起启动，在填写 token 之前只是等待，不需要修改 `.env` 或在服务器上执行其他命令。
 
-1. 在 `.env` 中加入 `COMPOSE_PROFILES=tunnel`（同时使用 Laya 时写成 `COMPOSE_PROFILES=laya,tunnel`），执行 `docker compose up -d`。
-2. 在 Cloudflare 控制台的 **Networking → Tunnels** 中点击 **Create a tunnel**，输入名称后创建；在安装说明中选择 Docker，复制命令中 `--token` 后面的内容（也可以复制整条命令）。不需要运行这条命令。
-3. 在 witden 控制台接入 Slack 的第一步选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务读取后连接 Cloudflare（在此之前它约每分钟重试一次），页面显示连接状态。
-4. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8320`。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网地址。
+1. 在 Cloudflare 控制台的 **Networking → Tunnels** 中点击 **Create a tunnel**，输入名称后创建；在安装说明中选择 Docker，复制命令中 `--token` 后面的内容（也可以复制整条命令）。不需要运行这条命令。
+2. 在 witden 控制台接入 Slack 的第一步选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务几秒内读取到它并连接 Cloudflare，页面显示连接状态。
+3. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8320`。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网地址。
 
-更换 token 后需要执行 `docker compose restart tunnel`。不再使用时，从 `COMPOSE_PROFILES` 中去掉 `tunnel`，执行 `docker compose rm -sf tunnel`，并在 Cloudflare 中删除这个 tunnel。
+在控制台中更换 token 后，`tunnel` 服务会自动用新 token 重新连接；点击“停用 tunnel”会删除 token 并断开连接。之后可以在 Cloudflare 中删除这个 tunnel。完全不需要这个服务时，可以执行 `docker compose rm -sf tunnel`，或在 `docker-compose.yml` 中删除它。
 
 单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8320`），再在控制台中填写并检查地址。
 
@@ -232,7 +231,7 @@ witden gen-key                                     生成新的主密钥
 
 ## 6. 升级
 
-1. 更新代码，重新构建镜像：`make images platform`（启用了 Laya 时再执行 `make laya`）。
+1. 更新代码，重新构建镜像：`make images platform`（同时构建 `witden/tunnel`；启用了 Laya 时再执行 `make laya`）。
 2. 重新启动服务：`docker compose up -d`。
 
 平台启动时会自动执行数据库迁移。升级前请先备份数据库。

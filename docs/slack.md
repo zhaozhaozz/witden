@@ -12,7 +12,7 @@ Slack 把消息推送到 witden 的**事件地址**，即 witden 的公网地址
 
 引导的第一步显示当前的公网地址（默认取部署时的 `WITDEN_PUBLIC_URL`）以及它能否使用。不能使用时，按以下任一方式准备地址，详见[部署与配置](deployment.md#24-公网地址)：
 
-- **Cloudflare Tunnel**（推荐，不需要公网 IP、开放端口或自己管理证书）：在 Cloudflare 中创建 tunnel，把 token 粘贴到引导中，再为 tunnel 添加一条指向 `http://api:8320` 的路由。witden 的 tunnel 服务会自动连接，witden 发现路由后自动检查并保存地址。
+- **Cloudflare Tunnel**（推荐，不需要公网 IP、开放端口或自己管理证书）：在 Cloudflare 中创建 tunnel，把 token 粘贴到引导中，再为 tunnel 添加一条指向 `http://api:8320` 的路由。Docker Compose 部署中的 tunnel 服务会自动连接，witden 发现路由后自动检查并保存地址，不需要在服务器上操作。
 - **自己的域名和反向代理**（nginx、Caddy 等）：把域名指向服务器，用反向代理提供 HTTPS 并转发到 witden，然后把地址填到引导中点击“检查并使用”。
 
 witden 会通过这个地址访问自己，确认请求能回到当前这个 witden，通过后才能进入下一步。检查失败时，页面会说明原因，例如不是 HTTPS、证书无效、域名解析不到、转发到了别的服务。
