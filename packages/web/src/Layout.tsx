@@ -1,5 +1,5 @@
 import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
-import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api/client";
 import type { Approval, KillSwitch, Topic } from "./api/types";
 import { connectionLabel, conversationIcon, conversationKind, sourceOf } from "./lib/conversations";
@@ -50,6 +50,23 @@ function useKillSwitches(enabled: boolean) {
   return active;
 }
 
+/** A fresh platform (no roles yet, guide neither finished nor skipped) opens the first-run guide. */
+function useFirstRun() {
+  const nav = useNavigate();
+  useEffect(() => {
+    let live = true;
+    api
+      .get<{ needed: boolean }>("/api/setup")
+      .then((s) => {
+        if (live && s.needed) nav("/setup", { replace: true });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [nav]);
+}
+
 function usePendingApprovals() {
   const [count, setCount] = useState(0);
   const load = useCallback(async () => {
@@ -84,6 +101,7 @@ export default function Layout() {
   const dir = useDirectory();
   const kills = useKillSwitches(can("emergency.stop"));
   const approvals = usePendingApprovals();
+  useFirstRun();
 
   const settings: NavItem[] = [
     { to: "/computers", label: "虚拟电脑", any: COMPUTER_PERMS },

@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import Layout, { RequirePerm } from "./Layout";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
@@ -21,6 +21,7 @@ const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
 const ModelsPage = lazy(() => import("./pages/ModelsPage"));
 const RoleEditorPage = lazy(() => import("./pages/roles/RoleEditorPage"));
 const RolesPage = lazy(() => import("./pages/roles/RolesPage"));
+const SetupPage = lazy(() => import("./pages/SetupPage"));
 const TemplatesPage = lazy(() => import("./pages/computers/TemplatesPage"));
 
 function Gate() {
@@ -37,6 +38,14 @@ function Gate() {
     <DirectoryProvider>
       <TopicsProvider>
         <Routes>
+          <Route
+            path="setup"
+            element={
+              <Suspense fallback={<Loading />}>
+                <SetupPage />
+              </Suspense>
+            }
+          />
           <Route element={<Layout />}>
             <Route index element={<Navigate to="/topics" replace />} />
             <Route path="login" element={<Navigate to="/topics" replace />} />

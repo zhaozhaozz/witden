@@ -25,6 +25,7 @@ import { liveRoutes } from "./api/live.js";
 import { modelRoutes } from "./api/models.js";
 import { publicUrlRoutes } from "./api/public-url.js";
 import { roleRoutes } from "./api/roles.js";
+import { setupRoutes } from "./api/setup.js";
 import { taskRoutes } from "./api/tasks.js";
 import { topicRoutes } from "./api/topics.js";
 import { buildWebhookApp, webhookRoutes } from "./api/webhooks.js";
@@ -105,6 +106,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     topicRoutes,
     taskRoutes,
     knowledgeRoutes,
+    setupRoutes,
     eventRoutes,
     integrationRoutes,
     (a: FastifyInstance) => webhookRoutes(a, "console"),

@@ -2055,6 +2055,30 @@ img.avatar-role.avatar-colored {
   color: var(--ink-3);
 }
 
+/* --- first-run guide (pages/SetupPage.tsx) ----------------------------------------------------- */
+
+.first-run {
+  align-items: flex-start;
+  padding-top: 6vh;
+}
+.first-run-panel {
+  width: 760px;
+}
+.first-run-skip {
+  margin-left: auto;
+  align-self: flex-start;
+}
+.first-run-presets {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  max-height: none;
+  margin-bottom: 12px;
+}
+.first-run-models {
+  grid-template-columns: 1fr;
+  max-height: 260px;
+  margin: 8px 0 12px;
+}
+
 /* --- topics workspace --------------------------------------------------------------------------- */
 
 .topic-view {
