@@ -4,8 +4,8 @@
  * Everyone who signs in to the console is an administrator: the console is where the roles and computers are
  * configured, and it shows every conversation the roles take part in. The people the roles serve are outside
  * it — Slack / Feishu members and channels. A person from a connected workspace without a console account is
- * an *external member* of that connection and may use only the roles it lists. What reaches outside people
- * is controlled by the information-flow labels (security/labels.ts), not by these permissions.
+ * an *external member* of that connection and may use only the role its bot stands for. What reaches outside
+ * people is controlled by the information-flow labels (security/labels.ts), not by these permissions.
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -22,7 +22,6 @@ export const Perm = {
   INSTANCE_MANAGE: "instance.manage",
   TEMPLATE_MANAGE: "template.manage",
   FILE_DOWNLOAD: "file.download",
-  RULES_MANAGE: "rules.manage",
   SECRETS_MANAGE: "secrets.manage",
   MODEL_USE: "model.use",
   CONNECTION_MANAGE: "connection.manage",
@@ -46,13 +45,11 @@ export async function hasPermission(db: Db, user: User | null | undefined, perm:
   return true;
 }
 
-/** External members may use (and bring into a thread) only the roles their connection lists. */
+/** External members may use (and bring into a thread) only the role their connection's bot stands for. */
 async function externalMemberMay(db: Db, connectionId: string, perm: Perm, roleId?: string | null): Promise<boolean> {
   if (!roleId || (perm !== Perm.ROLE_USE && perm !== Perm.ROLE_INVITE)) return false;
   const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
-  // A connection bound to one role (its bot stands for that role) lets its external members use just that role.
-  const allowed: unknown = conn?.settings?.role_id ? [conn.settings.role_id] : conn?.settings?.external_role_ids;
-  return Array.isArray(allowed) && allowed.includes(roleId);
+  return !!conn && conn.settings?.role_id === roleId;
 }
 
 export async function requirePerm(db: Db, user: User | null | undefined, perm: Perm, resourceId?: string | null) {

@@ -19,7 +19,6 @@ import { Loading } from "./ui/kit";
 const AdminPage = lazy(() => import("./pages/admin/AdminPage"));
 const ConnectionsPage = lazy(() => import("./pages/ConnectionsPage"));
 const ModelsPage = lazy(() => import("./pages/ModelsPage"));
-const RulesPage = lazy(() => import("./pages/RulesPage"));
 const RoleEditorPage = lazy(() => import("./pages/roles/RoleEditorPage"));
 const RolesPage = lazy(() => import("./pages/roles/RolesPage"));
 const TemplatesPage = lazy(() => import("./pages/computers/TemplatesPage"));
@@ -58,9 +57,6 @@ function Gate() {
             </Route>
             <Route element={<RequirePerm any={["secrets.manage"]} />}>
               <Route path="models" element={<ModelsPage />} />
-            </Route>
-            <Route element={<RequirePerm any={["rules.manage"]} />}>
-              <Route path="rules" element={<RulesPage />} />
             </Route>
             <Route element={<RequirePerm any={["connection.manage"]} />}>
               <Route path="connections" element={<ConnectionsPage />} />

@@ -120,7 +120,7 @@ export default function ConnectionsPage() {
     <div className="page">
       <PageHeader
         title="通讯接入"
-        sub="把 Slack、飞书、GitHub 的机器人接入进来。机器人所在频道和私信中的消息都会记录下来，只有 @ 机器人的消息才交给角色，并且要经过分配规则。"
+        sub="把 Slack、飞书、GitHub 的机器人接入进来。每个机器人代表一个角色：机器人所在频道和私信中的消息都会记录下来，@ 机器人的消息交给它代表的角色。"
         actions={
           <>
             <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
@@ -434,6 +434,14 @@ function ConnectionDetail({
             </button>
           </div>
         ) : null}
+        {conn.settings?.role_id ? null : (
+          <div className="callout callout-bad" role="alert">
+            这个机器人还没有选择代表的角色，发给它的请求都会被拒绝。{" "}
+            <button type="button" className="btn btn-xs" onClick={() => setEditing(true)}>
+              选择角色
+            </button>
+          </div>
+        )}
         {conn.platform === "slack" && conn.slack_mode === "http" ? (
           <div className="callout">
             这个接入使用事件地址，需要公网地址。改用 Socket Mode 后，witden 主动连到
@@ -456,10 +464,10 @@ function ConnectionDetail({
             ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
             [
               "机器人代表的角色",
-              typeof conn.settings?.role_id === "string" ? (
+              typeof conn.settings?.role_id === "string" && conn.settings.role_id ? (
                 dir.roleLabel(conn.settings.role_id)
               ) : (
-                <span className="muted">未选择：按分配规则选择角色</span>
+                <span className="text-bad">未选择</span>
               ),
             ],
             ...(conn.platform === "slack"
@@ -500,23 +508,18 @@ function ConnectionDetail({
             [
               "外部成员",
               conn.settings?.auto_provision_users
-                ? `开启：未关联的人自动成为外部成员，可以使用 ${
-                    typeof conn.settings.role_id === "string"
-                      ? dir.roleLabel(conn.settings.role_id)
-                      : (conn.settings.external_role_ids ?? []).map((id) => dir.roleLabel(id)).join("、") ||
-                        "（还没有选择角色）"
-                  }`
+                ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的角色"
                 : "关闭：未关联的人不能使用，需要管理员关联身份",
             ],
             [
               "角色身份显示",
-              typeof conn.settings?.role_id === "string"
-                ? "机器人就是这个角色：回复以机器人的名字和头像发出，不另加角色名称"
-                : conn.platform === "github"
-                  ? "评论开头写角色名称"
-                  : conn.settings?.custom_identity
-                    ? "用角色自己的名称和头像发消息"
-                    : "在消息前加角色名称",
+              `机器人就是它代表的角色，回复不另加名称；被请来协作的其他角色${
+                conn.platform === "github"
+                  ? "在评论开头写角色名称"
+                  : conn.platform === "slack" && conn.settings?.custom_identity
+                    ? "以自己的名称和头像发言"
+                    : "在消息前写角色名称"
+              }`,
             ],
           ]}
         />
@@ -760,7 +763,7 @@ function ConnectionForm({
   // New connections need every field; an existing one keeps what is left empty.
   const required = fields.filter(([k]) => !conn || (switching && k !== shared));
   const missing = required.some(([k]) => !creds[k]?.trim());
-  const disabled = busy || !name.trim() || missing;
+  const disabled = busy || !name.trim() || missing || !settings.role_id;
 
   const submit = async () => {
     const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
@@ -864,6 +867,7 @@ function ConnectionForm({
         <button type="button" className="btn" onClick={onCancel}>
           取消
         </button>
+        {settings.role_id ? null : <span className="small muted">选择机器人代表的角色后才能保存。</span>}
       </div>
     </form>
   );

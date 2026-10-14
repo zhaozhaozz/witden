@@ -9,7 +9,7 @@ export interface ExternalContext {
   threadKey?: string;
 }
 
-/** Where a topic lives outside (first linked conversation), for assignment rules. */
+/** Where a topic lives outside (first linked conversation), for role assignment. */
 export async function externalContext(db: Db, topicId: string): Promise<ExternalContext> {
   const [link] = await db.select().from(externalThreadLinks).where(eq(externalThreadLinks.topicId, topicId)).limit(1);
   if (!link) return {};

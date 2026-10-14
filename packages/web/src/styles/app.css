@@ -3120,51 +3120,6 @@ img.avatar-role.avatar-colored {
   font-size: 13px;
 }
 
-/* --- rules -------------------------------------------------------------------------------------- */
-
-.rules-layout {
-  --side-w: 380px;
-  --handle-gap: 14px;
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--side-w);
-  gap: var(--handle-gap);
-  align-items: start;
-}
-.rules-list {
-  padding: 12px;
-}
-.explain {
-  position: sticky;
-  top: 0;
-}
-.explain-result {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-}
-.verdict {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  margin-bottom: 14px;
-  font-size: 13.5px;
-}
-.verdict strong {
-  font-size: 15px;
-  white-space: nowrap;
-}
-.verdict-ok {
-  background: var(--ok-bg);
-  color: #145a35;
-}
-.verdict-bad {
-  background: var(--bad-bg);
-  color: #8a221e;
-}
-
 /* --- computers ---------------------------------------------------------------------------------- */
 
 .meters {
@@ -3842,9 +3797,6 @@ body.resizing {
   .topic-view.with-panel {
     --side-w: 320px;
   }
-  .rules-layout {
-    --side-w: 340px;
-  }
   .editor-layout {
     --side-w: 300px;
   }
@@ -3857,16 +3809,13 @@ body.resizing {
   .page {
     padding: 16px 20px 40px;
   }
-  .rules-layout,
   .editor-layout,
   .trace-grid {
     grid-template-columns: minmax(0, 1fr);
   }
-  .rules-layout > .resize-handle,
   .editor-layout > .resize-handle {
     display: none;
   }
-  .explain,
   .editor-side {
     position: static;
   }

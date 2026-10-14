@@ -13,14 +13,21 @@ export interface Channel {
 }
 
 /**
- * Mirror ``topicId`` into a private Slack channel whose members are ``members`` (Slack user ids), with an
- * assignment rule letting the world's roles work there (external conversations refuse work without one).
+ * Mirror ``topicId`` into a private Slack channel whose members are ``members`` (Slack user ids). The
+ * connection's bot stands for @dev (external conversations refuse work without a role); the console still
+ * brings in any role.
  */
 export async function linkChannel(w: World, topicId: string, members: string[], name = "partners"): Promise<Channel> {
   const connectionId = newId("conn");
   await db()
     .insert(connections)
-    .values({ id: connectionId, platform: "slack", name: `slack-${connectionId}`, status: "paused" });
+    .values({
+      id: connectionId,
+      platform: "slack",
+      name: `slack-${connectionId}`,
+      status: "paused",
+      settings: { role_id: w.ids.dev },
+    });
   const [conv] = await db()
     .insert(externalConversations)
     .values({
@@ -36,15 +43,5 @@ export async function linkChannel(w: World, topicId: string, members: string[], 
   await db()
     .insert(externalThreadLinks)
     .values({ id: newId("lnk"), connectionId, conversationId: conv.id, threadKey: "1.1", topicId });
-  const rule = await w.api("POST", "/api/rules", {
-    token: w.adminToken,
-    json: {
-      name: `rule-${connectionId}`,
-      match: { connection_id: connectionId },
-      allow_role_ids: [w.ids.dev, w.ids.test, w.ids.analyst],
-      default_role_id: w.ids.dev,
-    },
-  });
-  if (rule.status !== 200) throw new Error(`rule: ${rule.raw}`);
   return { connectionId, conversationId: conv.id };
 }

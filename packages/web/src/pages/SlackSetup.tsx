@@ -1,9 +1,8 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { Connection, Role, Rule } from "../api/types";
+import type { Connection, Role } from "../api/types";
 import { fmtRelative } from "../lib/format";
-import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
 import { CopyText, Field, Section, Tag } from "../ui/kit";
@@ -252,7 +251,7 @@ export function SlackSetup({
     >
       <p className="setup-intro">
         {switching
-          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、分配规则和已关联的账号都保持不变。`
+          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、机器人代表的角色和已关联的账号都保持不变。`
           : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的角色：一个频道是 witden 中的一个话题，和 Slack 中看到的一致，角色在提问的地方（频道里或 thread 里）回答。`}
       </p>
       <div className="setup-modes">
@@ -833,11 +832,8 @@ function EventsStep({
 function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connection) => void }) {
   const dir = useDirectory();
   const { run, busy } = useAction();
-  const rules = useResource(() => api.get<Rule[]>("/api/rules"), []);
   const [settings, setSettings] = useState(settingsOf(conn));
   const roles = dir.roles.filter((r) => r.status === "active" || r.id === settings.role_id);
-  // Rules written for this connection still apply on top of the bot's role.
-  const others = (rules.data ?? []).filter((r) => r.enabled && r.match.connection_id === conn.id);
 
   const save = async () => {
     const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { settings }), "已保存");
@@ -875,12 +871,6 @@ function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connecti
           </span>
         )}
       </div>
-      {others.length ? (
-        <div className="callout">
-          这个接入另有分配规则，会在此基础上生效（例如限制某些频道）：{others.map((r) => r.name).join("、")}
-          。需要调整时到 <Link to="/rules">分配规则</Link> 中修改。
-        </div>
-      ) : null}
       <h3 className="setup-sub">谁可以使用</h3>
       <p className="small muted">
         默认只有把 Slack 账号关联到 witden
@@ -993,9 +983,9 @@ function TryStep({
       ) : null}
       {latest?.status === "not_assigned" ? (
         <div className="callout callout-wait">
-          witden 收到了请求，但没有交给角色：{latest.detail}。常见原因是角色还没有分配电脑或模型（在
-          <Link to="/roles">角色管理</Link>中设置），或者不在<Link to="/rules">分配规则</Link>
-          允许的角色中。处理后在 Slack 中再发一次；Slack 的 thread 中也会收到这条说明。
+          witden 收到了请求，但没有交给角色：{latest.detail}。常见原因是机器人代表的角色还没有分配电脑或模型（在
+          <Link to="/roles">角色管理</Link>中设置），或者这个接入还没有选择角色（第 {num("access")} 步）。处理后在 Slack
+          中再发一次；Slack 中提问的地方也会收到这条说明。
         </div>
       ) : null}
       {latest?.status === "stored" ? (

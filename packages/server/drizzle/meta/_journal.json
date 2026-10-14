@@ -127,6 +127,13 @@
       "when": 1791967623234,
       "tag": "0017_slack_channel_topics",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1791971894536,
+      "tag": "0018_connection_role",
+      "breakpoints": true
     }
   ]
 }

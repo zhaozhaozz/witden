@@ -1,138 +1,15 @@
-/** Assignment rules (with the explain dry-run) and scoped knowledge / memory. */
+/** Scoped knowledge / memory. */
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { assignmentRules, knowledgeSpaces, type Memory, memories, topics, type User } from "../db/schema.js";
+import { knowledgeSpaces, type Memory, memories, topics, type User } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { PUBLIC, spaceLabel, topicLabel, userCanRead, userLabel } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
-import { resolve, specificity, validateMatch } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, body, params, query, row } from "./http.js";
-
-const RULE_FIELDS = [
-  "name",
-  "description",
-  "enabled",
-  "priority",
-  "match",
-  "effect",
-  "allowRoleIds",
-  "denyRoleIds",
-  "defaultRoleId",
-  "allowInstanceIds",
-];
-
-export async function ruleRoutes(app: FastifyInstance) {
-  const out = (r: typeof assignmentRules.$inferSelect) => ({ ...row(r), specificity: specificity(r) });
-
-  app.get(
-    "/api/rules",
-    authed(async ({ db, user }) => {
-      await requirePerm(db, user, Perm.RULES_MANAGE);
-      const rules = await db.select().from(assignmentRules);
-      return rules
-        .sort((a, b) => specificity(b) - specificity(a) || a.priority - b.priority || a.id.localeCompare(b.id))
-        .map(out);
-    }),
-  );
-
-  app.post(
-    "/api/rules",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.RULES_MANAGE);
-      const b = body(req);
-      if (!["allow", "deny"].includes(b.effect ?? "allow")) throw new BadRequest("effect must be allow or deny");
-      const [rule] = await db
-        .insert(assignmentRules)
-        .values({
-          id: newId("rule"),
-          name: String(b.name ?? "rule"),
-          description: b.description ?? "",
-          enabled: b.enabled ?? true,
-          priority: b.priority ?? 100,
-          match: validateMatch(b.match ?? {}),
-          effect: b.effect ?? "allow",
-          allowRoleIds: b.allowRoleIds ?? null,
-          denyRoleIds: b.denyRoleIds ?? [],
-          defaultRoleId: b.defaultRoleId ?? null,
-          allowInstanceIds: b.allowInstanceIds ?? null,
-          createdBy: user.id,
-        })
-        .returning();
-      await audit(db, "rule.create", {
-        actorType: "user",
-        actorId: user.id,
-        resourceType: "rule",
-        resourceId: rule.id,
-        detail: out(rule),
-      });
-      return out(rule);
-    }),
-  );
-
-  app.patch(
-    "/api/rules/:id",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.RULES_MANAGE);
-      const b = body(req);
-      for (const k of Object.keys(b)) if (!RULE_FIELDS.includes(k)) throw new BadRequest(`unknown field ${k}`);
-      if (b.match) b.match = validateMatch(b.match);
-      const [rule] = await db
-        .update(assignmentRules)
-        .set(b)
-        .where(eq(assignmentRules.id, params(req).id))
-        .returning();
-      if (!rule) throw new NotFound("rule not found");
-      await audit(db, "rule.update", {
-        actorType: "user",
-        actorId: user.id,
-        resourceType: "rule",
-        resourceId: rule.id,
-        detail: b,
-      });
-      return out(rule);
-    }),
-  );
-
-  app.delete(
-    "/api/rules/:id",
-    authed(async ({ db, user, req }) => {
-      await requirePerm(db, user, Perm.RULES_MANAGE);
-      const rows = await db
-        .delete(assignmentRules)
-        .where(eq(assignmentRules.id, params(req).id))
-        .returning();
-      if (!rows.length) throw new NotFound("rule not found");
-      await audit(db, "rule.delete", {
-        actorType: "user",
-        actorId: user.id,
-        resourceType: "rule",
-        resourceId: params(req).id,
-      });
-      return { ok: true };
-    }),
-  );
-
-  app.post(
-    "/api/rules/explain",
-    authed(async ({ db, user, req }) => {
-      // Dry-run: which role / computer would serve this request, and why.
-      await requirePerm(db, user, Perm.RULES_MANAGE);
-      const b = body(req);
-      return resolve(db, {
-        userId: b.userId ?? null,
-        topicId: b.topicId ?? null,
-        connectionId: b.connectionId ?? null,
-        conversationId: b.conversationId ?? null,
-        conversationKind: b.conversationKind ?? "internal",
-        requestedRoleIds: b.requestedRoleIds ?? [],
-      });
-    }),
-  );
-}
 
 async function canReadMemory(db: Db, user: User, m: Memory): Promise<boolean> {
   let allowed = false;

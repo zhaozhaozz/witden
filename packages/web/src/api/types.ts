@@ -588,26 +588,6 @@ export interface RemoteModel {
   added: boolean;
 }
 
-export type MatchKey = "connection_id" | "conversation_id" | "conversation_kind" | "topic_id" | "user_id";
-
-export interface Rule {
-  id: string;
-  name: string;
-  description: string;
-  enabled: boolean;
-  priority: number;
-  match: Partial<Record<MatchKey, string>>;
-  effect: "allow" | "deny";
-  allow_role_ids: string[] | null;
-  deny_role_ids: string[];
-  default_role_id: string | null;
-  allow_instance_ids: string[] | null;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
-  specificity: number;
-}
-
 export interface TraceStep {
   step: string;
   detail: unknown;
@@ -618,13 +598,6 @@ export interface RoleDecision {
   allowed: boolean;
   instance_id: string | null;
   reasons: string[];
-}
-
-export interface ExplainResult {
-  allowed: boolean;
-  reason: string | null;
-  candidates: RoleDecision[];
-  trace: TraceStep[];
 }
 
 export interface ExternalIdentity {
@@ -686,9 +659,10 @@ export interface Connection {
   status: "active" | "paused" | "error" | string;
   status_reason: string | null;
   settings: {
+    /** The role the connection's bot stands for; external members may use only it. */
+    role_id?: string | null;
     auto_provision_users?: boolean;
-    /** Roles that external members of this connection may use. */
-    external_role_ids?: string[];
+    /** Slack: other roles brought in speak under their own name and icon. */
     custom_identity?: boolean;
     [key: string]: unknown;
   };

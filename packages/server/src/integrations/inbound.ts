@@ -21,7 +21,6 @@ import {
   type Message,
   messages,
   processedEvents,
-  roles,
   type Topic,
   topics,
   type User,
@@ -34,8 +33,6 @@ import { saveArtifact } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
 import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
-
-const ROLE_TOKEN = /(?:(?<![\w@])@|\brole:)([a-z0-9][a-z0-9_.-]{0,31})/gi;
 
 export interface InboundMessage {
   connectionId: string;
@@ -200,7 +197,7 @@ export async function resolveIdentity(
     await db.update(externalIdentities).set({ displayName }).where(eq(externalIdentities.id, ident.id));
   }
   if (!ident.userId && conn.settings.auto_provision_users) {
-    // An external member of this connection: uses only the roles it allows, has no console sign-in.
+    // An external member of this connection: uses only the role its bot stands for, has no console sign-in.
     const user = await createUser(db, {
       name: displayName || `${conn.platform}-${externalUserId}`,
       externalConnectionId: conn.id,
@@ -348,15 +345,6 @@ async function threadRoot(db: Db, topic: Topic, msg: InboundMessage): Promise<st
   return root?.id ?? null;
 }
 
-async function roleMentions(db: Db, text: string): Promise<string[]> {
-  const ids: string[] = [];
-  for (const m of text.matchAll(ROLE_TOKEN)) {
-    const [role] = await db.select({ id: roles.id }).from(roles).where(eq(roles.handle, m[1].toLowerCase())).limit(1);
-    if (role && !ids.includes(role.id)) ids.push(role.id);
-  }
-  return ids;
-}
-
 export type Reply = (text: string) => Promise<void>;
 
 /** Process one inbound message exactly once. ``reply`` posts a direct notice back (e.g. "not linked"). */
@@ -395,9 +383,10 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     // Anyone who can see the thread may take part; their requests are still checked individually.
     if (!(await topicSvc.participant(db, topic.id, "user", user.id)))
       await topicSvc.addParticipant(db, topic, "user", user.id);
-    // A bot that stands for one role hands that role everything addressed to it; otherwise roles are named.
-    const bound = typeof conn.settings.role_id === "string" ? conn.settings.role_id : null;
-    const roleIds = bound ? (msg.addressed ? [bound] : []) : await roleMentions(db, msg.text);
+    // The bot stands for one role: everything addressed to it goes to that role. A bot without a role takes no
+    // requests; the dispatcher says so.
+    const bound = typeof conn.settings.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
+    const roleIds = bound && msg.addressed ? [bound] : [];
     const present = [];
     for (const rid of roleIds) if (await topicSvc.participant(db, topic.id, "role", rid)) present.push(rid);
     let stored = await saveMessage(db, topic, "user", user.id, msg.text, {
@@ -409,7 +398,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     if (msg.files?.length) stored = await ingestFiles(db, conn, topic, stored, user, msg.files);
     if (!msg.addressed) return { status: "stored", topic_id: topic.id };
     if (roleIds.length && !present.length) {
-      // Roles named but not yet in this thread: the assignment rules decide whether they may join.
+      // The role is not in this thread yet: the dispatcher checks it and brings it in.
       [stored] = await db
         .update(messages)
         .set({ mentions: roleIds.map((id) => ({ type: "role" as const, id })) })
@@ -423,7 +412,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
         refused = reasons;
       },
     });
-    // Nothing started because the rules or the roles refused: the connection page shows why.
+    // Nothing started because the request was refused: the connection page shows why.
     if (!created.length && refused.length)
       return { status: "not_assigned", topic_id: topic.id, detail: refused.join("; ") };
     return { status: "dispatched", topic_id: topic.id, tasks: created.map((t) => t.id) };

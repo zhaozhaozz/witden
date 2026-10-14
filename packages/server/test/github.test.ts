@@ -91,16 +91,11 @@ beforeEach(async () => {
   await db()
     .insert(externalIdentities)
     .values({ id: newId("ext"), connectionId: conn.id, externalUserId: "1001", userId: w.ids.alice });
-  const rule = await w.api("POST", "/api/rules", {
+  const bound = await w.api("PATCH", `/api/connections/${conn.id}`, {
     token: w.adminToken,
-    json: {
-      name: "github",
-      match: { connection_id: conn.id },
-      allow_role_ids: [w.ids.dev],
-      default_role_id: w.ids.dev,
-    },
+    json: { settings: { role_id: w.ids.dev } },
   });
-  expect(rule.status, rule.raw).toBe(200);
+  expect(bound.status, bound.raw).toBe(200);
 });
 afterEach(async () => {
   setGithubFetch((...args) => fetch(...args));
@@ -117,7 +112,7 @@ describe("github", () => {
 
   it("an issue comment that mentions the bot starts work; the answer comes back as a comment", async () => {
     w.scripts.dev = () => reply("Looking into the Safari login now.");
-    await send("issue_comment", commented("@witden-bot role:dev can you check this?"));
+    await send("issue_comment", commented("@witden-bot can you check this?"));
     await settle();
     const [task] = await allTasks();
     expect(task.ownerRoleId).toBe(w.ids.dev);
@@ -143,14 +138,14 @@ describe("github", () => {
     });
     expect(listed.find((t) => t.id === w.ids.topic).channel).toBeNull();
     const [first] = await db().select().from(messages).where(eq(messages.topicId, topic.id));
-    expect(first.content).toBe("role:dev can you check this?");
+    expect(first.content).toBe("can you check this?");
 
     await w.drain();
     await deliverPending();
     const answer = gh.comments.find((c) => c.body.includes("Looking into the Safari login now."));
     expect(answer?.path).toBe("/repos/acme/api/issues/12/comments");
-    // who is speaking, without an @ that would ping a GitHub user
-    expect(answer?.body.startsWith("**Dev** (`dev`)")).toBe(true);
+    // the bot is the role: no name in front
+    expect(answer?.body).toBe("Looking into the Safari login now.");
     // the comment that came from GitHub is not echoed back
     expect(gh.comments.some((c) => c.body.includes("can you check this"))).toBe(false);
 
@@ -200,7 +195,7 @@ describe("github", () => {
     await w.drain();
     w.scripts.dev = (_m, turn) =>
       turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("The staging password is hunter2");
-    await send("issue_comment", commented("@witden-bot role:dev what is the staging password?", { number: 40 }));
+    await send("issue_comment", commented("@witden-bot what is the staging password?", { number: 40 }));
     await settle();
     await w.drain();
     const task = (await allTasks()).at(-1)!;
@@ -287,13 +282,9 @@ describe("github app", () => {
     conn = res.body;
     const tested = (await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body;
     expect(tested).toMatchObject({ ok: true, app: "acme-witden", installations: 1 });
-    await w.api("POST", "/api/rules", {
-      token: w.adminToken,
-      json: { name: "app", match: { connection_id: conn.id }, allow_role_ids: [w.ids.dev], default_role_id: w.ids.dev },
-    });
     await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: { settings: { auto_provision_users: true, external_role_ids: [w.ids.dev] } },
+      json: { settings: { auto_provision_users: true, role_id: w.ids.dev } },
     });
   });
 
@@ -306,7 +297,7 @@ describe("github app", () => {
       issue: issue(12),
       comment: { id, body, user },
     });
-    await send("issue_comment", asked(1, "@acme-witden role:dev please check"));
+    await send("issue_comment", asked(1, "@acme-witden please check"));
     await settle();
     await w.drain();
     await deliverPending();

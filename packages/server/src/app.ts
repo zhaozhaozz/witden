@@ -20,11 +20,11 @@ import { computerRoutes } from "./api/computers.js";
 import { eventRoutes } from "./api/events.js";
 import { sendError } from "./api/http.js";
 import { integrationRoutes } from "./api/integrations.js";
+import { knowledgeRoutes } from "./api/knowledge.js";
 import { liveRoutes } from "./api/live.js";
 import { modelRoutes } from "./api/models.js";
 import { publicUrlRoutes } from "./api/public-url.js";
 import { roleRoutes } from "./api/roles.js";
-import { knowledgeRoutes, ruleRoutes } from "./api/rules-knowledge.js";
 import { taskRoutes } from "./api/tasks.js";
 import { topicRoutes } from "./api/topics.js";
 import { buildWebhookApp, webhookRoutes } from "./api/webhooks.js";
@@ -104,7 +104,6 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     roleRoutes,
     topicRoutes,
     taskRoutes,
-    ruleRoutes,
     knowledgeRoutes,
     eventRoutes,
     integrationRoutes,

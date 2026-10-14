@@ -1,40 +1,21 @@
 /**
- * Who may handle a request, on which computer, and why.
+ * Who handles a request, on which computer, and why it may or may not.
  *
- * Resolution is deterministic and explainable:
- * 1. Every enabled rule whose ``match`` fits the request applies.
- * 2. Restrictions compose by intersection: allowed roles / instances are intersected across rules, denied
- *    roles are unioned, and any matching ``deny`` rule refuses the request. A more specific rule can never
- *    widen what a broader rule forbids.
- * 3. The default role (used when nobody is @-mentioned) comes from the most specific rule that sets one.
- *    Specificity: topic > conversation > user > conversation kind > connection > global; ties by priority
- *    (lower first) then rule id.
- * 4. External conversations without any matching rule are refused (new entry points get nothing by default).
- *    Internal topics fall back to their own participant list.
- * 5. Explicit @-mentions never bypass any of this; the requester also needs ``role.use``.
+ * 1. Outside the console a connection's bot stands for one role (its ``role_id`` setting): requests that name
+ *    no role go to it. A connection without a role takes no requests.
+ * 2. Otherwise the roles asked for: named in the console, picked by the dispatcher, or the target of a role's
+ *    @-mention or hand-over.
+ * 3. Each role is then checked: it exists and is enabled, in a console topic it takes part, the person may use
+ *    it (external members only their connection's role; when a role asks another role, its contacts decide
+ *    instead), and it has a computer.
+ *
+ * The steps are recorded in a trace, kept with the task, so every assignment can be explained.
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type AssignmentRule, assignmentRules, computerInstances, connections, roles, users } from "../db/schema.js";
-import { BadRequest } from "../errors.js";
+import { computerInstances, connections, roles, users } from "../db/schema.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { participant } from "./topics.js";
-
-const SPECIFICITY: [keyof RequestContext, number][] = [
-  ["topicId", 32],
-  ["conversationId", 16],
-  ["userId", 8],
-  ["conversationKind", 4],
-  ["connectionId", 2],
-];
-/** JSON keys used in rule.match (snake_case, as stored and exposed by the API). */
-const MATCH_KEYS: Record<string, keyof RequestContext> = {
-  topic_id: "topicId",
-  conversation_id: "conversationId",
-  user_id: "userId",
-  conversation_kind: "conversationKind",
-  connection_id: "connectionId",
-};
 
 export interface RequestContext {
   userId: string | null;
@@ -44,6 +25,8 @@ export interface RequestContext {
   /** public | private | im | mpim | internal */
   conversationKind: string;
   requestedRoleIds: string[];
+  /** A role asking another role (an @-mention or a hand-over), already limited by its contacts. */
+  byRoleId?: string | null;
 }
 
 export interface RoleDecision {
@@ -60,28 +43,6 @@ export interface Decision {
   reason: string | null;
 }
 
-export function specificity(rule: AssignmentRule): number {
-  return SPECIFICITY.reduce((sum, [key, weight]) => {
-    const jsonKey = Object.entries(MATCH_KEYS).find(([, v]) => v === key)?.[0];
-    return jsonKey && rule.match[jsonKey] ? sum + weight : sum;
-  }, 0);
-}
-
-export function validateMatch(match: Record<string, unknown>): Record<string, unknown> {
-  const unknown = Object.keys(match).filter((k) => !(k in MATCH_KEYS));
-  if (unknown.length) {
-    throw new BadRequest(`unknown match keys: ${unknown.join(", ")}; allowed: ${Object.keys(MATCH_KEYS).join(", ")}`);
-  }
-  return Object.fromEntries(Object.entries(match).filter(([, v]) => v !== null && v !== ""));
-}
-
-function matches(rule: AssignmentRule, ctx: RequestContext): boolean {
-  return Object.entries(rule.match).every(([k, v]) => {
-    const key = MATCH_KEYS[k];
-    return !key || v === null || v === "" || ctx[key] === v;
-  });
-}
-
 function ctxJson(ctx: RequestContext) {
   return {
     user_id: ctx.userId,
@@ -89,95 +50,42 @@ function ctxJson(ctx: RequestContext) {
     connection_id: ctx.connectionId ?? null,
     conversation_id: ctx.conversationId ?? null,
     conversation_kind: ctx.conversationKind,
+    by_role_id: ctx.byRoleId ?? null,
   };
 }
 
-const intersect = (current: Set<string> | null, next: string[] | null) =>
-  next === null ? current : current === null ? new Set(next) : new Set([...current].filter((x) => next.includes(x)));
-
-/**
- * A connection whose bot stands for one role assigns that role, as if a rule for the connection allowed only
- * it and made it the default. Explicit rules still apply on top (their allowed roles intersect, a deny wins).
- */
-async function connectionRole(db: Db, ctx: RequestContext): Promise<AssignmentRule | null> {
-  if (!ctx.connectionId) return null;
-  const [conn] = await db.select().from(connections).where(eq(connections.id, ctx.connectionId)).limit(1);
+/** The role a connection's bot stands for, if it has one. */
+export async function connectionRole(db: Db, connectionId: string | null | undefined): Promise<string | null> {
+  if (!connectionId) return null;
+  const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
   const roleId = conn?.settings?.role_id;
-  if (typeof roleId !== "string" || !roleId) return null;
-  return {
-    id: `connection:${conn.id}`,
-    name: `the role ${conn.name}'s bot stands for`,
-    description: "",
-    enabled: true,
-    priority: Number.MAX_SAFE_INTEGER,
-    match: { connection_id: conn.id },
-    effect: "allow",
-    allowRoleIds: [roleId],
-    denyRoleIds: [],
-    defaultRoleId: roleId,
-    allowInstanceIds: null,
-    createdBy: null,
-    createdAt: conn.createdAt,
-    updatedAt: conn.updatedAt,
-  };
+  return typeof roleId === "string" && roleId ? roleId : null;
 }
 
 export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
   const trace: Decision["trace"] = [{ step: "request", detail: ctxJson(ctx) }];
-  const rules = (await db.select().from(assignmentRules).where(eq(assignmentRules.enabled, true)))
-    .filter((r) => matches(r, ctx))
-    .sort((a, b) => specificity(b) - specificity(a) || a.priority - b.priority || a.id.localeCompare(b.id));
-  const bound = await connectionRole(db, ctx);
-  if (bound) rules.push(bound);
-  trace.push({
-    step: "matched_rules",
-    detail: rules.map((r) => ({ id: r.id, name: r.name, effect: r.effect, specificity: specificity(r) })),
-  });
   const deny = (reason: string): Decision => {
     trace.push({ step: "result", detail: reason });
     return { allowed: false, candidates: [], trace, reason };
   };
   const [user] = ctx.userId ? await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1) : [];
   if (!user?.isActive) return deny("requester is not a recognised active member");
-  const denyRule = rules.find((r) => r.effect === "deny");
-  if (denyRule) return deny(`refused by rule '${denyRule.name}'`);
 
-  let allowedRoles: Set<string> | null = null;
-  let allowedInstances: Set<string> | null = null;
-  const deniedRoles = new Set<string>();
-  for (const r of rules) {
-    allowedRoles = intersect(allowedRoles, r.allowRoleIds);
-    allowedInstances = intersect(allowedInstances, r.allowInstanceIds);
-    for (const id of r.denyRoleIds) deniedRoles.add(id);
-  }
-  if (!rules.length) {
-    if (ctx.conversationKind !== "internal")
-      return deny("no assignment rule covers this conversation; an administrator must add one");
-    trace.push({ step: "fallback", detail: "internal topic without rules: topic participants decide" });
-  }
-  trace.push({
-    step: "restrictions",
-    detail: {
-      allowed_roles: allowedRoles ? [...allowedRoles].sort() : "unrestricted",
-      denied_roles: [...deniedRoles].sort(),
-      allowed_instances: allowedInstances ? [...allowedInstances].sort() : "unrestricted",
-    },
-  });
-
+  const bound = ctx.conversationKind === "internal" ? null : await connectionRole(db, ctx.connectionId);
+  if (ctx.conversationKind !== "internal" && !bound)
+    return deny("this connection's bot has no role yet: an administrator must choose the role it stands for");
   let candidateIds = [...new Set(ctx.requestedRoleIds)];
   if (candidateIds.length) {
-    trace.push({ step: "candidates", detail: `explicitly requested: ${candidateIds.join(", ")}` });
+    trace.push({ step: "candidates", detail: `asked for: ${candidateIds.join(", ")}` });
+  } else if (bound) {
+    candidateIds = [bound];
+    trace.push({ step: "candidates", detail: "the role the connection's bot stands for" });
   } else {
-    const def = rules.find((r) => r.defaultRoleId);
-    if (!def) return deny("no role was mentioned and no rule defines a default role");
-    candidateIds = [def.defaultRoleId!];
-    trace.push({ step: "candidates", detail: `default role from rule '${def.name}'` });
+    return deny("no role was mentioned");
   }
 
   const candidates: RoleDecision[] = [];
-  for (const roleId of candidateIds) {
-    candidates.push(await checkRole(db, user, ctx, roleId, allowedRoles, deniedRoles, allowedInstances));
-  }
+  for (const roleId of candidateIds) candidates.push(await checkRole(db, user, ctx, roleId));
   trace.push({ step: "roles", detail: candidates });
   const ok = candidates.some((c) => c.allowed);
   const reason = ok ? null : candidates.flatMap((c) => c.reasons).join("; ");
@@ -190,9 +98,6 @@ async function checkRole(
   user: typeof users.$inferSelect,
   ctx: RequestContext,
   roleId: string,
-  allowedRoles: Set<string> | null,
-  deniedRoles: Set<string>,
-  allowedInstances: Set<string> | null,
 ): Promise<RoleDecision> {
   const d: RoleDecision = { role_id: roleId, allowed: false, instance_id: null, reasons: [] };
   const [role] = await db.select().from(roles).where(eq(roles.id, roleId)).limit(1);
@@ -202,23 +107,17 @@ async function checkRole(
   }
   const label = `@${role.handle}`;
   if (role.status !== "active") d.reasons.push(`${label} is disabled`);
-  if (deniedRoles.has(roleId)) d.reasons.push(`${label} is denied here by an assignment rule`);
-  if (allowedRoles && !allowedRoles.has(roleId)) d.reasons.push(`${label} is not among the roles allowed here`);
-  // Internal topics: only roles someone invited. External threads: the rules decide and the dispatcher adds
-  // the role to the linked topic.
+  // Console topics: only roles someone invited. External threads: the dispatcher adds the role it hands work to.
   if (ctx.conversationKind === "internal" && ctx.topicId && !(await participant(db, ctx.topicId, "role", roleId))) {
     d.reasons.push(`${label} is not a participant of this topic`);
   }
-  if (!(await hasPermission(db, user, Perm.ROLE_USE, roleId)))
+  if (!ctx.byRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, roleId)))
     d.reasons.push(`you do not have permission to use ${label}`);
   if (!role.instanceId) {
     d.reasons.push(`${label} has no computer assigned`);
   } else {
     const [inst] = await db.select().from(computerInstances).where(eq(computerInstances.id, role.instanceId)).limit(1);
     if (!inst || inst.status === "deleted") d.reasons.push(`${label}'s computer no longer exists`);
-    else if (allowedInstances && !allowedInstances.has(inst.id)) {
-      d.reasons.push(`${label}'s computer ${inst.name} is not allowed for this request`);
-    }
     d.instance_id = role.instanceId;
   }
   d.allowed = d.reasons.length === 0;

@@ -87,7 +87,7 @@ node packages/server/dist/cli.js serve
 - [部署与配置](docs/deployment.md)：部署方式、首次配置、配置项、升级与备份
 - [系统架构](docs/architecture.md)：组件、执行边界、可靠性设计
 - [安全说明](docs/security.md)：平台提供的保护、部署方的责任、已知限制
-- [接入 Slack](docs/slack.md)：创建 Slack App、连接、分配规则与身份关联
+- [接入 Slack](docs/slack.md)：创建 Slack App、连接、选择机器人代表的角色与身份关联
 - [接入 GitHub](docs/github.md)：GitHub App 或机器人账号、Webhook、在 issue 和 pull request 中使用
 - [参与开发](CONTRIBUTING.md)：开发环境、测试与代码约定
 

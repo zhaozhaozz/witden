@@ -191,16 +191,12 @@ describe("slack", () => {
     // Slack accounts are linked to members by their Slack user id.
     await link(conn.id, "UALICE", w.ids.alice);
     await link(conn.id, "UBOB", w.ids.bob);
-    const rule = await w.api("POST", "/api/rules", {
+    // The bot stands for @dev.
+    const bound = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: {
-        name: "acme defaults",
-        match: { connection_id: conn.id },
-        allow_role_ids: [w.ids.dev],
-        default_role_id: w.ids.dev,
-      },
+      json: { settings: { role_id: w.ids.dev } },
     });
-    expect(rule.status, rule.raw).toBe(200);
+    expect(bound.status, bound.raw).toBe(200);
   });
 
   it("verifies signatures, answers url_verification and rejects stale requests", async () => {
@@ -519,14 +515,6 @@ describe("slack", () => {
   });
 
   it("a bot that stands for one role: that role takes everything addressed to it, and speaks as the bot", async () => {
-    // no assignment rules at all: binding the role is the assignment
-    for (const r of (await w.api("GET", "/api/rules", { token: w.adminToken })).body)
-      await w.api("DELETE", `/api/rules/${r.id}`, { token: w.adminToken });
-    const bound = await w.api("PATCH", `/api/connections/${conn.id}`, {
-      token: w.adminToken,
-      json: { settings: { role_id: w.ids.dev } },
-    });
-    expect(bound.status, bound.raw).toBe(200);
     w.scripts.dev = () => reply("on it");
     await send(event("<@UBOT> can you check the build", { ts: "970.1" }));
     // naming another role changes nothing: this bot is dev
@@ -560,7 +548,7 @@ describe("slack", () => {
     await w.drain();
     await deliverPending();
     const answer = slack.posts.find((p) => p.channel === "C1" && !p.thread_ts)!.text as string;
-    expect(answer.startsWith("*Dev (@dev)*:\n*结果*")).toBe(true);
+    expect(answer.startsWith("*结果*")).toBe(true);
     expect(answer).toContain("*构建*\u200b通过，详见 <http://localhost:8320/tasks|任务>");
     expect(answer).toContain("```\n项 | 值\n---|---\na  | 1\n```");
     expect(answer).toContain(`<http://localhost:8320/topics/${topicId}|在 witden 中查看>`);
@@ -599,11 +587,11 @@ describe("slack", () => {
     expect((await allTasks())[0].requesterUserId).toBe(w.ids.bob);
   });
 
-  it("external members: unlinked people get an account limited to the connection's roles; DMs stay apart", async () => {
+  it("external members: unlinked people get an account limited to the connection's role; DMs stay apart", async () => {
     w.scripts.dev = () => reply("", [call("ask_human", { question: "which environment?" })]);
     const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: { settings: { auto_provision_users: true, external_role_ids: [w.ids.dev] } },
+      json: { settings: { auto_provision_users: true, role_id: w.ids.dev } },
     });
     expect(patched.status, patched.raw).toBe(200);
     await send(event("<@UBOT> @dev hello", { user: "UCAROL", ts: "500.1" }));
@@ -612,7 +600,7 @@ describe("slack", () => {
     const listed = (await w.api("GET", "/api/users", { token: w.adminToken })).body as any[];
     expect(listed.find((u) => u.id === carolId)).toMatchObject({ external_connection_id: conn.id, email: null });
 
-    // Only the roles the connection lists, nothing else.
+    // Only the role the bot stands for, nothing else.
     const [carol] = await db().select().from(users).where(eq(users.id, carolId));
     expect(await hasPermission(db(), carol, Perm.ROLE_USE, w.ids.dev)).toBe(true);
     expect(await hasPermission(db(), carol, Perm.ROLE_USE, w.ids.test)).toBe(false);
@@ -623,12 +611,12 @@ describe("slack", () => {
       json: { password: "secret-pass-1" },
     });
     expect(pw.status).toBe(400);
-    // Taking the role off the list stops her waiting work at once.
+    // Giving the bot another role stops her waiting work with the old one at once.
     await w.drain();
     expect((await allTasks())[0].status).toBe("waiting_human");
     await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: { settings: { external_role_ids: [] } },
+      json: { settings: { role_id: w.ids.test } },
     });
     expect((await allTasks())[0].status).toBe("cancelled");
 
@@ -654,9 +642,8 @@ describe("slack", () => {
     expect(people[0][0]).not.toBe(people[1][0]);
   });
 
-  it("no rule means a refusal visible where the request was", async () => {
-    const rules = (await w.api("GET", "/api/rules", { token: w.adminToken })).body;
-    for (const r of rules) await w.api("DELETE", `/api/rules/${r.id}`, { token: w.adminToken });
+  it("a bot without a role refuses requests, visibly where they were asked", async () => {
+    await w.api("PATCH", `/api/connections/${conn.id}`, { token: w.adminToken, json: { settings: { role_id: null } } });
     await send(event("<@UBOT> @dev hello", { ts: "400.1" }));
     await w.waitFor(async () => {
       await deliverPending();
@@ -668,7 +655,7 @@ describe("slack", () => {
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
     expect(inbound.find((e: any) => e.event_key === "msg:C1:400.1")).toMatchObject({
       status: "not_assigned",
-      detail: expect.stringContaining("no assignment rule"),
+      detail: expect.stringContaining("this connection's bot has no role yet"),
     });
   });
 
@@ -700,19 +687,27 @@ describe("slack", () => {
     );
   });
 
-  it("connection settings: per-role identity, and a paused connection takes no requests", async () => {
+  it("other roles the bot's role brings in speak under their own name; a paused connection takes no requests", async () => {
     // Both admin calls below used to wait forever on the embedded database (query outside the request transaction).
     const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: { settings: { custom_identity: true } },
+      json: { settings: { custom_identity: true, auto_provision_users: true } },
     });
     expect(patched.status, patched.raw).toBe(200);
-    w.scripts.dev = () => reply("on it");
-    await send(event("<@UBOT> @dev hi", { ts: "700.1" }));
+    w.scripts.dev = (_m, turn) =>
+      turn === 0
+        ? reply("", [call("message_role", { role: "test", message: "please run the tests" })])
+        : reply("on it");
+    w.scripts.test = () => reply("tests pass");
+    // carol is an external member: she may use only dev, yet dev may still hand work to test
+    await send(event("<@UBOT> hi", { user: "UCAROL", ts: "700.1" }));
     await w.waitFor(async () => (await allTasks()).length === 1);
     await w.drain();
-    expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 1 });
-    expect(slack.posts).toEqual([expect.objectContaining({ channel: "C1", text: "on it", username: "Dev (@dev)" })]);
+    expect((await allTasks()).map((t) => t.ownerRoleId).sort()).toEqual([w.ids.dev, w.ids.test].sort());
+    expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 3 });
+    // the bot's own role speaks as the bot; another role under its own name
+    expect(slack.posts.find((p) => p.text === "on it")?.username).toBeUndefined();
+    expect(slack.posts.find((p) => p.text === "tests pass")).toMatchObject({ channel: "C1", username: "Test (@test)" });
 
     const paused = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
@@ -721,7 +716,7 @@ describe("slack", () => {
     expect(paused.body.status).toBe("paused");
     expect((await send(event("<@UBOT> @dev again", { ts: "700.2" }))).status).toBe(200);
     await settle();
-    expect(await allTasks()).toHaveLength(1);
+    expect(await allTasks()).toHaveLength(2);
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
     expect(inbound.map((e: any) => e.event_key)).toEqual(["msg:C1:700.1"]);
   });
@@ -746,53 +741,6 @@ describe("slack", () => {
     await w.drain();
     await deliverPending();
     expect(slack.posts.some((p) => p.thread_ts === root && p.text.includes("not assigned"))).toBe(false);
-  });
-
-  it("channel rules route threads to different roles and intersect with the workspace rule", async () => {
-    w.scripts.dev = () => reply("ok");
-    w.scripts.test = () => reply("ok");
-    await send(event("<@UBOT> first", { channel: "C2", ts: "600.1" }));
-    await w.waitFor(async () => (await allTasks()).length === 1);
-    const convs = (await w.api("GET", `/api/connections/${conn.id}/conversations`, { token: w.adminToken })).body;
-    const c2 = convs.find((c: any) => c.external_id === "C2");
-    const rules = (await w.api("GET", "/api/rules", { token: w.adminToken })).body;
-    // widen the workspace rule to dev+test, then make test the default for C2 only
-    await w.api("PATCH", `/api/rules/${rules[0].id}`, {
-      token: w.adminToken,
-      json: { allow_role_ids: [w.ids.dev, w.ids.test] },
-    });
-    await w.api("POST", "/api/rules", {
-      token: w.adminToken,
-      json: {
-        name: "C2 is QA",
-        match: { conversation_id: c2.id },
-        allow_role_ids: [w.ids.test],
-        default_role_id: w.ids.test,
-      },
-    });
-    await send(event("<@UBOT> second thread", { channel: "C2", ts: "600.2" }));
-    await send(event("<@UBOT> other channel", { channel: "C1", ts: "600.3" }));
-    await w.waitFor(async () => (await allTasks()).length === 3);
-    const owners = new Set((await allTasks()).slice(1).map((t) => t.ownerRoleId));
-    expect(owners).toEqual(new Set([w.ids.test, w.ids.dev]));
-    // In C2, @dev is outside the channel rule even though the workspace rule allows it.
-    await send(event("<@UBOT> @dev please", { channel: "C2", ts: "600.4" }));
-    await settle();
-    expect(await allTasks()).toHaveLength(3);
-    const explain = (
-      await w.api("POST", "/api/rules/explain", {
-        token: w.adminToken,
-        json: {
-          user_id: w.ids.alice,
-          connection_id: conn.id,
-          conversation_id: c2.id,
-          conversation_kind: "public",
-          requested_role_ids: [w.ids.dev],
-        },
-      })
-    ).body;
-    expect(explain.allowed).toBe(false);
-    expect(explain.reason).toContain("not among the roles allowed");
   });
 });
 
@@ -864,14 +812,9 @@ describe("feishu", () => {
     conn = res.body;
     expect((await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body.ok).toBe(true);
     await link(conn.id, "ou_alice", w.ids.alice);
-    await w.api("POST", "/api/rules", {
+    await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: {
-        name: "lark",
-        match: { connection_id: conn.id },
-        allow_role_ids: [w.ids.dev],
-        default_role_id: w.ids.dev,
-      },
+      json: { settings: { role_id: w.ids.dev } },
     });
   });
 
@@ -899,6 +842,7 @@ describe("feishu", () => {
     expect(feishu.sent).toHaveLength(1);
     expect(feishu.sent[0].path).toBe("im/v1/messages");
     expect(feishu.sent[0].body.receive_id).toBe("oc_dm_alice");
-    expect(JSON.parse(feishu.sent[0].body.content).text).toBe("Dev (@dev): hi alice");
+    // the bot is dev: no name in front
+    expect(JSON.parse(feishu.sent[0].body.content).text).toBe("hi alice");
   });
 });

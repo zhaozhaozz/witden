@@ -177,6 +177,7 @@ export async function contextForTopic(
   topic: Topic,
   userId: string | null,
   requested: string[],
+  byRoleId: string | null = null,
 ): Promise<RequestContext> {
   const ext = await externalContext(db, topic.id);
   return {
@@ -186,6 +187,7 @@ export async function contextForTopic(
     conversationId: ext.conversationId ?? null,
     conversationKind: ext.conversationKind ?? "internal",
     requestedRoleIds: requested,
+    byRoleId,
   };
 }
 
@@ -194,8 +196,9 @@ export async function authorize(
   topic: Topic,
   userId: string | null,
   roleIds: string[],
+  byRoleId: string | null = null,
 ): Promise<{ allowed: [Role, Record<string, any>][]; refusals: string[] }> {
-  const decision = await resolve(db, await contextForTopic(db, topic, userId, roleIds));
+  const decision = await resolve(db, await contextForTopic(db, topic, userId, roleIds, byRoleId));
   const allowed: [Role, Record<string, any>][] = [];
   const refusals: string[] = [];
   for (const cand of decision.candidates) {
@@ -376,7 +379,7 @@ export async function lastActiveRole(db: Db, topic: Topic, msg?: Message): Promi
     .limit(1);
   if (last?.authorId && (await topicSvc.participant(db, topic.id, "role", last.authorId))) return last.authorId;
   // Nobody has answered yet: the role whose task is newest here. Never an arbitrary participant; with no
-  // work in the thread the assignment rules choose.
+  // work in the thread the connection's role takes it.
   const [recent] = await db
     .select({ roleId: tasks.ownerRoleId })
     .from(tasks)
@@ -389,8 +392,7 @@ export async function lastActiveRole(db: Db, topic: Topic, msg?: Message): Promi
 
 /**
  * In a channel topic only a Slack thread carries on with the role working in it (the last one that answered
- * there, or whose task was asked there); a message posted in the channel itself goes to the role the
- * assignment rules pick.
+ * there, or whose task was asked there); a message posted in the channel itself goes to the connection's role.
  */
 async function threadRole(db: Db, topic: Topic, root: string | null): Promise<string | null> {
   if (!root) return null;
@@ -452,8 +454,8 @@ export async function dispatchHumanMessage(
   } else if (topic.kind === "dm") {
     candidates = (await topicSvc.participants(db, topic.id, "role")).map((p) => p.participantId);
   } else if (external) {
-    // Follow-ups in an external thread go to the role already working there; the first request gets the
-    // default role from the assignment rules (empty candidate list).
+    // Messages from the console into an external thread go to the role already working there, or else to the
+    // role the connection's bot stands for (empty candidate list).
     const last = await lastActiveRole(db, topic, msg);
     candidates = last ? [last] : [];
   } else {
@@ -563,7 +565,7 @@ export async function dispatchRoleMessage(
       });
       continue;
     }
-    const { allowed, refusals } = await authorize(db, topic, task.requesterUserId, [rid]);
+    const { allowed, refusals } = await authorize(db, topic, task.requesterUserId, [rid], sender.id);
     if (!allowed.length) {
       await systemMessage(db, topic, `Not forwarded: ${refusals.join("; ")}`, { taskId: task.id });
       continue;
@@ -609,7 +611,7 @@ export async function delegate(
   const topic = await topicSvc.getTopic(db, parent.topicId);
   if (!(await topicSvc.participant(db, topic.id, "role", target.id)))
     await topicSvc.inviteRole(db, null, topic, target.id, { byRole: sender });
-  const { allowed, refusals } = await authorize(db, topic, parent.requesterUserId, [target.id]);
+  const { allowed, refusals } = await authorize(db, topic, parent.requesterUserId, [target.id], sender.id);
   if (!allowed.length) throw new Forbidden(`delegation refused: ${refusals.join("; ")}`);
   let brief = `Delegated by @${sender.handle}.\n\nTask:\n${instruction}`;
   if (expectedOutput) brief += `\n\nExpected output:\n${expectedOutput}`;

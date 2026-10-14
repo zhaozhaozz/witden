@@ -612,23 +612,6 @@ export const outboundMessages = pgTable("outbound_messages", {
 
 // --- governance -----------------------------------------------------------------------------------------
 
-export const assignmentRules = pgTable("assignment_rules", {
-  id: id(),
-  name: text("name").notNull(),
-  description: text("description").notNull().default(""),
-  enabled: boolean("enabled").notNull().default(true),
-  priority: integer("priority").notNull().default(100),
-  match: json<Json>("match").notNull().default({}),
-  effect: text("effect").notNull().default("allow"),
-  allowRoleIds: json<string[] | null>("allow_role_ids"),
-  denyRoleIds: json<string[]>("deny_role_ids").notNull().default([]),
-  defaultRoleId: text("default_role_id"),
-  allowInstanceIds: json<string[] | null>("allow_instance_ids"),
-  createdBy: text("created_by"),
-  createdAt: created(),
-  updatedAt: updated(),
-});
-
 export const auditLogs = pgTable(
   "audit_logs",
   {
@@ -697,7 +680,6 @@ export type Artifact = typeof artifacts.$inferSelect;
 export type Memory = typeof memories.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type ExternalConversation = typeof externalConversations.$inferSelect;
-export type AssignmentRule = typeof assignmentRules.$inferSelect;
 export type KillSwitch = typeof killSwitches.$inferSelect;
 export type ExecSession = typeof execSessions.$inferSelect;
 export type ToolCallRecord = typeof toolCalls.$inferSelect;

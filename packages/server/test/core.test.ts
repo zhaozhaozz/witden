@@ -62,14 +62,14 @@ describe("with a database", () => {
     return t;
   };
 
-  it("console accounts may do everything; external members only use their connection's roles", async () => {
+  it("console accounts may do everything; external members only use their connection's role", async () => {
     const alice = await createUser(db(), { name: "alice", email: "alice@example.com" });
     expect(alice.isAdmin).toBe(true);
     expect(await hasPermission(db(), alice, Perm.ROLE_USE, "role_x")).toBe(true);
     expect(await hasPermission(db(), alice, Perm.SECRETS_MANAGE)).toBe(true);
     const [conn] = await db()
       .insert(connections)
-      .values({ id: newId("conn"), platform: "slack", name: "acme", settings: { external_role_ids: ["role_x"] } })
+      .values({ id: newId("conn"), platform: "slack", name: "acme", settings: { role_id: "role_x" } })
       .returning();
     const carol = await createUser(db(), { name: "carol", externalConnectionId: conn.id });
     expect(carol.isAdmin).toBe(false);

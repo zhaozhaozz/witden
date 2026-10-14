@@ -89,7 +89,6 @@ export default function Layout() {
     { to: "/computers", label: "虚拟电脑", any: COMPUTER_PERMS },
     { to: "/roles", label: "角色管理", any: ["role.manage"] },
     { to: "/models", label: "模型", any: ["secrets.manage"] },
-    { to: "/rules", label: "分配规则", any: ["rules.manage"] },
     { to: "/connections", label: "通讯接入", any: ["connection.manage"] },
     { to: "/admin", label: "系统管理", any: ADMIN_PERMS },
   ].filter((i) => !i.any || i.any.some(can));

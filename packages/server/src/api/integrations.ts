@@ -34,7 +34,7 @@ const PLATFORMS: Record<string, string[]> = {
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "external_role_ids", "custom_identity", "role_id"]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id"]);
 
 /** ``base``: the public address (services/public-url.ts). */
 function connOut(conn: Connection, base: string) {
@@ -86,12 +86,7 @@ const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
 function cleanSettings(s: Record<string, any>): Record<string, any> {
   const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k));
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
-  if (
-    s.external_role_ids !== undefined &&
-    !(Array.isArray(s.external_role_ids) && s.external_role_ids.every((x: unknown) => typeof x === "string"))
-  )
-    throw new BadRequest("external_role_ids must be a list of role ids");
-  // The role the connection's bot stands for (null: roles are chosen by the assignment rules).
+  // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");
   return s;

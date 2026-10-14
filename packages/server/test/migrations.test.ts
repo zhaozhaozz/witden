@@ -325,3 +325,75 @@ describe("0017_slack_channel_topics", () => {
     await db.close();
   });
 });
+
+describe("0018_connection_role", () => {
+  async function upTo0018() {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0018")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle) values ('role_a', 'A', 'a'), ('role_b', 'B', 'b'), ('role_c', 'C', 'c');
+    `);
+    return db;
+  }
+  const roleIds = async (db: PGlite) =>
+    (
+      await db.query<{ id: string; settings: Record<string, unknown> }>(
+        "select id, settings from connections order by id",
+      )
+    ).rows;
+
+  it("turns each connection's rules into the role its bot stands for, then drops the rules", async () => {
+    const db = await upTo0018();
+    await db.exec(`
+      insert into connections (id, platform, name, settings) values
+        ('conn_allow', 'slack', 'allow', '{}'),
+        ('conn_bound', 'slack', 'bound', '{"role_id": "role_a"}'),
+        ('conn_ext', 'feishu', 'ext', '{"external_role_ids": ["role_b"], "auto_provision_users": true}'),
+        ('conn_gone', 'slack', 'gone', '{}'),
+        ('conn_many', 'slack', 'many', '{"external_role_ids": ["role_a", "role_b"]}'),
+        ('conn_rule', 'slack', 'rule', '{}');
+      insert into assignment_rules (id, name, priority, match, effect, allow_role_ids, default_role_id) values
+        ('rule_1', 'rule default', 10, '{"connection_id": "conn_rule"}', 'allow', null, 'role_a'),
+        ('rule_2', 'rule later', 20, '{"connection_id": "conn_rule"}', 'allow', null, 'role_b'),
+        ('rule_3', 'allow one', 10, '{"connection_id": "conn_allow"}', 'allow', '["role_b"]', null),
+        ('rule_4', 'bound', 10, '{"connection_id": "conn_bound"}', 'allow', null, 'role_b'),
+        ('rule_5', 'missing role', 10, '{"connection_id": "conn_gone"}', 'allow', null, 'role_gone'),
+        ('rule_6', 'channel only', 10, '{"connection_id": "conn_many", "conversation_kind": "im"}', 'allow', null, 'role_c'),
+        ('rule_7', 'several', 50, '{}', 'allow', '["role_a", "role_c"]', null);
+    `);
+    await apply(db, "0018_connection_role");
+    expect(await roleIds(db)).toEqual([
+      { id: "conn_allow", settings: { role_id: "role_b" } },
+      { id: "conn_bound", settings: { role_id: "role_a" } },
+      { id: "conn_ext", settings: { role_id: "role_b", auto_provision_users: true } },
+      { id: "conn_gone", settings: {} },
+      { id: "conn_many", settings: {} },
+      { id: "conn_rule", settings: { role_id: "role_a" } },
+    ]);
+    const tables = (
+      await db.query<{ table_name: string }>(
+        "select table_name from information_schema.tables where table_schema = 'public'",
+      )
+    ).rows.map((r) => r.table_name);
+    expect(tables).not.toContain("assignment_rules");
+    await db.close();
+  });
+
+  it("gives connections without a rule of their own the role of a rule matching everything", async () => {
+    const db = await upTo0018();
+    await db.exec(`
+      insert into connections (id, platform, name, settings) values ('conn_1', 'slack', 'acme', '{}');
+      insert into assignment_rules (id, name, match, effect, enabled, default_role_id) values
+        ('rule_off', 'disabled', '{}', 'allow', false, 'role_a'),
+        ('rule_deny', 'deny', '{}', 'deny', true, 'role_b'),
+        ('rule_all', 'everyone', '{}', 'allow', true, 'role_c');
+    `);
+    await apply(db, "0018_connection_role");
+    expect(await roleIds(db)).toEqual([{ id: "conn_1", settings: { role_id: "role_c" } }]);
+    await db.close();
+  });
+});
