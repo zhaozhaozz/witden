@@ -38,6 +38,19 @@ export function socketText(socket: Connection["socket"]): { text: string; tone: 
   return { text: `连接失败，正在重试：${why}`, tone: "bad" };
 }
 
+/** What a Slack bot cannot do without a scope the connection test checks (server: integrations/slack.ts). */
+const SCOPE_EFFECTS: Record<string, string> = {
+  "chat:write": "角色不能在 Slack 中回复",
+  "files:write": "角色分享的文件和截图不能发到 Slack，只能附上控制台链接",
+};
+
+/** A warning for scopes the Slack app was installed without, or null when nothing is missing. */
+export function missingScopes(scopes: string[] | undefined): string | null {
+  if (!scopes?.length) return null;
+  const effects = scopes.map((x) => SCOPE_EFFECTS[x] ?? x).join("；");
+  return `Slack 应用缺少 ${scopes.join("、")} 权限（${effects}）。在应用的 OAuth & Permissions 页面添加后，点击 Reinstall to Workspace 重新安装。`;
+}
+
 /** Why the server refused a signed call to the events URL. */
 export const REJECTED: Record<string, string> = {
   "bad Slack signature": "签名不对",

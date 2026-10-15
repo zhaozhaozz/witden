@@ -3,12 +3,15 @@
  *
  * A Slack thread (root message + replies) is one topic; a 1:1 DM with the bot is one topic. One bot user fronts
  * any number of roles; replies carry the role's name (and icon with ``chat:write.customize``) so people
- * always see which role is speaking.
+ * always see which role is speaking. Files a role shares are uploaded to Slack (``files:write``): the console
+ * is not reachable from Slack, so a link to it would not open there.
  */
 import { createHmac } from "node:crypto";
+import fs from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { type Db, db as getDb } from "../db/client.js";
 import {
+  type Artifact,
   artifacts,
   type Connection,
   type ExternalConversation,
@@ -22,6 +25,7 @@ import {
 import { BadRequest, Forbidden, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { absoluteAvatarUrl } from "../services/appearance.js";
+import { artifactPath } from "../services/files.js";
 import { consoleBase, webhookBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, getAdapter, type InboundAction, register } from "./base.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
@@ -54,6 +58,9 @@ export class SlackError extends Error {
 }
 
 export class SlackClient {
+  /** The token's scopes, as Slack reports them on each response (x-oauth-scopes). */
+  scopes: string[] | null = null;
+
   constructor(private readonly token: string) {}
 
   private async request(method: string, init: RequestInit): Promise<any> {
@@ -61,6 +68,12 @@ export class SlackClient {
       ...init,
       headers: { ...(init.headers ?? {}), authorization: `Bearer ${this.token}` },
     });
+    const scopes = res.headers.get("x-oauth-scopes");
+    if (scopes !== null)
+      this.scopes = scopes
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
     if (res.status === 429)
       throw new Error(`rate limited by Slack (retry after ${res.headers.get("retry-after") ?? "?"}s)`);
     const data: any = await res.json();
@@ -81,6 +94,19 @@ export class SlackClient {
       Object.entries(params).map(([k, v]) => [k, String(v)] as [string, string]),
     ).toString();
     return this.request(`${method}?${qs}`, { method: "GET" });
+  }
+
+  /** Upload a file's bytes (files:write); it is shared only by files.completeUploadExternal. Returns its id. */
+  async upload(filename: string, data: Buffer): Promise<string> {
+    const { upload_url, file_id } = await this.call("files.getUploadURLExternal", { filename, length: data.length });
+    // The bytes themselves, not a form; the address is single-use and needs no token.
+    const res = await slackFetch(upload_url, {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new Uint8Array(data),
+    });
+    if (!res.ok) throw new Error(`upload failed: HTTP ${res.status}`);
+    return file_id;
   }
 
   async download(url: string, limit: number): Promise<Buffer | null> {
@@ -157,6 +183,30 @@ export async function clean(db: Db, conn: Connection, text: string): Promise<str
   return fromSlack(out, names).trim();
 }
 
+/** Why Slack would not take a file, for the people in the conversation. */
+const UPLOAD_PROBLEMS: Record<string, string> = {
+  missing_scope: "Slack 应用缺少 files:write 权限，请在应用的 OAuth & Permissions 中添加并重新安装",
+  not_in_channel: "机器人不在这个频道",
+  file_type_not_allowed: "工作区不允许上传这种文件",
+};
+const uploadProblem = (err: unknown) =>
+  err instanceof SlackError
+    ? (UPLOAD_PROBLEMS[err.error] ?? `Slack 返回 ${err.error}`)
+    : (err as NodeJS.ErrnoException).code === "ENOENT"
+      ? "witden 中的文件已不存在"
+      : (err as Error).message;
+
+/** Files as links into witden; they open only where the console is reachable, so the reason goes with them. */
+function fileLinks(files: Artifact[], why: string): string {
+  const lines = files.map(
+    (f) => `${f.mime.startsWith("image/") ? "🖼" : "📎"} <${consoleBase()}/api/files/${f.id}|${escapeSlack(f.name)}>`,
+  );
+  return `${lines.join("\n")}\n_附件没能发到 Slack：${escapeSlack(why)}_`;
+}
+
+/** Scopes the setup guide's manifest asks for that older apps may lack. */
+const CHECKED_SCOPES = ["chat:write", "files:write"];
+
 /** Prefix a message with who wrote it; multi-line bodies start on their own line. */
 const signed = (who: string, text: string) => `${who}:${text.includes("\n") ? "\n" : " "}${text}`;
 
@@ -170,16 +220,30 @@ export class SlackAdapter implements Adapter {
   }
 
   async test(_db: Db, conn: Connection) {
-    const data = await this.client(conn).call("auth.test", {});
+    const client = this.client(conn);
+    const data = await client.call("auth.test", {});
     // Socket Mode: the app-level token must be able to open a socket (it needs connections:write).
     const appToken = credentials(conn).app_token;
     if (appToken) await new SlackClient(appToken).call("apps.connections.open", {});
     conn.externalWorkspaceId = data.team_id;
     conn.botUserId = data.user_id;
-    return { team: data.team, team_id: data.team_id, bot_user_id: data.user_id, bot: data.user };
+    const scopes = client.scopes;
+    return {
+      team: data.team,
+      team_id: data.team_id,
+      bot_user_id: data.user_id,
+      bot: data.user,
+      // Granted scopes come back on every response; an app created before a scope was added lacks it.
+      missing_scopes: scopes ? CHECKED_SCOPES.filter((x) => !scopes.includes(x)) : [],
+    };
   }
 
-  private async render(db: Db, conn: Connection, msg: Message): Promise<[string, Record<string, string>]> {
+  private async render(
+    db: Db,
+    conn: Connection,
+    msg: Message,
+    refused: { files: Artifact[]; why: string } | null = null,
+  ): Promise<[string, Record<string, string>]> {
     const base = consoleBase();
     // System notices are plain text; everything else is Markdown written for the console.
     let text =
@@ -200,17 +264,8 @@ export class SlackAdapter implements Adapter {
       const [user] = await db.select().from(users).where(eq(users.id, m.id)).limit(1);
       if (ident && user) text = text.split(`@${user.name}`).join(`<@${ident.externalUserId}>`);
     }
-    if (msg.attachments?.length) {
-      // Links into witden (signing in shows the file); pictures are marked so people know what to expect.
-      const files = await db.select().from(artifacts).where(inArray(artifacts.id, msg.attachments));
-      const byId = new Map(files.map((f) => [f.id, f]));
-      const links = msg.attachments.map((a) => {
-        const f = byId.get(a);
-        const icon = f?.mime.startsWith("image/") ? "🖼" : "📎";
-        return `${icon} <${base}/api/files/${a}|${escapeSlack(f?.name ?? "文件")}>`;
-      });
-      text += `${text ? "\n" : ""}${links.join("\n")}`;
-    }
+    // Attachments are uploaded (send); only files Slack refused appear here, as links with the reason.
+    if (refused?.files.length) text += `${text ? "\n" : ""}${fileLinks(refused.files, refused.why)}`;
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
       const name = role ? `${role.name} (@${role.handle})` : "role";
@@ -231,9 +286,48 @@ export class SlackAdapter implements Adapter {
 
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
     const client = this.client(conn);
-    const [text, extra] = await this.render(db, conn, msg);
-    const params: Record<string, unknown> = { channel: out.conversationExternalId, text, unfurl_links: false };
-    if (out.threadKey) params.thread_ts = out.threadKey;
+    const files = msg.attachments?.length
+      ? await db.select().from(artifacts).where(inArray(artifacts.id, msg.attachments))
+      : [];
+    // Upload the files first: if Slack will not take them, the message carries links and the reason instead.
+    const uploaded: { id: string; title: string }[] = [];
+    let why: string | null = null;
+    for (const f of files) {
+      try {
+        uploaded.push({ id: await client.upload(f.name, fs.readFileSync(artifactPath(f))), title: f.name });
+      } catch (err) {
+        why = uploadProblem(err);
+        break;
+      }
+    }
+    const [text, extra] = await this.render(db, conn, msg, why ? { files, why } : null);
+    const where: Record<string, unknown> = { channel: out.conversationExternalId };
+    if (out.threadKey) where.thread_ts = out.threadKey;
+    const ts = text.trim() ? await this.post(client, { ...where, text, unfurl_links: false }, extra) : null;
+    if (uploaded.length && !why) {
+      try {
+        // Shared where the message went: in the same thread, or right below it in the channel.
+        await client.call("files.completeUploadExternal", {
+          files: uploaded,
+          channel_id: out.conversationExternalId,
+          ...(out.threadKey ? { thread_ts: out.threadKey } : {}),
+        });
+      } catch (err) {
+        // The message is already out: say what became of its files rather than sending it again (a failed
+        // notice is dropped for the same reason).
+        await client
+          .call("chat.postMessage", { ...where, text: fileLinks(files, uploadProblem(err)), unfurl_links: false })
+          .catch(() => undefined);
+      }
+    }
+    return ts;
+  }
+
+  private async post(
+    client: SlackClient,
+    params: Record<string, unknown>,
+    extra: Record<string, string>,
+  ): Promise<string> {
     try {
       return (await client.call("chat.postMessage", { ...params, ...extra })).ts;
     } catch (err) {
@@ -243,7 +337,7 @@ export class SlackAdapter implements Adapter {
         ["missing_scope", "not_allowed_token_type"].includes(err.error)
       ) {
         // No chat:write.customize: fall back to a visible name prefix rather than losing the identity.
-        const text2 = signed(`*${escapeSlack(extra.username)}*`, text);
+        const text2 = signed(`*${escapeSlack(extra.username)}*`, String(params.text ?? ""));
         return (await client.call("chat.postMessage", { ...params, text: text2 })).ts;
       }
       throw err;

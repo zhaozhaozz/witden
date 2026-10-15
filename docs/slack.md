@@ -50,6 +50,7 @@ oauth_config:
       - chat:write.customize   # 可选：被请来协作的其他角色以自己的名称和头像发言
       - users:read
       - files:read
+      - files:write            # 把角色分享的文件和截图发到 Slack
 settings:
   event_subscriptions:
     bot_events:
@@ -68,7 +69,7 @@ settings:
 1. 在引导中填写接入名称和两个令牌。每个输入框上方都写明了它在 Slack 中的位置：
    - **Bot User OAuth Token**：应用的 OAuth & Permissions 页面，以 `xoxb-` 开头。
    - **App-Level Token**：上一步生成的令牌，以 `xapp-` 开头。两个令牌填反时，页面会直接提示。
-2. 点击“保存并测试连接”。witden 加密保存令牌，读取工作区和机器人的信息，并用 App-Level Token 向 Slack 申请连接；通过后立即与 Slack 建立连接。测试失败时，页面会说明原因，例如 Bot Token 不正确、App-Level Token 不正确或缺少 `connections:write`。
+2. 点击“保存并测试连接”。witden 加密保存令牌，读取工作区和机器人的信息，并用 App-Level Token 向 Slack 申请连接；通过后立即与 Slack 建立连接。测试失败时，页面会说明原因，例如 Bot Token 不正确、App-Level Token 不正确或缺少 `connections:write`。测试通过但应用缺少 `chat:write` 或 `files:write` 时，页面会提示缺少哪项权限。
 
 连接由 witden 的 API 进程维护：Slack 每隔几个小时更换一次连接，witden 会在旧连接关闭前接好新连接；连接中断时自动重连。接入详情中的“与 Slack 的连接”显示当前状态。接入暂停时连接会断开。
 
@@ -112,8 +113,10 @@ witden 只按 **Slack 用户 ID** 识别 Slack 用户，不使用显示名称。
 
 witden 中的消息使用 Markdown，Slack 使用自己的格式，两者会自动转换：
 
-- **发送到 Slack**：粗体、斜体、删除线、链接、引用和代码块转换为 Slack 的写法；标题显示为粗体行；列表使用 `•`、`◦` 或序号，任务列表使用 ☐ / ☑；表格显示为对齐的等宽文本；图片和附件显示为指向 witden 的链接（打开时需要登录 witden）；Mermaid 流程图在 Slack 中显示源码，并附带在 witden 中查看图形的链接。
+- **发送到 Slack**：粗体、斜体、删除线、链接、引用和代码块转换为 Slack 的写法；标题显示为粗体行；列表使用 `•`、`◦` 或序号，任务列表使用 ☐ / ☑；表格显示为对齐的等宽文本；消息附带的文件（包括角色分享的截图）上传到 Slack，发在同一个频道或 thread 中，在 Slack 里直接查看；Mermaid 流程图在 Slack 中显示源码，并附带在 witden 中查看图形的链接。
 - **从 Slack 接收**：Slack 的格式和链接转换为 Markdown；提及的 Slack 用户显示为已关联成员的名字，频道显示为 `#频道名`；Slack 的项目符号列表转换为列表；代码保持原样。
+
+上传文件需要 `files:write` 权限。没有这项权限（例如应用在 witden 加入这项权限之前创建），或工作区不允许上传这种文件时，消息改为附上指向 witden 的文件链接，并写明没能发到 Slack 的原因；这种链接只有能访问 witden 控制台并已登录的人才能打开。给已有的应用补上权限：在应用的 **OAuth & Permissions** 页面 → **Scopes** → **Bot Token Scopes** 中添加 `files:write`，然后点击页面顶部提示中的 **Reinstall to Workspace**。在接入详情中点击“测试连接”可以确认权限是否齐全。
 
 ## 7. 切换接入方式
 

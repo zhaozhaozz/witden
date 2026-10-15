@@ -15,6 +15,7 @@ import {
   INBOUND_STATUS,
   type InboundEvent,
   lastRejected,
+  missingScopes,
   SLACK_FIELD_HELP,
   SLACK_FIELDS,
   settingsOf,
@@ -324,12 +325,14 @@ function ConnectionDetail({
               disabled={busy}
               onClick={async () => {
                 const out = await run(() =>
-                  api.post<{ ok: boolean; error?: string } & Record<string, unknown>>(
+                  api.post<{ ok: boolean; error?: string; missing_scopes?: string[] }>(
                     `/api/connections/${conn.id}/test`,
                   ),
                 );
                 if (!out) return;
-                if (out.ok) toast("连接正常", "ok");
+                const lacking = out.ok ? missingScopes(out.missing_scopes) : null;
+                if (lacking) toast(`连接正常，但${lacking}`, "bad");
+                else if (out.ok) toast("连接正常", "ok");
                 else toast(`连接失败：${out.error ?? "未知错误"}`, "bad");
                 const fresh = await api.get<Connection[]>("/api/connections");
                 const next = fresh.find((c) => c.id === conn.id);

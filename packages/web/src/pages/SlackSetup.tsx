@@ -12,6 +12,7 @@ import {
   INBOUND_STATUS,
   type InboundEvent,
   lastRejected,
+  missingScopes,
   SLACK_FIELD_HELP,
   SLACK_FIELDS,
   settingsOf,
@@ -37,6 +38,7 @@ const BOT_SCOPES: [string, string][] = [
   ["chat:write.customize", "以角色自己的名称和头像发言（可在设置中关闭）"],
   ["users:read", "读取发消息的人的名字"],
   ["files:read", "读取消息中的文件"],
+  ["files:write", "把角色分享的文件和截图发到 Slack"],
 ];
 
 const BOT_EVENTS: [string, string][] = [
@@ -145,6 +147,7 @@ interface TestResult {
   error?: string;
   team?: string;
   bot?: string;
+  missing_scopes?: string[];
 }
 
 /**
@@ -233,6 +236,7 @@ export function SlackSetup({
     ) : null,
     try: conn ? <TryStep conn={conn} bot={bot} num={num} onDone={() => onClose(conn)} /> : null,
   };
+  const lacking = missingScopes(tested?.missing_scopes);
   const summary: Partial<Record<StepKey, string>> = {
     address: address ? `公网事件地址：${address}` : undefined,
     app: switching
@@ -242,7 +246,9 @@ export function SlackSetup({
       : initial
         ? undefined
         : `应用名称：${botName}`,
-    credentials: tested?.ok ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}` : conn?.name,
+    credentials: tested?.ok
+      ? `已连接到工作区「${tested.team ?? "?"}」，机器人 @${tested.bot ?? "?"}${lacking ? `。${lacking}` : ""}`
+      : conn?.name,
   };
 
   return (

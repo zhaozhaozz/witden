@@ -71,12 +71,20 @@ class FakeSocketMode {
   }
 }
 
-const json = (body: unknown) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+const json = (body: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
 
-/** Slack Web API stand-in: channel ids starting with G are private, D are DMs; every post is recorded. */
+const SCOPES = "app_mentions:read,channels:history,chat:write,chat:write.customize,users:read,files:read,files:write";
+
+/**
+ * Slack Web API stand-in: channel ids starting with G are private, D are DMs; every post, upload and file share
+ * is recorded. ``scopes`` are what the bot token was granted.
+ */
 class FakeSlack {
   posts: Record<string, any>[] = [];
+  uploads: { id: string; name: string; data: Buffer }[] = [];
+  shares: Record<string, any>[] = [];
+  scopes = SCOPES;
   /** Socket Mode, when a test uses it. */
   sockets: FakeSocketMode | null = null;
   private ts = 1000;
@@ -85,6 +93,13 @@ class FakeSlack {
     const url = new URL(String(input));
     const method = url.pathname.split("/").pop();
     const headers = (init?.headers ?? {}) as Record<string, string>;
+    // File bytes go to the address files.getUploadURLExternal handed out, without a token.
+    if (url.hostname === "files.slack.com") {
+      const upload = this.uploads.find((u) => url.pathname.endsWith(u.id));
+      if (!upload || headers["content-type"] !== "application/octet-stream") return new Response("", { status: 400 });
+      upload.data = Buffer.from(init?.body as Uint8Array);
+      return new Response("OK", { status: 200 });
+    }
     // Socket Mode is opened with the app-level token, everything else uses the bot token.
     if (method === "apps.connections.open") {
       if (headers.authorization !== `Bearer ${APP_TOKEN}`) return json({ ok: false, error: "invalid_auth" });
@@ -93,9 +108,25 @@ class FakeSlack {
     if (headers.authorization !== `Bearer ${BOT_TOKEN}`) return json({ ok: false, error: "invalid_auth" });
     const params: Record<string, any> =
       init?.method === "POST" ? JSON.parse(String(init.body ?? "{}")) : Object.fromEntries(url.searchParams);
+    const granted = this.scopes.split(",");
+    const needs = (scope: string) => granted.includes(scope);
     switch (method) {
       case "auth.test":
-        return json({ ok: true, team_id: "T1", user_id: "UBOT", team: "Acme", user: "witden" });
+        // Slack names the token's scopes on every response; auth.test is where the connection test reads them.
+        return json(
+          { ok: true, team_id: "T1", user_id: "UBOT", team: "Acme", user: "witden" },
+          { "x-oauth-scopes": this.scopes },
+        );
+      case "files.getUploadURLExternal": {
+        if (!needs("files:write")) return json({ ok: false, error: "missing_scope", needed: "files:write" });
+        const id = `F${this.uploads.length + 1}`;
+        this.uploads.push({ id, name: params.filename, data: Buffer.alloc(0) });
+        return json({ ok: true, file_id: id, upload_url: `https://files.slack.com/upload/v1/${id}` });
+      }
+      case "files.completeUploadExternal":
+        if (!needs("files:write")) return json({ ok: false, error: "missing_scope", needed: "files:write" });
+        this.shares.push(params);
+        return json({ ok: true, files: params.files });
       case "conversations.info": {
         const ch = String(params.channel);
         const info = { id: ch, name: ch.toLowerCase(), is_private: ch.startsWith("G"), is_im: ch.startsWith("D") };
@@ -187,7 +218,13 @@ describe("slack", () => {
     conn = res.body;
     // The setup guide shows which workspace and bot the credentials belong to.
     const tested = await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken });
-    expect(tested.body).toMatchObject({ ok: true, team: "Acme", bot: "witden", bot_user_id: "UBOT" });
+    expect(tested.body).toMatchObject({
+      ok: true,
+      team: "Acme",
+      bot: "witden",
+      bot_user_id: "UBOT",
+      missing_scopes: [],
+    });
     // Slack accounts are linked to members by their Slack user id.
     await link(conn.id, "UALICE", w.ids.alice);
     await link(conn.id, "UBOB", w.ids.bob);
@@ -554,6 +591,47 @@ describe("slack", () => {
     expect(answer).toContain(`<http://localhost:8320/topics/${topicId}|在 witden 中查看>`);
     expect(answer).toContain("A --&gt; B");
     expect(answer).not.toMatch(/\*\*|##/);
+  });
+
+  it("files a role shares are uploaded to Slack where it was asked, not linked to the console", async () => {
+    const png = Buffer.from("\x89PNG fake screenshot");
+    w.manager.computer(w.ids.instance).files.set("/home/witden/desktop.png", png);
+    w.scripts.dev = (_m, turn) =>
+      turn === 0 ? reply("", [call("share_file", { path: "desktop.png", message: "桌面截图" })]) : reply("");
+    await send(event("we need a screenshot", { user: "UBOB", ts: "820.1", etype: "message" }));
+    await send(event("<@UBOT> 截个图", { ts: "821.1", thread_ts: "820.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+
+    expect(slack.uploads).toEqual([{ id: "F1", name: "desktop.png", data: png }]);
+    expect(slack.shares).toEqual([
+      { files: [{ id: "F1", title: "desktop.png" }], channel_id: "C1", thread_ts: "820.1" },
+    ]);
+    const posted = slack.posts.filter((p) => p.channel === "C1").map((p) => [p.thread_ts, p.text]);
+    expect(posted).toEqual([["820.1", "桌面截图"]]);
+  });
+
+  it("without files:write, shared files arrive as console links with the reason", async () => {
+    slack.scopes = SCOPES.replace(",files:write", "");
+    // The connection test names the scope the app lacks.
+    const tested = await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken });
+    expect(tested.body).toMatchObject({ ok: true, missing_scopes: ["files:write"] });
+
+    w.manager.computer(w.ids.instance).files.set("/home/witden/desktop.png", Buffer.from("png"));
+    w.scripts.dev = (_m, turn) =>
+      turn === 0 ? reply("", [call("share_file", { path: "desktop.png", message: "桌面截图" })]) : reply("");
+    await send(event("<@UBOT> 截个图", { ts: "830.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+
+    expect(slack.shares).toEqual([]);
+    const [post] = slack.posts.filter((p) => p.channel === "C1");
+    expect(post.text).toMatch(
+      /^桌面截图\n🖼 <http:\/\/localhost:8320\/api\/files\/file_\w+\|desktop\.png>\n_附件没能发到 Slack：/,
+    );
+    expect(post.text).toContain("缺少 files:write 权限");
   });
 
   it("unlinked people and bots cannot trigger work", async () => {
