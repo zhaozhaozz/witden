@@ -83,7 +83,9 @@ describe("first-run setup", () => {
 
     expect((await h.api("POST", "/api/setup/skip", { token: h.adminToken })).status).toBe(200);
     expect(await status()).toMatchObject({ needed: false, finished_at: null });
-    expect((await h.api("GET", "/api/roles", { token: h.adminToken })).body).toHaveLength(0);
+    // only the built-in system administrator
+    const roles = (await h.api("GET", "/api/roles", { token: h.adminToken })).body;
+    expect(roles.map((r: any) => [r.handle, r.system_admin])).toEqual([["admin", true]]);
   });
 
   it("is not offered once roles exist", async () => {

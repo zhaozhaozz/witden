@@ -301,7 +301,9 @@ export default function SetupPage() {
                     {busy ?? "使用这个模型，开始体验"}
                   </button>
                   {busy ? null : (
-                    <span className="small muted">将创建一台桌面虚拟电脑、一个助手和一个系统管理员角色。</span>
+                    <span className="small muted">
+                      将创建一台桌面虚拟电脑和一个助手；内置的系统管理员还没有模型时也用这个模型。
+                    </span>
                   )}
                 </div>
               </div>

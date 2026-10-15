@@ -43,6 +43,7 @@ import { EventBus } from "./services/events.js";
 import { reconcile } from "./services/instances.js";
 import { bootstrapLaya } from "./services/model-configs.js";
 import { proxyConfigFor } from "./services/model-proxy.js";
+import { ensureSystemAdmin } from "./services/system-admin.js";
 import { bootstrap } from "./services/users.js";
 
 export interface StartOptions {
@@ -137,6 +138,8 @@ export async function start(opts: StartOptions): Promise<Witden> {
   setDatabase(database);
   initSecretBox(settings);
   await transaction((tx) => bootstrap(tx, settings));
+  // The built-in system administrator, kept by the process that serves the API (api and worker start together).
+  if (settings.processRole !== "worker") await transaction((tx) => ensureSystemAdmin(tx));
   // Once, by the process that serves the API (api and worker start together).
   if (settings.layaUrl && settings.processRole !== "worker") {
     const { layaUrl, layaApiKey } = settings;

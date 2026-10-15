@@ -397,3 +397,30 @@ describe("0018_connection_role", () => {
     await db.close();
   });
 });
+
+describe("0020_single_system_admin", () => {
+  it("keeps the oldest system administrator; the others become ordinary roles; a second one is refused", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0020")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, system_admin, allowed_tools, approval_required, created_at) values
+        ('role_old', 'Admin', 'admin', true, '["config"]', '[]', '2026-10-14 08:00'),
+        ('role_new', 'Ops', 'ops', true, '["config", "shell"]', '["change_config", "shell"]', '2026-10-14 09:00'),
+        ('role_dev', 'Dev', 'dev', false, '["shell"]', '[]', '2026-10-14 07:00');
+    `);
+    await apply(db, "0020_single_system_admin");
+    expect(
+      (await db.query("select id, system_admin, allowed_tools, approval_required from roles order by id")).rows,
+    ).toEqual([
+      { id: "role_dev", system_admin: false, allowed_tools: ["shell"], approval_required: [] },
+      { id: "role_new", system_admin: false, allowed_tools: ["shell"], approval_required: ["shell"] },
+      { id: "role_old", system_admin: true, allowed_tools: ["config"], approval_required: [] },
+    ]);
+    await expect(db.exec("update roles set system_admin = true where id = 'role_dev'")).rejects.toThrow();
+    await db.close();
+  });
+});

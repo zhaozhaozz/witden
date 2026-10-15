@@ -232,33 +232,40 @@ export const execSessions = pgTable(
 
 // --- roles & knowledge -------------------------------------------------------------------------------
 
-export const roles = pgTable("roles", {
-  id: id(),
-  name: text("name").notNull(),
-  handle: text("handle").notNull().unique(),
-  avatarUrl: text("avatar_url"),
-  /** Badge colour (#rrggbb); null = derived from the id. */
-  color: text("color"),
-  description: text("description").notNull().default(""),
-  systemPrompt: text("system_prompt").notNull().default(""),
-  modelConfigId: text("model_config_id").references(() => modelConfigs.id),
-  modelParams: json<Json>("model_params").notNull().default({}),
-  instanceId: text("instance_id").references(() => computerInstances.id),
-  allowedTools: json<string[]>("allowed_tools").notNull().default([]),
-  allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
-  knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
-  approvalRequired: json<string[]>("approval_required").notNull().default([]),
-  maxSteps: integer("max_steps"),
-  maxTokensPerTask: integer("max_tokens_per_task"),
-  dailyTokenLimit: integer("daily_token_limit"),
-  /** Works only in the console and may read and change witden's configuration (never its secrets). */
-  systemAdmin: boolean("system_admin").notNull().default(false),
-  status: text("status").notNull().default("active"),
-  configVersion: integer("config_version").notNull().default(1),
-  createdBy: text("created_by"),
-  createdAt: created(),
-  updatedAt: updated(),
-});
+export const roles = pgTable(
+  "roles",
+  {
+    id: id(),
+    name: text("name").notNull(),
+    handle: text("handle").notNull().unique(),
+    avatarUrl: text("avatar_url"),
+    /** Badge colour (#rrggbb); null = derived from the id. */
+    color: text("color"),
+    description: text("description").notNull().default(""),
+    systemPrompt: text("system_prompt").notNull().default(""),
+    modelConfigId: text("model_config_id").references(() => modelConfigs.id),
+    modelParams: json<Json>("model_params").notNull().default({}),
+    instanceId: text("instance_id").references(() => computerInstances.id),
+    allowedTools: json<string[]>("allowed_tools").notNull().default([]),
+    allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
+    knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
+    approvalRequired: json<string[]>("approval_required").notNull().default([]),
+    maxSteps: integer("max_steps"),
+    maxTokensPerTask: integer("max_tokens_per_task"),
+    dailyTokenLimit: integer("daily_token_limit"),
+    /**
+     * The built-in system administrator (exactly one, created by the platform, services/system-admin.ts): works
+     * only in the console and may read and change witden's configuration (never its secrets).
+     */
+    systemAdmin: boolean("system_admin").notNull().default(false),
+    status: text("status").notNull().default("active"),
+    configVersion: integer("config_version").notNull().default(1),
+    createdBy: text("created_by"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("ux_single_system_admin").on(t.systemAdmin).where(sql`${t.systemAdmin}`)],
+);
 
 export const knowledgeSpaces = pgTable("knowledge_spaces", {
   id: id(),

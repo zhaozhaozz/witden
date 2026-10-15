@@ -1,7 +1,8 @@
 /**
  * First run: once a person has connected a model service and picked a model, everything else needed to start
- * is created in one go — a desktop computer, a system administrator role and an assistant that works on that
- * computer — with a DM to the assistant. Existing pieces are reused, so finishing twice creates nothing twice.
+ * is prepared in one go — a desktop computer and an assistant that works on it, and the built-in system
+ * administrator gets that model if it has none — with a DM to the assistant. Existing pieces are reused, so
+ * finishing twice creates nothing twice.
  */
 import { and, eq, sql } from "drizzle-orm";
 import { settings } from "../config.js";
@@ -13,6 +14,7 @@ import { createInstance, instancesNotDeleted, recordAudit } from "./instances.js
 import { isSystemOne, modelLabel, modelWithProvider, unusableReason } from "./model-configs.js";
 import { getSetting, putSetting } from "./platform-settings.js";
 import { createRole } from "./roles.js";
+import { ensureSystemAdmin } from "./system-admin.js";
 import { seedBuiltinTemplates } from "./templates.js";
 import { getOrCreateDm } from "./topics.js";
 
@@ -34,17 +36,13 @@ const ASSISTANT = {
     "你是团队的通用助手，用中文交流。先弄清要做什么再动手；需要上网、查资料或操作网页时，使用你的桌面电脑里的浏览器。做完后说明结果，产出的文件用 share_file 分享到对话里。",
 };
 
-const ADMIN = {
-  name: "系统管理员",
-  handle: "admin",
-  description: "帮你配置 witden：角色、模型、虚拟电脑、通讯接入和知识。",
-  systemPrompt: "你是 witden 的系统管理员，用中文和管理员沟通，按他们的要求配置 witden。",
-};
-
-/** The guide is offered on a fresh platform: nothing set up yet and nobody finished or skipped it. */
+/** The guide is offered on a fresh platform: no roles but the built-in one, and nobody finished or skipped it. */
 export async function setupStatus(db: Db): Promise<{ needed: boolean; setting: SetupSetting | null }> {
   const setting = await getSetting<SetupSetting>(db, SETUP);
-  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(roles);
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(roles)
+    .where(eq(roles.systemAdmin, false));
   return { needed: !setting && count === 0, setting };
 }
 
@@ -93,16 +91,12 @@ export async function finishSetup(db: Db, user: User, modelConfigId: string): Pr
     await recordAudit(db, user.id, "instance.create", computer, { template: template.name, setup: true });
   }
 
+  let admin = await ensureSystemAdmin(db);
+  const adminModel = await modelWithProvider(db, admin.modelConfigId);
+  if (!adminModel || unusableReason(adminModel.model, adminModel.provider))
+    [admin] = await db.update(roles).set({ modelConfigId }).where(eq(roles.id, admin.id)).returning();
   const existing = await db.select().from(roles);
   const handleTaken = async (h: string) => existing.some((r) => r.handle === h);
-  const admin =
-    existing.find((r) => r.systemAdmin) ??
-    (await createRole(db, user, {
-      ...ADMIN,
-      handle: await free(handleTaken, ADMIN.handle),
-      systemAdmin: true,
-      modelConfigId,
-    }));
   const assistant =
     existing.find((r) => !r.systemAdmin && r.status === "active") ??
     (await createRole(db, user, {

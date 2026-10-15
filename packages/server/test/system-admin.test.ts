@@ -1,10 +1,16 @@
-/** A system administrator role: configures witden through the console API, only in the console, never secrets. */
+/**
+ * The built-in system administrator: always there and only one; configures witden through the console API,
+ * only in the console, never secrets.
+ */
+
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildEnvelope } from "../src/agent/dispatch.js";
 import { toolsFor } from "../src/agent/tools.js";
 import { db } from "../src/db/client.js";
-import type { Role } from "../src/db/schema.js";
+import { type Role, roles } from "../src/db/schema.js";
 import { runtime } from "../src/runtime.js";
+import { ensureSystemAdmin } from "../src/services/system-admin.js";
 import { call, lastToolResult, reply } from "./support/harness.js";
 import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -15,12 +21,15 @@ let topicId: string;
 
 beforeEach(async () => {
   w = await buildWorld();
-  const created = await w.api("POST", "/api/roles", {
+  // created by the platform at start, before any model existed
+  const builtIn = (await w.api("GET", "/api/roles", { token: w.adminToken })).body.filter((r: any) => r.system_admin);
+  expect(builtIn).toHaveLength(1);
+  adminId = builtIn[0].id;
+  const configured = await w.api("PATCH", `/api/roles/${adminId}`, {
     token: w.adminToken,
-    json: { name: "Admin", handle: "admin", system_admin: true, model_config_id: w.ids.model },
+    json: { model_config_id: w.ids.model },
   });
-  expect(created.status, created.raw).toBe(200);
-  adminId = created.body.id;
+  expect(configured.status, configured.raw).toBe(200);
   topicId = (
     await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Setup", role_ids: [adminId, w.ids.dev] } })
   ).body.id;
@@ -42,10 +51,32 @@ async function runAdmin(calls: ReturnType<typeof call>[]): Promise<string[]> {
 }
 
 describe("system administrator role", () => {
-  it("is created with the configuration tools only and needs no computer", async () => {
+  it("is built in with the configuration tools only, needs no computer, and cannot be added, disabled or copied", async () => {
     const role = (await w.api("GET", `/api/roles/${adminId}`, { token: w.adminToken })).body;
-    expect(role).toMatchObject({ system_admin: true, allowed_tools: ["config"], instance: null });
+    expect(role).toMatchObject({ handle: "admin", system_admin: true, allowed_tools: ["config"], instance: null });
     expect(role.warnings.join()).not.toContain("computer");
+    const refusals = [
+      await w.api("POST", "/api/roles", {
+        token: w.adminToken,
+        json: { name: "A2", handle: "a2", system_admin: true },
+      }),
+      await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { system_admin: true } }),
+      await w.api("PATCH", `/api/roles/${adminId}`, { token: w.adminToken, json: { system_admin: false } }),
+      await w.api("POST", `/api/roles/${adminId}/disable`, { token: w.adminToken, json: { on_tasks: "cancel" } }),
+      await w.api("POST", `/api/roles/${adminId}/copy`, { token: w.adminToken, json: { handle: "admin-2" } }),
+    ];
+    for (const r of refusals) {
+      expect(r.status, r.raw).toBe(400);
+      expect(r.raw).toContain("built in");
+    }
+    const roles = (await w.api("GET", "/api/roles", { token: w.adminToken })).body;
+    expect(roles.filter((r: any) => r.system_admin).map((r: any) => [r.id, r.status])).toEqual([[adminId, "active"]]);
+    // people still configure it like any role
+    const renamed = await w.api("PATCH", `/api/roles/${adminId}`, {
+      token: w.adminToken,
+      json: { name: "管家", system_admin: true },
+    });
+    expect(renamed.body.name).toBe("管家");
     const [admin] = (await db().query.roles.findMany()).filter((r: Role) => r.id === adminId);
     const [dev] = (await db().query.roles.findMany()).filter((r: Role) => r.id === w.ids.dev);
     const names = (r: Role) => toolsFor(buildEnvelope(r, null)).map((t) => t.name);
@@ -66,6 +97,13 @@ describe("system administrator role", () => {
     const texts = (await w.messages(dm.id)).map((m: any) => m.content);
     expect(texts).toContain("ok");
     expect(texts.some((t: string) => t.includes("invite the role first"))).toBe(false);
+  });
+
+  it("is put back by the platform if it is ever missing, with the model most roles use", async () => {
+    await db().delete(roles).where(eq(roles.id, adminId));
+    const again = await ensureSystemAdmin(db());
+    expect(again).toMatchObject({ handle: "admin", systemAdmin: true, modelConfigId: w.ids.model, status: "active" });
+    expect((await ensureSystemAdmin(db())).id).toBe(again.id);
   });
 
   it("reads and changes the configuration as the person who asked, with an audit trail", async () => {
@@ -162,12 +200,6 @@ describe("system administrator role", () => {
     });
     expect(bot.status).toBe(400);
     expect(bot.raw).toContain("system administrator");
-    const promote = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
-      token: w.adminToken,
-      json: { system_admin: true },
-    });
-    expect(promote.status).toBe(400);
-    expect(promote.raw).toContain("stands for");
 
     // not in a topic shared with a Slack channel
     await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
