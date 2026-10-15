@@ -455,6 +455,9 @@ textarea.prompt {
 .form-row > .field {
   flex: 1;
 }
+.form-row-model > .field:first-child {
+  flex: 2;
+}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));

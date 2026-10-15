@@ -418,32 +418,67 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           </Section>
 
           <Section title="模型">
-            <Field
-              label="模型"
-              hint={
-                selectedModel && "usable" in selectedModel && !selectedModel.usable
-                  ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
-                  : "按服务商分组；在「模型」页添加服务商和模型。"
-              }
-            >
-              <select value={draft.model_config_id} onChange={(e) => pickModel(e.target.value)}>
-                <option value="">未配置</option>
-                {modelGroups.map(([provider, list]) => (
-                  <optgroup key={provider} label={provider || "其他"}>
-                    {list.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                        {m.name !== m.model ? `（${m.model}）` : ""}
-                        {m.usable ? "" : " · 不可用"}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-                {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
-                  <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
-                ) : null}
-              </select>
-            </Field>
+            {/* The model and how much it thinks belong together: one row. */}
+            <div className="form-row form-row-model">
+              <Field
+                label="模型"
+                hint={
+                  selectedModel && "usable" in selectedModel && !selectedModel.usable
+                    ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
+                    : "按服务商分组；在「模型」页添加服务商和模型。"
+                }
+              >
+                <select value={draft.model_config_id} onChange={(e) => pickModel(e.target.value)}>
+                  <option value="">未配置</option>
+                  {modelGroups.map(([provider, list]) => (
+                    <optgroup key={provider} label={provider || "其他"}>
+                      {list.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                          {m.name !== m.model ? `（${m.model}）` : ""}
+                          {m.usable ? "" : " · 不可用"}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
+                    <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
+                  ) : null}
+                </select>
+              </Field>
+              <Field
+                label="思考程度（effort）"
+                hint={
+                  !draft.model_config_id
+                    ? "先选择模型"
+                    : effort.reported
+                      ? effort.levels.length
+                        ? "模型服务报告的等级；越高思考越充分，也越慢、越耗 token"
+                        : "模型服务报告这个模型没有思考程度设置"
+                      : "服务未报告支持的等级，以下为常见等级，不支持时请求会出错；在“模型”页检测能力可获取"
+                }
+              >
+                <select
+                  value={draft.reasoning_effort}
+                  disabled={!draft.model_config_id || !effort.levels.length}
+                  onChange={(e) => set("reasoning_effort", e.target.value)}
+                >
+                  <option value="">
+                    默认（由模型决定{effort.default ? `，${EFFORT_LABEL[effort.default] ?? effort.default}` : ""}）
+                  </option>
+                  {effort.levels.map((l) => (
+                    <option key={l} value={l}>
+                      {EFFORT_LABEL[l] ?? l}
+                    </option>
+                  ))}
+                  {draft.reasoning_effort && !effort.levels.includes(draft.reasoning_effort) ? (
+                    <option value={draft.reasoning_effort}>
+                      {EFFORT_LABEL[draft.reasoning_effort] ?? draft.reasoning_effort}（这个模型不支持）
+                    </option>
+                  ) : null}
+                </select>
+              </Field>
+            </div>
             {selectedModel ? (
               <div className="caps">
                 <Capability
@@ -464,38 +499,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 />
               </div>
             ) : null}
-            <Field
-              label="思考程度（effort）"
-              hint={
-                !draft.model_config_id
-                  ? "先选择模型。"
-                  : effort.reported
-                    ? effort.levels.length
-                      ? "这些是模型服务报告的、这个模型支持的等级。等级越高，思考越充分，用时和 token 也越多。"
-                      : "模型服务报告这个模型没有思考程度设置。"
-                    : "模型服务没有报告这个模型支持哪些等级，下面是常见等级，模型不支持时请求会出错。在“模型”页对它点击“检测能力”可以获取支持的等级（Anthropic、OpenRouter 等服务会报告）。"
-              }
-            >
-              <select
-                value={draft.reasoning_effort}
-                disabled={!draft.model_config_id || !effort.levels.length}
-                onChange={(e) => set("reasoning_effort", e.target.value)}
-              >
-                <option value="">
-                  默认（由模型决定{effort.default ? `，${EFFORT_LABEL[effort.default] ?? effort.default}` : ""}）
-                </option>
-                {effort.levels.map((l) => (
-                  <option key={l} value={l}>
-                    {EFFORT_LABEL[l] ?? l}
-                  </option>
-                ))}
-                {draft.reasoning_effort && !effort.levels.includes(draft.reasoning_effort) ? (
-                  <option value={draft.reasoning_effort}>
-                    {EFFORT_LABEL[draft.reasoning_effort] ?? draft.reasoning_effort}（这个模型不支持）
-                  </option>
-                ) : null}
-              </select>
-            </Field>
             <Field label="模型参数（JSON，可选）" hint='例如 {"temperature": 0.2}'>
               <textarea
                 className="mono"
