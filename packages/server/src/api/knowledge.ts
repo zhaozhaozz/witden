@@ -13,8 +13,7 @@ import { authed, body, params, query, row } from "./http.js";
 
 async function canReadMemory(db: Db, user: User, m: Memory): Promise<boolean> {
   let allowed = false;
-  if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
-  else if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_READ, m.spaceId);
+  if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_READ, m.spaceId);
   else if (m.scope === "topic") {
     const [topic] = m.topicId ? await db.select().from(topics).where(eq(topics.id, m.topicId)).limit(1) : [];
     allowed = !!topic && (await topicSvc.canView(db, user, topic));
@@ -93,11 +92,8 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       const b = body(req);
       const base = { id: newId("mem"), content: String(b.content ?? ""), createdByType: "user", createdById: user.id };
       let values: typeof memories.$inferInsert;
-      if (b.scope === "role") {
-        await requirePerm(db, user, Perm.ROLE_MANAGE);
-        if (!b.roleId) throw new BadRequest("role_id is required");
-        values = { ...base, scope: "role", roleId: b.roleId, labels: [PUBLIC] };
-      } else if (b.scope === "team") {
+      // Job knowledge per role is gone (migration 0022 moved it into the role prompts): the prompt says it.
+      if (b.scope === "team") {
         if (
           !b.spaceId ||
           !(await db.select().from(knowledgeSpaces).where(eq(knowledgeSpaces.id, b.spaceId)).limit(1)).length
@@ -111,7 +107,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         values = { ...base, scope: "topic", topicId: topic.id, labels: [topicLabel(topic.id)] };
       } else if (b.scope === "user") {
         values = { ...base, scope: "user", userId: user.id, labels: [userLabel(user.id)] };
-      } else throw new BadRequest("scope must be role, team, topic or user");
+      } else throw new BadRequest("scope must be team, topic or user (a role's job knowledge belongs in its prompt)");
       const [m] = await db.insert(memories).values(values).returning();
       await audit(db, "memory.create", {
         actorType: "user",
@@ -134,7 +130,6 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       if (!m || m.deletedAt) throw new NotFound("memory not found");
       let allowed = false;
       if (m.scope === "user") allowed = m.userId === user.id;
-      else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
       else if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
       else if (m.scope === "topic" && m.topicId)
         allowed =

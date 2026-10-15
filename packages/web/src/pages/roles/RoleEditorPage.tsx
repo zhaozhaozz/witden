@@ -1,17 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
-import type {
-  AgentSession,
-  Instance,
-  KnowledgeSpace,
-  Memory,
-  ModelConfig,
-  Role,
-  RoleImpact,
-  ToolGroup,
-} from "../../api/types";
-import { fmtNumber, fmtRelative, genericStatus, instanceStatus } from "../../lib/format";
+import type { AgentSession, Instance, KnowledgeSpace, ModelConfig, Role, RoleImpact, ToolGroup } from "../../api/types";
+import { EFFORT_LABEL, effortChoices } from "../../lib/effort";
+import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
@@ -20,7 +12,6 @@ import {
   Capability,
   ColorPicker,
   ComputerBadge,
-  Empty,
   ErrorNote,
   Field,
   FieldGroup,
@@ -49,6 +40,8 @@ interface Draft {
   system_prompt: string;
   model_config_id: string;
   model_params: string;
+  /** "" = the model's default. */
+  reasoning_effort: string;
   instance_id: string;
   allowed_tools: string[];
   any_contact: boolean;
@@ -70,6 +63,7 @@ function toDraft(r: Role | null): Draft {
     system_prompt: r?.system_prompt ?? "",
     model_config_id: r?.model_config_id ?? "",
     model_params: r?.model_params && Object.keys(r.model_params).length ? JSON.stringify(r.model_params, null, 2) : "",
+    reasoning_effort: r?.reasoning_effort ?? "",
     instance_id: r?.instance_id ?? "",
     allowed_tools: r?.allowed_tools ?? [],
     any_contact: (r?.allowed_contacts ?? []).includes("*"),
@@ -104,6 +98,7 @@ function toBody(d: Draft): Record<string, unknown> {
     system_prompt: d.system_prompt,
     model_config_id: d.model_config_id || null,
     model_params: modelParams,
+    reasoning_effort: d.reasoning_effort || null,
     instance_id: d.instance_id || null,
     // Sorted (as the server stores them) so toggling back and forth does not count as a change.
     allowed_tools: [...d.allowed_tools].sort(),
@@ -194,6 +189,21 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     models.data?.find((m) => m.id === draft.model_config_id) ??
     (role?.model && role.model.id === draft.model_config_id ? role.model : null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const effortFor = (modelId: string) => {
+    const m = models.data?.find((x) => x.id === modelId);
+    return effortChoices(
+      m?.provider?.protocol,
+      m?.capabilities ?? (role?.model?.id === modelId ? role.model.capabilities : undefined),
+    );
+  };
+  const effort = effortFor(draft.model_config_id);
+  // Another model may not take the chosen level: fall back to its default.
+  const pickModel = (id: string) =>
+    setDraft((d) => ({
+      ...d,
+      model_config_id: id,
+      reasoning_effort: effortFor(id).levels.includes(d.reasoning_effort) ? d.reasoning_effort : "",
+    }));
 
   const save = async () => {
     if (!body) return;
@@ -354,10 +364,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               </Field>
             </div>
             <div className="form-row">
-              <FieldGroup
-                label="头像"
-                hint="从你自己的电脑选择 PNG、JPEG、GIF 或 WebP 图片（最大 1 MB），也可以填写图片地址"
-              >
+              <FieldGroup label="头像" hint="从你自己的电脑选择 PNG、JPEG、GIF 或 WebP 图片（最大 1 MB）">
                 <AvatarEditor
                   id={role?.id ?? (draft.handle || "new-role")}
                   name={draft.name || draft.handle || "?"}
@@ -397,7 +404,10 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           </Section>
 
           <Section title="工作方式">
-            <Field label="提示词" hint="职责、工作规则、沟通方式与行为约束。权限限制由系统执行，不依赖提示词。">
+            <Field
+              label="提示词"
+              hint="职责、工作规则、沟通方式与行为约束；需要角色长期记住的岗位知识（例如“发布前必须跑完 make check”）也写在这里。权限限制由系统执行，不依赖提示词。"
+            >
               <textarea
                 className="prompt"
                 rows={10}
@@ -416,7 +426,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   : "按服务商分组；在「模型」页添加服务商和模型。"
               }
             >
-              <select value={draft.model_config_id} onChange={(e) => set("model_config_id", e.target.value)}>
+              <select value={draft.model_config_id} onChange={(e) => pickModel(e.target.value)}>
                 <option value="">未配置</option>
                 {modelGroups.map(([provider, list]) => (
                   <optgroup key={provider} label={provider || "其他"}>
@@ -454,6 +464,38 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 />
               </div>
             ) : null}
+            <Field
+              label="思考程度（effort）"
+              hint={
+                !draft.model_config_id
+                  ? "先选择模型。"
+                  : effort.reported
+                    ? effort.levels.length
+                      ? "这些是模型服务报告的、这个模型支持的等级。等级越高，思考越充分，用时和 token 也越多。"
+                      : "模型服务报告这个模型没有思考程度设置。"
+                    : "模型服务没有报告这个模型支持哪些等级，下面是常见等级，模型不支持时请求会出错。在“模型”页对它点击“检测能力”可以获取支持的等级（Anthropic、OpenRouter 等服务会报告）。"
+              }
+            >
+              <select
+                value={draft.reasoning_effort}
+                disabled={!draft.model_config_id || !effort.levels.length}
+                onChange={(e) => set("reasoning_effort", e.target.value)}
+              >
+                <option value="">
+                  默认（由模型决定{effort.default ? `，${EFFORT_LABEL[effort.default] ?? effort.default}` : ""}）
+                </option>
+                {effort.levels.map((l) => (
+                  <option key={l} value={l}>
+                    {EFFORT_LABEL[l] ?? l}
+                  </option>
+                ))}
+                {draft.reasoning_effort && !effort.levels.includes(draft.reasoning_effort) ? (
+                  <option value={draft.reasoning_effort}>
+                    {EFFORT_LABEL[draft.reasoning_effort] ?? draft.reasoning_effort}（这个模型不支持）
+                  </option>
+                ) : null}
+              </select>
+            </Field>
             <Field label="模型参数（JSON，可选）" hint='例如 {"temperature": 0.2}'>
               <textarea
                 className="mono"
@@ -605,7 +647,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               </Section>
             ) : null}
             <RoleSessions role={role} />
-            <RoleMemories role={role} />
           </aside>
         ) : null}
       </div>
@@ -690,9 +731,7 @@ function CopyRoleDialog({
         if (out) onDone(out);
       }}
     >
-      <p className="muted small">
-        新角色拥有相同的岗位配置和岗位知识，但身份独立：话题记忆、私信和进行中的任务不会被复制。
-      </p>
+      <p className="muted small">新角色拥有相同的提示词和设置，但身份独立：话题记忆、私信和进行中的任务不会被复制。</p>
       <div className="form-row">
         <Field label="名称">
           <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -786,74 +825,7 @@ function RoleSessions({ role }: { role: Role }) {
   );
 }
 
-function RoleMemories({ role }: { role: Role }) {
-  const { run, busy } = useAction();
-  const { confirm } = useFeedback();
-  const [text, setText] = useState("");
-  const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "role", role_id: role.id }), [role.id]);
-  return (
-    <Section title="岗位知识">
-      <p className="small muted">
-        岗位知识跟随角色，在它参与的所有话题中都可使用；不要写入只属于某个人或某个话题的私密信息。
-      </p>
-      <form
-        className="note-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const m = await run(
-            () => api.post<Memory>("/api/memories", { scope: "role", role_id: role.id, content: text.trim() }),
-            "已添加",
-          );
-          if (m) {
-            setText("");
-            res.setData((p) => [m, ...(p ?? [])]);
-          }
-        }}
-      >
-        <textarea
-          rows={2}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="例如：发布前必须跑完 make check"
-        />
-        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
-          添加
-        </button>
-      </form>
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <ul className="memory-list">
-              {rows.map((m) => (
-                <li key={m.id}>
-                  <div className="memory-text">{m.content}</div>
-                  <div className="small muted">
-                    {m.created_by_type === "role" ? "角色自己记录" : "成员添加"} · {fmtRelative(m.created_at)}
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={async () => {
-                        if (!(await confirm({ title: "删除这条岗位知识", danger: true, confirmLabel: "删除" }))) return;
-                        const ok = await run(() => api.del(`/api/memories/${m.id}`));
-                        if (ok) res.setData((p) => p?.filter((x) => x.id !== m.id));
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty title="还没有岗位知识" />
-          )
-        }
-      </Loaded>
-    </Section>
-  );
-}
-
-/** Upload an image (stored by the server, saved with the role) or type an image URL. */
+/** Upload an image from one's own computer (stored by the server, saved with the role). */
 function AvatarEditor({
   id,
   name,
@@ -898,12 +870,6 @@ function AvatarEditor({
             }}
           />
         </div>
-        <input
-          className="mono"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="或填写图片地址 https://…"
-        />
       </div>
     </div>
   );

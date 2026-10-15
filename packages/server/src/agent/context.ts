@@ -11,7 +11,6 @@ import {
   externalConversations,
   externalThreadLinks,
   type Message,
-  memories,
   messages,
   type Role,
   type Task,
@@ -64,11 +63,6 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
   const [requester] = task.requesterUserId
     ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
     : [];
-  const knowledge = await db
-    .select()
-    .from(memories)
-    .where(and(eq(memories.scope, "role"), eq(memories.roleId, role.id), isNull(memories.deletedAt)))
-    .limit(20);
   const prompt = task.roleSnapshot.system_prompt ?? role.systemPrompt;
   const desktop = inst?.spec.desktop;
   const parts = [
@@ -88,7 +82,6 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
     PLATFORM_RULES,
     role.systemAdmin ? ADMIN_RULES : "",
   ];
-  if (knowledge.length) parts.push(`## Job knowledge\n${knowledge.map((m) => `- ${m.content}`).join("\n")}`);
   return parts.filter(Boolean).join("\n");
 }
 

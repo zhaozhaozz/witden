@@ -202,7 +202,11 @@ export class TaskRunner {
       }
       let model: ChatModel;
       try {
-        model = await models.chatModelFor(tx, cfg);
+        // The role's own parameters and effort, as they were when the task was created.
+        model = await models.chatModelFor(tx, cfg, {
+          params: task.roleSnapshot.model_params,
+          effort: task.roleSnapshot.reasoning_effort,
+        });
       } catch (err) {
         return this.failIn(tx, task, (err as Error).message);
       }

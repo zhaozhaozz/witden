@@ -476,6 +476,8 @@ export interface Role {
   max_steps: number | null;
   max_tokens_per_task: number | null;
   daily_token_limit: number | null;
+  /** How much the model thinks (null: the model's default). */
+  reasoning_effort: string | null;
   /** Works only in the console and may read and change witden's configuration (never its secrets). */
   system_admin: boolean;
   status: "active" | "disabled";
@@ -521,6 +523,8 @@ export interface Capabilities {
   latency_ms?: number;
   /** System One models: answered the check question correctly. */
   decide?: boolean | null;
+  /** Reasoning effort levels the model's service reported at the last check (null: none reported). */
+  effort?: { levels: string[]; default: string | null; param: string } | null;
 }
 
 /** One model offered by a provider (roles, grants and usage refer to these). */

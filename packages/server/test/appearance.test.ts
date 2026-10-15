@@ -28,13 +28,14 @@ function multipart(name: string, content: Buffer, type: string) {
 }
 
 describe("appearance", () => {
-  it("roles take a colour and an avatar URL; bad values are refused", async () => {
-    const ok = await admin("PATCH", `/api/roles/${w.ids.dev}`, {
-      color: "#FF8800",
-      avatar_url: "https://img.example/a.png",
-    });
+  it("roles take a colour; avatars only as uploaded images; bad values are refused", async () => {
+    const ok = await admin("PATCH", `/api/roles/${w.ids.dev}`, { color: "#FF8800" });
     expect(ok.status, ok.raw).toBe(200);
-    expect([ok.body.color, ok.body.avatar_url]).toEqual(["#ff8800", "https://img.example/a.png"]);
+    expect(ok.body.color).toBe("#ff8800");
+    // an image address elsewhere is refused: avatars are uploaded
+    const url = await admin("PATCH", `/api/roles/${w.ids.dev}`, { avatar_url: "https://img.example/a.png" });
+    expect(url.status).toBe(400);
+    expect(url.raw).toContain("upload the image");
     expect((await admin("PATCH", `/api/roles/${w.ids.dev}`, { color: "red" })).status).toBe(400);
     expect((await admin("PATCH", `/api/roles/${w.ids.dev}`, { avatar_url: "javascript:alert(1)" })).status).toBe(400);
     expect((await admin("PATCH", `/api/roles/${w.ids.dev}`, { color: null })).body.color).toBeNull();

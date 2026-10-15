@@ -30,8 +30,7 @@ const NOTE_ZH: Record<string, string> = {
     "执行中和排队中的任务继续使用开始时的提示词、模型和虚拟电脑。",
   "Changing the computer does not move files, installed software or logins; tasks pinned to the old computer must be cancelled or re-run explicitly.":
     "更换虚拟电脑不会迁移文件、已安装的软件和登录状态；已固定在旧虚拟电脑上的任务需要明确取消或重新执行。",
-  "Agent sessions and topic notes stay with their topics; job knowledge stays with the role.":
-    "角色会话和话题记忆留在各自话题中；岗位知识跟随角色。",
+  "Agent sessions and topic notes stay with their topics.": "角色会话和话题记忆留在各自话题中。",
 };
 
 const FIELD_ZH: Record<string, string> = {
@@ -63,7 +62,7 @@ export function ImpactView({ impact }: { impact: RoleImpact }) {
         </div>
         <div>
           <strong>{impact.memories}</strong>
-          <span>岗位记忆</span>
+          <span>角色记下的笔记</span>
         </div>
       </div>
       {impact.active_tasks.length ? (

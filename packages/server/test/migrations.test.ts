@@ -448,3 +448,50 @@ describe("0021_role_profile_tool", () => {
     await db.close();
   });
 });
+
+describe("0022_role_settings", () => {
+  it("moves job knowledge into the role prompts, drops avatars from elsewhere, adds reasoning effort", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0022")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, system_prompt, avatar_url) values
+        ('role_dev', 'Dev', 'dev', 'You build things.', 'https://img.example/a.png'),
+        ('role_ops', 'Ops', 'ops', '', '/api/avatars/${"a".repeat(64)}.png'),
+        ('role_qa', 'QA', 'qa', 'You test.', null);
+      insert into memories (id, scope, role_id, content, created_at, deleted_at) values
+        ('mem_2', 'role', 'role_dev', 'run make check before a release', '2026-10-14 09:00', null),
+        ('mem_1', 'role', 'role_dev', 'staging is at staging.example', '2026-10-14 08:00', null),
+        ('mem_x', 'role', 'role_dev', 'deleted note', '2026-10-14 07:00', '2026-10-14 07:30'),
+        ('mem_3', 'role', 'role_ops', 'pager rota is in the wiki', '2026-10-14 08:00', null),
+        ('mem_t', 'topic', 'role_dev', 'a topic note stays', '2026-10-14 08:00', null);
+    `);
+    await apply(db, "0022_role_settings");
+    const roles = (
+      await db.query<{ id: string; system_prompt: string; avatar_url: string | null; reasoning_effort: null }>(
+        "select id, system_prompt, avatar_url, reasoning_effort from roles order by id",
+      )
+    ).rows;
+    expect(roles).toEqual([
+      {
+        id: "role_dev",
+        system_prompt:
+          "You build things.\n\n## 岗位知识\n- staging is at staging.example\n- run make check before a release",
+        avatar_url: null,
+        reasoning_effort: null,
+      },
+      {
+        id: "role_ops",
+        system_prompt: "## 岗位知识\n- pager rota is in the wiki",
+        avatar_url: `/api/avatars/${"a".repeat(64)}.png`,
+        reasoning_effort: null,
+      },
+      { id: "role_qa", system_prompt: "You test.", avatar_url: null, reasoning_effort: null },
+    ]);
+    expect((await db.query("select id from memories order by id")).rows).toEqual([{ id: "mem_t" }]);
+    await db.close();
+  });
+});

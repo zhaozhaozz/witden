@@ -301,6 +301,11 @@ function ModelRow({
         {caps.latency_ms !== undefined && (caps.chat || caps.decide) ? (
           <div className="small muted">响应 {fmtLatency(caps.latency_ms)}</div>
         ) : null}
+        {caps.effort ? (
+          <div className="small muted">
+            {caps.effort.levels.length ? `思考程度：${caps.effort.levels.join(" · ")}` : "没有思考程度设置"}
+          </div>
+        ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
       </td>
       <td>{m.enabled ? <StatusChip meta={genericStatus(m.status)} compact /> : <Tag>已停用</Tag>}</td>

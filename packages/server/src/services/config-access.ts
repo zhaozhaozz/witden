@@ -38,7 +38,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       {
         method: "POST",
         path: "/api/roles",
-        note: 'name, handle, description, system_prompt, model_config_id, instance_id, allowed_tools (groups), approval_required (groups or tools), allowed_contacts (role ids or "*"), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color',
+        note: 'name, handle, description, system_prompt, model_config_id, reasoning_effort (one of the levels in the model\'s capabilities.effort, or null for its default), model_params, instance_id, allowed_tools (groups), approval_required (groups or tools), allowed_contacts (role ids or "*"), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color',
       },
       { method: "PATCH", path: "/api/roles/:id", note: "any of the fields above" },
       { method: "POST", path: "/api/roles/:id/copy", note: "name, handle" },
@@ -127,8 +127,8 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
     endpoints: [
       { method: "GET", path: "/api/knowledge-spaces" },
       { method: "POST", path: "/api/knowledge-spaces", note: "name, description" },
-      { method: "GET", path: "/api/memories", note: "?scope=role&role_id= (job knowledge) or ?scope=team&space_id=" },
-      { method: "POST", path: "/api/memories", note: "scope: role (role_id) | team (space_id), content" },
+      { method: "GET", path: "/api/memories", note: "?scope=team&space_id= (team knowledge)" },
+      { method: "POST", path: "/api/memories", note: "scope: team, space_id, content" },
       { method: "DELETE", path: "/api/memories/:id" },
     ],
   },
@@ -147,8 +147,8 @@ const ENDPOINTS = AREAS.flatMap((a) => a.endpoints).map((e) => ({
   pattern: new RegExp(`^${e.path.replace(/:[a-z_]+/g, "[^/]+")}$`),
 }));
 
-/** Memories other than job knowledge (topic notes, private notes) are conversation material, not configuration. */
-const MEMORY_SCOPES = new Set(["role", "team"]);
+/** Only team knowledge is configuration; topic notes and private notes are conversation material. */
+const MEMORY_SCOPES = new Set(["team"]);
 
 /** Fields that carry a secret. A person enters these in the console; they never pass through a role. */
 const SECRET_KEYS = new Set([
@@ -259,7 +259,9 @@ async function guard(method: Method, pathname: string, query: URLSearchParams, b
   if (pathname === "/api/memories") {
     const scope = method === "GET" ? query.get("scope") : (body as Record<string, unknown> | null)?.scope;
     if (!MEMORY_SCOPES.has(String(scope)))
-      throw new Forbidden("only job knowledge (scope role) and team knowledge (scope team) are configuration");
+      throw new Forbidden(
+        "only team knowledge (scope team) is configuration; a role's job knowledge belongs in its prompt",
+      );
   }
 }
 

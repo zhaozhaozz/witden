@@ -245,6 +245,8 @@ export const roles = pgTable(
     systemPrompt: text("system_prompt").notNull().default(""),
     modelConfigId: text("model_config_id").references(() => modelConfigs.id),
     modelParams: json<Json>("model_params").notNull().default({}),
+    /** How much the model thinks (services/effort.ts); null: the model's default. */
+    reasoningEffort: text("reasoning_effort"),
     instanceId: text("instance_id").references(() => computerInstances.id),
     allowedTools: json<string[]>("allowed_tools").notNull().default([]),
     allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),

@@ -22,6 +22,7 @@ import {
 import { BadRequest, Conflict, type ModelError, NotFound } from "../errors.js";
 import { secretBox } from "../security/crypto.js";
 import { audit } from "./audit.js";
+import { type EffortInfo, withEffort } from "./effort.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, LAYA_BOOTSTRAP, putSetting } from "./platform-settings.js";
 
 export const PROTOCOLS = new Set(["openai", "anthropic", "systemone"]);
@@ -275,11 +276,19 @@ async function usableProvider(db: Db, m: ModelConfig): Promise<ModelProvider> {
   return provider;
 }
 
-export async function chatModelFor(db: Db, m: ModelConfig): Promise<ChatModel> {
+/** What a role adds to its model's own settings: its model parameters and reasoning effort. */
+export interface RoleModelOptions {
+  params?: Record<string, any> | null;
+  effort?: string | null;
+}
+
+export async function chatModelFor(db: Db, m: ModelConfig, role: RoleModelOptions = {}): Promise<ChatModel> {
   const provider = await usableProvider(db, m);
   if (isSystemOne(provider))
     throw new BadRequest(`${modelLabel(m, provider)} is a System One decision model: it cannot chat`);
-  return modelFactory(m, provider, apiKeyOf(provider));
+  let params: Record<string, any> = { ...(m.params ?? {}), ...(role.params ?? {}) };
+  if (role.effort) params = withEffort(provider.protocol, m.capabilities, role.effort, params);
+  return modelFactory({ ...m, params }, provider, apiKeyOf(provider));
 }
 
 export async function decisionModelFor(db: Db, m: ModelConfig): Promise<DecisionModel> {
@@ -297,12 +306,23 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
   const caps = isSystemOne(provider)
     ? await probeDecisionModel(await decisionModelFor(db, m))
     : await probeCapabilities(await chatModelFor(db, m));
+  if (!isSystemOne(provider)) caps.effort = await reportedEffort(provider, m);
   const [row] = await db
     .update(modelConfigs)
     .set({ capabilities: caps, status: (caps.chat ?? caps.decide) ? "ok" : "error" })
     .where(eq(modelConfigs.id, m.id))
     .returning();
   return row;
+}
+
+/** The effort levels the service reports for this model (null: it reports none, or could not be asked now). */
+async function reportedEffort(provider: ModelProvider, m: ModelConfig): Promise<EffortInfo | null> {
+  try {
+    const remote = await listModels(provider.protocol, provider.baseUrl, apiKeyOf(provider));
+    return remote.find((r) => r.id === m.model)?.effort ?? null;
+  } catch {
+    return (m.capabilities?.effort as EffortInfo | undefined) ?? null;
+  }
 }
 
 /**

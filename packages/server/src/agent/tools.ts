@@ -612,11 +612,6 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
   for (const m of await db
     .select()
     .from(memories)
-    .where(and(live, eq(memories.scope, "role"), eq(memories.roleId, ctx.roleId))))
-    rows.push(["role knowledge", m]);
-  for (const m of await db
-    .select()
-    .from(memories)
     .where(and(live, eq(memories.scope, "topic"), eq(memories.topicId, topic.id))))
     rows.push(["this topic", m]);
   for (const spaceId of task.envelope.spaces ?? []) {

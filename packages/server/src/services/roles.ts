@@ -23,7 +23,8 @@ import {
 import { BadRequest, Conflict, NotFound } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
-import { getProvider, isSystemOne } from "./model-configs.js";
+import { EFFORT_LEVELS, effortChoices } from "./effort.js";
+import { getProvider, isSystemOne, modelWithProvider } from "./model-configs.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
@@ -34,6 +35,7 @@ const BEHAVIOUR_FIELDS = new Set([
   "instanceId",
   "allowedTools",
   "systemAdmin",
+  "reasoningEffort",
 ]);
 /** Field names as the REST API spells them. */
 const apiName = (field: string) => field.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -94,6 +96,29 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
       await requirePerm(db, user, Perm.INSTANCE_MANAGE, inst.id);
       out.instanceId = inst.id;
     } else out.instanceId = null;
+  }
+  if ("reasoningEffort" in data) {
+    const effort = data.reasoningEffort ? String(data.reasoningEffort) : null;
+    if (effort && !EFFORT_LEVELS.includes(effort))
+      throw new BadRequest(
+        `reasoning_effort must be one of ${EFFORT_LEVELS.join(", ")}, or null for the model's default`,
+      );
+    out.reasoningEffort = effort;
+  }
+  // The effort must be one the role's model takes (as reported by its service, or the common levels).
+  const effort = out.reasoningEffort !== undefined ? out.reasoningEffort : current?.reasoningEffort;
+  const modelId = out.modelConfigId !== undefined ? out.modelConfigId : current?.modelConfigId;
+  if (effort && modelId && ("reasoningEffort" in data || "modelConfigId" in data)) {
+    const found = await modelWithProvider(db, modelId);
+    if (found) {
+      const { levels, reported } = effortChoices(found.provider.protocol, found.model.capabilities);
+      if (!levels.includes(effort))
+        throw new BadRequest(
+          reported
+            ? `${found.model.name} takes effort ${levels.join(", ") || "(none: it has no effort setting)"}, not ${effort}`
+            : `${effort} is not an effort level for ${found.provider.protocol} models; use ${levels.join(", ")}`,
+        );
+    }
   }
   // The system administrator is built in (services/system-admin.ts): no role becomes one or stops being one.
   if ("systemAdmin" in data && !!data.systemAdmin !== (current?.systemAdmin ?? false))
@@ -181,7 +206,7 @@ export async function impact(db: Db, role: Role) {
     notes: [
       "Running and queued tasks keep the prompt, model and computer they started with.",
       "Changing the computer does not move files, installed software or logins; tasks pinned to the old computer must be cancelled or re-run explicitly.",
-      "Agent sessions and topic notes stay with their topics; job knowledge stays with the role.",
+      "Agent sessions and topic notes stay with their topics.",
     ],
   };
 }
@@ -226,7 +251,7 @@ export async function updateRole(db: Db, user: User, role: Role, input: Record<s
   return { role: updated, changes: changes.map(apiName), impact: report };
 }
 
-/** Same job on another computer: independent identity, own sessions (job knowledge is copied). */
+/** Same job on another computer: independent identity and sessions, the same prompt and settings. */
 export async function copyRole(
   db: Db,
   user: User,
@@ -245,6 +270,7 @@ export async function copyRole(
     systemPrompt: role.systemPrompt,
     modelConfigId: role.modelConfigId,
     modelParams: role.modelParams,
+    reasoningEffort: role.reasoningEffort,
     instanceId,
     allowedTools: role.allowedTools,
     allowedContacts: role.allowedContacts,
@@ -254,20 +280,6 @@ export async function copyRole(
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,
   });
-  for (const m of await db
-    .select()
-    .from(memories)
-    .where(and(eq(memories.scope, "role"), eq(memories.roleId, role.id), isNull(memories.deletedAt)))) {
-    await db.insert(memories).values({
-      id: newId("mem"),
-      scope: "role",
-      roleId: clone.id,
-      content: m.content,
-      labels: m.labels,
-      createdByType: "user",
-      createdById: user.id,
-    });
-  }
   return clone;
 }
 

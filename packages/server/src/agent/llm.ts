@@ -6,6 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { ModelError } from "../errors.js";
+import { anthropicEffort, type EffortInfo, gatewayEffort } from "../services/effort.js";
 
 export interface ToolCall {
   id: string;
@@ -373,6 +374,8 @@ export interface RemoteModel {
   id: string;
   /** Display name when the provider gives one. */
   name: string | null;
+  /** Reasoning effort levels, when the provider reports them (services/effort.ts). */
+  effort?: EffortInfo;
 }
 
 /**
@@ -407,7 +410,12 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
       const q = new URLSearchParams({ limit: "1000", ...(after ? { after_id: after } : {}) });
       const data = await request(`${base}/v1/models?${q}`, { headers }, 30_000);
       for (const m of data?.data ?? []) {
-        if (m?.id) found.set(String(m.id), { id: String(m.id), name: m.display_name ? String(m.display_name) : null });
+        if (m?.id)
+          found.set(String(m.id), {
+            id: String(m.id),
+            name: m.display_name ? String(m.display_name) : null,
+            effort: anthropicEffort(m),
+          });
       }
       if (!data?.has_more || !data.last_id) break;
       after = String(data.last_id);
@@ -420,7 +428,7 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
     for (const m of list) {
       const item = m as Record<string, unknown> | string;
       const id = typeof item === "string" ? item : String(item?.id ?? item?.model ?? item?.name ?? "");
-      if (id) found.set(id, { id, name: null });
+      if (id) found.set(id, { id, name: null, effort: typeof item === "string" ? undefined : gatewayEffort(item) });
     }
   }
   return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));

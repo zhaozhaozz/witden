@@ -304,6 +304,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
         model_name: found ? models.modelLabel(found.model, found.provider) : null,
         system_prompt: role.systemPrompt,
         model_params: role.modelParams,
+        reasoning_effort: role.reasoningEffort,
         instance_id: role.instanceId,
       },
       assignment: o.assignment ?? {},

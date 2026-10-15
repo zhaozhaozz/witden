@@ -23,13 +23,13 @@ export function parseColor(value: unknown): string | null {
   return s.toLowerCase();
 }
 
-/** An uploaded avatar (/api/avatars/...), an http(s) image URL, or null. */
+/** An uploaded avatar (/api/avatars/...) or null. */
 export function parseAvatarUrl(value: unknown): string | null {
   if (value === undefined || value === null || value === "") return null;
   const s = String(value).trim();
+  // Only images uploaded to witden: no addresses elsewhere for the console (or Slack) to fetch.
   if (s.startsWith("/api/avatars/") && AVATAR_FILE.test(s.slice("/api/avatars/".length))) return s;
-  if (/^https?:\/\/\S+$/i.test(s) && s.length <= 2000) return s;
-  throw new BadRequest("avatar_url must be an http(s) image URL or an uploaded avatar");
+  throw new BadRequest("avatar_url must be an uploaded avatar (/api/avatars/...): upload the image instead");
 }
 
 function sniff(buf: Buffer): string | null {
