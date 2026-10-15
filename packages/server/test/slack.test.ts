@@ -853,7 +853,8 @@ class FakeFeishu {
     if ((init?.headers as Record<string, string>)?.authorization !== "Bearer t-123")
       return json({ code: 99991663, msg: "invalid access token" });
     if (path === "bot/v3/info")
-      return json({ code: 0, msg: "ok", data: { bot: { app_name: "witden", open_id: "ou_bot" } } });
+      // the shape Feishu documents: the bot beside code, not in data
+      return json({ code: 0, msg: "ok", bot: { app_name: "witden", open_id: "ou_bot" } });
     if (/^im\/v1\/chats\/[^/]+\/members$/.test(path))
       return json({ code: 0, data: { items: [{ member_id: "ou_alice" }], has_more: false } });
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
@@ -906,7 +907,11 @@ describe("feishu", () => {
     });
     expect(res.status, res.raw).toBe(200);
     conn = res.body;
-    expect((await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body.ok).toBe(true);
+    expect((await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body).toMatchObject({
+      ok: true,
+      bot: "witden",
+      bot_open_id: "ou_bot",
+    });
     await link(conn.id, "ou_alice", w.ids.alice);
     await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,

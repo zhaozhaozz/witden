@@ -64,12 +64,14 @@ export class FeishuAdapter implements Adapter {
       })
     ).json();
     if (res.code !== 0) throw new Error(`Feishu ${path} failed: ${res.msg}`);
-    return res.data ?? {};
+    // v1 APIs answer in ``data``; older ones (bot/v3/info) put their fields beside ``code``
+    return res.data ?? res;
   }
 
   async test(_db: Db, conn: Connection) {
-    const info = await this.call(conn, "GET", "bot/v3/info");
-    const bot = info.bot ?? info;
+    // { code, msg, bot: { app_name, open_id, … } }; answers only once the bot ability is published
+    const { bot } = await this.call(conn, "GET", "bot/v3/info");
+    if (!bot?.open_id) throw new Error("Feishu bot/v3/info failed: no bot in the answer");
     conn.botUserId = bot.open_id;
     return { bot: bot.app_name, bot_open_id: bot.open_id };
   }

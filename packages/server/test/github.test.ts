@@ -103,6 +103,22 @@ afterEach(async () => {
 });
 
 describe("github", () => {
+  it("a Feishu connection still finds its adapter after GitHub's was loaded on its own", async () => {
+    // this file never imports the Feishu module; the GitHub one is loaded by now
+    const res = await w.api("POST", "/api/connections", {
+      token: w.adminToken,
+      json: {
+        platform: "feishu",
+        name: "acme feishu",
+        credentials: { app_id: "cli_x", app_secret: "s", verification_token: "t" },
+      },
+    });
+    expect(res.status, res.raw).toBe(200);
+    const tested = (await w.api("POST", `/api/connections/${res.body.id}/test`, { token: w.adminToken })).body;
+    expect(tested.ok).toBe(false);
+    expect(tested.error).not.toMatch(/no adapter/);
+  });
+
   it("images in a comment become links, so GitHub fetches no address a role wrote", () => {
     const md =
       "看图 ![屏幕](https://evil.example/x.png?d=secret) 和 ![][ref]\n\n```\n![代码里](a.png)\n```\n\n[ref]: https://x.dev/y.png";
@@ -218,7 +234,12 @@ class FakeGithubApp {
   comments: { path: string; body: string; token: string }[] = [];
   minted = 0;
   lookups = 0;
-  constructor(private readonly publicKey: string) {}
+  /** Codes GitHub hands back after creating an app from a manifest; each works once. */
+  manifestCodes = new Set(["good-code-123"]);
+  constructor(
+    private readonly publicKey: string,
+    private readonly privateKey = "",
+  ) {}
 
   /** The app's JWT: signed with its private key, issued by it, not expired. */
   private jwtOk(auth: string) {
@@ -234,8 +255,26 @@ class FakeGithubApp {
     const auth = ((init?.headers ?? {}) as Record<string, string>).authorization ?? "";
     const body = init?.body ? JSON.parse(String(init.body)) : {};
     const app = () => this.jwtOk(auth);
+    const conversion = /^\/app-manifests\/([\w-]+)\/conversions$/.exec(url.pathname);
+    if (conversion && init?.method === "POST") {
+      if (!this.manifestCodes.delete(conversion[1])) return new Response("{}", { status: 404 });
+      return Response.json(
+        {
+          id: 4242,
+          slug: "acme-witden",
+          name: "Acme witden",
+          html_url: "https://github.com/apps/acme-witden",
+          owner: { login: "acme" },
+          client_id: "Iv1.x",
+          client_secret: "client-secret",
+          webhook_secret: SECRET,
+          pem: this.privateKey,
+        },
+        { status: 201 },
+      );
+    }
     if (url.pathname === "/app" && app()) return Response.json({ id: 4242, slug: "acme-witden", name: "Acme witden" });
-    if (url.pathname === "/app/installations" && app()) return Response.json([{ id: 555 }]);
+    if (url.pathname === "/app/installations" && app()) return Response.json([{ id: 555, account: { login: "acme" } }]);
     if (url.pathname === "/repos/acme/api/installation" && app()) {
       this.lookups++;
       return Response.json({ id: 555 });
@@ -264,7 +303,7 @@ describe("github app", () => {
   let fake: FakeGithubApp;
 
   beforeEach(async () => {
-    fake = new FakeGithubApp(publicKey);
+    fake = new FakeGithubApp(publicKey, privateKey);
     setGithubFetch(fake.fetch);
     const bad = async (credentials: Record<string, string>) =>
       (
@@ -289,7 +328,7 @@ describe("github app", () => {
     expect(res.body.github_auth).toBe("app");
     conn = res.body;
     const tested = (await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body;
-    expect(tested).toMatchObject({ ok: true, app: "acme-witden", installations: 1 });
+    expect(tested).toMatchObject({ ok: true, app: "acme-witden", installations: 1, accounts: ["acme"] });
     await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
       json: { settings: { auto_provision_users: true, role_id: w.ids.dev } },
@@ -323,6 +362,40 @@ describe("github app", () => {
     await send("issue_comment", asked(3, "@acme-witden echo", { login: "acme-witden[bot]", id: 1, type: "Bot" }));
     await settle();
     expect((await allTasks()).length).toBe(before);
+  });
+
+  it("the setup guide's app: made from a manifest, its credentials fetched from GitHub with the code", async () => {
+    // the connection comes first (the app's webhook URL names it), without credentials
+    const created = await w.api("POST", "/api/connections", {
+      token: w.adminToken,
+      json: { platform: "github", name: "guide app", credentials: {} },
+    });
+    expect(created.status, created.raw).toBe(200);
+    expect(created.body.has_credentials).toBe(false);
+    const id = created.body.id;
+    const exchange = (code: string) =>
+      w.api("POST", `/api/connections/${id}/github-app`, { token: w.adminToken, json: { code } });
+    expect((await exchange("wrong-code-1")).status).toBe(400);
+    const made = await exchange("good-code-123");
+    expect(made.status, made.raw).toBe(200);
+    expect(made.body).toEqual({
+      app: "acme-witden",
+      name: "Acme witden",
+      html_url: "https://github.com/apps/acme-witden",
+      owner: "acme",
+    });
+    // the private key and webhook secret never leave the server
+    expect(made.raw).not.toContain("PRIVATE KEY");
+    expect(made.raw).not.toContain(SECRET);
+    // a code works once
+    expect((await exchange("good-code-123")).status).toBe(400);
+    const listed = (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find((c: any) => c.id === id);
+    expect(listed).toMatchObject({ has_credentials: true, github_auth: "app", bot_user_id: "acme-witden" });
+    const tested = (await w.api("POST", `/api/connections/${id}/test`, { token: w.adminToken })).body;
+    expect(tested).toMatchObject({ ok: true, app: "acme-witden", accounts: ["acme"] });
+    // GitHub signs its deliveries with the secret it generated, which witden now holds
+    conn = { id };
+    expect((await send("ping", { zen: "hi" })).status).toBe(200);
   });
 
   it("switching to a bot account token drops the app's credentials", async () => {

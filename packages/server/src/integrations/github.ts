@@ -92,6 +92,45 @@ export class GithubClient {
   }
 }
 
+export interface ManifestApp {
+  id: number;
+  slug: string;
+  name: string;
+  html_url: string;
+  owner: string | null;
+  pem: string;
+  webhook_secret: string;
+}
+
+/**
+ * The GitHub App created from the manifest the setup guide sent. GitHub sends the browser back with a one-time
+ * code, valid for an hour; this exchanges it for the app's id, private key and webhook secret (the request
+ * itself needs no credentials: the code is the proof).
+ */
+export async function convertManifest(code: string): Promise<ManifestApp> {
+  if (!/^[\w-]{6,200}$/.test(code)) throw new BadRequest("invalid manifest code");
+  const res = await githubFetch(`${API}/app-manifests/${code}/conversions`, {
+    method: "POST",
+    headers: { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28", "user-agent": "witden" },
+  });
+  const text = await res.text();
+  if (!res.ok)
+    throw new BadRequest(
+      `GitHub did not accept the code (HTTP ${res.status}): it works once and for an hour; create the app again`,
+    );
+  const data = JSON.parse(text);
+  if (!data.webhook_secret) throw new BadRequest("GitHub returned the app without a webhook secret");
+  return {
+    id: Number(data.id),
+    slug: String(data.slug),
+    name: String(data.name ?? data.slug),
+    html_url: String(data.html_url ?? ""),
+    owner: data.owner?.login ?? null,
+    pem: String(data.pem),
+    webhook_secret: String(data.webhook_secret),
+  };
+}
+
 /** A GitHub App's JWT: RS256, valid ten minutes, issued a minute early to absorb clock drift. */
 export function appJwt(appId: string, privateKey: string, now = Date.now()): string {
   const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -175,7 +214,9 @@ export class GithubAdapter implements Adapter {
       const installations = (await this.appClient(conn).request("GET", "/app/installations?per_page=100")).data;
       conn.botUserId = String(app.slug);
       conn.externalWorkspaceId = String(app.id);
-      return { app: app.slug, name: app.name, installations: (installations ?? []).length };
+      // Where it is installed: the setup guide waits for the first installation.
+      const accounts = (installations ?? []).map((i: any) => String(i.account?.login ?? i.account?.slug ?? i.id));
+      return { app: app.slug, name: app.name, installations: accounts.length, accounts };
     }
     const { data } = await (await this.client(conn, "")).request("GET", "/user");
     conn.botUserId = String(data.login);

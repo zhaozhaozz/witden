@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Connection, ExternalConversation, OutboundMessage } from "../api/types";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
@@ -21,6 +22,8 @@ import {
   settingsOf,
   socketText,
 } from "./connectionParts";
+import { FeishuSetup } from "./FeishuSetup";
+import { GithubSetup, MANIFEST_KEY, type ManifestReturn } from "./GithubSetup";
 import { SlackSetup } from "./SlackSetup";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
@@ -43,26 +46,46 @@ const CAP_STATUS: Record<string, { label: string; tone: "ok" | "wait" | "off" }>
   planned: { label: "计划中", tone: "off" },
 };
 
+// Every platform is set up with its step-by-step guide.
 const PLATFORM_CHOICES: [string, string, string][] = [
   ["slack", "Slack", "在频道和私信中 @ 机器人。按步骤引导完成设置，默认不需要公网地址。"],
-  ["github", "GitHub", "在 issue 和 pull request 中 @ 机器人，以 GitHub App 或机器人账号的身份回复。"],
-  ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。"],
+  [
+    "github",
+    "GitHub",
+    "在 issue 和 pull request 中 @ 机器人，以 GitHub App 或机器人账号的身份回复。按步骤引导完成设置，App 一键创建；需要公网地址。",
+  ],
+  ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。按步骤引导完成设置，需要公网地址。"],
 ];
 
-// What to prepare on the platform before filling in the form (Slack has its own step-by-step guide).
-const SETUP_HINT: Record<string, string> = {
-  github:
-    "先在 GitHub 中创建 GitHub App（Settings → Developer settings → GitHub Apps → New GitHub App）：Webhook URL 先填控制台地址，Webhook secret 填一个随机字符串；权限给 Issues、Pull requests 读写和 Metadata 只读；订阅 Issues、Issue comment、Pull request 事件。创建后生成私钥，并把应用安装到需要的仓库或组织。也可以改用一个机器人账号的 Token。创建接入后，把详情中的事件地址填回 GitHub。",
-  feishu:
-    "先在飞书开放平台创建企业自建应用并启用机器人能力，记下 App ID、App Secret 和事件订阅中的 Verification Token。创建接入后，把详情中的事件地址填到飞书的事件订阅请求地址。",
-};
-
-/** A new connection (``conn`` null) or the Slack guide resumed for an existing one. */
+/** A new connection (``conn`` null) or the guide resumed for an existing one. */
 interface Setup {
   platform: string | null;
   conn: Connection | null;
   /** Slack: open the guide on this way of connecting (to switch an existing connection). */
   mode?: "socket" | "http";
+  /** GitHub: the browser came back from creating the app. */
+  manifest?: ManifestReturn;
+}
+
+/**
+ * GitHub sends the browser back here after creating an app from the guide's manifest
+ * (``?github_app=<connection>&code=…&state=…``). The state must be the one this tab sent.
+ */
+function manifestReturn(params: URLSearchParams): { conn: string; manifest: ManifestReturn } | null {
+  const conn = params.get("github_app");
+  if (!conn) return null;
+  let sent: { state?: string; conn?: string } = {};
+  try {
+    sent = JSON.parse(sessionStorage.getItem(MANIFEST_KEY) ?? "{}");
+  } catch {
+    // treated as not sent from this tab
+  }
+  sessionStorage.removeItem(MANIFEST_KEY);
+  const code = params.get("code");
+  if (!code) return { conn, manifest: { error: "GitHub 没有返回代码" } };
+  if (sent.conn !== conn || !sent.state || sent.state !== params.get("state"))
+    return { conn, manifest: { error: "这次跳转不是从这个页面发起的（校验码不一致），已忽略。请重新创建 App" } };
+  return { conn, manifest: { code } };
 }
 
 export default function ConnectionsPage() {
@@ -71,10 +94,22 @@ export default function ConnectionsPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [setup, setSetup] = useState<Setup | null>(null);
   const [showCaps, setShowCaps] = useState(false);
+  const [params, setParams] = useSearchParams();
 
   useEffect(() => {
     if (!selected && res.data?.length) setSelected(res.data[0].id);
   }, [res.data, selected]);
+
+  // Back from GitHub: resume that connection's guide with the code, and drop it from the address bar.
+  useEffect(() => {
+    // Read (and so use up) the state only once the connection it names can be shown.
+    if (!res.data || !params.get("github_app")) return;
+    const back = manifestReturn(params);
+    if (!back) return;
+    setParams({}, { replace: true });
+    const conn = res.data.find((c) => c.id === back.conn);
+    if (conn) setSetup({ platform: "github", conn, manifest: back.manifest });
+  }, [params, res.data, setParams]);
 
   const current = res.data?.find((c) => c.id === selected) ?? null;
   const closeSetup = (c: Connection | null) => {
@@ -123,18 +158,25 @@ export default function ConnectionsPage() {
           }}
           onClose={closeSetup}
         />
-      ) : setup?.platform ? (
-        <Section
-          title={`接入 ${PLATFORM_LABEL[setup.platform] ?? setup.platform}`}
-          actions={
-            <button type="button" className="btn btn-sm" onClick={() => setSetup(null)}>
-              取消
-            </button>
-          }
-        >
-          <p className="setup-intro">{SETUP_HINT[setup.platform]}</p>
-          <ConnectionForm conn={null} platform={setup.platform} onCancel={() => setSetup(null)} onSaved={closeSetup} />
-        </Section>
+      ) : setup?.platform === "github" ? (
+        <GithubSetup
+          initial={setup.conn}
+          manifest={setup.manifest}
+          onCreated={(c) => {
+            setSelected(c.id);
+            void res.reload();
+          }}
+          onClose={closeSetup}
+        />
+      ) : setup?.platform === "feishu" ? (
+        <FeishuSetup
+          initial={setup.conn}
+          onCreated={(c) => {
+            setSelected(c.id);
+            void res.reload();
+          }}
+          onClose={closeSetup}
+        />
       ) : setup ? (
         <Section
           title="新建接入"
@@ -276,7 +318,7 @@ function ConnectionDetail({
   conn: Connection;
   onChanged: (c: Connection) => void;
   onDeleted: () => void;
-  /** Open the step-by-step setup (Slack), optionally on the other way of connecting. */
+  /** Open the step-by-step setup, optionally (Slack) on the other way of connecting. */
   onGuide: (mode?: "socket" | "http") => void;
 }) {
   const { can } = useAuth();
@@ -314,11 +356,9 @@ function ConnectionDetail({
         }
         actions={
           <div className="btn-row">
-            {conn.platform === "slack" ? (
-              <button type="button" className="btn btn-sm" onClick={() => onGuide()}>
-                设置引导
-              </button>
-            ) : null}
+            <button type="button" className="btn btn-sm" onClick={() => onGuide()}>
+              设置引导
+            </button>
             <button
               type="button"
               className="btn btn-sm"
@@ -395,9 +435,9 @@ function ConnectionDetail({
             {conn.status_reason ?? (conn.status === "active" ? "正在接收和发送消息" : "")}
           </div>
         </div>
-        {conn.platform === "slack" && !conn.bot_user_id ? (
+        {!conn.bot_user_id ? (
           <div className="callout callout-wait">
-            这个接入还没有完成设置：凭据还没有通过测试。{" "}
+            这个接入还没有完成设置：{conn.has_credentials ? "凭据还没有通过测试" : "还没有凭据"}。{" "}
             <button type="button" className="btn btn-xs" onClick={() => onGuide()}>
               继续设置
             </button>
@@ -472,7 +512,16 @@ function ConnectionDetail({
               ),
             ],
             ...(conn.platform === "github"
-              ? [["接入方式", conn.github_auth === "app" ? "GitHub App" : "机器人账号 Token"] as [string, string]]
+              ? [
+                  [
+                    "接入方式",
+                    conn.github_auth === "app"
+                      ? "GitHub App"
+                      : conn.github_auth === "token"
+                        ? "机器人账号 Token"
+                        : "还没有设置（在设置引导中创建 App）",
+                  ] as [string, string],
+                ]
               : []),
             [
               "外部成员",
@@ -492,24 +541,14 @@ function ConnectionDetail({
             ],
           ]}
         />
-        {conn.platform === "slack" ? (
-          <p className="small muted">Slack 应用的事件订阅、权限和试用步骤见“设置引导”。</p>
-        ) : null}
-        {conn.platform === "github" && conn.github_auth === "app" ? (
-          <p className="small muted">
-            在 GitHub App 的设置中：Webhook URL 填事件地址，Webhook secret 填上面的 Webhook Secret；权限给 Issues、Pull
-            requests 读写和 Metadata 只读；订阅 Issues、Issue comment、Pull request
-            事件；再把应用安装到需要的仓库或组织。在 issue 或 pull request 中 @{conn.bot_user_id ?? "应用名"}{" "}
-            即可让角色工作。
-          </p>
-        ) : null}
-        {conn.platform === "github" && conn.github_auth !== "app" ? (
-          <p className="small muted">
-            在仓库或组织的 Settings → Webhooks 中添加 webhook：Payload URL 填事件地址，Content type 选
-            application/json，Secret 填上面的 Webhook Secret，事件选择 Issues、Issue comments 和 Pull requests。在 issue
-            或 pull request 中 @{conn.bot_user_id ?? "机器人账号"} 即可让角色工作。
-          </p>
-        ) : null}
+        <p className="small muted">
+          {PLATFORM_LABEL[conn.platform] ?? conn.platform}
+          {conn.platform === "github"
+            ? " App 的安装、Webhook 和试用步骤见“设置引导”。"
+            : conn.platform === "slack"
+              ? " 应用的事件订阅、权限和试用步骤见“设置引导”。"
+              : "应用的权限、事件订阅、版本发布和试用步骤见“设置引导”。"}
+        </p>
       </Section>
       <Tabs
         value={tab}

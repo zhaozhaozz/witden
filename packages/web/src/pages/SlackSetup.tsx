@@ -1,23 +1,11 @@
-import { type ReactNode, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { type ReactNode, useState } from "react";
 import { api } from "../api/client";
-import type { Connection, Role } from "../api/types";
+import type { Connection } from "../api/types";
 import { fmtRelative } from "../lib/format";
-import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
 import { CopyText, Field, Section, Tag } from "../ui/kit";
-import {
-  ConnectionSettingsFields,
-  Identities,
-  INBOUND_STATUS,
-  type InboundEvent,
-  lastRejected,
-  missingScopes,
-  SLACK_FIELD_HELP,
-  SLACK_FIELDS,
-  settingsOf,
-  socketText,
-} from "./connectionParts";
+import { missingScopes, SLACK_FIELD_HELP, SLACK_FIELDS, socketText } from "./connectionParts";
+import { AccessStep, SetupSteps, TryStep, useLiveConnection, WebhookStatus } from "./setupParts";
 
 /** Field labels, as the connection form names them. */
 const CREDENTIAL_LABEL = Object.fromEntries([...SLACK_FIELDS.socket, ...SLACK_FIELDS.http]) as Record<string, string>;
@@ -114,12 +102,6 @@ const SLACK_ERRORS: [RegExp, string][] = [
     "witden 服务器连不上 slack.com，请检查服务器的网络或代理设置。",
   ],
 ];
-
-/** Why a role cannot take work yet (the dispatcher refuses roles without a computer or a model). */
-function missingSetup(r: Role): string | undefined {
-  const missing = [r.instance_id ? null : "分配电脑", r.model_config_id ? null : "配置模型"].filter(Boolean);
-  return missing.length ? `还没有${missing.join("和")}，暂时不能工作` : undefined;
-}
 
 type Mode = "socket" | "http";
 type StepKey = "address" | "app" | "credentials" | "events" | "access" | "try";
@@ -228,13 +210,15 @@ export function SlackSetup({
     access: conn ? (
       <AccessStep
         conn={conn}
+        intro="一个 Slack 应用就是工作区里的一个机器人。选择它代表 witden 中的哪个角色：发给这个机器人的消息都交给这个角色处理，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个 Slack 应用（在 witden 中各是一个接入）。"
+        account="Slack 账号"
         onSaved={(c) => {
           setConn(c);
           go("try");
         }}
       />
     ) : null,
-    try: conn ? <TryStep conn={conn} bot={bot} num={num} onDone={() => onClose(conn)} /> : null,
+    try: conn ? <SlackTryStep conn={conn} bot={bot} num={num} onDone={() => onClose(conn)} /> : null,
   };
   const lacking = missingScopes(tested?.missing_scopes);
   const summary: Partial<Record<StepKey, string>> = {
@@ -298,35 +282,23 @@ export function SlackSetup({
                 : "Slack 把消息推送到 witden 的公网事件地址：需要一个只转发到事件端口的 HTTPS 地址。"}
         </p>
       </div>
-      <ol className="setup-steps">
-        {flow.map((key, i) => {
-          const at = flow.indexOf(step);
-          const state = key === step ? "current" : i < reached ? "done" : "todo";
-          // Steps after the credentials need a connection that works; from then on any of them can be opened.
-          const open =
-            i !== at && (i <= reached || (i > flow.indexOf("credentials") && !!conn?.bot_user_id))
-              ? () => setStep(key)
-              : undefined;
-          return (
-            <li key={key} className={`setup-step setup-${state}`}>
-              <button type="button" className="setup-head" disabled={!open} onClick={open}>
-                <span className="setup-num" aria-hidden>
-                  {state === "done" ? "✓" : i + 1}
-                </span>
-                <span className="setup-title">
-                  {key === "app" && switching
-                    ? mode === "socket"
-                      ? "让原来的 Slack 应用打开 Socket Mode"
-                      : "让原来的 Slack 应用改用事件地址"
-                    : STEP_TITLES[key]}
-                </span>
-                {state === "done" && summary[key] ? <span className="setup-summary">{summary[key]}</span> : null}
-              </button>
-              {state === "current" ? <div className="setup-body">{body[key]}</div> : null}
-            </li>
-          );
-        })}
-      </ol>
+      <SetupSteps
+        flow={flow}
+        step={step}
+        reached={reached}
+        title={(key) =>
+          key === "app" && switching
+            ? mode === "socket"
+              ? "让原来的 Slack 应用打开 Socket Mode"
+              : "让原来的 Slack 应用改用事件地址"
+            : STEP_TITLES[key]
+        }
+        summary={summary}
+        body={body}
+        // Steps after the credentials need a connection that works; from then on any of them can be opened.
+        unlocked={(_key, i) => i > flow.indexOf("credentials") && !!conn?.bot_user_id}
+        onOpen={setStep}
+      />
     </Section>
   );
 }
@@ -756,25 +728,9 @@ function EventsStep({
   onNext: () => void;
   onFixSecret: () => void;
 }) {
-  const [conn, setConn] = useState(initial);
   // Follow Slack's calls to the events URL while this step is open.
-  useEffect(() => {
-    let stopped = false;
-    const timer = window.setInterval(async () => {
-      try {
-        const fresh = (await api.get<Connection[]>("/api/connections")).find((c) => c.id === initial.id);
-        if (fresh && !stopped) setConn(fresh);
-      } catch {
-        // the next poll retries
-      }
-    }, 3000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [initial.id]);
+  const conn = useLiveConnection(initial);
   const url = conn.events_url ?? "";
-  const rejected = lastRejected(conn);
   return (
     <>
       <p>让 Slack 把消息推送给 witden：在应用中填写 witden 的事件地址，并订阅需要的事件。</p>
@@ -815,22 +771,21 @@ function EventsStep({
           点击页面底部的 <b>Save Changes</b>。如果页面顶部提示重新安装应用（reinstall your app），按提示重新安装。
         </li>
       </ol>
-      {rejected ? (
-        <div className="callout callout-bad" role="alert">
-          {fmtRelative(rejected.at)}，witden 收到了 Slack 的请求，但校验没有通过：{rejected.reason}。这通常是第{" "}
-          {num("credentials")} 步的 Signing Secret 填错了：它在应用的 Basic Information → App Credentials 中，是 32
-          位十六进制字符，不是 xapp- 开头的 App-Level Token。改好后在 Slack 中点击 Request URL 旁的 Retry。{" "}
-          <button type="button" className="btn btn-xs" onClick={onFixSecret}>
-            重新填写 Signing Secret
-          </button>
-        </div>
-      ) : conn.webhook?.verified_at ? (
-        <div className="callout">{fmtRelative(conn.webhook.verified_at)}，Slack 验证了事件地址，可以继续订阅事件。</div>
-      ) : (
-        <div className="small muted setup-events">
-          还没有收到 Slack 的请求。在 Slack 中填写 Request URL 后，这里会显示验证结果（每 3 秒刷新）。
-        </div>
-      )}
+      <WebhookStatus
+        conn={conn}
+        platform="Slack"
+        idle="还没有收到 Slack 的请求。在 Slack 中填写 Request URL 后，这里会显示验证结果（每 3 秒刷新）。"
+        accepted={(at) => `${fmtRelative(at)}，Slack 验证了事件地址，可以继续订阅事件。`}
+        fix={
+          <>
+            这通常是第 {num("credentials")} 步的 Signing Secret 填错了：它在应用的 Basic Information → App Credentials
+            中，是 32 位十六进制字符，不是 xapp- 开头的 App-Level Token。改好后在 Slack 中点击 Request URL 旁的 Retry。{" "}
+            <button type="button" className="btn btn-xs" onClick={onFixSecret}>
+              重新填写 Signing Secret
+            </button>
+          </>
+        }
+      />
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
           已显示 Verified 并保存，下一步
@@ -840,74 +795,8 @@ function EventsStep({
   );
 }
 
-function AccessStep({ conn, onSaved }: { conn: Connection; onSaved: (c: Connection) => void }) {
-  const dir = useDirectory();
-  const { run, busy } = useAction();
-  const [settings, setSettings] = useState(settingsOf(conn));
-  // A system administrator works only in the console, never as a bot.
-  const roles = dir.roles.filter((r) => !r.system_admin && (r.status === "active" || r.id === settings.role_id));
-
-  const save = async () => {
-    const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { settings }), "已保存");
-    if (out) onSaved(out);
-  };
-
-  return (
-    <>
-      <p>
-        一个 Slack 应用就是工作区里的一个机器人。选择它代表 witden
-        中的哪个角色：发给这个机器人的消息都交给这个角色处理，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个
-        Slack 应用（在 witden 中各是一个接入）。
-      </p>
-      <div className="pick setup-roles" role="radiogroup" aria-label="机器人代表的角色">
-        {roles.length ? (
-          roles.map((r) => (
-            <label key={r.id} className={`pick-item${settings.role_id === r.id ? " pick-on" : ""}`}>
-              <input
-                type="radio"
-                name="bot-role"
-                checked={settings.role_id === r.id}
-                onChange={() => setSettings({ ...settings, role_id: r.id })}
-              />
-              <span className="pick-text">
-                <span>
-                  {r.name} @{r.handle}
-                </span>
-                {missingSetup(r) ? <span className="pick-hint">{missingSetup(r)}</span> : null}
-              </span>
-            </label>
-          ))
-        ) : (
-          <span className="muted small">
-            还没有可用的角色，请先在<Link to="/roles">角色管理</Link>中创建。
-          </span>
-        )}
-      </div>
-      <h3 className="setup-sub">谁可以使用</h3>
-      <p className="small muted">
-        默认只有把 Slack 账号关联到 witden
-        管理员账号的人可以使用（最后一步可以直接关联你自己的账号）。要让工作区里的其他人也能使用，开启“允许未关联的人使用”。
-      </p>
-      <div className="form form-narrow">
-        <ConnectionSettingsFields platform="slack" value={settings} onChange={setSettings} chooseRole={false} />
-      </div>
-      <div className="setup-next">
-        <button
-          type="button"
-          className="btn btn-primary"
-          disabled={busy || !settings.role_id}
-          onClick={() => void save()}
-        >
-          保存，下一步
-        </button>
-        {settings.role_id ? null : <span className="small muted">选择一个角色后继续。</span>}
-      </div>
-    </>
-  );
-}
-
-function TryStep({
-  conn: initial,
+function SlackTryStep({
+  conn,
   bot,
   num,
   onDone,
@@ -917,107 +806,39 @@ function TryStep({
   num: StepNumber;
   onDone: () => void;
 }) {
-  const [events, setEvents] = useState<InboundEvent[] | null>(null);
-  const [conn, setConn] = useState(initial);
   const socket = conn.slack_mode === "socket";
-  // Watch the connection's inbound events (and, in Socket Mode, its socket) while this step is open.
-  useEffect(() => {
-    let stopped = false;
-    const load = async () => {
-      try {
-        const [rows, all] = await Promise.all([
-          api.get<InboundEvent[]>(`/api/connections/${initial.id}/inbound`),
-          api.get<Connection[]>("/api/connections"),
-        ]);
-        if (stopped) return;
-        setEvents(rows);
-        const fresh = all.find((c) => c.id === initial.id);
-        if (fresh) setConn(fresh);
-      } catch {
-        // keep the last list; the next poll retries
-      }
-    };
-    void load();
-    const timer = window.setInterval(load, 3000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [initial.id]);
-  const recent = (events ?? []).slice(0, 5);
-  const link = socketText(conn.socket);
-  // What to do next depends on how the latest message was handled.
-  const latest = recent[0];
   const name = bot ? `@${bot}` : "@机器人";
-
   return (
-    <>
-      {socket ? (
-        <p className="small">
-          与 Slack 的连接（Socket Mode）：<Tag tone={link.tone}>{link.text}</Tag>
-        </p>
-      ) : null}
-      <ol className="setup-list">
-        <li>
-          在 Slack 的一个频道中发送 <code>/invite {name}</code>，把机器人邀请进来。
-        </li>
-        <li>
-          在频道中发送 <code>{name} 你好</code>；也可以在 Slack 左侧的 Apps 中找到机器人，直接给它发私信。
-        </li>
-        <li>回到这里查看 witden 收到的消息和处理结果（每 3 秒刷新）。</li>
-      </ol>
-      <div className="setup-events">
-        {events === null ? (
-          <span className="muted small">正在读取…</span>
-        ) : recent.length ? (
-          <ul className="plain-list">
-            {recent.map((e) => (
-              <li key={e.id}>
-                <span className="muted small">{fmtRelative(e.received_at)}</span>{" "}
-                <Tag tone={INBOUND_STATUS[e.status]?.[1] ?? "info"}>{INBOUND_STATUS[e.status]?.[0] ?? e.status}</Tag>
-                {e.detail ? <span className="small muted"> {e.detail}</span> : null}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <span className="muted small">
-            还没有收到消息。
-            {socket
-              ? "发了消息后这里一直没有变化时，检查上面的连接状态，以及机器人是否已被邀请进频道。"
-              : `发了消息后这里一直没有变化时，检查第 ${num("events")} 步的 Request URL 是否显示 Verified，事件是否已订阅并保存。`}
-          </span>
-        )}
-      </div>
-      {latest?.status === "dispatched" ? (
-        <div className="callout">
-          已交给角色处理。角色会在提问的地方（频道里或 thread 里）回复，也可以在 witden 的会话列表中查看。
-        </div>
-      ) : null}
-      {latest?.status === "not_assigned" ? (
-        <div className="callout callout-wait">
-          witden 收到了请求，但没有交给角色：{latest.detail}。常见原因是机器人代表的角色还没有分配电脑或模型（在
-          <Link to="/roles">角色管理</Link>中设置），或者这个接入还没有选择角色（第 {num("access")} 步）。处理后在 Slack
-          中再发一次；Slack 中提问的地方也会收到这条说明。
-        </div>
-      ) : null}
-      {latest?.status === "stored" ? (
-        <div className="callout">这条消息没有 @ 机器人：witden 记录了它，但只有 @ 机器人的消息才交给角色。</div>
-      ) : null}
-      {latest?.status === "unlinked_user" ? (
+    <TryStep
+      conn={conn}
+      platform="Slack"
+      where="提问的地方（频道里或 thread 里）"
+      accessStep={num("access")}
+      idle={
+        socket
+          ? "检查上面的连接状态，以及机器人是否已被邀请进频道。"
+          : `检查第 ${num("events")} 步的 Request URL 是否显示 Verified，事件是否已订阅并保存。`
+      }
+      header={(live) =>
+        socket ? (
+          <p className="small">
+            与 Slack 的连接（Socket Mode）：
+            <Tag tone={socketText(live.socket).tone}>{socketText(live.socket).text}</Tag>
+          </p>
+        ) : null
+      }
+      steps={
         <>
-          <div className="callout callout-wait">
-            发消息的 Slack 账号还没有关联 witden 账号，所以没有交给角色。在下面把你自己的 Slack 账号关联到你的 witden
-            账号，然后在 Slack 中再发一次；其他人可以在第 {num("access")} 步开启“允许未关联的人使用”。
-          </div>
-          <Identities key={events?.length} conn={conn} />
+          <li>
+            在 Slack 的一个频道中发送 <code>/invite {name}</code>，把机器人邀请进来。
+          </li>
+          <li>
+            在频道中发送 <code>{name} 你好</code>；也可以在 Slack 左侧的 Apps 中找到机器人，直接给它发私信。
+          </li>
         </>
-      ) : null}
-      {socket ? <SocketFaq open={!!events && !events.length} /> : null}
-      <div className="setup-next">
-        <button type="button" className="btn btn-primary" onClick={onDone}>
-          完成
-        </button>
-      </div>
-    </>
+      }
+      footer={(events) => (socket ? <SocketFaq open={!!events && !events.length} /> : null)}
+      onDone={onDone}
+    />
   );
 }

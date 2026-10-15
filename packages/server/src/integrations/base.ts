@@ -90,7 +90,9 @@ export function register(platform: string, factory: () => Adapter): void {
 }
 
 export async function getAdapter(conn: Connection): Promise<Adapter> {
-  if (!registry.size) {
+  // Each module registers its adapter when imported. Others are imported on their own (a Slack credential
+  // check loads slack.js), so a non-empty registry does not mean this platform's adapter is in it.
+  if (!registry.has(conn.platform)) {
     await import("./slack.js");
     await import("./feishu.js");
     await import("./github.js");

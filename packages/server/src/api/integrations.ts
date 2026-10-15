@@ -46,12 +46,14 @@ function connOut(conn: Connection, base: string) {
   return {
     ...row(conn),
     // How it connects, never the credentials themselves. GitHub: an app or a bot account.
-    ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : "token" } : {}),
+    // none yet while the setup guide is creating the app
+    ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : creds.token ? "token" : undefined } : {}),
     // Slack: Socket Mode, with the state of this process's socket, or the events URL.
     ...(conn.platform === "slack"
       ? { slack_mode: creds.app_token ? "socket" : "http", socket: slackSockets.state(conn.id) }
       : {}),
-    has_credentials: !!conn.credentialsEncrypted,
+    // a GitHub connection the setup guide created before its app exists has none yet
+    has_credentials: Object.values(creds).some(Boolean),
     capabilities: CAPABILITIES[conn.platform] ?? {},
     events_url: `${base}/api/integrations/${conn.platform}/${conn.id}/events`,
     // Whether the platform has reached the events URL, and whether its signature matched.
@@ -151,7 +153,10 @@ export async function integrationRoutes(app: FastifyInstance) {
       const creds = trimmed(b.credentials ?? {});
       const missing = required.filter((k) => !creds[k]);
       if (missing.length) throw new BadRequest(`missing credentials: ${missing.join(", ")}`);
-      if (b.platform === "github") (await import("../integrations/github.js")).checkCredentials(creds);
+      // A GitHub App made by the setup guide gets its credentials from GitHub after the connection exists
+      // (its webhook URL names the connection): until then the connection has none.
+      const pending = b.platform === "github" && !Object.values(creds).some(Boolean);
+      if (b.platform === "github" && !pending) (await import("../integrations/github.js")).checkCredentials(creds);
       if (b.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(creds);
       if ((await db.select().from(connections).where(eq(connections.name, b.name)).limit(1)).length)
         throw new BadRequest("a connection with this name exists");
@@ -214,6 +219,34 @@ export async function integrationRoutes(app: FastifyInstance) {
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
       after(() => slackSockets.sync());
       return { ok: true };
+    }),
+  );
+
+  app.post(
+    "/api/connections/:id/github-app",
+    authedNoTx(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const conn = await getConn(db, params(req).id);
+      if (conn.platform !== "github") throw new BadRequest("not a GitHub connection");
+      const { convertManifest } = await import("../integrations/github.js");
+      const app = await convertManifest(String(body(req).code ?? ""));
+      const credentialsEncrypted = await mergedCredentials(conn, {
+        app_id: String(app.id),
+        private_key: app.pem,
+        webhook_secret: app.webhook_secret,
+      });
+      await db
+        .update(connections)
+        .set({ credentialsEncrypted, botUserId: app.slug, externalWorkspaceId: String(app.id), statusReason: null })
+        .where(eq(connections.id, conn.id));
+      await audit(db, "connection.github_app", {
+        actorType: "user",
+        actorId: user.id,
+        connectionId: conn.id,
+        detail: { app: app.slug, owner: app.owner },
+      });
+      // The private key and webhook secret stay on the server.
+      return { app: app.slug, name: app.name, html_url: app.html_url, owner: app.owner };
     }),
   );
 
