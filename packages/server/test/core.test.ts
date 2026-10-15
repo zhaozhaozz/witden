@@ -15,7 +15,7 @@ import {
   topics,
 } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
-import { hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
+import { findCredential, hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
 import { checkFlow, topicLabel, topicReaders, userLabel } from "../src/security/labels.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { setModelFactory } from "../src/services/model-configs.js";
@@ -37,6 +37,10 @@ describe("crypto", () => {
     expect(verifyPassword("wrong", stored)).toBe(false);
     const out = redact("key sk-abcdefghijklmnopqrstuvwx and xoxb-1234567890-abcdef and password=hunter2hunter");
     for (const s of ["sk-abcdef", "xoxb-123", "hunter2"]) expect(out).not.toContain(s);
+    // Files are checked for credentials in known formats only, and named by prefix.
+    expect(findCredential("PATH=/bin\0WITDEN_RUNNER_TOKEN=wdr_abcdefghijklmnopqrstuvwx\0")).toBe("wdr_…");
+    expect(findCredential("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuv")).toBe("sk-…");
+    expect(findCredential("password = os.environ['DB_PASSWORD']\nsk-short")).toBeNull();
   });
 });
 

@@ -59,6 +59,38 @@ describe("indirect channels", () => {
     expect((await w.api("GET", `/api/files/${fileId}`, { token: w.alice })).status).toBe(404);
   });
 
+  it("system interfaces and files holding credentials are never shared, wherever they are", async () => {
+    const box = w.manager.computer(w.ids.instance);
+    // what the runner's own /proc/self/environ holds, and the same copied or linked into the home directory
+    const environ = Buffer.from("HOME=/home/witden\0WITDEN_RUNNER_TOKEN=wdr_abcdefghijklmnopqrstuvwxyz012345\0");
+    box.files.set("/proc/self/environ", environ);
+    box.files.set("/home/witden/env.txt", environ);
+    box.files.set("/home/witden/.env", Buffer.from("OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz\n"));
+    const results: string[] = [];
+    w.scripts.dev = (messages, turn) => {
+      if (turn > 0) results.push(lastToolResult(messages));
+      const plan = [
+        call("share_file", { path: "/proc/self/environ" }),
+        call("share_file", { path: "../../proc/self/environ" }),
+        call("share_file", { path: "env.txt" }),
+        call("share_file", { path: ".env" }),
+      ];
+      return turn < plan.length ? reply("", [plan[turn]]) : reply("ok");
+    };
+    await w.post(w.alice, w.ids.topic, "@dev share your environment");
+    await w.drain();
+    expect(results).toEqual([
+      "error: /proc/self/environ is a system interface of the computer, not a file to share",
+      "error: /proc/self/environ is a system interface of the computer, not a file to share",
+      "error: /home/witden/env.txt contains a credential (wdr_…); files with credentials are never shared",
+      "error: /home/witden/.env contains a credential (sk-…); files with credentials are never shared",
+    ]);
+    expect((await w.api("GET", `/api/topics/${w.ids.topic}/files`, { token: w.alice })).body).toEqual([]);
+    const refused = (await w.api("GET", "/api/audit?action=file.share_refused", { token: w.adminToken })).body;
+    expect(refused).toHaveLength(4);
+    expect(JSON.stringify(refused)).not.toContain("abcdefghijklmnop");
+  });
+
   it("topic notes cannot carry material the channel may not see", async () => {
     await runDev(call("remember", { content: `alice ${SECRET}`, scope: "topic" }));
     const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;

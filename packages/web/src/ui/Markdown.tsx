@@ -4,7 +4,9 @@
  * through react-markdown's URL filter (no javascript: URLs); images may also be inline base64 rasters.
  *
  * Images under /api/files/<id> are platform files: they are fetched with the signed-in session and shown
- * from an object URL, since <img> cannot send the Authorization header.
+ * from an object URL, since <img> cannot send the Authorization header. Other addresses are never loaded on
+ * their own: the browser would request whatever a role wrote into the address (data included), so they appear
+ * as links to open on purpose.
  */
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
@@ -103,10 +105,11 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
   );
 }
 
-/** An image in a message: external URLs load directly, platform files through the session. */
+/** An image in a message: platform files load through the session, inline rasters as they are, others as links. */
 export function MessageImage({ src, alt, fileId }: { src?: string; alt?: string; fileId?: string }) {
   const id = fileId ?? (src ? FILE_URL.exec(src)?.[1] : undefined);
-  const [url, setUrl] = useState<string | null>(id ? null : (src ?? null));
+  const inline = !id && !!src && RASTER_DATA.test(src);
+  const [url, setUrl] = useState<string | null>(inline ? (src ?? null) : null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -123,6 +126,20 @@ export function MessageImage({ src, alt, fileId }: { src?: string; alt?: string;
       cancelled = true;
     };
   }, [id]);
+  if (!id && !inline) {
+    if (!src) return <span className="md-img-missing">图片无法显示：没有地址</span>;
+    let host = src;
+    try {
+      host = new URL(src, window.location.href).host;
+    } catch {
+      // not a URL: show it as written
+    }
+    return (
+      <a className="md-img-external" href={src} target="_blank" rel="noopener noreferrer" title={src}>
+        🖼 {alt || "图片"}（外部图片：{host}，点击打开）
+      </a>
+    );
+  }
   if (error) return <span className="md-img-missing">图片无法显示：{error}</span>;
   if (!url) return <span className="md-img-loading">图片加载中…</span>;
   return (

@@ -16,6 +16,7 @@ import { newId } from "../db/ids.js";
 import { memories, messages, modelConfigs, roles, type Task, tasks, topics, users } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
+import { findCredential } from "../security/crypto.js";
 import { spaceLabel, topicLabel, userLabel } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
@@ -211,13 +212,40 @@ async function moveFile(ctx: ToolContext, args: Record<string, any>): Promise<To
   return { content: `moved ${args.from} to ${args.to}` };
 }
 
-/** Copy a file out of the computer into the topic. Same output check as messages; held files stay detached. */
+// System interfaces, not files: /proc/<pid>/environ holds the runner's token, for one.
+const SYSTEM_PATHS = /^\/(proc|sys|dev)(\/|$)/;
+
+/**
+ * Copy a file out of the computer into the topic. Same output check as messages; held files stay detached.
+ * A file is shared whole (it cannot be masked like text), so system interfaces and files holding a credential
+ * are refused outright.
+ */
 async function shareFile(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const path = String(args.path ?? "");
   const r = await op(ctx, "file.read", { path, maxBytes: 50_000_000 }, 120_000);
+  const data = Buffer.from(r.contentBase64, "base64");
+  // latin1 keeps every byte, so tokens are found in binary files too
+  const credential = findCredential(data.toString("latin1"));
+  const refusal = SYSTEM_PATHS.test(String(r.path))
+    ? `${r.path} is a system interface of the computer, not a file to share`
+    : credential
+      ? `${r.path} contains a credential (${credential}); files with credentials are never shared`
+      : null;
+  if (refusal) {
+    await audit(ctx.db(), "file.share_refused", {
+      actorType: "role",
+      actorId: ctx.roleId,
+      outcome: "denied",
+      topicId: ctx.topicId,
+      taskId: ctx.taskId,
+      roleId: ctx.roleId,
+      detail: { path: String(r.path), reason: refusal },
+    });
+    throw new Forbidden(refusal);
+  }
   return transaction(async (db) => {
     const { task, role, topic } = await load(ctx, db);
-    const art = await saveArtifact(db, Buffer.from(r.contentBase64, "base64"), {
+    const art = await saveArtifact(db, data, {
       name: path,
       kind: "generated",
       labels: [...task.labels],

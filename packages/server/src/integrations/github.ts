@@ -10,6 +10,10 @@
  */
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import type { Nodes } from "mdast";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmFromMarkdown } from "mdast-util-gfm";
+import { gfm } from "micromark-extension-gfm";
 import type { Db } from "../db/client.js";
 import {
   artifacts,
@@ -36,6 +40,27 @@ const MEMBERS_TTL_MS = 10 * 60_000;
 export let githubFetch: typeof fetch = (...args) => fetch(...args);
 export function setGithubFetch(fn: typeof fetch): void {
   githubFetch = fn;
+}
+
+/**
+ * Markdown images as links: GitHub fetches every image a comment shows (through its image proxy), so an
+ * address a role wrote would be requested on its behalf, whatever data the address carries. Only the parsed
+ * image nodes change (``![`` becomes ``[🖼 ``); code is left as written.
+ */
+export function imagesAsLinks(markdown: string): string {
+  const tree = fromMarkdown(markdown, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  const starts: number[] = [];
+  const walk = (node: Nodes) => {
+    if ((node.type === "image" || node.type === "imageReference") && node.position)
+      starts.push(node.position.start.offset ?? -1);
+    if ("children" in node) for (const child of node.children) walk(child);
+  };
+  walk(tree);
+  let out = markdown;
+  // From the end, so earlier offsets stay valid.
+  for (const at of starts.sort((a, b) => b - a))
+    if (at >= 0 && out.startsWith("![", at)) out = `${out.slice(0, at)}[🖼 ${out.slice(at + 2)}`;
+  return out;
 }
 
 /** Webhook signature: ``X-Hub-Signature-256: sha256=<HMAC-SHA256 of the raw body with the webhook secret>``. */
@@ -167,7 +192,7 @@ export class GithubAdapter implements Adapter {
             .split("\n")
             .map((l) => (l.trim() ? `_${l.trim()}_` : l))
             .join("\n")
-        : msg.content;
+        : imagesAsLinks(msg.content);
     for (const m of msg.mentions ?? []) {
       if (m.type !== "user") continue;
       const [ident] = await db

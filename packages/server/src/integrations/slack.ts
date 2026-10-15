@@ -8,7 +8,7 @@
  */
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { type Db, db as getDb } from "../db/client.js";
 import {
   type Artifact,
@@ -286,8 +286,18 @@ export class SlackAdapter implements Adapter {
 
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
     const client = this.client(conn);
+    // Only files of this topic go out (attachments are checked when a message is posted; this keeps it so).
     const files = msg.attachments?.length
-      ? await db.select().from(artifacts).where(inArray(artifacts.id, msg.attachments))
+      ? await db
+          .select()
+          .from(artifacts)
+          .where(
+            and(
+              inArray(artifacts.id, msg.attachments),
+              eq(artifacts.topicId, msg.topicId),
+              isNull(artifacts.deletedAt),
+            ),
+          )
       : [];
     // Upload the files first: if Slack will not take them, the message carries links and the reason instead.
     const uploaded: { id: string; title: string }[] = [];
@@ -303,7 +313,10 @@ export class SlackAdapter implements Adapter {
     const [text, extra] = await this.render(db, conn, msg, why ? { files, why } : null);
     const where: Record<string, unknown> = { channel: out.conversationExternalId };
     if (out.threadKey) where.thread_ts = out.threadKey;
-    const ts = text.trim() ? await this.post(client, { ...where, text, unfurl_links: false }, extra) : null;
+    // No previews: Slack would fetch whatever address the text links to, images included.
+    const ts = text.trim()
+      ? await this.post(client, { ...where, text, unfurl_links: false, unfurl_media: false }, extra)
+      : null;
     if (uploaded.length && !why) {
       try {
         // Shared where the message went: in the same thread, or right below it in the channel.
@@ -316,7 +329,12 @@ export class SlackAdapter implements Adapter {
         // The message is already out: say what became of its files rather than sending it again (a failed
         // notice is dropped for the same reason).
         await client
-          .call("chat.postMessage", { ...where, text: fileLinks(files, uploadProblem(err)), unfurl_links: false })
+          .call("chat.postMessage", {
+            ...where,
+            text: fileLinks(files, uploadProblem(err)),
+            unfurl_links: false,
+            unfurl_media: false,
+          })
           .catch(() => undefined);
       }
     }
@@ -345,7 +363,9 @@ export class SlackAdapter implements Adapter {
   }
 
   async postRoot(conn: Connection, channel: string, text: string): Promise<string> {
-    return (await this.client(conn).call("chat.postMessage", { channel, text, unfurl_links: false })).ts;
+    return (
+      await this.client(conn).call("chat.postMessage", { channel, text, unfurl_links: false, unfurl_media: false })
+    ).ts;
   }
 
   async reply(conn: Connection, channel: string, thread: string, text: string): Promise<void> {

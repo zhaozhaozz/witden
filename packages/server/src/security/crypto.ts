@@ -132,6 +132,18 @@ export function redact(text: string, extra: string[] = []): string {
   return out;
 }
 
+/**
+ * Whether ``text`` holds a credential in a known format (the plain patterns above), shown as its prefix. Files
+ * are checked with this before they leave a computer: unlike text they cannot be masked in place.
+ */
+export function findCredential(text: string): string | null {
+  for (const p of PLAIN_PATTERNS) {
+    const m = new RegExp(p.source).exec(text);
+    if (m) return `${m[0].slice(0, m[0].search(/[-_]/) + 1)}…`;
+  }
+  return null;
+}
+
 export function redactDeep<T>(value: T, extra: string[] = []): T {
   if (typeof value === "string") return redact(value, extra) as T;
   if (Array.isArray(value)) return value.map((v) => redactDeep(v, extra)) as T;

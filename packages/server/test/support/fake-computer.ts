@@ -2,6 +2,7 @@
  * A simulated computer for tests: an in-memory runner speaking the real runner protocol, plus a fake Docker
  * Manager that "creates" such computers and makes their runners dial into the hub. Nothing executes anywhere.
  */
+import { posix } from "node:path";
 import type {
   BackupRequest,
   BackupResult,
@@ -90,8 +91,9 @@ export class FakeComputer {
     this.transport = null;
   }
 
+  /** Resolved against the working directory, as the runner does (``..`` included). */
   private path(p: string): string {
-    return p.startsWith("/") ? p : `${this.spec.workdir}/${p}`;
+    return posix.resolve(this.spec.workdir, p);
   }
 
   private reply(id: string, ok: boolean, result?: unknown, error?: { code: string; message: string }) {

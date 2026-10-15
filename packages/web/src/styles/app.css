@@ -2317,7 +2317,8 @@ img.avatar-role.avatar-colored {
   background: var(--surface);
 }
 .md-img-loading,
-.md-img-missing {
+.md-img-missing,
+.md-img-external {
   display: inline-block;
   padding: 6px 10px;
   border: 1px dashed var(--line);

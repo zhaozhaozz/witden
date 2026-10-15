@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
+import { saveMessage } from "../src/agent/dispatch.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import {
@@ -25,6 +26,7 @@ import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
 import { socketTiming } from "../src/integrations/slack-socket.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
+import { saveArtifact } from "../src/services/files.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -610,6 +612,22 @@ describe("slack", () => {
     ]);
     const posted = slack.posts.filter((p) => p.channel === "C1").map((p) => [p.thread_ts, p.text]);
     expect(posted).toEqual([["820.1", "桌面截图"]]);
+    // no previews: Slack fetches nothing a role's text points at
+    expect(slack.posts.find((p) => p.text === "桌面截图")).toMatchObject({ unfurl_links: false, unfurl_media: false });
+
+    // Only the topic's own files go out: an attachment from elsewhere is neither uploaded nor linked.
+    const topicId = (await allTasks())[0].topicId;
+    const [topic] = await db().select().from(topics).where(eq(topics.id, topicId));
+    const foreign = await saveArtifact(db(), Buffer.from("other"), {
+      name: "other.txt",
+      kind: "upload",
+      labels: [],
+      topicId: w.ids.topic,
+    });
+    await saveMessage(db(), topic, "role", w.ids.dev, "see attached", { attachments: [foreign.id] });
+    await deliverPending();
+    expect(slack.uploads.map((u) => u.name)).toEqual(["desktop.png"]);
+    expect(slack.posts.at(-1)?.text).toBe("see attached");
   });
 
   it("without files:write, shared files arrive as console links with the reason", async () => {
