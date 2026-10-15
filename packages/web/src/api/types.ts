@@ -337,6 +337,8 @@ export interface RunnerInfo {
   desktop?: { display?: string; width?: number; height?: number; vncPort?: number; vncViewPort?: number } | null;
   browser?: boolean;
   tools?: string[];
+  /** Other processes in the computer could read the runner token (absent: a runner too old to check). */
+  tokenExposed?: boolean;
 }
 
 /** Live connection of the computer's runner to the hub of the API process answering the request. */

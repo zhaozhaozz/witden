@@ -1,10 +1,14 @@
 /** Templates, computer lifecycle, the execution boundary and desktop control. */
+
+import { RUNNER_PROTOCOL_VERSION } from "@witden/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ExecutionGateway } from "../src/compute/gateway.js";
+import { memoryTransportPair, RunnerHub } from "../src/compute/hub.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { computerInstances, instanceLeases, roles, tasks, topics } from "../src/db/schema.js";
 import { InstanceBusy, InstanceUnavailable } from "../src/errors.js";
+import { FakeComputer } from "./support/fake-computer.js";
 import { type Harness, startHarness } from "./support/harness.js";
 
 let h: Harness;
@@ -109,6 +113,79 @@ describe("instances", () => {
     );
     const audit = (await h.api("GET", "/api/audit?action=runner.rejected", { token: h.adminToken })).body;
     expect(audit[0].instance_id).toBe(inst.id);
+  });
+
+  it("while a computer's runner answers, a second connection with its token is refused, not swapped in", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-dup");
+    const pc = h.manager.computer(inst.id);
+    const hub = h.manager.hub!;
+    hub.duplicateCheckMs = 300;
+    const original = hub.connected(inst.id);
+    // someone else holding the token
+    const impostor = new FakeComputer(inst.id, pc.spec);
+    impostor.connect(hub);
+    await h.waitFor(async () => !impostor.connected);
+    expect(hub.connected(inst.id)).toBe(original);
+    expect(pc.connected).toBe(true);
+    const refused = (await h.api("GET", "/api/audit?action=runner.duplicate", { token: h.adminToken })).body;
+    expect(refused[0]).toMatchObject({ instance_id: inst.id, outcome: "denied" });
+
+    // A runner that stopped answering (a connection left half-open) is replaced by its reconnect.
+    pc.answersPings = false;
+    const reconnect = new FakeComputer(inst.id, pc.spec);
+    reconnect.connect(hub);
+    await h.waitFor(async () => hub.connected(inst.id) !== original);
+    expect(reconnect.connected).toBe(true);
+    expect(pc.connected).toBe(false);
+  });
+
+  it("a stdio channel the Docker Manager opened is its own credential; elsewhere a runner needs the token", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-stdio");
+    const hello = (instanceId: string) =>
+      JSON.stringify({
+        type: "hello",
+        protocol: RUNNER_PROTOCOL_VERSION,
+        instanceId,
+        token: "",
+        runnerVersion: "test",
+        info: {
+          hostname: "box",
+          user: "witden",
+          uid: 1000,
+          workdir: "/home/witden",
+          desktop: null,
+          browser: false,
+          tools: [],
+        },
+      });
+    // what the runner on the channel says it is
+    let says = inst.id;
+    const hub = new RunnerHub(async () => {
+      const [hubSide, runnerSide] = memoryTransportPair();
+      setTimeout(() => runnerSide.sendText(hello(says)), 20);
+      return hubSide;
+    });
+    const conn = await hub.connection(inst.id, { containerId: "c-stdio", network: "none", waitMs: 2_000 });
+    expect(conn).toMatchObject({ instanceId: inst.id, via: "stdio" });
+    conn.shutdown("test");
+
+    // the channel vouches only for the computer it was opened into
+    const other = await instance(tpl.id, "box-other");
+    says = other.id;
+    await expect(hub.connection(inst.id, { containerId: "c-stdio", network: "none", waitMs: 500 })).rejects.toThrow();
+    // and a runner dialling in still needs the token
+    const [hubSide, runnerSide] = memoryTransportPair();
+    let closed = "";
+    runnerSide.onClose((reason) => {
+      closed = reason;
+    });
+    hub.accept(hubSide, "websocket");
+    setTimeout(() => runnerSide.sendText(hello(other.id)), 10);
+    await h.waitFor(async () => closed !== "");
+    expect(closed).toBe("authentication failed");
+    await hub.close();
   });
 
   it("clones without credentials", async () => {

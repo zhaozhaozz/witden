@@ -1,16 +1,18 @@
-// Bundles the runner into one ESM file for the computer images (node build.mjs [--outfile path]).
-// `ws` and the shared protocol are inlined; playwright-core stays external (installed next to the bundle).
+// Bundles the runner and the images' init (witden-runner.mjs, witden-init.mjs) into one directory for the
+// computer images (node build.mjs [--outdir dir]). `ws` and the shared protocol are inlined; playwright-core
+// stays external (installed next to the bundles).
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const outIndex = process.argv.indexOf("--outfile");
-const outfile = outIndex > 0 ? path.resolve(process.argv[outIndex + 1]) : path.join(here, "dist", "witden-runner.mjs");
+const outIndex = process.argv.indexOf("--outdir");
+const outdir = outIndex > 0 ? path.resolve(process.argv[outIndex + 1]) : path.join(here, "dist");
 
 await esbuild.build({
-  entryPoints: [path.join(here, "src", "main.ts")],
-  outfile,
+  entryPoints: { "witden-runner": path.join(here, "src", "main.ts"), "witden-init": path.join(here, "src", "init.ts") },
+  outdir,
+  outExtension: { ".js": ".mjs" },
   bundle: true,
   platform: "node",
   format: "esm",
@@ -23,4 +25,4 @@ await esbuild.build({
   banner: { js: 'import { createRequire as __witdenCreateRequire } from "node:module";\nconst require = __witdenCreateRequire(import.meta.url);' },
   logLevel: "warning",
 });
-console.log(`bundled ${path.relative(process.cwd(), outfile)}`);
+console.log(`bundled witden-runner.mjs and witden-init.mjs into ${path.relative(process.cwd(), outdir) || "."}`);

@@ -134,6 +134,8 @@ describe.skipIf(!enabled)("end to end with Docker", () => {
     });
     expect(ready.runner.via).toBe("websocket");
     expect(ready.runner.info.user).toBe("witden");
+    // started through the image's protected init: nothing else in the computer can read the runner token
+    expect(ready.runner.info.tokenExposed).toBe(false);
   }, 120_000);
 
   it("a role runs a command on its computer and answers in the topic", async () => {

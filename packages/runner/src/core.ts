@@ -22,6 +22,7 @@ import { processList } from "./ops/system.js";
 import { Terminals } from "./ops/terminal.js";
 import { type RunnerOptions, resolveRunnerOptions } from "./options.js";
 import { reqString } from "./params.js";
+import { tokenReadable } from "./proc.js";
 import { StreamManager } from "./streams.js";
 import { isRecord, which } from "./util.js";
 import { RUNNER_VERSION } from "./version.js";
@@ -215,6 +216,7 @@ export class RunnerCore {
       desktop,
       browser,
       tools,
+      tokenExposed: tokenReadable(this.options.token),
     };
   }
 

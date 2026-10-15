@@ -40,6 +40,12 @@ export const LABEL_MANAGED = "witden.managed";
 export const LABEL_INSTANCE = "witden.instance";
 export const LABEL_PATH = "witden.path";
 export const LABEL_BACKUP = "witden.backup";
+/**
+ * Set to "protected" by images that bring their own init keeping the runner token from the rest of the
+ * computer (the witden images: tini and witden-init from execute-only binaries). Such images are started
+ * without Docker's init, whose PID 1 would hold the container's environment, token included, readably.
+ */
+export const LABEL_INIT = "witden.init";
 export const BACKUP_REPOSITORY = "witden-backup";
 export const DEFAULT_BRIDGE_NETWORK = "witden-computers";
 export const DEFAULT_INTERNAL_NETWORK = "witden-computers-internal";
@@ -48,7 +54,14 @@ export const DEFAULT_RUNNER_COMMAND: readonly string[] = [
   "/opt/witden/runner/witden-runner.mjs",
   "--stdio",
 ];
+/** The stdio runner of protected images: through witden-init, which keeps the runner's environment clean. */
+export const PROTECTED_RUNNER_COMMAND: readonly string[] = [
+  "/opt/witden/bin/node",
+  "/opt/witden/runner/witden-init.mjs",
+  "--stdio",
+];
 export const DEFAULT_RUNNER_USER = "witden";
+const TOKEN_ENV = "WITDEN_RUNNER_TOKEN";
 export const DEFAULT_HUB_HOST = "witden-hub";
 
 const ICC_OPTION = "com.docker.network.bridge.enable_icc";
@@ -66,6 +79,8 @@ export interface DockerManagerOptions {
   allowedRuntimes?: readonly string[];
   /** Command started with `docker exec` for the stdio runner channel, and the user it runs as. */
   runnerCommand?: readonly string[];
+  /** The stdio runner command for images labelled witden.init=protected. */
+  protectedRunnerCommand?: readonly string[];
   runnerUser?: string;
   /** Host name that bridge computers resolve to the Docker host, where the hub is published. */
   hubHost?: string;
@@ -91,6 +106,11 @@ function wrap(err: unknown, context: string): ManagerError {
   if (status === 404) return new ManagerError("not_found", message);
   if (status === 409) return new ManagerError("conflict", message);
   return new ManagerError("docker_error", message);
+}
+
+/** Whether an image (or a container, which carries its image's labels) brings the protected init. */
+function protectedInit(labels: Record<string, string> | null | undefined): boolean {
+  return labels?.[LABEL_INIT] === "protected";
 }
 
 function isRunning(info: Docker.ContainerInspectInfo): boolean {
@@ -134,6 +154,7 @@ export class DockerManager implements ManagerApi {
   private readonly internalNetwork: string;
   private readonly allowedRuntimes: readonly string[];
   private readonly runnerCommand: string[];
+  private readonly protectedRunnerCommand: string[];
   private readonly runnerUser: string;
   private readonly hubHost: string;
   private readonly networkLocks = new Map<string, Promise<void>>();
@@ -146,6 +167,7 @@ export class DockerManager implements ManagerApi {
     this.internalNetwork = options.internalNetwork || DEFAULT_INTERNAL_NETWORK;
     this.allowedRuntimes = options.allowedRuntimes ?? DEFAULT_ALLOWED_RUNTIMES;
     this.runnerCommand = [...(options.runnerCommand ?? DEFAULT_RUNNER_COMMAND)];
+    this.protectedRunnerCommand = [...(options.protectedRunnerCommand ?? PROTECTED_RUNNER_COMMAND)];
     this.runnerUser = options.runnerUser || DEFAULT_RUNNER_USER;
     this.hubHost = options.hubHost || DEFAULT_HUB_HOST;
     if (!this.runnerCommand.length) throw new Error("runnerCommand must not be empty");
@@ -398,7 +420,10 @@ export class DockerManager implements ManagerApi {
     let socket: Duplex;
     try {
       exec = await container.exec({
-        Cmd: this.runnerCommand,
+        Cmd: protectedInit(info.Config?.Labels) ? this.protectedRunnerCommand : this.runnerCommand,
+        // An exec inherits the container's environment. This channel is its own credential (the hub
+        // accepts the runner on it without a token), so nothing started here holds the token.
+        Env: [`${TOKEN_ENV}=`],
         // the user the computer was created as; the configured default only for containers without one
         User: info.Config?.User || this.runnerUser,
         AttachStdin: true,
@@ -440,6 +465,7 @@ export class DockerManager implements ManagerApi {
   private async createComputer(spec: ComputerSpec): Promise<CreateComputerResult> {
     const warnings: string[] = [];
     await this.ensureImage(spec.image);
+    const image = await this.inspectImage(spec.image);
     const networkMode = await this.networkFor(spec.network);
     const res = spec.resources;
     const hostConfig: Docker.HostConfig = {
@@ -447,7 +473,8 @@ export class DockerManager implements ManagerApi {
       CapAdd: spec.capAdd.length ? [...spec.capAdd] : [...DEFAULT_CAPS],
       SecurityOpt: ["no-new-privileges:true"],
       Privileged: false,
-      Init: true,
+      // Reaps orphaned processes; protected images do that with their own init.
+      Init: !protectedInit(image?.Config?.Labels),
       RestartPolicy: { Name: "unless-stopped" },
       NetworkMode: networkMode,
       PublishAllPorts: false,
@@ -480,7 +507,7 @@ export class DockerManager implements ManagerApi {
       Env: [
         ...Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
         `WITDEN_INSTANCE_ID=${spec.instanceId}`,
-        `WITDEN_RUNNER_TOKEN=${spec.runner.token}`,
+        `${TOKEN_ENV}=${spec.runner.token}`,
         `WITDEN_HUB_URL=${spec.runner.hubUrl ?? ""}`,
       ],
       Labels: { [LABEL_MANAGED]: "true", [LABEL_INSTANCE]: spec.instanceId },
@@ -561,6 +588,7 @@ export class DockerManager implements ManagerApi {
   private async scrub(container: Docker.Container, paths: string[]): Promise<void> {
     const exec = await container.exec({
       Cmd: ["rm", "-rf", "--", ...paths],
+      Env: [`${TOKEN_ENV}=`],
       User: "0",
       WorkingDir: "/",
       AttachStdout: true,

@@ -137,7 +137,7 @@ function startComputer(image: string, hub: TestHub, instanceId: string, token: s
     name,
     "--hostname",
     name,
-    "--init",
+    // no --init: the images bring their own (label witden.init=protected), as the Docker Manager honours
     "--cap-drop",
     "ALL",
     ...CAPS.flatMap((cap) => ["--cap-add", cap]),
@@ -169,6 +169,19 @@ function imageExists(image: string): boolean {
 }
 
 const b64 = (s: string) => Buffer.from(s).toString("base64");
+
+/**
+ * Run as a role's command would: every process whose environment holds the runner token, and whether the
+ * runner or PID 1 can be inspected. Prints only "scanned" when the token is out of reach.
+ */
+const TOKEN_SCAN = [
+  'for f in /proc/[0-9]*/environ; do tr "\\0" "\\n" 2>/dev/null <"$f" | grep -q "^WITDEN_RUNNER_TOKEN=." && echo "$f"; done',
+  'pid=$(pgrep -f "^/opt/witden/bin/node /opt/witden/runner/witden-runner.mjs" | head -1)',
+  'cat "/proc/$pid/environ" >/dev/null 2>&1 && echo "readable /proc/$pid/environ"',
+  'head -c1 "/proc/$pid/mem" >/dev/null 2>&1 && echo "readable /proc/$pid/mem"',
+  "cat /proc/1/environ >/dev/null 2>&1 && echo readable /proc/1/environ",
+  "echo scanned",
+].join("; ");
 const decode = (r: Record<string, any>) => Buffer.from(r.contentBase64, "base64").toString("utf8");
 
 describe.skipIf(!enabled)("computer images (docker)", () => {
@@ -214,6 +227,9 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
     it("runs commands as witden inside the container, without the runner token", async () => {
       const r = await conn.ok("exec.run", { command: 'id -un; id -u; hostname; echo "[$WITDEN_RUNNER_TOKEN]"' });
       expect(r.output.split("\n").slice(0, 4)).toEqual(["witden", "1000", name, "[]"]);
+      // nor anywhere else: no process shows it, the runner and PID 1 cannot be inspected
+      expect((await conn.ok("exec.run", { command: TOKEN_SCAN })).output.trim()).toBe("scanned");
+      expect(conn.hello.info.tokenExposed).toBe(false);
       const node = await conn.ok("exec.run", { command: "node --version && npm --version && python3 --version" });
       expect(node.output).toMatch(/^v22\./);
     });
@@ -283,7 +299,9 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
     }, 60_000);
 
     it("serves the --stdio channel through docker exec", async () => {
-      const child = spawn("docker", ["exec", "-i", name, "node", "/opt/witden/runner/witden-runner.mjs", "--stdio"], {
+      // as the Docker Manager opens it for protected images: no token, the channel is the credential
+      const command = ["/opt/witden/bin/node", "/opt/witden/runner/witden-init.mjs", "--stdio"];
+      const child = spawn("docker", ["exec", "-i", "-e", "WITDEN_RUNNER_TOKEN=", name, ...command], {
         stdio: ["pipe", "pipe", "ignore"],
       });
       const frames = new StdioFrameDecoder();
@@ -301,7 +319,7 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
         throw new Error("no answer on the stdio channel");
       };
       const hello = await until(() => messages.find((m) => m.type === "hello"));
-      expect(hello).toMatchObject({ instanceId, token, info: { user: "witden", uid: 1000 } });
+      expect(hello).toMatchObject({ instanceId, token: "", info: { user: "witden", uid: 1000 } });
       const request = {
         type: "request",
         id: "stdio-1",
@@ -349,6 +367,12 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
         vncViewPort: 5901,
       });
       expect(conn.hello.info.tools).toEqual(expect.arrayContaining(["screen", "input", "browser", "terminal"]));
+    });
+
+    it("keeps the runner token from the desktop's programs", async () => {
+      // supervisord, the X server, VNC and the session's xterm / bash all run without it
+      expect((await conn.ok("exec.run", { command: TOKEN_SCAN })).output.trim()).toBe("scanned");
+      expect(conn.hello.info.tokenExposed).toBe(false);
     });
 
     it("captures the screen and drives mouse and keyboard", async () => {

@@ -3,7 +3,9 @@
 # reaches them through the runner's loopback streams, so the desktop is never exposed directly.
 # Build from the repository root:  docker build -f images/desktop/Dockerfile -t witden/computer-desktop:latest .
 #
-# Everything, supervisord included, runs as the unprivileged user `witden` (uid 1000).
+# Everything, supervisord included, runs as the unprivileged user `witden` (uid 1000). witden-init starts
+# supervisord without the runner token and the runner with it; see images/shell/Dockerfile and
+# packages/runner/src/init.ts for how the token is kept from the rest of the computer.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -16,7 +18,7 @@ RUN npm init -y >/dev/null \
 COPY packages/shared/src packages/shared/src
 COPY packages/runner/src packages/runner/src
 COPY packages/runner/build.mjs packages/runner/
-RUN node packages/runner/build.mjs --outfile /opt/witden/runner/witden-runner.mjs \
+RUN node packages/runner/build.mjs --outdir /opt/witden/runner \
  && mkdir -p /opt/witden/runner/node_modules \
  && cp -r node_modules/playwright-core /opt/witden/runner/node_modules/
 
@@ -29,7 +31,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       xvfb x11vnc fluxbox xterm xdotool imagemagick x11-utils dbus-x11 \
       chromium fonts-noto-cjk fonts-dejavu-core \
-      supervisor socat tmux procps ca-certificates curl git python3 \
+      supervisor socat tmux procps ca-certificates curl git python3 tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash -u 1000 witden \
  && echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage --no-first-run"' \
@@ -37,6 +39,12 @@ RUN apt-get update \
 
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
 COPY --from=runner /opt/witden/runner /opt/witden/runner
+# Execute-only copies for the processes that hold the runner token (tini as PID 1, witden-init, the runner).
+RUN install -d -m 755 /opt/witden/bin \
+ && install -m 111 /usr/local/bin/node /opt/witden/bin/node \
+ && install -m 111 /usr/bin/tini /opt/witden/bin/tini
+# Tells the platform to start this image without Docker's own init, which would hold the token readably.
+LABEL witden.init="protected"
 # Login and interactive shells load the computer's model proxy settings when the platform enabled it.
 COPY images/common/model-proxy.sh /etc/profile.d/witden-model-proxy.sh
 RUN echo '. /etc/profile.d/witden-model-proxy.sh' >> /etc/bash.bashrc
@@ -52,4 +60,8 @@ RUN chown -R witden:witden /home/witden/.fluxbox && chmod +x /home/witden/.fluxb
 
 USER witden
 WORKDIR /home/witden
+# The command is the service witden-init keeps running next to the runner.
+# Through sh: Docker's capabilities still count when it starts PID 1, which makes tini readable to it and so
+# inspectable; started again by sh, which has none, tini is protected like the rest.
+ENTRYPOINT ["/bin/sh", "-c", "exec /opt/witden/bin/tini -- /opt/witden/bin/node /opt/witden/runner/witden-init.mjs \"$@\"", "witden-init"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/witden/supervisord.conf"]

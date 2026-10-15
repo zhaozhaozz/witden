@@ -3,7 +3,9 @@
 # Build from the repository root:  docker build -f images/shell/Dockerfile -t witden/computer-shell:latest .
 #
 # Everything runs as the unprivileged user `witden` (uid 1000), the runner included. Isolation also comes from
-# the platform's container settings (dropped capabilities, no-new-privileges, no host mounts).
+# the platform's container settings (dropped capabilities, no-new-privileges, no host mounts). The runner token
+# is kept from the rest of the computer by witden-init (packages/runner/src/init.ts): only the runner gets it,
+# and every process holding it runs from an execute-only binary, which other processes cannot inspect.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -16,7 +18,7 @@ RUN npm init -y >/dev/null \
 COPY packages/shared/src packages/shared/src
 COPY packages/runner/src packages/runner/src
 COPY packages/runner/build.mjs packages/runner/
-RUN node packages/runner/build.mjs --outfile /opt/witden/runner/witden-runner.mjs \
+RUN node packages/runner/build.mjs --outdir /opt/witden/runner \
  && mkdir -p /opt/witden/runner/node_modules \
  && cp -r node_modules/playwright-core /opt/witden/runner/node_modules/
 
@@ -29,7 +31,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl wget git tmux procps less vim-tiny nano \
       python3 python3-pip python3-venv build-essential pkg-config \
-      ripgrep jq unzip zip openssh-client file \
+      ripgrep jq unzip zip openssh-client file tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash -u 1000 witden \
  && mkdir -p /workspace && chown witden:witden /workspace
@@ -42,10 +44,15 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
 
 COPY --from=runner /opt/witden/runner /opt/witden/runner
+# Execute-only copies for the processes that hold the runner token (tini as PID 1, witden-init, the runner).
+RUN install -d -m 755 /opt/witden/bin \
+ && install -m 111 /usr/local/bin/node /opt/witden/bin/node \
+ && install -m 111 /usr/bin/tini /opt/witden/bin/tini
+# Tells the platform to start this image without Docker's own init, which would hold the token readably.
+LABEL witden.init="protected"
 # Login and interactive shells load the computer's model proxy settings when the platform enabled it.
 COPY images/common/model-proxy.sh /etc/profile.d/witden-model-proxy.sh
 RUN echo '. /etc/profile.d/witden-model-proxy.sh' >> /etc/bash.bashrc
-COPY --chmod=755 images/shell/runner-loop.sh /opt/witden/runner/runner-loop.sh
 
 # Roles are not root: global npm / pip installs go to ~/.local.
 ENV NPM_CONFIG_PREFIX=/home/witden/.local \
@@ -54,4 +61,7 @@ ENV NPM_CONFIG_PREFIX=/home/witden/.local \
 
 USER witden
 WORKDIR /home/witden
-CMD ["/opt/witden/runner/runner-loop.sh"]
+# Through sh: Docker's capabilities still count when it starts PID 1, which makes tini readable to it and so
+# inspectable; started again by sh, which has none, tini is protected like the rest.
+ENTRYPOINT ["/bin/sh", "-c", "exec /opt/witden/bin/tini -- /opt/witden/bin/node /opt/witden/runner/witden-init.mjs \"$@\"", "witden-init"]
+CMD []

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { sleep } from "./util.js";
 
 export interface ProcStat {
@@ -12,6 +12,31 @@ export interface ProcStat {
   /** Start time in clock ticks since boot; with the pid it identifies a process despite pid reuse. */
   startTime: string;
   comm: string;
+}
+
+/**
+ * Whether a process of this user other than the runner could read ``token``: from the environment of any
+ * process it can open, or from the runner itself when the runner can be inspected (its /proc entries are
+ * then owned by the user rather than by root). See init.ts for how the computer images prevent both.
+ */
+export function tokenReadable(token: string): boolean {
+  if (!token) return false;
+  const uid = process.getuid?.();
+  try {
+    if (uid !== undefined && uid !== 0 && statSync("/proc/self/environ").uid === uid) return true;
+  } catch {
+    return false; // no /proc: not Linux, nothing to check
+  }
+  const needle = Buffer.from(`WITDEN_RUNNER_TOKEN=${token}\0`);
+  for (const name of readdirSync("/proc")) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    try {
+      if (readFileSync(`/proc/${name}/environ`).includes(needle)) return true;
+    } catch {
+      // not ours to read, or gone
+    }
+  }
+  return false;
 }
 
 export function readStat(pid: number): ProcStat | null {

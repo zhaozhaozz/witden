@@ -279,6 +279,33 @@ describe.skipIf(!enabled)("DockerManager with a real Docker daemon", () => {
   );
 
   it(
+    "starts images with the protected init without Docker's init, and their stdio runner through it",
+    async () => {
+      const repo = `${prefix}-protected`;
+      const base = await docker.createContainer({ Image: IMAGE, name: `${prefix}-protected-base` });
+      await base.commit({ repo, tag: "latest", changes: ["LABEL witden.init=protected"] });
+      backupImages.push(`${repo}:latest`);
+      const own = new DockerManager({
+        docker,
+        dataDir,
+        bridgeNetwork: nets.bridge,
+        internalNetwork: nets.internal,
+        allowedRuntimes: ["runc"],
+        runnerCommand: ["cat"],
+        protectedRunnerCommand: ["sh", "-c", 'echo "protected[$WITDEN_RUNNER_TOKEN]"; exec cat'],
+      });
+      const { containerId } = await own.create(makeSpec("protected", { image: `${repo}:latest` }));
+      await own.start(containerId);
+      expect((await docker.getContainer(containerId).inspect()).HostConfig.Init).toBe(false);
+      const channel = await own.openRunnerChannel(containerId);
+      // the channel is its own credential: nothing started through it holds the runner token
+      expect((await collect(channel, 12)).toString()).toBe("protected[]\n");
+      channel.close();
+    },
+    SLOW,
+  );
+
+  it(
     "relays the stdio runner channel, directly and over HTTP",
     async () => {
       const direct = await manager.openRunnerChannel(ids.a);

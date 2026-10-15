@@ -32,6 +32,9 @@ import { hashToken, safeEqual } from "../security/crypto.js";
 import { audit } from "../services/audit.js";
 import { publish } from "../services/events.js";
 
+/** How long the connected runner has to answer before a new connection for its computer replaces it. */
+const DUPLICATE_CHECK_MS = 5_000;
+
 /** Minimal bidirectional transport (WebSocket, stdio channel, or in-memory for tests). */
 export interface HubTransport {
   sendText(text: string): void;
@@ -182,7 +185,28 @@ export class RunnerConnection {
       this.onProxy?.(this, msg);
     } else if (msg.type === "ping") {
       this.transport.sendText(JSON.stringify({ type: "pong", at: msg.at }));
+    } else if (msg.type === "pong") {
+      this.pongs.get(msg.at)?.();
     }
+  }
+
+  private readonly pongs = new Map<number, () => void>();
+  private pingSeq = 0;
+
+  /** Whether the runner still answers: a ping it must return within ``timeoutMs``. */
+  alive(timeoutMs: number): Promise<boolean> {
+    if (this.closed) return Promise.resolve(false);
+    const at = ++this.pingSeq;
+    return new Promise((resolve) => {
+      const done = (ok: boolean) => {
+        clearTimeout(timer);
+        this.pongs.delete(at);
+        resolve(ok);
+      };
+      const timer = setTimeout(() => done(false), timeoutMs);
+      this.pongs.set(at, () => done(true));
+      if (!this.post({ type: "ping", at })) done(false);
+    });
   }
 
   /** Send an operation and wait for its result. ``id`` doubles as the runner's journal / idempotency key. */
@@ -271,6 +295,8 @@ export class RunnerHub {
   proxyHandler: RunnerConnection["onProxy"] = null;
   /** Extra welcome fields for a computer, e.g. its model proxy settings. */
   welcomeExtras: ((instanceId: string) => Promise<Partial<WelcomeMessage>>) | null = null;
+  /** How long the connected runner has to answer before a new connection replaces it (tests shorten it). */
+  duplicateCheckMs = DUPLICATE_CHECK_MS;
 
   constructor(private readonly openStdioChannel?: (containerId: string) => Promise<HubTransport>) {}
 
@@ -279,8 +305,12 @@ export class RunnerHub {
     return c && !c.closed ? c : undefined;
   }
 
-  /** Accept a transport; the runner must send a valid hello first. */
-  accept(transport: HubTransport, via: RunnerConnection["via"]): void {
+  /**
+   * Accept a transport; the runner must send a valid hello first. ``channelFor``: the transport is a stdio
+   * channel the Docker Manager opened into that computer, which itself proves who answers, so the runner
+   * there needs no token (and the protected images start it without one: nothing in the computer holds it).
+   */
+  accept(transport: HubTransport, via: RunnerConnection["via"], channelFor?: string): void {
     let done = false;
     const timer = setTimeout(() => {
       if (!done) transport.close("hello timeout");
@@ -296,11 +326,25 @@ export class RunnerHub {
         transport.close("invalid hello");
         return;
       }
-      const ok = await this.authenticate(hello);
+      const ok = await this.authenticate(hello, channelFor);
       if (!ok) {
         transport.close("authentication failed");
         return;
       }
+      // A computer has one runner. While the connected one still answers, a second hello with the same
+      // token is not its reconnect but someone else holding the token: refuse it rather than hand over.
+      const current = this.connected(hello.instanceId);
+      if (current && (await current.alive(this.duplicateCheckMs))) {
+        await audit(db(), "runner.duplicate", {
+          actorType: "system",
+          instanceId: hello.instanceId,
+          outcome: "denied",
+          detail: { via, connected_via: current.via },
+        });
+        transport.close("this computer's runner is already connected");
+        return;
+      }
+      await this.recordConnected(hello);
       const old = this.connections.get(hello.instanceId);
       const conn = new RunnerConnection(hello.instanceId, hello.info, transport, via, (c, reason) =>
         this.gone(c, reason),
@@ -319,10 +363,10 @@ export class RunnerHub {
     });
   }
 
-  private async authenticate(hello: HelloMessage): Promise<boolean> {
-    if (hello?.type !== "hello" || hello.protocol !== RUNNER_PROTOCOL_VERSION || !hello.instanceId || !hello.token) {
-      return false;
-    }
+  private async authenticate(hello: HelloMessage, channelFor?: string): Promise<boolean> {
+    if (hello?.type !== "hello" || hello.protocol !== RUNNER_PROTOCOL_VERSION || !hello.instanceId) return false;
+    const byChannel = channelFor !== undefined && hello.instanceId === channelFor;
+    if (!byChannel && !hello.token) return false;
     return transaction(async (tx) => {
       const [inst] = await tx
         .select()
@@ -332,18 +376,28 @@ export class RunnerHub {
       const valid =
         !!inst &&
         inst.status !== "deleted" &&
-        !!inst.runnerTokenHash &&
-        safeEqual(inst.runnerTokenHash, hashToken(hello.token));
+        (byChannel || (!!inst.runnerTokenHash && safeEqual(inst.runnerTokenHash, hashToken(hello.token))));
       if (!valid) {
         await audit(tx, "runner.rejected", { actorType: "system", instanceId: hello.instanceId, outcome: "denied" });
         return false;
       }
+      return true;
+    });
+  }
+
+  private async recordConnected(hello: HelloMessage): Promise<void> {
+    await transaction(async (tx) => {
       await tx
         .update(computerInstances)
         .set({ runnerConnectedAt: new Date(), runnerInfo: hello.info as any })
-        .where(eq(computerInstances.id, inst.id));
-      await publish(tx, "instance.runner", { id: inst.id, connected: true }, `instance:${inst.id}`, "admin");
-      return true;
+        .where(eq(computerInstances.id, hello.instanceId));
+      await publish(
+        tx,
+        "instance.runner",
+        { id: hello.instanceId, connected: true },
+        `instance:${hello.instanceId}`,
+        "admin",
+      );
     });
   }
 
@@ -373,7 +427,7 @@ export class RunnerHub {
     if (opts.network !== "bridge" && opts.containerId && this.openStdioChannel) {
       const transport = await this.openStdioChannel(opts.containerId);
       const ready = this.waitFor(instanceId, 15_000);
-      this.accept(transport, "stdio");
+      this.accept(transport, "stdio", instanceId);
       return ready;
     }
     return this.waitFor(instanceId, opts.waitMs ?? 20_000);

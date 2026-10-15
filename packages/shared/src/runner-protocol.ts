@@ -35,6 +35,12 @@ export interface RunnerInfo {
   /** True when a CDP endpoint for the desktop browser (or a local Chromium for background sessions) exists. */
   browser: boolean;
   tools: string[];
+  /**
+   * True when another process of the computer's user could read the runner token (from /proc or the
+   * runner's memory): the computer was not started through the protected init of the witden images.
+   * Absent from runners that predate the check.
+   */
+  tokenExposed?: boolean;
 }
 
 export interface WelcomeMessage {

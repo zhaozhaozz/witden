@@ -24,7 +24,8 @@ export interface Env {
   childEnv(extra?: Record<string, string>): NodeJS.ProcessEnv;
 }
 
-const PRIVATE_VARS = ["WITDEN_RUNNER_TOKEN"];
+// The token, and what witden-init sets for the runner process only (init.ts).
+const PRIVATE_VARS = ["WITDEN_RUNNER_TOKEN", "WITDEN_HOME", "WS_NO_BUFFER_UTIL", "WS_NO_UTF_8_VALIDATE"];
 
 export function createEnv(workdir: string, home: string, logger: Logger): Env {
   let user = "";

@@ -44,6 +44,8 @@ export class FakeComputer {
     { status: number; headers: Record<string, string>; chunks: Buffer[]; done: (error?: string) => void }
   >();
   private proxySeq = 0;
+  /** False: the runner has gone quiet (its connection looks open but nothing answers). */
+  answersPings = true;
   private transport: HubTransport | null = null;
   private hub: RunnerHub | null = null;
   private sessions = 0;
@@ -135,6 +137,10 @@ export class FakeComputer {
   }
 
   private async handle(msg: any): Promise<void> {
+    if (msg.type === "ping") {
+      if (this.answersPings) this.transport?.sendText(JSON.stringify({ type: "pong", at: msg.at }));
+      return;
+    }
     if (msg.type === "welcome" || msg.type === "configure") {
       this.modelProxy = msg.modelProxy ?? null;
       return;

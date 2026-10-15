@@ -76,6 +76,17 @@ function runnerFacts(info: RunnerInfo) {
       ),
     ],
     ["浏览器", info.browser ? "可用" : <span className="muted">不可用</span>],
+    [
+      "Runner 令牌",
+      info.tokenExposed === false ? (
+        "已保护：电脑内的其他程序读不到"
+      ) : (
+        <span className="text-bad small">
+          {info.tokenExposed ? "未保护：电脑内的程序可以读到" : "未检查（Runner 版本较旧）"}
+          。用最新的 witden 镜像创建的虚拟电脑才受保护：点击“重置”并保留持久化目录中的数据即可
+        </span>
+      ),
+    ],
   ] as [string, ReactNode][];
 }
 

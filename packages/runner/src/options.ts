@@ -53,7 +53,8 @@ function detectDisplay(env: NodeJS.ProcessEnv): string | null {
 
 /** Fills in defaults from the environment (see images/ for the variables the platform sets). */
 export function resolveRunnerOptions(overrides: Partial<RunnerOptions> = {}, env = process.env): RunnerOptions {
-  const home = overrides.home ?? (env.HOME || os.homedir());
+  // witden-init points HOME at the runner's own directory and passes the user's home separately (init.ts).
+  const home = overrides.home ?? (env.WITDEN_HOME || env.HOME || os.homedir());
   const workdir = overrides.workdir ?? (env.WITDEN_WORKDIR || home);
   const stateDir = overrides.stateDir ?? (env.WITDEN_STATE_DIR || path.join(home, ".witden-runner"));
   return {
