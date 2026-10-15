@@ -15,8 +15,10 @@ import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { memories, messages, modelConfigs, roles, type Task, tasks, topics, users } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
+import { externalContext } from "../integrations/links.js";
 import { spaceLabel, topicLabel, userLabel } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
+import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
@@ -35,10 +37,13 @@ export const TOOL_GROUPS: Record<string, string> = {
   memory: "Remember and recall scoped notes on the platform",
   topics: "Reference other topics the requester can read",
   config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
+  profile: "Change the role's own description, in console conversations only",
 };
 
 /** Groups only system administrator roles may have. */
 export const ADMIN_TOOL_GROUPS = new Set(["config"]);
+/** Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub. */
+export const CONSOLE_ONLY_GROUPS = new Set(["profile"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
@@ -48,7 +53,7 @@ export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
 /** A new system administrator: the configuration tools; it needs no computer. */
 export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
-export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics"];
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics", "profile"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
@@ -688,6 +693,42 @@ export async function authorName(db: Db, type: string, id: string | null): Promi
   return "system";
 }
 
+// --- the role's own description ---------------------------------------------------------------------------
+
+const DESCRIPTION_LIMIT = 500;
+
+/** Rewrite the role's own description (职责说明), nothing else. Console conversations only; asks first by default. */
+async function updateMyDescription(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const description = String(args.description ?? "").trim();
+  if (!description) throw new BadRequest("description is required");
+  if (description.length > DESCRIPTION_LIMIT)
+    throw new BadRequest(`keep your description under ${DESCRIPTION_LIMIT} characters`);
+  return transaction(async (db) => {
+    const { task, role, topic } = await load(ctx, db);
+    // Checked again here: the topic may have been shared to Slack since the task started.
+    if ((await externalContext(db, topic.id)).conversationKind)
+      throw new Forbidden(
+        "your description can be changed only in console conversations, not from Slack, Feishu or GitHub",
+      );
+    if (await textRestricted(db, task))
+      throw new Forbidden(
+        "this task drew on material not everyone here may see, and your description is shown to everyone",
+      );
+    await db.update(roles).set({ description }).where(eq(roles.id, role.id));
+    await audit(db, "role.update", {
+      actorType: "role",
+      actorId: role.id,
+      resourceType: "role",
+      resourceId: role.id,
+      roleId: role.id,
+      taskId: task.id,
+      topicId: topic.id,
+      detail: { fields: ["description"], tool: "update_my_description" },
+    });
+    return { content: `your description is now: ${description}` };
+  });
+}
+
 // --- witden's configuration (system administrators) -----------------------------------------------------
 
 const CONFIG_RESULT_LIMIT = 30_000;
@@ -924,6 +965,13 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       readTopic,
     ),
     spec(
+      "update_my_description",
+      "profile",
+      "Rewrite your own description (职责说明): the short introduction people see when choosing whom to ask. Describe your responsibilities only; everyone can see it, so never include confidential details or anything from private conversations. Only in console conversations; a person may have to approve it first.",
+      obj({ description: { type: "string", description: `at most ${DESCRIPTION_LIMIT} characters` } }, ["description"]),
+      updateMyDescription,
+    ),
+    spec(
       "read_config",
       "config",
       `Read witden's configuration through its API, as the person who asked you. Secrets (keys, tokens, passwords) are never returned. Paths (query strings allowed):\n${configCatalog("read")}`,
@@ -997,7 +1045,9 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
       // Declining to answer is for messages that reached the role without an @-mention.
       (t.name !== "stay_silent" || !!envelope.auto) &&
       // The configuration tools only for a system administrator's own work.
-      (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin),
+      (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
+      // Some only where the conversation stays in the console.
+      (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside),
   );
 }
 

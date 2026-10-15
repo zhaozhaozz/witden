@@ -424,3 +424,27 @@ describe("0020_single_system_admin", () => {
     await db.close();
   });
 });
+
+describe("0021_role_profile_tool", () => {
+  it("gives existing roles the description tool, asking first; not the system administrator", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0021")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, system_admin, allowed_tools, approval_required) values
+        ('role_admin', 'Admin', 'admin', true, '["config"]', '[]'),
+        ('role_dev', 'Dev', 'dev', false, '["shell", "topics"]', '["topics"]'),
+        ('role_chat', 'Chat', 'chat', false, '[]', '[]');
+    `);
+    await apply(db, "0021_role_profile_tool");
+    expect((await db.query("select id, allowed_tools, approval_required from roles order by id")).rows).toEqual([
+      { id: "role_admin", allowed_tools: ["config"], approval_required: [] },
+      { id: "role_chat", allowed_tools: ["profile"], approval_required: ["profile"] },
+      { id: "role_dev", allowed_tools: ["profile", "shell", "topics"], approval_required: ["profile", "topics"] },
+    ]);
+    await db.close();
+  });
+});

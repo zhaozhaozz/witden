@@ -291,7 +291,12 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       spawnedByTaskId: parent?.id ?? null,
       depth: parent ? parent.depth + 1 : 0,
       round: o.round ?? 0,
-      envelope: { ...buildEnvelope(role, parent), ...(o.auto ? { auto: true } : {}) },
+      envelope: {
+        ...buildEnvelope(role, parent),
+        ...(o.auto ? { auto: true } : {}),
+        // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered.
+        ...((await externalContext(db, topic.id)).conversationKind ? { outside: true } : {}),
+      },
       labels,
       roleSnapshot: {
         config_version: role.configVersion,

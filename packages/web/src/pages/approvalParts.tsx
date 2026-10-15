@@ -3,14 +3,14 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { Approval } from "../api/types";
 import { APPROVALS_EVENT } from "../Layout";
-import { fmtRelative, fmtTime, genericStatus, isRestricted } from "../lib/format";
+import { fmtRelative, fmtTime, genericStatus, isRestricted, TOOL_LABEL } from "../lib/format";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
 import { JsonBlock, RoleBadge, StatusChip } from "../ui/kit";
 
 function actionLabel(a: Approval): string {
   if (a.action === "disclose") return "发送含受限资料的消息";
-  return `使用工具 ${a.action}`;
+  return `使用工具：${TOOL_LABEL[a.action] ?? a.action}`;
 }
 
 /** One approval request: what is held, why, who may decide, and the decision controls. */

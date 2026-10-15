@@ -203,6 +203,7 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   memory: "记忆",
   topics: "跨话题引用",
   config: "witden 配置",
+  profile: "职责说明",
 };
 
 /** What each tool group covers, in people's words. */
@@ -215,6 +216,8 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   collaborate: "给其他角色发消息、委派任务（受「可以联系的角色」限制），不在虚拟电脑里",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",
   topics: "读取请求者能看到的其他话题，不在虚拟电脑里",
+  profile:
+    "修改自己的职责说明（别人邀请、私信时看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
   config:
     "像管理员一样读取和修改 witden 的配置（角色、模型、虚拟电脑、通讯接入、知识；不含账号），读不到也改不了任何密钥",
 };
@@ -251,6 +254,7 @@ export const TOOL_LABEL: Record<string, string> = {
   post_progress: "汇报进度",
   follow_up_later: "稍后跟进",
   stay_silent: "决定不回复",
+  update_my_description: "修改自己的职责说明",
   read_config: "读取 witden 配置",
   change_config: "修改 witden 配置",
 };

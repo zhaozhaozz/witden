@@ -186,11 +186,12 @@ describe("permissions and isolation", () => {
       "desktop",
       "files",
       "memory",
+      "profile",
       "shell",
       "terminal",
       "topics",
     ]);
-    expect(created.body.approval_required).toEqual(["collaborate", "memory", "topics"]);
+    expect(created.body.approval_required).toEqual(["collaborate", "memory", "profile", "topics"]);
     const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
     const files = groups.find((g: any) => g.group === "files");
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
