@@ -65,6 +65,44 @@ export interface InboundEvent {
   received_at: string;
 }
 
+/** Credential fields per platform, as [key, label]; shared by the connection form and the Slack guide. */
+export const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
+  // Slack: see SLACK_FIELDS (Socket Mode, or the events URL)
+  slack: [],
+  feishu: [
+    ["app_id", "App ID"],
+    ["app_secret", "App Secret"],
+    ["verification_token", "Verification Token"],
+  ],
+  // GitHub: see GITHUB_FIELDS (a GitHub App, or a bot account's token)
+  github: [],
+};
+
+/** Socket Mode (recommended: no public address) or the events URL; the bot token is the same for both. */
+export const SLACK_FIELDS: Record<"socket" | "http", [string, string][]> = {
+  socket: [
+    ["bot_token", "Bot User OAuth Token"],
+    ["app_token", "App-Level Token"],
+  ],
+  http: [
+    ["bot_token", "Bot User OAuth Token"],
+    ["signing_secret", "Signing Secret"],
+  ],
+};
+
+/** A GitHub App (recommended) or a bot account; the private key is a multi-line PEM. */
+export const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
+  app: [
+    ["app_id", "App ID"],
+    ["private_key", "Private key（.pem 文件的全部内容）"],
+    ["webhook_secret", "Webhook Secret"],
+  ],
+  token: [
+    ["token", "机器人账号的 Token（ghp_… 或 github_pat_…）"],
+    ["webhook_secret", "Webhook Secret"],
+  ],
+};
+
 /**
  * What goes into each Slack credential and where it is, shown right above the inputs. After an app is created
  * Slack shows a couple of tokens, and the app-level one (xapp-) is easily taken for the signing secret.

@@ -1,3 +1,4 @@
+import type { EffortChoices } from "../lib/effort";
 // Response shapes of the witden API (see packages/server/src/api/*.ts and db/schema.ts).
 // Top-level keys are snake_case; nested JSON columns are returned exactly as stored.
 
@@ -494,6 +495,7 @@ export interface Role {
     provider?: { id: string; name: string };
     capabilities: Capabilities;
     status: string;
+    effort?: EffortChoices | null;
   } | null;
   tokens_today?: number;
   /** Configuration problems that will make work fail (no model, computer stopped, ...). */
@@ -552,6 +554,8 @@ export interface ModelConfig {
   tokens_today?: number;
   /** Present in the flat /api/models list. */
   provider?: { id: string; name: string; protocol: ModelProtocol; status: ModelProvider["status"] };
+  /** The reasoning effort levels a role may pick (null for decision models). */
+  effort?: EffortChoices | null;
 }
 
 /** openai / anthropic: chat models; systemone: decision models (TypeSafe Jev, Laya). */

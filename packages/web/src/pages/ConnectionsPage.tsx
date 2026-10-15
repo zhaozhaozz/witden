@@ -9,11 +9,14 @@ import { CopyText, Empty, Field, JsonBlock, KV, Loaded, PageHeader, Section, Sta
 import { ResizeHandle } from "../ui/resize";
 import {
   ConnectionSettingsFields,
+  CREDENTIAL_FIELDS,
+  GITHUB_FIELDS,
   Identities,
   INBOUND_STATUS,
   type InboundEvent,
   lastRejected,
   SLACK_FIELD_HELP,
+  SLACK_FIELDS,
   settingsOf,
   socketText,
 } from "./connectionParts";
@@ -37,43 +40,6 @@ const CAP_STATUS: Record<string, { label: string; tone: "ok" | "wait" | "off" }>
   supported: { label: "已支持", tone: "ok" },
   experimental: { label: "实验性", tone: "wait" },
   planned: { label: "计划中", tone: "off" },
-};
-
-const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
-  // Slack: see SLACK_FIELDS (Socket Mode, or the events URL)
-  slack: [],
-  feishu: [
-    ["app_id", "App ID"],
-    ["app_secret", "App Secret"],
-    ["verification_token", "Verification Token"],
-  ],
-  // GitHub: see GITHUB_FIELDS (a GitHub App, or a bot account's token)
-  github: [],
-};
-
-/** Socket Mode (recommended: no public address) or the events URL; the bot token is the same for both. */
-const SLACK_FIELDS: Record<"socket" | "http", [string, string][]> = {
-  socket: [
-    ["bot_token", "Bot User OAuth Token"],
-    ["app_token", "App-Level Token"],
-  ],
-  http: [
-    ["bot_token", "Bot User OAuth Token"],
-    ["signing_secret", "Signing Secret"],
-  ],
-};
-
-/** A GitHub App (recommended) or a bot account; the private key is a multi-line PEM. */
-const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
-  app: [
-    ["app_id", "App ID"],
-    ["private_key", "Private key（.pem 文件的全部内容）"],
-    ["webhook_secret", "Webhook Secret"],
-  ],
-  token: [
-    ["token", "机器人账号的 Token（ghp_… 或 github_pat_…）"],
-    ["webhook_secret", "Webhook Secret"],
-  ],
 };
 
 const PLATFORM_CHOICES: [string, string, string][] = [

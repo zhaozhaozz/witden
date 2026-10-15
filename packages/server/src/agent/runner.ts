@@ -247,6 +247,8 @@ export class TaskRunner {
       usage.tokens = (usage.tokens ?? 0) + response.promptTokens + response.completionTokens;
       await tx.update(tasks).set({ usage }).where(eq(tasks.id, taskId));
       const payload: Record<string, any> = { content: response.content };
+      // Kept for the next request: DeepSeek asks for its reasoning back on later turns that use tools.
+      if (response.reasoning) payload.reasoning_content = response.reasoning;
       if (response.toolCalls.length) {
         payload.tool_calls = response.toolCalls.map((c) => ({
           id: c.id,

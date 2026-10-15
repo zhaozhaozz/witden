@@ -18,6 +18,7 @@ import { BadRequest } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { avatarFile, MAX_AVATAR_BYTES, saveAvatar } from "../services/appearance.js";
 import { audit } from "../services/audit.js";
+import { effortChoices } from "../services/effort.js";
 import { modelLabel, modelWithProvider, tokensToday, unusableReason } from "../services/model-configs.js";
 import * as svc from "../services/roles.js";
 import { canView } from "../services/topics.js";
@@ -66,6 +67,7 @@ async function roleOut(db: Db, role: Role, full: boolean) {
         provider: { id: found.provider.id, name: found.provider.name },
         capabilities: found.model.capabilities,
         status: found.model.status,
+        effort: effortChoices(found.provider.protocol, found.model.model, found.model.capabilities),
       }
     : null;
   data.warnings = roleWarnings(role, inst, cfg, found?.provider);

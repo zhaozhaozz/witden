@@ -9,6 +9,7 @@ import { type ModelConfig, type ModelProvider, modelConfigs, modelProviders, typ
 import { BadRequest } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { effortChoices } from "../services/effort.js";
 import * as svc from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, putSetting } from "../services/platform-settings.js";
 import { authed, authedNoTx, body, params, row } from "./http.js";
@@ -25,6 +26,8 @@ async function modelOut(db: Db, m: ModelConfig, p: ModelProvider) {
     usable: !svc.unusableReason(m, p),
     used_by_roles: await svc.rolesUsing(db, m),
     tokens_today: await svc.tokensToday(db, { modelConfigId: m.id }),
+    // The reasoning effort levels roles may pick, and where they came from (services/effort.ts).
+    effort: svc.isSystemOne(p) ? null : effortChoices(p.protocol, m.model, m.capabilities),
   };
 }
 

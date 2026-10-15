@@ -13,9 +13,14 @@ import {
   type InboundEvent,
   lastRejected,
   SLACK_FIELD_HELP,
+  SLACK_FIELDS,
   settingsOf,
   socketText,
 } from "./connectionParts";
+
+/** Field labels, as the connection form names them. */
+const CREDENTIAL_LABEL = Object.fromEntries([...SLACK_FIELDS.socket, ...SLACK_FIELDS.http]) as Record<string, string>;
+
 import { PublicAddressStep } from "./PublicAddress";
 
 const BOT_SCOPES: [string, string][] = [
@@ -647,7 +652,7 @@ function CredentialsStep({
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field
-          label="Bot User OAuth Token"
+          label={CREDENTIAL_LABEL.bot_token}
           description={SLACK_FIELD_HELP.bot_token}
           hint={
             wrongToken ? (
@@ -670,7 +675,7 @@ function CredentialsStep({
         </Field>
         {mode === "socket" ? (
           <Field
-            label="App-Level Token"
+            label={CREDENTIAL_LABEL.app_token}
             description={SLACK_FIELD_HELP.app_token}
             hint={
               wrongAppToken ? (
@@ -691,7 +696,7 @@ function CredentialsStep({
           </Field>
         ) : (
           <Field
-            label="Signing Secret"
+            label={CREDENTIAL_LABEL.signing_secret}
             description={SLACK_FIELD_HELP.signing_secret}
             hint={
               secretIsToken ? (

@@ -46,6 +46,8 @@ export async function loadTranscript(db: Db, task: Task): Promise<ChatMessage[]>
     if (s.kind === "assistant") {
       const m: ChatMessage = { role: "assistant", content: p.content ?? "" };
       if (p.tool_calls?.length) m.tool_calls = p.tool_calls;
+      // Only services that returned it get it back; others never see the field.
+      if (typeof p.reasoning_content === "string" && p.reasoning_content) m.reasoning_content = p.reasoning_content;
       return m;
     }
     if (s.kind === "tool") return { role: "tool", tool_call_id: p.tool_call_id ?? "", content: p.content ?? "" };

@@ -1,47 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
-import type { Instance, ModelConfig, ModelProtocol, ModelProvider, RemoteModel } from "../api/types";
+import type { Instance, ModelConfig, ModelProvider } from "../api/types";
 import { instanceStatus } from "../lib/format";
 import { useInterval } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useTopics } from "../lib/topics";
-import { Field, StatusChip } from "../ui/kit";
+import { StatusChip } from "../ui/kit";
+import {
+  addModels,
+  type ModelChoice,
+  ModelPicker,
+  type ServiceDraft,
+  ServiceFields,
+  saveService,
+  serviceDraft,
+  serviceReady,
+} from "./modelParts";
 
 /**
  * First run (shown while the platform has no roles): connect a model service, pick a model, and witden creates
- * a desktop computer, a system administrator and an assistant on that computer (POST /api/setup/finish).
+ * a desktop computer and an assistant on it, and the built-in system administrator gets the model if it has none
+ * (POST /api/setup/finish). The service form and the model picker are the models page's own (modelParts.tsx).
  */
-
-interface Preset {
-  key: string;
-  label: string;
-  protocol: ModelProtocol;
-  baseUrl: string;
-  hint?: string;
-}
-
-const PRESETS: Preset[] = [
-  { key: "openai", label: "OpenAI", protocol: "openai", baseUrl: "https://api.openai.com/v1" },
-  { key: "anthropic", label: "Anthropic（Claude）", protocol: "anthropic", baseUrl: "https://api.anthropic.com" },
-  { key: "deepseek", label: "DeepSeek", protocol: "openai", baseUrl: "https://api.deepseek.com/v1" },
-  {
-    key: "qwen",
-    label: "通义千问（阿里云百炼）",
-    protocol: "openai",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  },
-  { key: "kimi", label: "Kimi（月之暗面）", protocol: "openai", baseUrl: "https://api.moonshot.cn/v1" },
-  { key: "zhipu", label: "智谱 GLM", protocol: "openai", baseUrl: "https://open.bigmodel.cn/api/paas/v4" },
-  { key: "openrouter", label: "OpenRouter", protocol: "openai", baseUrl: "https://openrouter.ai/api/v1" },
-  {
-    key: "custom",
-    label: "其他服务",
-    protocol: "openai",
-    baseUrl: "",
-    hint: "OpenAI 兼容接口（如 vLLM、Ollama）填写含 /v1 的地址；Anthropic 接口不含 /v1。地址要能从 witden 服务器访问到。",
-  },
-];
 
 interface Finished {
   computer: { id: string; name: string; status: string };
@@ -54,15 +35,9 @@ export default function SetupPage() {
   const nav = useNavigate();
   const dir = useDirectory();
   const topics = useTopics();
-  const [preset, setPreset] = useState<Preset>(PRESETS[0]);
-  const [protocol, setProtocol] = useState<ModelProtocol>(PRESETS[0].protocol);
-  const [baseUrl, setBaseUrl] = useState(PRESETS[0].baseUrl);
-  const [apiKey, setApiKey] = useState("");
+  const [service, setService] = useState<ServiceDraft>(() => serviceDraft());
   const [provider, setProvider] = useState<ModelProvider | null>(null);
-  const [remote, setRemote] = useState<RemoteModel[] | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [filter, setFilter] = useState("");
-  const [picked, setPicked] = useState("");
+  const [picked, setPicked] = useState<ModelChoice[]>([]);
   const [model, setModel] = useState<ModelConfig | null>(null);
   const [done, setDone] = useState<Finished | null>(null);
   const [computer, setComputer] = useState<Instance | null>(null);
@@ -71,43 +46,17 @@ export default function SetupPage() {
   const [error, setError] = useState<string | null>(null);
 
   const step = done ? 3 : stage;
-  const shown = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return (remote ?? []).filter((m) => !q || m.id.toLowerCase().includes(q) || m.name?.toLowerCase().includes(q));
-  }, [remote, filter]);
 
-  const choose = (p: Preset) => {
-    setPreset(p);
-    setProtocol(p.protocol);
-    setBaseUrl(p.baseUrl);
-  };
-
-  /** Save the service (create it, or update it when coming back) and ask it for its models. */
+  /** Save the service (create it, or update it when coming back); the picker then asks it for its models. */
   const connect = async () => {
     setBusy("正在连接模型服务");
     setError(null);
     try {
-      const body: Record<string, unknown> = { protocol, base_url: baseUrl.trim() };
-      if (apiKey) body.api_key = apiKey;
-      let saved: ModelProvider;
-      if (provider) saved = await api.patch<ModelProvider>(`/api/model-providers/${provider.id}`, body);
-      else {
-        const taken = new Set((await api.get<ModelProvider[]>("/api/model-providers")).map((p) => p.name));
-        let name = preset.key === "custom" ? "模型服务" : preset.label;
-        for (let i = 2; taken.has(name); i++) name = `${preset.label} ${i}`;
-        saved = await api.post<ModelProvider>("/api/model-providers", { ...body, name });
-      }
+      const saved = await saveService(service, provider);
       setProvider(saved);
-      setApiKey("");
+      setService({ ...serviceDraft(saved), preset: service.preset });
+      setPicked([]);
       setStage(2);
-      try {
-        setRemote((await api.get<{ models: RemoteModel[] }>(`/api/model-providers/${saved.id}/remote-models`)).models);
-        setListError(null);
-      } catch (err) {
-        // Some services list no models: the name can still be typed in.
-        setRemote([]);
-        setListError(errorMessage(err));
-      }
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -117,17 +66,11 @@ export default function SetupPage() {
 
   /** Add the model, check what it can do, then create the computer and the roles. */
   const start = async () => {
-    if (!provider || !picked.trim()) return;
+    if (!provider || !picked.length) return;
     setError(null);
     try {
       setBusy("正在添加模型");
-      await api.post(`/api/model-providers/${provider.id}/models`, {
-        models: [{ model: picked.trim() }],
-        source: remote?.some((m) => m.id === picked) ? "api" : "manual",
-      });
-      const found = (await api.get<ModelConfig[]>("/api/models")).find(
-        (m) => m.provider?.id === provider.id && m.model === picked.trim(),
-      );
+      const [found] = await addModels(provider, picked);
       if (!found) throw new Error("模型没有添加成功");
       setBusy("正在检测模型能力（会调用几次模型，可能需要半分钟）");
       const checked = await api.post<ModelConfig>(`/api/models/${found.id}/check`);
@@ -198,48 +141,15 @@ export default function SetupPage() {
             </button>
             {step === 1 ? (
               <div className="setup-body">
-                <div className="pick first-run-presets" role="radiogroup" aria-label="模型服务">
-                  {PRESETS.map((p) => (
-                    <label key={p.key} className={`pick-item${p.key === preset.key ? " pick-on" : ""}`}>
-                      <input type="radio" name="preset" checked={p.key === preset.key} onChange={() => choose(p)} />
-                      <span className="pick-text">{p.label}</span>
-                    </label>
-                  ))}
-                </div>
                 <div className="form">
-                  {preset.key === "custom" ? (
-                    <Field label="接口协议">
-                      <select value={protocol} onChange={(e) => setProtocol(e.target.value as ModelProtocol)}>
-                        <option value="openai">OpenAI 兼容</option>
-                        <option value="anthropic">Anthropic</option>
-                      </select>
-                    </Field>
-                  ) : null}
-                  <Field label="API 地址" hint={preset.hint}>
-                    <input className="mono" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-                  </Field>
-                  <Field
-                    label="API Key"
-                    hint={`在模型服务的控制台中创建。witden 加密保存，之后在任何地方都不会显示出来${
-                      preset.key === "custom" ? "；自部署的服务不需要时留空" : ""
-                    }。`}
-                  >
-                    <input
-                      type="password"
-                      autoComplete="new-password"
-                      value={apiKey}
-                      onChange={(e) => setApiKey(e.target.value)}
-                    />
-                  </Field>
+                  <ServiceFields value={service} onChange={setService} existing={provider} showName={false} />
                 </div>
                 <div className="setup-next">
                   <button
                     type="button"
                     className="btn btn-primary"
                     // A saved service keeps its key when coming back to this step.
-                    disabled={
-                      !!busy || !baseUrl.trim() || (preset.key !== "custom" && !apiKey && !provider?.has_api_key)
-                    }
+                    disabled={!!busy || !serviceReady(service, provider)}
                     onClick={() => void connect()}
                   >
                     {busy ?? "连接并获取模型"}
@@ -259,43 +169,13 @@ export default function SetupPage() {
             </div>
             {step === 2 ? (
               <div className="setup-body">
-                {listError ? (
-                  <div className="callout callout-wait">
-                    没能取到模型列表：{listError}。可以返回上一步检查地址和 API Key，或直接在下面填写模型名称。
-                  </div>
-                ) : null}
-                {remote?.length ? (
-                  <>
-                    <input
-                      type="search"
-                      placeholder={`在 ${remote.length} 个模型中筛选`}
-                      value={filter}
-                      onChange={(e) => setFilter(e.target.value)}
-                    />
-                    <div className="pick first-run-models" role="radiogroup" aria-label="模型">
-                      {shown.slice(0, 300).map((m) => (
-                        <label key={m.id} className={`pick-item${m.id === picked ? " pick-on" : ""}`}>
-                          <input type="radio" name="model" checked={m.id === picked} onChange={() => setPicked(m.id)} />
-                          <span className="pick-text">
-                            <span className="mono">{m.id}</span>
-                            {m.name && m.name !== m.id ? <span className="pick-hint">{m.name}</span> : null}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </>
-                ) : null}
-                <Field
-                  label={remote?.length ? "或填写模型名称" : "模型名称"}
-                  hint="填写服务的接口使用的名称，例如 gpt-4o、deepseek-chat、qwen-plus。助手要操作桌面，最好选支持工具调用和图像理解的模型。"
-                >
-                  <input className="mono" value={picked} onChange={(e) => setPicked(e.target.value)} />
-                </Field>
+                {provider ? <ModelPicker provider={provider} multiple={false} onChange={setPicked} /> : null}
+                <p className="small muted">助手要操作桌面，最好选支持工具调用和图像理解的模型。</p>
                 <div className="setup-next">
                   <button
                     type="button"
                     className="btn btn-primary"
-                    disabled={!!busy || !picked.trim()}
+                    disabled={!!busy || !picked.length}
                     onClick={() => void start()}
                   >
                     {busy ?? "使用这个模型，开始体验"}

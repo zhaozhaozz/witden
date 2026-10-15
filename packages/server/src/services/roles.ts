@@ -111,12 +111,12 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   if (effort && modelId && ("reasoningEffort" in data || "modelConfigId" in data)) {
     const found = await modelWithProvider(db, modelId);
     if (found) {
-      const { levels, reported } = effortChoices(found.provider.protocol, found.model.capabilities);
+      const { levels, source } = effortChoices(found.provider.protocol, found.model.model, found.model.capabilities);
       if (!levels.includes(effort))
         throw new BadRequest(
-          reported
-            ? `${found.model.name} takes effort ${levels.join(", ") || "(none: it has no effort setting)"}, not ${effort}`
-            : `${effort} is not an effort level for ${found.provider.protocol} models; use ${levels.join(", ")}`,
+          source === "common"
+            ? `${effort} is not an effort level for ${found.provider.protocol} models; use ${levels.join(", ")}`
+            : `${found.model.name} takes effort ${levels.join(", ") || "(none: it has no effort setting)"}, not ${effort}`,
         );
     }
   }

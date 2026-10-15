@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import { ModelError } from "../errors.js";
-import { anthropicEffort, type EffortInfo, gatewayEffort } from "../services/effort.js";
+import { anthropicEffort, type EffortInfo, listedEffort } from "../services/effort.js";
 
 export interface ToolCall {
   id: string;
@@ -17,6 +17,8 @@ export interface ToolCall {
 
 export interface LLMResponse {
   content: string;
+  /** The model's reasoning, when the service returns it and wants it back (DeepSeek's reasoning_content). */
+  reasoning?: string;
   toolCalls: ToolCall[];
   promptTokens: number;
   completionTokens: number;
@@ -29,6 +31,8 @@ export interface ChatMessage {
   content: string | ContentPart[];
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
+  /** OpenAI-compatible services that return reasoning_content expect it back on the assistant turn. */
+  reasoning_content?: string;
 }
 export interface ToolSchema {
   name: string;
@@ -181,8 +185,10 @@ export class OpenAICompatibleModel implements ChatModel {
     const stream = { stream: true, stream_options: { include_usage: true } };
     const res = await postMaybeStreaming(this, this.url, this.headers, body, stream, this.timeoutMs, onDelta);
     if (!isEventStream(res)) return OpenAICompatibleModel.parse(await parseJson(res));
-    // Streamed: text arrives in delta.content; tool calls arrive in pieces keyed by index.
+    // Streamed: text arrives in delta.content, reasoning in delta.reasoning_content; tool calls arrive in
+    // pieces keyed by index.
     let content = "";
+    let reasoning = "";
     const calls: { id?: string; name: string; args: string }[] = [];
     let usage: any = null;
     let finishReason: string | null = null;
@@ -196,6 +202,7 @@ export class OpenAICompatibleModel implements ChatModel {
         content += delta.content;
         onDelta?.(delta.content);
       }
+      if (typeof delta.reasoning_content === "string") reasoning += delta.reasoning_content;
       for (const part of delta.tool_calls ?? []) {
         const at = typeof part.index === "number" ? part.index : calls.length;
         calls[at] ??= { name: "", args: "" };
@@ -210,6 +217,7 @@ export class OpenAICompatibleModel implements ChatModel {
           finish_reason: finishReason,
           message: {
             content,
+            ...(reasoning ? { reasoning_content: reasoning } : {}),
             tool_calls: calls.filter(Boolean).map((c) => ({ id: c.id, function: { name: c.name, arguments: c.args } })),
           },
         },
@@ -233,6 +241,9 @@ export class OpenAICompatibleModel implements ChatModel {
     });
     return {
       content: msg.content ?? "",
+      ...(typeof msg.reasoning_content === "string" && msg.reasoning_content
+        ? { reasoning: msg.reasoning_content }
+        : {}),
       toolCalls,
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
@@ -428,7 +439,7 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
     for (const m of list) {
       const item = m as Record<string, unknown> | string;
       const id = typeof item === "string" ? item : String(item?.id ?? item?.model ?? item?.name ?? "");
-      if (id) found.set(id, { id, name: null, effort: typeof item === "string" ? undefined : gatewayEffort(item) });
+      if (id) found.set(id, { id, name: null, effort: typeof item === "string" ? undefined : listedEffort(item) });
     }
   }
   return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));

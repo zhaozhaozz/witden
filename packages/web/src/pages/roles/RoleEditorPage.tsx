@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type { AgentSession, Instance, KnowledgeSpace, ModelConfig, Role, RoleImpact, ToolGroup } from "../../api/types";
-import { EFFORT_LABEL, effortChoices } from "../../lib/effort";
+import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
 import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
@@ -27,6 +27,7 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
+import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
 import { defaultPermissions, PermissionList } from "./PermissionList";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
@@ -140,15 +141,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const toolGroups = useResource(() => api.get<ToolGroup[]>("/api/roles/tool-groups"), []);
   const models = useResource(() => api.get<ModelConfig[]>("/api/models"), []);
   // Models grouped under their providers for the picker; System 1 decision models cannot chat, so no role uses them.
-  const modelGroups = useMemo(() => {
-    const groups = new Map<string, ModelConfig[]>();
-    for (const m of models.data ?? []) {
-      if (m.provider?.protocol === "systemone") continue;
-      const key = m.provider?.name ?? "";
-      groups.set(key, [...(groups.get(key) ?? []), m]);
-    }
-    return [...groups.entries()];
-  }, [models.data]);
   const instances = useResource(() => api.get<Instance[]>("/api/instances"), []);
   const spaces = useResource(() => api.get<KnowledgeSpace[]>("/api/knowledge-spaces"), []);
   const defaults = useMemo(() => (toolGroups.data ? defaultPermissions(toolGroups.data) : null), [toolGroups.data]);
@@ -189,13 +181,10 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
     models.data?.find((m) => m.id === draft.model_config_id) ??
     (role?.model && role.model.id === draft.model_config_id ? role.model : null);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
-  const effortFor = (modelId: string) => {
-    const m = models.data?.find((x) => x.id === modelId);
-    return effortChoices(
-      m?.provider?.protocol,
-      m?.capabilities ?? (role?.model?.id === modelId ? role.model.capabilities : undefined),
-    );
-  };
+  // The levels a model takes come from the server (services/effort.ts): reported, known, or common.
+  const effortFor = (modelId: string): EffortChoices =>
+    models.data?.find((x) => x.id === modelId)?.effort ??
+    (role?.model?.id === modelId ? role.model.effort : null) ?? { levels: [], default: null, source: "common" };
   const effort = effortFor(draft.model_config_id);
   // Another model may not take the chosen level: fall back to its default.
   const pickModel = (id: string) =>
@@ -428,34 +417,24 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                     : "按服务商分组；在「模型」页添加服务商和模型。"
                 }
               >
-                <select value={draft.model_config_id} onChange={(e) => pickModel(e.target.value)}>
-                  <option value="">未配置</option>
-                  {modelGroups.map(([provider, list]) => (
-                    <optgroup key={provider} label={provider || "其他"}>
-                      {list.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                          {m.name !== m.model ? `（${m.model}）` : ""}
-                          {m.usable ? "" : " · 不可用"}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                  {role?.model && !(models.data ?? []).some((m) => m.id === role.model!.id) ? (
-                    <option value={role.model.id}>{role.model.label ?? role.model.name}</option>
-                  ) : null}
-                </select>
+                <ModelSelect
+                  models={models.data ?? []}
+                  value={draft.model_config_id}
+                  onChange={pickModel}
+                  kind="chat"
+                  current={role?.model ? { id: role.model.id, label: role.model.label ?? role.model.name } : null}
+                />
               </Field>
               <Field
                 label="思考程度（effort）"
                 hint={
                   !draft.model_config_id
                     ? "先选择模型"
-                    : effort.reported
-                      ? effort.levels.length
-                        ? "模型服务报告的等级；越高思考越充分，也越慢、越耗 token"
+                    : effort.source === "common"
+                      ? "服务未报告支持的等级，以下为常见等级，不支持时请求会出错；在“模型”页检测能力可获取"
+                      : effort.levels.length
+                        ? `${effort.source === "service" ? "模型服务报告的" : "witden 已知的这个模型的"}等级；越高思考越充分，也越慢、越耗 token`
                         : "模型服务报告这个模型没有思考程度设置"
-                      : "服务未报告支持的等级，以下为常见等级，不支持时请求会出错；在“模型”页检测能力可获取"
                 }
               >
                 <select

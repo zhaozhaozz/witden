@@ -1,6 +1,6 @@
 /** Reasoning effort: the levels a service reports per model, the role setting, and where requests carry it. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { setFetch } from "../src/agent/llm.js";
+import { buildModel, setFetch } from "../src/agent/llm.js";
 import { withEffort } from "../src/services/effort.js";
 import { setModelFactory } from "../src/services/model-configs.js";
 import { reply } from "./support/harness.js";
@@ -151,5 +151,81 @@ describe("reasoning effort", () => {
     await w.post(w.alice, w.ids.topic, "@dev hello");
     await w.drain();
     expect(sent).toEqual([{ temperature: 0.2, reasoning_effort: "high" }]);
+  });
+  it("reads DeepSeek's levels from its model list, and falls back to the table of known models", async () => {
+    const p = (
+      await admin("POST", "/api/model-providers", {
+        name: "deepseek",
+        base_url: "https://api.deepseek.example",
+        api_key: "sk-ds-test-0123456789",
+        models: ["deepseek-flash", "gpt-6.1-sol", "my-local-model"],
+      })
+    ).body;
+    const [flash, sol, local] = p.models;
+    // before any check: the table of known models, else the common levels
+    const listed = (await admin("GET", "/api/models")).body;
+    const effortOf = (id: string) => listed.find((m: any) => m.id === id).effort;
+    expect(effortOf(flash.id)).toEqual({ levels: ["low", "high", "max"], default: "high", source: "known" });
+    expect(effortOf(sol.id)).toEqual({
+      levels: ["low", "medium", "high", "xhigh", "max"],
+      default: "medium",
+      source: "known",
+    });
+    expect(effortOf(local.id).source).toBe("common");
+    const noNone = await admin("PATCH", `/api/roles/${w.ids.dev}`, {
+      model_config_id: sol.id,
+      reasoning_effort: "none",
+    });
+    expect(noNone.status).toBe(400);
+    // checking asks the service, whose report wins
+    setFetch(async () =>
+      Response.json({
+        data: [{ id: "deepseek-flash", effort: { supported_levels: ["low", "high", "max"], default_level: "high" } }],
+      }),
+    );
+    capable();
+    expect((await admin("POST", `/api/models/${flash.id}/check`)).body.effort).toEqual({
+      levels: ["low", "high", "max"],
+      default: "high",
+      source: "service",
+    });
+  });
+
+  it("gives a service its reasoning_content back on the next turn, and only a service that sent it", async () => {
+    setModelFactory((m, provider, key) => buildModel(provider.protocol, provider.baseUrl, m.model, key, m.params));
+    const bodies: any[] = [];
+    const sse = (events: object[]) =>
+      new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") + "data: [DONE]\n\n", {
+        headers: { "content-type": "text/event-stream" },
+      });
+    setFetch(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (bodies.length === 1)
+        return sse([
+          { choices: [{ delta: { reasoning_content: "I should run " } }] },
+          { choices: [{ delta: { reasoning_content: "the command." } }] },
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: "c1", function: { name: "run_command", arguments: '{"command":"echo hi"}' } },
+                  ],
+                },
+                finish_reason: "tool_calls",
+              },
+            ],
+          },
+        ]);
+      return sse([{ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }]);
+    });
+    await w.post(w.alice, w.ids.topic, "@dev run it");
+    await w.drain();
+    expect(bodies).toHaveLength(2);
+    const assistant = bodies[1].messages.find((m: any) => m.role === "assistant");
+    expect(assistant).toMatchObject({ reasoning_content: "I should run the command.", tool_calls: [{ id: "c1" }] });
+    // the first request had no earlier turn to give back; nothing else carries the field
+    expect(JSON.stringify(bodies[0].messages)).not.toContain("reasoning_content");
   });
 });

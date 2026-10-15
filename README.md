@@ -43,7 +43,8 @@ witden 让你拥有一组“AI 员工”。每位 AI 员工（称为**角色**�
 **模型**
 - 按“服务商 → 模型”管理：对话模型支持 OpenAI 兼容接口（如 vLLM、Ollama、DeepSeek）和 Anthropic 接口；模型可以从服务商获取列表后选择，也可以手动填写。
 - 可检测模型的对话、工具调用和图像理解能力以及响应时间；按角色和模型设置每日 token 额度，并统计用量。
-- 角色可以设置思考程度（effort）：模型服务报告了某个模型支持的等级时（如 Anthropic、OpenRouter），只列出这些等级；Anthropic 接口、OpenRouter 类服务和其他 OpenAI 兼容接口各按自己的参数发送。
+- 添加模型服务时可以直接选择常见服务（OpenAI、Anthropic、DeepSeek、通义千问、Kimi、智谱、OpenRouter 等），只需填写 API Key；首次使用引导与模型页使用同一套界面。
+- 角色可以设置思考程度（effort）：模型服务报告了某个模型支持的等级时（如 Anthropic、DeepSeek、OpenRouter），只列出这些等级；服务不报告时，使用 witden 内置的已知模型表，或列出常见等级。各种接口按自己的参数发送；DeepSeek 等返回的思考内容会在后续请求中带回。
 - 支持 System 1 决策模型（System One 接口）：TypeSafe Jev 和开源的 Laya。它们针对给定内容回答选择题并给出概率，响应快，用作话题调度模型；Laya 可以作为 Docker Compose 的可选服务一起部署。
 
 ## 系统组成

@@ -2071,15 +2071,11 @@ img.avatar-role.avatar-colored {
   margin-left: auto;
   align-self: flex-start;
 }
-.first-run-presets {
+/* Service presets (pages/modelParts.tsx): wide enough for the longest name. */
+.service-presets {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   max-height: none;
   margin-bottom: 12px;
-}
-.first-run-models {
-  grid-template-columns: 1fr;
-  max-height: 260px;
-  margin: 8px 0 12px;
 }
 
 /* --- topics workspace --------------------------------------------------------------------------- */

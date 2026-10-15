@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { api } from "../api/client";
-import type { ModelConfig, ModelProtocol, ModelProvider, RemoteModel } from "../api/types";
+import type { ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
 import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
@@ -8,18 +8,26 @@ import { useAction, useFeedback } from "../ui/feedback";
 import {
   Capability,
   Empty,
-  ErrorNote,
   Field,
   FormModal,
   Handle,
   Loaded,
-  Loading,
   PageHeader,
   RoleBadge,
   StatusChip,
   Tag,
   Toggle,
 } from "../ui/kit";
+import {
+  addModels,
+  type ModelChoice,
+  ModelPicker,
+  type ServiceDraft,
+  ServiceFields,
+  saveService,
+  serviceDraft,
+  serviceReady,
+} from "./modelParts";
 
 const PROTOCOL_LABEL: Record<ModelProtocol, string> = {
   openai: "OpenAI 兼容协议",
@@ -35,8 +43,7 @@ const PROVIDER_STATUS: Record<ModelProvider["status"], { label: string; tone: "o
 
 type Dialog =
   | { kind: "provider"; provider: ModelProvider | null }
-  | { kind: "remote"; provider: ModelProvider }
-  | { kind: "manual"; provider: ModelProvider }
+  | { kind: "models"; provider: ModelProvider }
   | { kind: "model"; model: ModelConfig; systemOne: boolean };
 
 export default function ModelsPage() {
@@ -88,13 +95,18 @@ export default function ModelsPage() {
         }
       </Loaded>
       {dialog?.kind === "provider" ? (
-        <ProviderEditor provider={dialog.provider} onClose={() => setDialog(null)} onSaved={done} />
+        <ProviderEditor
+          provider={dialog.provider}
+          onClose={() => setDialog(null)}
+          onSaved={(saved, created) => {
+            void res.reload();
+            // A new service: go straight on to choosing its models.
+            setDialog(created ? { kind: "models", provider: saved } : null);
+          }}
+        />
       ) : null}
-      {dialog?.kind === "remote" ? (
-        <RemoteModelsDialog provider={dialog.provider} onClose={() => setDialog(null)} onSaved={done} />
-      ) : null}
-      {dialog?.kind === "manual" ? (
-        <ManualModelsDialog provider={dialog.provider} onClose={() => setDialog(null)} onSaved={done} />
+      {dialog?.kind === "models" ? (
+        <AddModelsDialog provider={dialog.provider} onClose={() => setDialog(null)} onSaved={done} />
       ) : null}
       {dialog?.kind === "model" ? (
         <ModelEditor model={dialog.model} systemOne={dialog.systemOne} onClose={() => setDialog(null)} onSaved={done} />
@@ -184,7 +196,7 @@ function ProviderCard({
           </table>
         </div>
       ) : (
-        <p className="small muted">这个服务商下还没有模型。从接口获取模型列表，或手动填写模型名称。</p>
+        <p className="small muted">这个服务商下还没有模型。点击“添加模型”，从它的模型列表中选择，或填写模型名称。</p>
       )}
 
       {manage ? (
@@ -195,12 +207,9 @@ function ProviderCard({
               className="btn btn-xs btn-primary"
               disabled={p.status === "revoked"}
               title={p.status === "revoked" ? "密钥已撤销，先在编辑中设置新密钥" : undefined}
-              onClick={() => onDialog({ kind: "remote", provider: p })}
+              onClick={() => onDialog({ kind: "models", provider: p })}
             >
-              从接口获取模型
-            </button>
-            <button type="button" className="btn btn-xs" onClick={() => onDialog({ kind: "manual", provider: p })}>
-              手动添加模型
+              添加模型
             </button>
             <button type="button" className="btn btn-xs" onClick={() => onDialog({ kind: "provider", provider: p })}>
               编辑服务商
@@ -301,9 +310,9 @@ function ModelRow({
         {caps.latency_ms !== undefined && (caps.chat || caps.decide) ? (
           <div className="small muted">响应 {fmtLatency(caps.latency_ms)}</div>
         ) : null}
-        {caps.effort ? (
-          <div className="small muted">
-            {caps.effort.levels.length ? `思考程度：${caps.effort.levels.join(" · ")}` : "没有思考程度设置"}
+        {m.effort && m.effort.source !== "common" ? (
+          <div className="small muted" title={m.effort.source === "service" ? "模型服务报告" : "witden 已知的模型"}>
+            {m.effort.levels.length ? `思考程度：${m.effort.levels.join(" · ")}` : "没有思考程度设置"}
           </div>
         ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
@@ -371,6 +380,7 @@ function ModelRow({
   );
 }
 
+/** Add or edit a service with the same form as the first-run guide (modelParts.tsx). */
 function ProviderEditor({
   provider,
   onClose,
@@ -378,275 +388,64 @@ function ProviderEditor({
 }: {
   provider: ModelProvider | null;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (saved: ModelProvider, created: boolean) => void;
 }) {
   const { run, busy } = useAction();
-  const [name, setName] = useState(provider?.name ?? "");
-  const [protocol, setProtocol] = useState<ModelProtocol>(provider?.protocol ?? "openai");
-  const [baseUrl, setBaseUrl] = useState(provider?.base_url ?? "");
-  const [apiKey, setApiKey] = useState("");
-  const [models, setModels] = useState("");
-
-  const addressChanged = !!provider && (protocol !== provider.protocol || baseUrl.trim() !== provider.base_url);
+  const [value, setValue] = useState<ServiceDraft>(() => serviceDraft(provider));
   const submit = async () => {
-    const body: Record<string, unknown> = { name: name.trim(), protocol, base_url: baseUrl.trim() };
-    // The key is write-only: omit it to keep the stored one.
-    if (apiKey) body.api_key = apiKey;
-    if (!provider) {
-      const list = parseModelLines(models);
-      if (list.length) body.models = list;
-    }
-    const out = await run(
-      () =>
-        provider ? api.patch(`/api/model-providers/${provider.id}`, body) : api.post("/api/model-providers", body),
-      provider ? "已保存" : "已添加服务商",
-    );
-    if (out) onSaved();
+    const out = await run(() => saveService(value, provider), provider ? "已保存" : "已添加服务商");
+    if (out) onSaved(out, !provider);
   };
-
   return (
     <FormModal
       title={provider ? `编辑服务商 ${provider.name}` : "添加模型服务商"}
       busy={busy}
-      width={620}
-      disabled={!name.trim() || !baseUrl.trim()}
+      width={640}
+      submitLabel={provider ? "保存" : "添加，下一步选择模型"}
+      disabled={!value.name.trim() || !serviceReady(value, provider)}
       onClose={onClose}
       onSubmit={() => void submit()}
     >
-      <div className="form-row">
-        <Field label="名称">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：内部 vLLM、DeepSeek" />
-        </Field>
-        <Field label="接口协议">
-          <select value={protocol} onChange={(e) => setProtocol(e.target.value as ModelProtocol)}>
-            <option value="openai">OpenAI 兼容</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="systemone">System One（TypeSafe Jev、Laya）</option>
-          </select>
-        </Field>
-      </div>
-      <Field
-        label="API 地址"
-        hint={
-          protocol === "anthropic"
-            ? "例如 https://api.anthropic.com（不含 /v1）"
-            : protocol === "systemone"
-              ? "TypeSafe Jev：https://api.typesafe.ai；通过 OpenRouter：https://openrouter.ai/api；自部署的 Laya：http://主机:8000"
-              : "例如 https://llm.internal.example.com/v1（模型列表取自 {地址}/models）"
-        }
-      >
-        <input className="mono" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-      </Field>
-      <Field
-        label="API 密钥"
-        hint={
-          addressChanged && provider?.has_api_key
-            ? "地址或协议变了：已保存的密钥不会发往新地址，请重新填写"
-            : provider?.has_api_key
-              ? "已设置密钥；留空保持不变"
-              : protocol === "systemone"
-                ? "Jev 填 TypeSafe 或 OpenRouter 的密钥；自部署的 Laya 填它的 LAYA_API_KEY，未设置时留空"
-                : "可选；自部署服务不需要时留空"
-        }
-      >
-        <input type="password" autoComplete="new-password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-      </Field>
-      {provider ? (
-        <p className="small muted">更换地址或密钥后，这个服务商下的模型需要重新检测能力。</p>
-      ) : (
-        <Field
-          label="模型（可选）"
-          hint={
-            protocol === "systemone"
-              ? `每行一个模型名称，可写成「模型名称 | 显示名」。${SYSTEM_ONE_MODELS}`
-              : "每行一个模型名称，可写成「模型名称 | 显示名」；也可以保存后从接口获取"
-          }
-        >
-          <textarea className="mono" rows={3} value={models} onChange={(e) => setModels(e.target.value)} />
-        </Field>
-      )}
+      <ServiceFields value={value} onChange={setValue} existing={provider} decision />
+      {provider ? <p className="small muted">更换地址或密钥后，这个服务商下的模型需要重新检测能力。</p> : null}
+    </FormModal>
+  );
+}
+
+/** Choose models from the service's list or by name (the same picker as the first-run guide). */
+function AddModelsDialog({
+  provider,
+  onClose,
+  onSaved,
+}: {
+  provider: ModelProvider;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { run, busy } = useAction();
+  const [choices, setChoices] = useState<ModelChoice[]>([]);
+  const submit = async () => {
+    const out = await run(() => addModels(provider, choices), `已添加（已存在的模型会跳过）`);
+    if (out) onSaved();
+  };
+  return (
+    <FormModal
+      title={`为 ${provider.name} 添加模型`}
+      busy={busy}
+      width={640}
+      submitLabel={choices.length ? `添加（${choices.length}）` : "添加"}
+      disabled={!choices.length}
+      onClose={onClose}
+      onSubmit={() => void submit()}
+    >
+      {provider.protocol === "systemone" ? <p className="small muted">{SYSTEM_ONE_MODELS}</p> : null}
+      <ModelPicker provider={provider} multiple onChange={setChoices} />
     </FormModal>
   );
 }
 
 const SYSTEM_ONE_MODELS =
-  "Jev 一般填 jev-latest（也可以保存后从接口获取）；自部署的 Laya 没有模型列表，中文对话填 multilingual，纯英文可填 english。";
-
-/** "model-id" or "model-id | display name" per line. */
-function parseModelLines(text: string): { model: string; name?: string }[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [model, ...rest] = line.split("|");
-      const name = rest.join("|").trim();
-      return name ? { model: model.trim(), name } : { model: model.trim() };
-    });
-}
-
-function RemoteModelsDialog({
-  provider,
-  onClose,
-  onSaved,
-}: {
-  provider: ModelProvider;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { run, busy } = useAction();
-  const res = useResource(
-    () => api.get<{ models: RemoteModel[] }>(`/api/model-providers/${provider.id}/remote-models`),
-    [provider.id],
-  );
-  const [filter, setFilter] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  const shown = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    return (res.data?.models ?? []).filter(
-      (m) => !q || m.id.toLowerCase().includes(q) || m.name?.toLowerCase().includes(q),
-    );
-  }, [res.data, filter]);
-  const selectable = shown.filter((m) => !m.added);
-  const allPicked = selectable.length > 0 && selectable.every((m) => picked.has(m.id));
-  const toggle = (id: string, on: boolean) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-
-  const submit = async () => {
-    const byId = new Map((res.data?.models ?? []).map((m) => [m.id, m]));
-    const models = [...picked].map((id) => ({
-      model: id,
-      ...(byId.get(id)?.name ? { name: byId.get(id)?.name } : {}),
-    }));
-    const out = await run(
-      () => api.post(`/api/model-providers/${provider.id}/models`, { models, source: "api" }),
-      `已添加 ${models.length} 个模型`,
-    );
-    if (out) onSaved();
-  };
-
-  return (
-    <FormModal
-      title={`从 ${provider.name} 获取模型`}
-      busy={busy}
-      width={640}
-      submitLabel={picked.size ? `添加所选（${picked.size}）` : "添加所选"}
-      disabled={!picked.size}
-      onClose={onClose}
-      onSubmit={() => void submit()}
-    >
-      {res.loading && !res.data ? <Loading label="正在向服务商查询模型列表" /> : null}
-      {res.error ? (
-        <ErrorNote
-          error={`获取失败：${res.error}。可以检查地址和密钥，或改为手动添加模型。`}
-          onRetry={() => void res.reload()}
-        />
-      ) : null}
-      {res.data ? (
-        <>
-          <div className="remote-toolbar">
-            <input
-              type="search"
-              placeholder={`在 ${res.data.models.length} 个模型中筛选`}
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
-            <Toggle
-              checked={allPicked}
-              disabled={!selectable.length}
-              label={filter ? "全选筛选结果" : "全选"}
-              onChange={(on) => {
-                for (const m of selectable) toggle(m.id, on);
-              }}
-            />
-          </div>
-          {shown.length ? (
-            <ul className="remote-models">
-              {shown.map((m) => (
-                <li key={m.id}>
-                  <label className={m.added ? "muted" : undefined}>
-                    <input
-                      type="checkbox"
-                      checked={m.added || picked.has(m.id)}
-                      disabled={m.added}
-                      onChange={(e) => toggle(m.id, e.target.checked)}
-                    />
-                    <code className="id">{m.id}</code>
-                    {m.name && m.name !== m.id ? <span className="small">{m.name}</span> : null}
-                    {m.added ? <Tag>已添加</Tag> : null}
-                  </label>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="small muted">
-              {res.data.models.length ? "没有匹配的模型" : "服务商没有返回任何模型，可以手动添加。"}
-            </p>
-          )}
-        </>
-      ) : null}
-    </FormModal>
-  );
-}
-
-function ManualModelsDialog({
-  provider,
-  onClose,
-  onSaved,
-}: {
-  provider: ModelProvider;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { run, busy } = useAction();
-  const [text, setText] = useState("");
-  const list = parseModelLines(text);
-  const submit = async () => {
-    const out = await run(
-      () =>
-        api.post<{ added: ModelConfig[]; skipped: number }>(`/api/model-providers/${provider.id}/models`, {
-          models: list,
-        }),
-      "已添加（已存在的模型会跳过）",
-    );
-    if (out) onSaved();
-  };
-  return (
-    <FormModal
-      title={`手动添加模型到 ${provider.name}`}
-      busy={busy}
-      width={560}
-      submitLabel={list.length ? `添加（${list.length}）` : "添加"}
-      disabled={!list.length}
-      onClose={onClose}
-      onSubmit={() => void submit()}
-    >
-      <Field
-        label="模型名称"
-        hint={`每行一个，填写服务商接口使用的模型名称；可写成「模型名称 | 显示名」。已存在的会跳过。${
-          provider.protocol === "systemone" ? SYSTEM_ONE_MODELS : ""
-        }`}
-      >
-        <textarea
-          className="mono"
-          rows={5}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={
-            provider.protocol === "systemone"
-              ? "multilingual | Laya 多语言"
-              : "qwen2.5-72b-instruct\ndeepseek-chat | DeepSeek V3"
-          }
-        />
-      </Field>
-    </FormModal>
-  );
-}
+  "Jev 一般选 jev-latest；自部署的 Laya 没有模型列表，中文对话填 multilingual，纯英文可填 english。";
 
 function ModelEditor({
   model,

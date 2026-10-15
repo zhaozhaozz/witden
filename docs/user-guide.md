@@ -155,9 +155,13 @@
 
 **思考程度（effort）**决定模型回答前思考得多充分：等级越高，思考越充分，用时和 token 也越多；选“默认”由模型自己决定。可选的等级取决于模型：
 
-- 在“设置 → 模型”中对模型点击“检测能力”时，witden 会向模型服务查询这个模型支持哪些等级。Anthropic 和 OpenRouter 等服务会报告，查到后模型列表中显示“思考程度：……”，角色设置中只列出这些等级。
-- 服务没有报告时（例如 OpenAI 官方接口和多数自部署服务），列出常见等级（none、minimal、low、medium、high、xhigh、max；Anthropic 接口为 low 到 max），模型不支持所选等级时，请求会出错。
-- witden 按服务的要求发送：Anthropic 接口放在 `output_config.effort`，报告了等级的 OpenRouter 类服务放在 `reasoning.effort`，其他 OpenAI 兼容接口使用 `reasoning_effort`。
+- **模型服务报告的等级**：在“设置 → 模型”中对模型点击“检测能力”时，witden 会向模型服务查询这个模型支持哪些等级。Anthropic、DeepSeek、OpenRouter 等服务会报告，查到后模型列表中显示“思考程度：……”，角色设置中只列出这些等级。
+- **witden 已知的模型**：服务不报告、但文档写明了等级的模型（例如 OpenAI 的部分模型），witden 内置了一张表，按模型名称匹配，直接列出这些等级。
+- **常见等级**：以上都没有时（例如多数自部署服务），列出常见等级（none、minimal、low、medium、high、xhigh、max；Anthropic 接口为 low 到 max），模型不支持所选等级时，请求会出错。
+- witden 按服务的要求发送：Anthropic 接口放在 `output_config.effort`，OpenRouter 类服务放在 `reasoning.effort`，其他 OpenAI 兼容接口（包括 DeepSeek）使用 `reasoning_effort`。
+- DeepSeek 等服务会返回模型的思考内容，并要求之后的请求把它带回；witden 会保存并在下一轮请求中带回，只对返回了思考内容的服务这样做。
+
+添加模型服务的界面在“设置 → 模型”和首次使用引导中是同一套：选择常见服务（OpenAI、Anthropic、DeepSeek、通义千问、Kimi、智谱、OpenRouter，以及调度用的 TypeSafe Jev、Laya）会自动填好地址和协议，只需填写 API Key；“其他服务”可以自己选择协议和地址。添加后在“添加模型”中从服务的模型列表选择，或填写模型名称。
 
 角色设置中的“模型参数”（例如 `{"temperature": 0.2}`）与模型自身的参数合并后随每个请求发送，角色的设置优先。
 
@@ -238,8 +242,8 @@ Laya 对中文对话的判断明显弱于 Jev：在 Laya 项目公开的中文�
 
 ### 8.2 配置步骤
 
-1. 在“设置 → 模型”中点击“添加服务商”，接口协议选择“System One（TypeSafe Jev、Laya）”，填写 API 地址和密钥。
-2. 添加模型：Jev 可以点击“从接口获取模型”后选择，也可以手动填写；Laya 服务不提供模型列表，请点击“手动添加模型”填写模型名称。
+1. 在“设置 → 模型”中点击“添加服务商”，选择“TypeSafe Jev”或“Laya”，填写 API 地址和密钥。
+2. 添加模型：在“添加模型”中，Jev 可以从模型列表中选择，也可以填写名称；Laya 服务不提供模型列表，请填写模型名称。
 3. 点击“检测能力”。平台会提一个答案明确的问题，检测连接、回答是否正确以及响应时间。
 4. 回到“话题调度”，选择该模型并保存。列表只显示 System 1 模型。
 
