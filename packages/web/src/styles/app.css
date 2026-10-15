@@ -2071,13 +2071,6 @@ img.avatar-role.avatar-colored {
   margin-left: auto;
   align-self: flex-start;
 }
-/* Service presets (pages/modelParts.tsx): wide enough for the longest name. */
-.service-presets {
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  max-height: none;
-  margin-bottom: 12px;
-}
-
 /* --- topics workspace --------------------------------------------------------------------------- */
 
 .topic-view {

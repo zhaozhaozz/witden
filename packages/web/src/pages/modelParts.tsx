@@ -34,14 +34,14 @@ export const SERVICE_PRESETS: ServicePreset[] = [
   { key: "openrouter", label: "OpenRouter", protocol: "openai", baseUrl: "https://openrouter.ai/api/v1" },
   {
     key: "jev",
-    label: "TypeSafe Jev（调度用的决策模型）",
+    label: "TypeSafe Jev",
     protocol: "systemone",
     baseUrl: "https://api.typesafe.ai",
     decision: true,
   },
   {
     key: "laya",
-    label: "Laya（自部署的决策模型）",
+    label: "Laya（自部署）",
     protocol: "systemone",
     baseUrl: "",
     decision: true,
@@ -124,14 +124,31 @@ export function ServiceFields({
   return (
     <>
       {existing ? null : (
-        <div className="pick service-presets" role="radiogroup" aria-label="模型服务">
-          {presets.map((p) => (
-            <label key={p.key} className={`pick-item${p.key === value.preset ? " pick-on" : ""}`}>
-              <input type="radio" name="service-preset" checked={p.key === value.preset} onChange={() => choose(p)} />
-              <span className="pick-text">{p.label}</span>
-            </label>
-          ))}
-        </div>
+        <Field label="模型服务" hint="选择常见服务会自动填好地址和协议；列表里没有的选“其他服务”">
+          <select value={value.preset} onChange={(e) => choose(presetOf(e.target.value))}>
+            <optgroup label="对话模型">
+              {presets
+                .filter((p) => !p.decision && p.key !== "custom")
+                .map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+            </optgroup>
+            {decision ? (
+              <optgroup label="调度用的决策模型（System One）">
+                {presets
+                  .filter((p) => p.decision)
+                  .map((p) => (
+                    <option key={p.key} value={p.key}>
+                      {p.label}
+                    </option>
+                  ))}
+              </optgroup>
+            ) : null}
+            <option value="custom">其他服务</option>
+          </select>
+        </Field>
       )}
       {existing || value.preset === "custom" ? (
         <Field label="接口协议">
