@@ -12,7 +12,7 @@ const CREDENTIAL_LABEL = Object.fromEntries([...SLACK_FIELDS.socket, ...SLACK_FI
 
 import { PublicAddressStep } from "./PublicAddress";
 
-const BOT_SCOPES: [string, string][] = [
+export const BOT_SCOPES: [string, string][] = [
   ["app_mentions:read", "收到频道中 @机器人 的消息"],
   ["channels:history", "读取机器人所在公开频道的消息"],
   ["groups:history", "读取机器人所在私有频道的消息"],
@@ -140,12 +140,15 @@ interface TestResult {
 export function SlackSetup({
   initial,
   initialMode,
+  header,
   onCreated,
   onClose,
 }: {
   initial: Connection | null;
   /** Open on this way of connecting (e.g. to switch an existing connection to Socket Mode). */
   initialMode?: Mode;
+  /** Shown first: the choice between a new app and installing an existing one. */
+  header?: ReactNode;
   onCreated: (c: Connection) => void;
   onClose: (c: Connection | null) => void;
 }) {
@@ -218,7 +221,15 @@ export function SlackSetup({
         }}
       />
     ) : null,
-    try: conn ? <SlackTryStep conn={conn} bot={bot} num={num} onDone={() => onClose(conn)} /> : null,
+    try: conn ? (
+      <SlackTryStep
+        conn={conn}
+        bot={bot}
+        accessStep={num("access")}
+        idle={`检查第 ${num("events")} 步的 Request URL 是否显示 Verified，事件是否已订阅并保存。`}
+        onDone={() => onClose(conn)}
+      />
+    ) : null,
   };
   const lacking = missingScopes(tested?.missing_scopes);
   const summary: Partial<Record<StepKey, string>> = {
@@ -244,6 +255,7 @@ export function SlackSetup({
         </button>
       }
     >
+      {header}
       <p className="setup-intro">
         {switching
           ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、机器人代表的角色和已关联的账号都保持不变。`
@@ -795,15 +807,18 @@ function EventsStep({
   );
 }
 
-function SlackTryStep({
+/** Try the bot in Slack. ``idle``: what to check when nothing arrives through the events URL. */
+export function SlackTryStep({
   conn,
   bot,
-  num,
+  accessStep,
+  idle,
   onDone,
 }: {
   conn: Connection;
   bot: string | null;
-  num: StepNumber;
+  accessStep: number;
+  idle: string;
   onDone: () => void;
 }) {
   const socket = conn.slack_mode === "socket";
@@ -813,12 +828,8 @@ function SlackTryStep({
       conn={conn}
       platform="Slack"
       where="提问的地方（频道里或 thread 里）"
-      accessStep={num("access")}
-      idle={
-        socket
-          ? "检查上面的连接状态，以及机器人是否已被邀请进频道。"
-          : `检查第 ${num("events")} 步的 Request URL 是否显示 Verified，事件是否已订阅并保存。`
-      }
+      accessStep={accessStep}
+      idle={socket ? "检查上面的连接状态，以及机器人是否已被邀请进频道。" : idle}
       header={(live) =>
         socket ? (
           <p className="small">

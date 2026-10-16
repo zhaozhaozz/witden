@@ -95,6 +95,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 
 - 各平台的事件接口 `/api/integrations/<平台>/<接入>/events`，每个接口都校验平台的签名或令牌；
 - 公网地址的检查接口 `/api/integrations/probe`；
+- Slack 安装回调 `/api/integrations/slack/oauth`：把一个 Slack 应用安装到其他工作区时，Slack 把安装人的浏览器带到这里，只完成控制台中发起的安装（见[接入 Slack](slack.md#10-把应用安装到多个工作区)）；
 - 角色头像 `/api/avatars/<文件>`：以角色身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。
 
 其他请求一律返回 404，包括控制台页面和所有管理接口。公网地址只能转发到这个端口。消息中“在 witden 中查看”等链接仍然指向 `WITDEN_PUBLIC_URL`（控制台的内网地址），只有能访问内网的人可以打开。
@@ -177,7 +178,7 @@ server {
 | `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
 | `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 在内网访问控制台的地址，消息中的链接指向这里。控制台中没有保存公网事件地址时，事件地址也按它生成（见 2.4）。 |
-| `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查和角色头像，公网地址只转发到这里。设为 `0` 时不开启。 |
+| `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查、Slack 安装回调和角色头像，公网地址只转发到这里。设为 `0` 时不开启。 |
 | `WITDEN_WEBHOOK_BIND` | `127.0.0.1` | （Compose）事件端口在宿主机上发布到的网卡地址。反向代理在其他机器上时修改。 |
 | `WITDEN_TUNNEL_TOKEN_FILE` | — | Cloudflare Tunnel token 的保存位置，`tunnel` 服务从这里读取。Compose 中已设置为 `/tunnel/token`；未设置时控制台不提供 Cloudflare Tunnel 选项。 |
 | `WITDEN_TUNNEL_METRICS_URL` | — | cloudflared 指标接口的地址，用于显示连接状态和读取路由。Compose 中为 `http://tunnel:2000`。 |

@@ -14,6 +14,7 @@ import { db as getDb } from "../db/client.js";
 import { connections } from "../db/schema.js";
 import { WitdenError } from "../errors.js";
 import { acceptSlackEvent, credentials, SlackClient } from "./slack.js";
+import { workspaceConnection } from "./slack-install.js";
 
 export interface SocketState {
   state: "connecting" | "connected" | "error";
@@ -141,9 +142,10 @@ class SlackSocket {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ envelope_id: msg.envelope_id }));
   }
 
-  private async deliver(payload: unknown) {
-    const [conn] = await getDb().select().from(connections).where(eq(connections.id, this.connectionId)).limit(1);
-    if (conn) await acceptSlackEvent(conn, payload);
+  private async deliver(payload: any) {
+    const [app] = await getDb().select().from(connections).where(eq(connections.id, this.connectionId)).limit(1);
+    // One socket per app: events of every workspace it is installed in arrive here.
+    if (app) await acceptSlackEvent(await workspaceConnection(getDb(), app, payload?.team_id), payload);
   }
 }
 
@@ -166,7 +168,10 @@ class SlackSockets {
     this.sockets.clear();
   }
 
-  /** Open sockets for Socket Mode connections that are not paused; close the rest and those whose token changed. */
+  /**
+   * Open a socket per Socket Mode app (a connection holding an app token) while any of its workspaces is not
+   * paused; close the rest and those whose token changed. Workspaces installed through an app have no socket.
+   */
   sync(): Promise<void> {
     this.syncing = this.syncing.then(
       () => this.reconcile(),
@@ -177,8 +182,11 @@ class SlackSockets {
 
   private async reconcile(): Promise<void> {
     const wanted = new Map<string, string>();
-    for (const c of await getDb().select().from(connections).where(eq(connections.platform, "slack"))) {
-      if (c.status === "paused") continue;
+    const all = await getDb().select().from(connections).where(eq(connections.platform, "slack"));
+    for (const c of all) {
+      if (c.installOf) continue;
+      const family = [c, ...all.filter((x) => x.installOf === c.id)];
+      if (family.every((x) => x.status === "paused")) continue;
       try {
         const token = credentials(c).app_token;
         if (token) wanted.set(c.id, token);

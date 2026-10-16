@@ -8,15 +8,35 @@
  * platforms reach it directly, but answers the address check as "console" so such an address is refused.
  */
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
-import { db as getDb } from "../db/client.js";
-import { NotFound, WitdenError } from "../errors.js";
+import { db as getDb, transaction } from "../db/client.js";
+import { BadRequest, NotFound, WitdenError } from "../errors.js";
 import { getAdapter } from "../integrations/base.js";
 import { acceptEvents } from "../integrations/inbound.js";
+import {
+  CALLBACK_PATH,
+  exchangeCode,
+  installProblem,
+  installWorkspace,
+  readState,
+  workspaceConnection,
+} from "../integrations/slack-install.js";
+import { slackSockets } from "../integrations/slack-socket.js";
 import { noteWebhook } from "../integrations/webhook-status.js";
+import { audit } from "../services/audit.js";
 import { probeAnswer } from "../services/public-url.js";
 import { params, query, sendError } from "./http.js";
 import { getConn } from "./integrations.js";
 import { serveAvatar } from "./roles.js";
+
+const escapeHtml = (t: string) =>
+  t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+/** The page a person's browser shows after Slack's redirect: what became of the installation, nothing else. */
+function installPage(title: string, text: string): string {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>${escapeHtml(title)}</title><style>body{font:15px/1.6 system-ui,sans-serif;max-width:36em;margin:4em auto;padding:0 1em;color:#1f2933}</style>
+</head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p></body></html>`;
+}
 
 /** Run a platform's verification; a signed call that fails it is remembered for the console. */
 function rejectedIf(connectionId: string, signed: boolean, verify: () => void): void {
@@ -66,8 +86,43 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
       noteWebhook(conn.id, "verified");
       return reply.send({ challenge: payload.challenge });
     }
-    await acceptSlackEvent(conn, payload);
+    // One app, possibly installed in several workspaces: the event goes to the workspace's connection.
+    await acceptSlackEvent(await workspaceConnection(getDb(), conn, payload.team_id), payload);
     return { ok: true };
+  });
+
+  // Slack sends the browser of whoever installed the app here (integrations/slack-install.ts). It completes
+  // only installations witden started (the signed state) and shows a plain page.
+  app.get(CALLBACK_PATH, async (req, reply) => {
+    const q = query(req);
+    const page = (ok: boolean, text: string) =>
+      reply
+        .code(ok ? 200 : 400)
+        .type("text/html; charset=utf-8")
+        .send(installPage(ok ? "已安装到 Slack 工作区" : "没有完成安装", text));
+    if (q.error) return page(false, q.error === "access_denied" ? "安装已取消。" : `Slack 返回：${q.error}`);
+    try {
+      const state = readState(String(q.state ?? ""));
+      const app = await getConn(getDb(), state.app);
+      if (app.platform !== "slack" || app.installOf) throw new BadRequest("this is not a Slack app's connection");
+      const inst = await exchangeCode(app, String(q.code ?? ""), state.redirectUri);
+      const conn = await transaction(async (db) => {
+        const installed = await installWorkspace(db, app, inst, null);
+        await audit(db, "connection.slack_install", {
+          actorType: "system",
+          connectionId: installed.id,
+          detail: { app: app.id, team: inst.teamId, via: "callback" },
+        });
+        return installed;
+      });
+      void slackSockets.sync();
+      return page(
+        true,
+        `已把应用安装到工作区「${inst.teamName}」（witden 接入「${conn.name}」）。可以关闭这个页面，回到 witden 继续设置。`,
+      );
+    } catch (err) {
+      return page(false, installProblem(err));
+    }
   });
 
   app.post("/api/integrations/github/:id/events", async (req) => {

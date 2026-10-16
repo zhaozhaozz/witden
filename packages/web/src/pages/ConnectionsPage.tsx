@@ -24,6 +24,7 @@ import {
 } from "./connectionParts";
 import { FeishuSetup } from "./FeishuSetup";
 import { GithubSetup, MANIFEST_KEY, type ManifestReturn } from "./GithubSetup";
+import { SlackInstall } from "./SlackInstall";
 import { SlackSetup } from "./SlackSetup";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
@@ -65,6 +66,58 @@ interface Setup {
   mode?: "socket" | "http";
   /** GitHub: the browser came back from creating the app. */
   manifest?: ManifestReturn;
+  /** Slack: install the app this connection holds in another workspace. */
+  installApp?: Connection;
+}
+
+/**
+ * New Slack connections: a new Slack app, or an app witden already has installed in another workspace. A
+ * workspace installed that way resumes the installation guide.
+ */
+function SlackStart({
+  setup,
+  rows,
+  onCreated,
+  onClose,
+}: {
+  setup: Setup;
+  rows: Connection[];
+  onCreated: (c: Connection) => void;
+  onClose: (c: Connection | null) => void;
+}) {
+  // Connections holding a Slack app (not ones installed through another).
+  const apps = rows.filter((c) => c.platform === "slack" && !c.install_of && c.has_credentials);
+  const [install, setInstall] = useState(!!setup.installApp || !!setup.conn?.install_of);
+  const choice =
+    !setup.conn && apps.length ? (
+      <div className="setup-modes">
+        <div className="segmented">
+          <button type="button" className={install ? "seg" : "seg seg-on"} onClick={() => setInstall(false)}>
+            新建一个 Slack 应用
+          </button>
+          <button type="button" className={install ? "seg seg-on" : "seg"} onClick={() => setInstall(true)}>
+            把已有的应用安装到另一个工作区
+          </button>
+        </div>
+        <p className="small muted">
+          {install
+            ? "同一个应用可以装进多个工作区（例如不同的组织），不必为每个工作区各建一个应用。"
+            : "在一个工作区中新建 Slack 应用。之后也可以把它安装到更多工作区。"}
+        </p>
+      </div>
+    ) : null;
+  return install ? (
+    <SlackInstall
+      apps={apps}
+      app={setup.installApp ?? null}
+      installed={setup.conn?.install_of ? setup.conn : null}
+      header={choice}
+      onInstalled={onCreated}
+      onClose={onClose}
+    />
+  ) : (
+    <SlackSetup initial={setup.conn} initialMode={setup.mode} header={choice} onCreated={onCreated} onClose={onClose} />
+  );
 }
 
 /**
@@ -149,9 +202,9 @@ export default function ConnectionsPage() {
         </Section>
       ) : null}
       {setup?.platform === "slack" ? (
-        <SlackSetup
-          initial={setup.conn}
-          initialMode={setup.mode}
+        <SlackStart
+          setup={setup}
+          rows={res.data ?? []}
           onCreated={(c) => {
             setSelected(c.id);
             void res.reload();
@@ -227,6 +280,7 @@ export default function ConnectionsPage() {
                       void res.reload();
                     }}
                     onGuide={(mode) => setSetup({ platform: current.platform, conn: current, mode })}
+                    onInstall={() => setSetup({ platform: "slack", conn: null, installApp: current })}
                   />
                 ) : null}
               </div>
@@ -314,12 +368,15 @@ function ConnectionDetail({
   onChanged,
   onDeleted,
   onGuide,
+  onInstall,
 }: {
   conn: Connection;
   onChanged: (c: Connection) => void;
   onDeleted: () => void;
   /** Open the step-by-step setup, optionally (Slack) on the other way of connecting. */
   onGuide: (mode?: "socket" | "http") => void;
+  /** Slack: install this connection's app in another workspace. */
+  onInstall: () => void;
 }) {
   const { can } = useAuth();
   const dir = useDirectory();
@@ -359,6 +416,11 @@ function ConnectionDetail({
             <button type="button" className="btn btn-sm" onClick={() => onGuide()}>
               设置引导
             </button>
+            {conn.platform === "slack" && !conn.install_of && conn.has_credentials ? (
+              <button type="button" className="btn btn-sm" onClick={onInstall}>
+                安装到其他工作区
+              </button>
+            ) : null}
             <button
               type="button"
               className="btn btn-sm"
@@ -451,7 +513,15 @@ function ConnectionDetail({
             </button>
           </div>
         )}
-        {conn.platform === "slack" && conn.slack_mode === "http" ? (
+        {conn.install_of ? (
+          <div className="callout">
+            这个工作区是通过应用「{conn.app_connection?.name ?? "?"}
+            」安装的：它只保存自己的机器人令牌，接收消息用的是那个应用的
+            {conn.slack_mode === "socket" ? "连接（Socket Mode）" : "事件地址"}
+            。应用的令牌、接入方式等在那个接入中修改；需要更换这里的令牌时，重新安装一次即可。
+          </div>
+        ) : null}
+        {conn.platform === "slack" && conn.slack_mode === "http" && !conn.install_of ? (
           <div className="callout">
             这个接入使用事件地址，需要公网地址。改用 Socket Mode 后，witden 主动连到
             Slack，不需要公网地址；设置引导会说明如何让原来的 Slack 应用打开 Socket Mode。{" "}
@@ -485,6 +555,16 @@ function ConnectionDetail({
                     string,
                     ReactNode,
                   ],
+                  conn.install_of
+                    ? (["所属的应用", conn.app_connection?.name ?? "?"] as [string, ReactNode])
+                    : ([
+                        "安装到的其他工作区",
+                        conn.installs?.length ? (
+                          conn.installs.map((i) => i.name).join("、")
+                        ) : (
+                          <span className="muted">没有（可以点击“安装到其他工作区”）</span>
+                        ),
+                      ] as [string, ReactNode]),
                 ]
               : []),
             conn.slack_mode === "socket"
@@ -756,8 +836,11 @@ function ConnectionForm({
   const [settings, setSettings] = useState(settingsOf(conn));
   const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
   const [slackMode, setSlackMode] = useState<"socket" | "http">(conn?.slack_mode ?? "socket");
-  const fields =
-    platform === "github"
+  // A Slack workspace installed through an app gets its token by installing; the rest is the app's.
+  const installed = !!conn?.install_of;
+  const fields = installed
+    ? []
+    : platform === "github"
       ? GITHUB_FIELDS[githubAuth]
       : platform === "slack"
         ? SLACK_FIELDS[slackMode]
@@ -824,7 +907,13 @@ function ConnectionForm({
           </select>
         </Field>
       ) : null}
-      {platform === "slack" ? (
+      {installed ? (
+        <p className="small muted">
+          这个工作区通过应用「{conn?.app_connection?.name ?? "?"}
+          」安装，凭据只有它自己的机器人令牌；需要更换时重新安装一次。
+        </p>
+      ) : null}
+      {platform === "slack" && !installed ? (
         <Field
           label="接入方式"
           hint={

@@ -684,8 +684,15 @@ export interface Connection {
   external_workspace_id: string | null;
   /** Slack: events over a socket witden keeps open (Socket Mode), or sent to the events URL. */
   slack_mode?: "socket" | "http";
-  /** Slack Socket Mode: the state of the server's socket. */
+  /** Slack Socket Mode: the state of the server's socket (the app's, for a workspace installed through one). */
   socket?: { state: "connecting" | "connected" | "error"; since: string; error?: string } | null;
+  /** Slack: this workspace was installed through the app another connection holds (OAuth). */
+  install_of?: string | null;
+  app_connection?: { id: string; name: string } | null;
+  /** Slack, a connection holding an app: its OAuth client is saved, so it can be installed in more workspaces. */
+  slack_oauth?: boolean;
+  /** Slack, a connection holding an app: the workspaces installed through it. */
+  installs?: { id: string; name: string; team_id: string | null }[];
   /** How the platform's calls to the events URL went lately (kept in the server's memory). */
   webhook?: {
     verified_at?: string;

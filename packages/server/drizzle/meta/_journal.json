@@ -162,6 +162,13 @@
       "when": 1792039047609,
       "tag": "0022_role_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792150900729,
+      "tag": "0023_slack_app_installs",
+      "breakpoints": true
     }
   ]
 }

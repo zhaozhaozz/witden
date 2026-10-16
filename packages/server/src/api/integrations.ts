@@ -17,6 +17,15 @@ import {
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
+import {
+  CALLBACK_PATH,
+  checkRedirect,
+  exchangeCode,
+  installProblem,
+  installState,
+  installWorkspace,
+  readState,
+} from "../integrations/slack-install.js";
 import { slackSockets } from "../integrations/slack-socket.js";
 import { webhookStatus } from "../integrations/webhook-status.js";
 import { secretBox } from "../security/crypto.js";
@@ -37,12 +46,29 @@ const PLATFORMS: Record<string, string[]> = {
 };
 const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id"]);
 
-/** ``base``: the public address (services/public-url.ts). */
-function connOut(conn: Connection, base: string) {
-  const creds =
-    ["github", "slack"].includes(conn.platform) && conn.credentialsEncrypted
-      ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
-      : {};
+const decrypted = (conn: Connection): Record<string, string> =>
+  ["github", "slack"].includes(conn.platform) && conn.credentialsEncrypted
+    ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
+    : {};
+
+/** A Slack connection's app and the workspaces installed through it (integrations/slack-install.ts). */
+async function familyOf(db: Db, conn: Connection): Promise<Connection[]> {
+  if (conn.platform !== "slack") return [];
+  return db
+    .select()
+    .from(connections)
+    .where(conn.installOf ? eq(connections.id, conn.installOf) : eq(connections.installOf, conn.id));
+}
+
+/**
+ * ``base``: the public address (services/public-url.ts). ``family``: other connections, among them the app a
+ * Slack workspace was installed through, or those installed through this one.
+ */
+function connOut(conn: Connection, base: string, family: Connection[] = []) {
+  const creds = decrypted(conn);
+  // A workspace installed through another connection's app connects as that app does.
+  const app = conn.installOf ? (family.find((c) => c.id === conn.installOf) ?? null) : null;
+  const appCreds = app ? decrypted(app) : creds;
   return {
     ...row(conn),
     // How it connects, never the credentials themselves. GitHub: an app or a bot account.
@@ -50,12 +76,25 @@ function connOut(conn: Connection, base: string) {
     ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : creds.token ? "token" : undefined } : {}),
     // Slack: Socket Mode, with the state of this process's socket, or the events URL.
     ...(conn.platform === "slack"
-      ? { slack_mode: creds.app_token ? "socket" : "http", socket: slackSockets.state(conn.id) }
+      ? {
+          slack_mode: appCreds.app_token ? "socket" : "http",
+          socket: slackSockets.state(app?.id ?? conn.id),
+          ...(conn.installOf
+            ? { app_connection: app ? { id: app.id, name: app.name } : null }
+            : {
+                // whether it can be installed in more workspaces (OAuth client saved), and where it is
+                slack_oauth: !!(creds.client_id && creds.client_secret),
+                installs: family
+                  .filter((c) => c.installOf === conn.id)
+                  .map((c) => ({ id: c.id, name: c.name, team_id: c.externalWorkspaceId })),
+              }),
+        }
       : {}),
     // a GitHub connection the setup guide created before its app exists has none yet
     has_credentials: Object.values(creds).some(Boolean),
     capabilities: CAPABILITIES[conn.platform] ?? {},
-    events_url: `${base}/api/integrations/${conn.platform}/${conn.id}/events`,
+    // Slack sends every workspace's events to the app's address.
+    events_url: `${base}/api/integrations/${conn.platform}/${app?.id ?? conn.id}/events`,
     // Whether the platform has reached the events URL, and whether its signature matched.
     webhook: webhookStatus(conn.id),
   };
@@ -68,6 +107,13 @@ function connOut(conn: Connection, base: string) {
 async function mergedCredentials(conn: Connection, entered: Record<string, unknown>): Promise<string> {
   const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
   const given = Object.fromEntries(Object.entries(trimmed(entered)).filter(([, v]) => v));
+  if (conn.installOf) {
+    // A workspace installed through an app holds only its bot token; the rest is the app's.
+    const appKeys = Object.keys(given).filter((k) => k !== "bot_token");
+    if (appKeys.length) throw new BadRequest(`${appKeys.join(", ")} 属于应用本身，请在应用所在的接入中修改`);
+    (await import("../integrations/slack.js")).checkCredentials({ ...current, ...given }, { installed: true });
+    return secretBox().encrypt(JSON.stringify({ ...current, ...given }));
+  }
   if (conn.platform === "github") {
     if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
     if (given.app_id || given.private_key) delete current.token;
@@ -119,7 +165,8 @@ export async function integrationRoutes(app: FastifyInstance) {
     authed(async ({ db, user }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const base = await webhookBase(db);
-      return (await db.select().from(connections).orderBy(connections.name)).map((c) => connOut(c, base));
+      const rows = await db.select().from(connections).orderBy(connections.name);
+      return rows.map((c) => connOut(c, base, rows));
     }),
   );
 
@@ -178,7 +225,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         detail: { platform: conn.platform, name: conn.name },
       });
       after(() => slackSockets.sync());
-      return connOut(conn, await webhookBase(db));
+      return connOut(conn, await webhookBase(db), await familyOf(db, conn));
     }),
   );
 
@@ -207,7 +254,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         detail: { fields: Object.keys(b), status: updated.status },
       });
       after(() => slackSockets.sync());
-      return connOut(updated, await webhookBase(db));
+      return connOut(updated, await webhookBase(db), await familyOf(db, updated));
     }),
   );
 
@@ -215,6 +262,12 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections/:id",
     authed(async ({ db, user, req, after }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const installed = await db
+        .select({ name: connections.name })
+        .from(connections)
+        .where(eq(connections.installOf, params(req).id));
+      if (installed.length)
+        throw new BadRequest(`这个应用还安装在 ${installed.map((c) => c.name).join("、")}，请先删除这些接入`);
       await db.delete(connections).where(eq(connections.id, params(req).id));
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
       after(() => slackSockets.sync());
@@ -247,6 +300,75 @@ export async function integrationRoutes(app: FastifyInstance) {
       });
       // The private key and webhook secret stay on the server.
       return { app: app.slug, name: app.name, html_url: app.html_url, owner: app.owner };
+    }),
+  );
+
+  // Installing a Slack app in another workspace (integrations/slack-install.ts): the state and redirect
+  // address for Slack's authorize page. "public": Slack sends the browser to the public address, which completes
+  // the installation; "manual": to any HTTPS address, whose final URL is pasted back (…/complete).
+  app.post(
+    "/api/connections/:id/slack-install",
+    authed(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const app = await getConn(db, params(req).id);
+      if (app.platform !== "slack" || app.installOf)
+        throw new BadRequest("请选择持有 Slack 应用的接入（不是通过应用安装的工作区）");
+      const creds = decrypted(app);
+      if (!creds.client_id || !creds.client_secret) throw new BadRequest("请先保存应用的 Client ID 和 Client Secret");
+      const b = body(req);
+      let redirect: string;
+      if (b.method === "public") {
+        redirect = checkRedirect(`${await webhookBase(db)}${CALLBACK_PATH}`);
+      } else if (b.method === "manual") {
+        redirect = checkRedirect(String(b.redirectUri ?? ""));
+      } else throw new BadRequest("method must be public or manual");
+      return { client_id: creds.client_id, redirect_uri: redirect, state: installState(app.id, redirect) };
+    }),
+  );
+
+  app.post(
+    "/api/connections/:id/slack-install/complete",
+    authedNoTx(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const app = await getConn(db, params(req).id);
+      const b = body(req);
+      // The address the browser ended up on, or its code and state.
+      let code = String(b.code ?? "");
+      let state = String(b.state ?? "");
+      if (b.url) {
+        let q: URLSearchParams;
+        try {
+          q = new URL(String(b.url).trim()).searchParams;
+        } catch {
+          throw new BadRequest("请粘贴浏览器地址栏中的完整地址");
+        }
+        if (q.get("error"))
+          throw new BadRequest(q.get("error") === "access_denied" ? "安装已取消" : `Slack 返回：${q.get("error")}`);
+        code = q.get("code") ?? "";
+        state = q.get("state") ?? "";
+      }
+      if (!code || !state) throw new BadRequest("这个地址中没有安装代码：请粘贴安装后浏览器停留的页面地址");
+      const s = readState(state);
+      if (s.app !== app.id) throw new BadRequest("这次安装是为另一个应用发起的");
+      let installed: Connection;
+      try {
+        const inst = await exchangeCode(app, code, s.redirectUri);
+        installed = await transaction(async (tx) => {
+          const c = await installWorkspace(tx, app, inst, user.id);
+          await audit(tx, "connection.slack_install", {
+            actorType: "user",
+            actorId: user.id,
+            connectionId: c.id,
+            detail: { app: app.id, team: inst.teamId, via: "pasted" },
+          });
+          return c;
+        });
+      } catch (err) {
+        if (err instanceof BadRequest) throw err;
+        throw new BadRequest(installProblem(err));
+      }
+      void slackSockets.sync();
+      return connOut(installed, await webhookBase(db), await familyOf(db, installed));
     }),
   );
 

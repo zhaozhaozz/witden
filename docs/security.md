@@ -35,7 +35,7 @@
 3. **需要更强隔离时使用安全运行时。** 处理敏感数据的模板可以设置 `runtime: runsc`（gVisor）或 Kata Containers，并在 `WITDEN_ALLOWED_RUNTIMES` 和 `WITDEN_MANAGER_ALLOWED_RUNTIMES` 中启用。
 4. **规划网络。** 虚拟电脑默认连接 `witden-computers` 网桥（虚拟电脑之间不能互相访问），可以访问外网和宿主机网关。宿主机上的数据库等服务应只监听 `127.0.0.1` 或使用防火墙隔离。不需要外网的模板使用 `network: internal` 或 `none`。
 5. **保管主密钥和令牌。** 设置 `WITDEN_SECRET_KEY` 并离线备份，丢失后已保存的密钥无法解密；`WITDEN_INTERNAL_TOKEN` 只提供给 API 和 Worker。
-6. **保护控制台。** 只在内部网络中开放，并在前面放置 HTTPS 反向代理。不要把控制台端口（8320）转发到公网：外部平台只需要访问事件端口（8325），它只提供各平台的事件接口、不需要登录的地址检查接口和角色头像，其他请求一律返回 404。控制台保存公网事件地址前会确认它只通往事件端口，见[部署与配置](deployment.md#24-公网事件地址)。使用 Cloudflare Tunnel 时，token 以文件形式保存在数据卷 `witden-tunnel` 中，只挂载给 `api`（读写）和 `tunnel`（只读）服务；持有 token 的人可以接管这个 tunnel，请像主密钥一样保管。控制台账号都是管理员，可以看到所有会话（包括 Slack、飞书中与机器人的私信），请据此告知使用机器人的人。
+6. **保护控制台。** 只在内部网络中开放，并在前面放置 HTTPS 反向代理。不要把控制台端口（8320）转发到公网：外部平台只需要访问事件端口（8325），它只提供各平台的事件接口、不需要登录的地址检查接口、Slack 安装回调（只完成控制台中发起的安装，校验签名的 state）和角色头像，其他请求一律返回 404。控制台保存公网事件地址前会确认它只通往事件端口，见[部署与配置](deployment.md#24-公网事件地址)。使用 Cloudflare Tunnel 时，token 以文件形式保存在数据卷 `witden-tunnel` 中，只挂载给 `api`（读写）和 `tunnel`（只读）服务；持有 token 的人可以接管这个 tunnel，请像主密钥一样保管。控制台账号都是管理员，可以看到所有会话（包括 Slack、飞书中与机器人的私信），请据此告知使用机器人的人。
 7. **配置 Slack。** 优先使用 Socket Mode：它不需要公网地址，App-Level Token 只授予 `connections:write`；使用事件地址时必须设置 Signing Secret；按需授予 `chat:write.customize` 以显示角色名称和头像；只把机器人邀请到需要的频道。
 8. **配置 GitHub。** 必须设置 Webhook Secret；优先使用 GitHub App，只安装到需要的仓库，私钥只保存在 witden 中；使用机器人账号时，用专用账号，令牌只授予需要接入的仓库。
 

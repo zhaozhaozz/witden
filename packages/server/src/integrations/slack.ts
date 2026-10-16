@@ -124,7 +124,11 @@ export const slackMode = (creds: Record<string, string>): "socket" | "http" => (
  * Check Slack credentials when they are entered, catching the usual mix-ups: Slack shows several tokens and
  * secrets, and an app-level token (xapp-) saved as the signing secret fails every event's signature check.
  */
-export function checkCredentials(creds: Record<string, string>): void {
+/**
+ * ``installed``: a workspace installed through another connection's app, which holds only its bot token. The
+ * OAuth client (client_id, client_secret) is optional: it lets the app be installed in more workspaces.
+ */
+export function checkCredentials(creds: Record<string, string>, opts: { installed?: boolean } = {}): void {
   if (creds.bot_token && !creds.bot_token.startsWith("xoxb-"))
     throw new BadRequest("bot_token must be the Bot User OAuth Token (xoxb-…) from OAuth & Permissions");
   if (creds.app_token && !creds.app_token.startsWith("xapp-"))
@@ -133,7 +137,11 @@ export function checkCredentials(creds: Record<string, string>): void {
     throw new BadRequest(
       "signing_secret is a Slack token, not the Signing Secret: copy it from Basic Information → App Credentials",
     );
-  if (!creds.app_token && !creds.signing_secret)
+  if (creds.client_id && !/^\d+\.\d+$/.test(creds.client_id))
+    throw new BadRequest("client_id must be the app's Client ID (digits.digits) from Basic Information");
+  if (creds.client_secret && /^(xapp-|xox[a-z]-)/.test(creds.client_secret))
+    throw new BadRequest("client_secret is a Slack token, not the Client Secret: copy it from Basic Information");
+  if (!opts.installed && !creds.app_token && !creds.signing_secret)
     throw new BadRequest("an app_token (Socket Mode) or a signing_secret (events URL) is required");
 }
 
