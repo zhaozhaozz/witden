@@ -9,16 +9,16 @@
  */
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { db as getDb, transaction } from "../db/client.js";
-import { BadRequest, NotFound, WitdenError } from "../errors.js";
+import { Forbidden, NotFound, WitdenError } from "../errors.js";
 import { getAdapter } from "../integrations/base.js";
 import { acceptEvents } from "../integrations/inbound.js";
+import { appCredentials, appForEvents, getApp, workspaceConnection } from "../integrations/slack-apps.js";
 import {
   CALLBACK_PATH,
   exchangeCode,
   installProblem,
   installWorkspace,
   readState,
-  workspaceConnection,
 } from "../integrations/slack-install.js";
 import { slackSockets } from "../integrations/slack-socket.js";
 import { noteWebhook } from "../integrations/webhook-status.js";
@@ -68,14 +68,15 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
   );
 
   app.post("/api/integrations/slack/:id/events", async (req, reply) => {
-    const { verifySignature, credentials, acceptSlackEvent } = await import("../integrations/slack.js");
+    const { verifySignature, acceptSlackEvent } = await import("../integrations/slack.js");
     const raw: Buffer = (req as any).rawBody ?? Buffer.from("");
-    const conn = await getConn(getDb(), params(req).id);
-    if (conn.platform !== "slack") throw new NotFound("unknown connection");
+    // A Slack app's events URL (addresses made before apps name a workspace, which leads to its app).
+    const slackApp = await appForEvents(getDb(), params(req).id);
+    if (!slackApp) throw new NotFound("unknown Slack app");
     const signature = req.headers["x-slack-signature"];
-    rejectedIf(conn.id, !!signature, () =>
+    rejectedIf(slackApp.id, !!signature, () =>
       verifySignature(
-        credentials(conn).signing_secret ?? "",
+        appCredentials(slackApp).signing_secret ?? "",
         String(req.headers["x-slack-request-timestamp"] ?? ""),
         raw,
         String(signature ?? ""),
@@ -83,11 +84,14 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     );
     const payload: any = req.body ?? {};
     if (payload.type === "url_verification") {
-      noteWebhook(conn.id, "verified");
+      noteWebhook(slackApp.id, "verified");
       return reply.send({ challenge: payload.challenge });
     }
-    // One app, possibly installed in several workspaces: the event goes to the workspace's connection.
-    await acceptSlackEvent(await workspaceConnection(getDb(), conn, payload.team_id), payload);
+    if (payload.type !== "event_callback") return { ok: true };
+    // Every workspace the app is installed in sends here: the event goes to that workspace's connection.
+    const conn = await workspaceConnection(getDb(), slackApp, payload.team_id);
+    if (!conn) throw new Forbidden("event from a workspace this app is not connected to");
+    await acceptSlackEvent(conn, payload);
     return { ok: true };
   });
 
@@ -103,15 +107,14 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     if (q.error) return page(false, q.error === "access_denied" ? "安装已取消。" : `Slack 返回：${q.error}`);
     try {
       const state = readState(String(q.state ?? ""));
-      const app = await getConn(getDb(), state.app);
-      if (app.platform !== "slack" || app.installOf) throw new BadRequest("this is not a Slack app's connection");
+      const app = await getApp(getDb(), state.app);
       const inst = await exchangeCode(app, String(q.code ?? ""), state.redirectUri);
       const conn = await transaction(async (db) => {
         const installed = await installWorkspace(db, app, inst, null);
         await audit(db, "connection.slack_install", {
           actorType: "system",
           connectionId: installed.id,
-          detail: { app: app.id, team: inst.teamId, via: "callback" },
+          detail: { slack_app: app.id, team: inst.teamId, via: "callback" },
         });
         return installed;
       });

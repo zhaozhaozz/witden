@@ -36,6 +36,7 @@ import { type Settings, setSettings } from "./config.js";
 import { openDatabase, setDatabase, transaction } from "./db/client.js";
 import { deliverPending } from "./integrations/delivery.js";
 import { processInbound } from "./integrations/inbound.js";
+import { normalizeSlackApps } from "./integrations/slack-apps.js";
 import { slackSockets } from "./integrations/slack-socket.js";
 import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
@@ -140,6 +141,8 @@ export async function start(opts: StartOptions): Promise<Witden> {
   await transaction((tx) => bootstrap(tx, settings));
   // The built-in system administrator, kept by the process that serves the API (api and worker start together).
   if (settings.processRole !== "worker") await transaction((tx) => ensureSystemAdmin(tx));
+  // Slack apps keep their keys, workspaces their bot tokens (after migration 0024 copied them whole).
+  if (settings.processRole !== "worker") await transaction((tx) => normalizeSlackApps(tx));
   // Once, by the process that serves the API (api and worker start together).
   if (settings.layaUrl && settings.processRole !== "worker") {
     const { layaUrl, layaApiKey } = settings;

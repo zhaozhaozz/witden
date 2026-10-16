@@ -3,7 +3,8 @@
  * connections:write) and receives the Events API over it, so Slack needs no public address and nothing of
  * witden faces the internet.
  *
- * Each API process keeps one socket per Socket Mode connection. Slack replaces sockets every few hours and
+ * Each API process keeps one socket per Socket Mode app (slack-apps.ts): events of every workspace the app is
+ * installed in arrive on it and go to that workspace's connection. Slack replaces sockets every few hours and
  * warns about 10 s before closing one: a new socket is opened at once, and the old one is closed when the new
  * one says hello. An envelope is acknowledged once its events are queued (as the HTTP route answers after
  * queueing), so Slack retries anything that was not.
@@ -11,10 +12,10 @@
 import { eq } from "drizzle-orm";
 import WebSocket from "ws";
 import { db as getDb } from "../db/client.js";
-import { connections } from "../db/schema.js";
-import { WitdenError } from "../errors.js";
-import { acceptSlackEvent, credentials, SlackClient } from "./slack.js";
-import { workspaceConnection } from "./slack-install.js";
+import { connections, slackApps } from "../db/schema.js";
+import { Forbidden, WitdenError } from "../errors.js";
+import { acceptSlackEvent, SlackClient } from "./slack.js";
+import { appCredentials, workspaceConnection } from "./slack-apps.js";
 
 export interface SocketState {
   state: "connecting" | "connected" | "error";
@@ -37,7 +38,7 @@ class SlackSocket {
   private linkDisabled = false;
 
   constructor(
-    readonly connectionId: string,
+    readonly appId: string,
     readonly appToken: string,
   ) {}
 
@@ -60,6 +61,7 @@ class SlackSocket {
     let url: string;
     try {
       url = (await new SlackClient(this.appToken).call("apps.connections.open", {})).url;
+      if (typeof url !== "string" || !url) throw new Error("Slack gave no socket address");
     } catch (err) {
       // A replacement that cannot open leaves the current socket serving until Slack closes it.
       if (!this.current) this.retry((err as { error?: string }).error ?? (err as Error).message);
@@ -143,13 +145,16 @@ class SlackSocket {
   }
 
   private async deliver(payload: any) {
-    const [app] = await getDb().select().from(connections).where(eq(connections.id, this.connectionId)).limit(1);
+    const [app] = await getDb().select().from(slackApps).where(eq(slackApps.id, this.appId)).limit(1);
+    if (!app || payload?.type !== "event_callback") return;
     // One socket per app: events of every workspace it is installed in arrive here.
-    if (app) await acceptSlackEvent(await workspaceConnection(getDb(), app, payload?.team_id), payload);
+    const conn = await workspaceConnection(getDb(), app, payload.team_id);
+    if (!conn) throw new Forbidden("event from a workspace this app is not connected to");
+    await acceptSlackEvent(conn, payload);
   }
 }
 
-/** The sockets of this process, kept in line with the Socket Mode connections in the database. */
+/** The sockets of this process, kept in line with the Socket Mode apps in the database. */
 class SlackSockets {
   private readonly sockets = new Map<string, SlackSocket>();
   private timer: NodeJS.Timeout | null = null;
@@ -169,8 +174,8 @@ class SlackSockets {
   }
 
   /**
-   * Open a socket per Socket Mode app (a connection holding an app token) while any of its workspaces is not
-   * paused; close the rest and those whose token changed. Workspaces installed through an app have no socket.
+   * Open a socket per Socket Mode app while any of its workspaces is not paused; close the rest and those whose
+   * token changed.
    */
   sync(): Promise<void> {
     this.syncing = this.syncing.then(
@@ -182,14 +187,12 @@ class SlackSockets {
 
   private async reconcile(): Promise<void> {
     const wanted = new Map<string, string>();
-    const all = await getDb().select().from(connections).where(eq(connections.platform, "slack"));
-    for (const c of all) {
-      if (c.installOf) continue;
-      const family = [c, ...all.filter((x) => x.installOf === c.id)];
-      if (family.every((x) => x.status === "paused")) continue;
+    const workspaces = await getDb().select().from(connections).where(eq(connections.platform, "slack"));
+    for (const app of await getDb().select().from(slackApps)) {
+      if (!workspaces.some((c) => c.slackAppId === app.id && c.status !== "paused")) continue;
       try {
-        const token = credentials(c).app_token;
-        if (token) wanted.set(c.id, token);
+        const token = appCredentials(app).app_token;
+        if (token) wanted.set(app.id, token);
       } catch {
         // unreadable credentials (master key changed): nothing to connect with
       }
@@ -207,8 +210,9 @@ class SlackSockets {
     }
   }
 
-  state(connectionId: string): SocketState | null {
-    return this.sockets.get(connectionId)?.state ?? null;
+  /** The socket of an app. */
+  state(appId: string): SocketState | null {
+    return this.sockets.get(appId)?.state ?? null;
   }
 }
 

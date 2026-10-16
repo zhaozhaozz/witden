@@ -194,6 +194,7 @@ export function SlackSetup({
       <CredentialsStep
         mode={mode}
         conn={conn}
+        appName={initial ? undefined : botName}
         unsaved={unsaved}
         result={tested}
         onCreated={(c) => {
@@ -552,6 +553,7 @@ function SwitchAppStep({ to, num, onNext }: { to: Mode; num: StepNumber; onNext:
 function CredentialsStep({
   mode,
   conn,
+  appName,
   unsaved,
   result,
   onCreated,
@@ -559,6 +561,8 @@ function CredentialsStep({
 }: {
   mode: Mode;
   conn: Connection | null;
+  /** A new connection comes with a new Slack app, named as the bot. */
+  appName?: string;
   /** An existing connection switching ways: the new way's credential is required. */
   unsaved: boolean;
   result: TestResult | null;
@@ -599,7 +603,12 @@ function CredentialsStep({
     if (!saved) {
       saved =
         (await run(() =>
-          api.post<Connection>("/api/connections", { platform: "slack", name: name.trim(), credentials }),
+          api.post<Connection>("/api/connections", {
+            platform: "slack",
+            name: name.trim(),
+            app_name: appName?.trim() || undefined,
+            credentials,
+          }),
         )) ?? null;
       if (!saved) return;
       onCreated(saved);

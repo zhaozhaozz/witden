@@ -1,9 +1,6 @@
 /**
- * One Slack app in more workspaces (OAuth v2). The app is the connection holding its app-level credentials:
- * the app token (Socket Mode) or signing secret (events URL), and the OAuth client id and secret. Every further
- * workspace is a connection of its own, ``install_of`` the app's, keeping only its bot token, its people and
- * its conversations. Events of all workspaces arrive through the app (its socket or its events URL) and are
- * handed to the workspace's connection by team_id.
+ * Installing a Slack app (slack-apps.ts) in another workspace with Slack's OAuth v2: the workspace becomes a
+ * connection of the app holding its own bot token.
  *
  * Installing: Slack sends the person's browser back to a redirect address with a one-time code (valid ten
  * minutes) and the state witden made; witden checks the state and exchanges the code (oauth.v2.access, an
@@ -12,13 +9,14 @@
  * pastes back into the console.
  */
 import { randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { type Connection, connections } from "../db/schema.js";
+import { type Connection, connections, type SlackApp, slackApps } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
-import { credentials, SlackError, slackFetch } from "./slack.js";
+import { SlackError, slackFetch } from "./slack.js";
+import { appCredentials } from "./slack-apps.js";
 
 const STATE_TTL_MS = 30 * 60_000;
 /** Where the public address answers Slack's redirect (api/webhooks.ts). */
@@ -28,9 +26,9 @@ export const CALLBACK_PATH = "/api/integrations/slack/oauth";
 const used = new Map<string, number>();
 
 /** The state sent to Slack: which app and redirect address, until when; signed, so it cannot be made up. */
-export function installState(appConnectionId: string, redirectUri: string, now = Date.now()): string {
+export function installState(appId: string, redirectUri: string, now = Date.now()): string {
   const body = Buffer.from(
-    JSON.stringify({ c: appConnectionId, r: redirectUri, e: now + STATE_TTL_MS, n: randomBytes(8).toString("hex") }),
+    JSON.stringify({ c: appId, r: redirectUri, e: now + STATE_TTL_MS, n: randomBytes(8).toString("hex") }),
   ).toString("base64url");
   return `${body}.${secretBox().proof("slack-install", body)}`;
 }
@@ -66,11 +64,13 @@ export interface Installation {
   teamId: string;
   teamName: string;
   botUserId: string;
+  /** Slack's id for the app. */
+  appId: string | null;
 }
 
 /** Exchange the code Slack handed the browser for the workspace's bot token. */
-export async function exchangeCode(app: Connection, code: string, redirectUri: string): Promise<Installation> {
-  const creds = credentials(app);
+export async function exchangeCode(app: SlackApp, code: string, redirectUri: string): Promise<Installation> {
+  const creds = appCredentials(app);
   if (!creds.client_id || !creds.client_secret) throw new BadRequest("还没有保存应用的 Client ID 和 Client Secret");
   if (!/^[\w.-]{8,300}$/.test(code)) throw new BadRequest("缺少安装代码");
   const res = await slackFetch("https://slack.com/api/oauth.v2.access", {
@@ -93,6 +93,7 @@ export async function exchangeCode(app: Connection, code: string, redirectUri: s
     teamId: String(data.team.id),
     teamName: String(data.team.name ?? data.team.id),
     botUserId: String(data.bot_user_id ?? ""),
+    appId: data.app_id ? String(data.app_id) : null,
   };
 }
 
@@ -114,40 +115,28 @@ async function freeName(db: Db, team: string, app: string): Promise<string> {
 }
 
 /**
- * Put an installation in place: the app's own workspace (a reinstall) gets the new bot token; another workspace
- * gets its own connection (new, or the one it already has), standing for the app's role until changed.
+ * Put an installation in place: a workspace the app is already in gets the new bot token; another gets a
+ * connection of its own, standing for the role of the app's first workspace until changed.
  */
 export async function installWorkspace(
   db: Db,
-  app: Connection,
+  app: SlackApp,
   inst: Installation,
   by: string | null,
 ): Promise<Connection> {
   const box = secretBox();
-  if (!app.externalWorkspaceId || app.externalWorkspaceId === inst.teamId) {
-    const creds = { ...credentials(app), bot_token: inst.token };
-    const [updated] = await db
-      .update(connections)
-      .set({
-        credentialsEncrypted: box.encrypt(JSON.stringify(creds)),
-        externalWorkspaceId: inst.teamId,
-        botUserId: inst.botUserId || app.botUserId,
-        statusReason: null,
-      })
-      .where(eq(connections.id, app.id))
-      .returning();
-    return updated;
-  }
+  if (inst.appId && !app.appId) await db.update(slackApps).set({ appId: inst.appId }).where(eq(slackApps.id, app.id));
   const values = {
     credentialsEncrypted: box.encrypt(JSON.stringify({ bot_token: inst.token })),
     botUserId: inst.botUserId || null,
     statusReason: null,
   };
-  const [existing] = await db
+  const mine = await db
     .select()
     .from(connections)
-    .where(and(eq(connections.installOf, app.id), eq(connections.externalWorkspaceId, inst.teamId)))
-    .limit(1);
+    .where(eq(connections.slackAppId, app.id))
+    .orderBy(asc(connections.createdAt));
+  const existing = mine.find((c) => c.externalWorkspaceId === inst.teamId);
   if (existing) {
     const [updated] = await db
       .update(connections)
@@ -156,35 +145,22 @@ export async function installWorkspace(
       .returning();
     return updated;
   }
-  const settings = app.settings as Record<string, unknown>;
+  const first = (mine[0]?.settings ?? {}) as Record<string, unknown>;
   const [created] = await db
     .insert(connections)
     .values({
       id: newId("conn"),
       platform: "slack",
       name: await freeName(db, inst.teamName, app.name),
-      installOf: app.id,
+      slackAppId: app.id,
       externalWorkspaceId: inst.teamId,
       ...values,
-      // The same bot in another workspace: the app's role until chosen otherwise; nobody unlinked yet.
-      settings: { role_id: settings.role_id ?? null, custom_identity: !!settings.custom_identity },
+      // The same bot in another workspace: the role of the app's first workspace until chosen; nobody unlinked.
+      settings: { role_id: first.role_id ?? null, custom_identity: !!first.custom_identity },
       createdBy: by,
     })
     .returning();
   return created;
-}
-
-/** The connection of the workspace an event of ``app`` came from: the app's own, or one installed through it. */
-export async function workspaceConnection(db: Db, app: Connection, teamId: unknown): Promise<Connection> {
-  if (typeof teamId !== "string" || !teamId || !app.externalWorkspaceId || teamId === app.externalWorkspaceId)
-    return app;
-  const [installed] = await db
-    .select()
-    .from(connections)
-    .where(and(eq(connections.installOf, app.id), eq(connections.externalWorkspaceId, teamId)))
-    .limit(1);
-  // none: the app's own connection refuses it as coming from another workspace
-  return installed ?? app;
 }
 
 /** Why Slack refused the exchange, for the person installing. */

@@ -24,7 +24,9 @@ import { deliverPending } from "../src/integrations/delivery.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
 import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
+import { normalizeSlackApps } from "../src/integrations/slack-apps.js";
 import { socketTiming } from "../src/integrations/slack-socket.js";
+import { secretBox } from "../src/security/crypto.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { saveArtifact } from "../src/services/files.js";
 import { call, reply } from "./support/harness.js";
@@ -785,17 +787,19 @@ describe("slack", () => {
     });
   });
 
-  describe("one app in more workspaces", () => {
+  describe("Slack apps and their workspaces", () => {
     const MANUAL = "https://localhost/witden/slack-install";
+    const appId = () => conn.slack_app.id as string;
+    const apps = async () => (await w.api("GET", "/api/slack-apps", { token: w.adminToken })).body;
     /** Save the app's OAuth client and start an installation; returns the state. */
-    const start = async (redirect = MANUAL) => {
-      const saved = await w.api("PATCH", `/api/connections/${conn.id}`, {
+    const start = async (redirect = MANUAL, id = appId()) => {
+      const saved = await w.api("PATCH", `/api/slack-apps/${id}`, {
         token: w.adminToken,
         json: { credentials: CLIENT },
       });
       expect(saved.status, saved.raw).toBe(200);
       expect(saved.body.slack_oauth).toBe(true);
-      const res = await w.api("POST", `/api/connections/${conn.id}/slack-install`, {
+      const res = await w.api("POST", `/api/slack-apps/${id}/install`, {
         token: w.adminToken,
         json: { method: "manual", redirect_uri: redirect },
       });
@@ -803,83 +807,102 @@ describe("slack", () => {
       expect(res.body).toMatchObject({ client_id: CLIENT.client_id, redirect_uri: redirect });
       return res.body.state as string;
     };
-    const paste = (url: string) =>
-      w.api("POST", `/api/connections/${conn.id}/slack-install/complete`, { token: w.adminToken, json: { url } });
+    const paste = (url: string, id = appId()) =>
+      w.api("POST", `/api/slack-apps/${id}/install/complete`, { token: w.adminToken, json: { url } });
+    const install = async () =>
+      (await paste(`${MANUAL}?code=code-ok-1&state=${encodeURIComponent(await start())}`)).body;
+    /** An event sent to the app's events URL, as Slack sends every workspace's. */
+    const toApp = (payload: unknown) => {
+      const { raw, headers } = signed(payload);
+      return w.api("POST", new URL(conn.events_url).pathname, { payload: raw, headers });
+    };
     const betaEvent = (text: string, ts: string) => ({ ...event(text, { ts, channel: "C9" }), team_id: "T2" });
 
-    it("installed by pasting back the address: Beta's events go to its own connection, replies use its token", async () => {
+    it("an app is its own level: made with its first workspace, installed in another by pasting the address", async () => {
+      expect(conn.slack_app).toMatchObject({ name: "acme" });
+      expect(conn.events_url).toContain(`/api/integrations/slack/${appId()}/events`);
+      const listed = await w.api("GET", "/api/slack-apps", { token: w.adminToken });
+      expect(listed.body).toEqual([
+        expect.objectContaining({
+          id: appId(),
+          name: "acme",
+          slack_mode: "http",
+          has_credentials: true,
+          slack_oauth: false,
+          workspaces: [{ id: conn.id, name: "acme", team_id: "T1", status: "active" }],
+        }),
+      ]);
+      expect(listed.raw).not.toContain(SECRET);
       // the client is needed first; the public way needs an HTTPS public address, which tests do not have
       expect(
         (
-          await w.api("POST", `/api/connections/${conn.id}/slack-install`, {
+          await w.api("POST", `/api/slack-apps/${appId()}/install`, {
             token: w.adminToken,
             json: { method: "manual", redirect_uri: MANUAL },
           })
         ).status,
       ).toBe(400);
       const state = await start();
-      expect(
-        (
-          await w.api("POST", `/api/connections/${conn.id}/slack-install`, {
-            token: w.adminToken,
-            json: { method: "public" },
-          })
-        ).status,
-      ).toBe(400);
-      expect(
-        (
-          await w.api("POST", `/api/connections/${conn.id}/slack-install`, {
-            token: w.adminToken,
-            json: { method: "manual", redirect_uri: "http://localhost/x" },
-          })
-        ).status,
-      ).toBe(400);
+      for (const json of [{ method: "public" }, { method: "manual", redirect_uri: "http://localhost/x" }])
+        expect((await w.api("POST", `/api/slack-apps/${appId()}/install`, { token: w.adminToken, json })).status).toBe(
+          400,
+        );
 
       const done = await paste(`${MANUAL}?code=code-ok-1&state=${encodeURIComponent(state)}`);
       expect(done.status, done.raw).toBe(200);
       const beta = done.body;
       expect(beta).toMatchObject({
         name: "Beta",
-        install_of: conn.id,
-        app_connection: { id: conn.id, name: "acme" },
+        slack_app: { id: appId(), name: "acme" },
         external_workspace_id: "T2",
         bot_user_id: "UBOT2",
         slack_mode: "http",
-        // Slack sends every workspace's events to the app's address
         events_url: conn.events_url,
         settings: { role_id: w.ids.dev },
       });
       expect(done.raw).not.toContain(BETA_TOKEN);
-      // the code was exchanged with the same redirect address
       expect(slack.exchanges.at(-1)).toMatchObject({ code: "code-ok-1", redirect_uri: MANUAL, ...CLIENT });
       // each state completes one installation
       expect((await paste(`${MANUAL}?code=code-ok-2&state=${encodeURIComponent(state)}`)).status).toBe(400);
-      const app = (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find(
-        (c: any) => c.id === conn.id,
-      );
-      expect(app.installs).toEqual([{ id: beta.id, name: "Beta", team_id: "T2" }]);
+      expect((await apps())[0].workspaces.map((x: any) => x.name)).toEqual(["acme", "Beta"]);
 
       // Beta's people are Beta's: alice's account there is linked to her, separately
       await link(beta.id, "UALICE", w.ids.alice);
       w.scripts.dev = () => reply("hello Beta");
-      // the event comes to the app's events URL, like every workspace's
-      expect((await send(betaEvent("<@UBOT2> @dev hi from Beta", "950.1"))).status).toBe(200);
+      expect((await toApp(betaEvent("<@UBOT2> @dev hi from Beta", "950.1"))).status).toBe(200);
       await w.waitFor(async () => (await allTasks()).length === 1);
-      const [task] = await allTasks();
-      const [beta_conv] = await db()
-        .select()
-        .from(externalConversations)
-        .where(eq(externalConversations.connectionId, beta.id));
-      expect(beta_conv.externalId).toBe("C9");
-      expect(task.instruction).toBe("@dev hi from Beta");
+      expect((await allTasks())[0].instruction).toBe("@dev hi from Beta");
       await w.drain();
       await deliverPending();
       const i = slack.posts.findIndex((p) => p.text === "hello Beta");
-      expect(slack.posts[i].channel).toBe("C9");
-      expect(slack.postedIn[i]).toBe("T2");
+      expect([slack.posts[i].channel, slack.postedIn[i]]).toEqual(["C9", "T2"]);
+      // a workspace the app is not installed in is refused
+      expect((await toApp({ ...event("<@UBOT> hi", { ts: "951.1" }), team_id: "T3" })).status).toBe(403);
+    });
 
-      // a workspace the app is not connected to is refused
-      expect((await send({ ...event("<@UBOT> hi", { ts: "951.1" }), team_id: "T3" })).status).toBe(403);
+    it("deleting a workspace leaves the app and its other workspaces working; an app goes once it has none", async () => {
+      const beta = await install();
+      await link(beta.id, "UALICE", w.ids.alice);
+      // the app's first workspace goes
+      expect((await w.api("DELETE", `/api/connections/${conn.id}`, { token: w.adminToken })).status).toBe(200);
+      const [app] = await apps();
+      expect(app).toMatchObject({ id: appId(), workspaces: [{ id: beta.id, name: "Beta" }] });
+      // Beta still receives and answers through the app
+      w.scripts.dev = () => reply("still here");
+      expect((await toApp(betaEvent("<@UBOT2> @dev are you there", "952.1"))).status).toBe(200);
+      await w.waitFor(async () => (await allTasks()).length === 1);
+      await w.drain();
+      await deliverPending();
+      expect(slack.posts.some((p) => p.text === "still here")).toBe(true);
+      // and the app can still be installed again
+      expect((await paste(`${MANUAL}?code=code-ok-2&state=${encodeURIComponent(await start())}`)).body.id).toBe(
+        beta.id,
+      );
+      // an app in use is not deleted
+      expect((await w.api("DELETE", `/api/slack-apps/${appId()}`, { token: w.adminToken })).status).toBe(400);
+      expect((await w.api("DELETE", `/api/connections/${beta.id}`, { token: w.adminToken })).status).toBe(200);
+      expect((await w.api("DELETE", `/api/slack-apps/${appId()}`, { token: w.adminToken })).status).toBe(200);
+      expect(await apps()).toEqual([]);
     });
 
     it("the public callback completes an installation by itself, and only one witden started", async () => {
@@ -891,64 +914,75 @@ describe("slack", () => {
       );
       expect(forged.status).toBe(400);
       expect(forged.raw).toContain("不是由 witden 发起");
-      const cancelled = await page("error=access_denied");
-      expect(cancelled.raw).toContain("安装已取消");
+      expect((await page("error=access_denied")).raw).toContain("安装已取消");
       const ok = await page(`code=code-ok-1&state=${encodeURIComponent(state)}`);
       expect(ok.status, ok.raw).toBe(200);
       expect(ok.raw.startsWith("<!doctype html>")).toBe(true);
       expect(ok.raw).toContain("Beta");
       expect(ok.raw).not.toContain(BETA_TOKEN);
       expect(slack.exchanges.at(-1)).toMatchObject({ redirect_uri: callback });
-      const listed = (await w.api("GET", "/api/connections", { token: w.adminToken })).body;
-      expect(listed.find((c: any) => c.install_of === conn.id)).toMatchObject({
-        name: "Beta",
-        external_workspace_id: "T2",
-      });
+      expect((await apps())[0].workspaces.map((x: any) => x.name)).toEqual(["acme", "Beta"]);
       const audit = (await w.api("GET", "/api/audit?action=connection.slack_install", { token: w.adminToken })).body;
-      expect(audit[0].detail).toMatchObject({ app: conn.id, team: "T2", via: "callback" });
+      expect(audit[0].detail).toMatchObject({ slack_app: appId(), team: "T2", via: "callback" });
     });
 
-    it("an installed workspace keeps only its bot token; the app stays while installed elsewhere; reinstalling updates", async () => {
-      const first = await paste(`${MANUAL}?code=code-ok-1&state=${encodeURIComponent(await start())}`);
-      const beta = first.body;
-      const patch = (credentials: Record<string, string>) =>
-        w.api("PATCH", `/api/connections/${beta.id}`, { token: w.adminToken, json: { credentials } });
-      expect((await patch({ app_token: APP_TOKEN })).status).toBe(400);
-      expect((await patch({ bot_token: "xoxb-rotated-1" })).status).toBe(200);
-      // installing again in the same workspace updates its connection
-      const again = await paste(`${MANUAL}?code=code-ok-2&state=${encodeURIComponent(await start())}`);
-      expect(again.body.id).toBe(beta.id);
-      expect((await w.api("POST", `/api/connections/${beta.id}/test`, { token: w.adminToken })).body).toMatchObject({
-        ok: true,
-        team: "Beta",
-      });
-      // a state is for its app only
-      const other = await w.api("POST", `/api/connections/${beta.id}/slack-install/complete`, {
+    it("keys go where they belong: the app's on the app, a bot token on its workspace", async () => {
+      const beta = await install();
+      // a bot token is a workspace's
+      expect(
+        (
+          await w.api("PATCH", `/api/slack-apps/${appId()}`, {
+            token: w.adminToken,
+            json: { credentials: { bot_token: "xoxb-x-1" } },
+          })
+        ).status,
+      ).toBe(400);
+      // an app key entered on a workspace (the switching guide does) changes the app, for all its workspaces
+      const switched = await w.api("PATCH", `/api/connections/${beta.id}`, {
         token: w.adminToken,
-        json: { url: `${MANUAL}?code=code-ok-3&state=${encodeURIComponent(await start())}` },
+        json: { credentials: { app_token: APP_TOKEN } },
       });
-      expect(other.status).toBe(400);
-      expect((await w.api("DELETE", `/api/connections/${conn.id}`, { token: w.adminToken })).status).toBe(400);
-      expect((await w.api("DELETE", `/api/connections/${beta.id}`, { token: w.adminToken })).status).toBe(200);
-      expect((await w.api("DELETE", `/api/connections/${conn.id}`, { token: w.adminToken })).status).toBe(200);
+      expect(switched.body.slack_mode).toBe("socket");
+      expect((await apps())[0].slack_mode).toBe("socket");
+      expect(
+        (await w.api("GET", "/api/connections", { token: w.adminToken })).body.find((c: any) => c.id === conn.id)
+          .slack_mode,
+      ).toBe("socket");
+      // installing again in the same workspace updates its connection
+      expect((await paste(`${MANUAL}?code=code-ok-2&state=${encodeURIComponent(await start())}`)).body.id).toBe(
+        beta.id,
+      );
+      // a state is for its app only
+      const other = (
+        await w.api("POST", "/api/connections", {
+          token: w.adminToken,
+          json: { platform: "slack", name: "other", credentials: { bot_token: BOT_TOKEN, signing_secret: SECRET } },
+        })
+      ).body;
+      expect(other.slack_app.id).not.toBe(appId());
+      expect(
+        (await paste(`${MANUAL}?code=code-ok-3&state=${encodeURIComponent(await start())}`, other.slack_app.id)).status,
+      ).toBe(400);
     });
 
-    it("Socket Mode: one socket for the app carries every workspace's events", async () => {
+    it("Socket Mode: one socket for the app carries every workspace's events, whichever workspace goes", async () => {
       const fake = new FakeSocketMode();
       await fake.start();
       slack.sockets = fake;
       try {
-        await w.api("PATCH", `/api/connections/${conn.id}`, {
+        await w.api("PATCH", `/api/slack-apps/${appId()}`, {
           token: w.adminToken,
           json: { credentials: { app_token: APP_TOKEN } },
         });
         await w.waitFor(async () => fake.sockets.length === 1);
-        const beta = (await paste(`${MANUAL}?code=code-ok-1&state=${encodeURIComponent(await start())}`)).body;
+        const beta = await install();
         expect(beta).toMatchObject({ slack_mode: "socket", socket: { state: "connected" } });
-        // still one socket: the installed workspace has none of its own
-        await w.api("POST", `/api/connections/${beta.id}/test`, { token: w.adminToken });
-        expect(fake.sockets).toHaveLength(1);
         await link(beta.id, "UALICE", w.ids.alice);
+        // the app's first workspace goes: the socket stays for Beta
+        await w.api("DELETE", `/api/connections/${conn.id}`, { token: w.adminToken });
+        await new Promise((r) => setTimeout(r, 200));
+        expect(fake.sockets).toHaveLength(1);
+        expect(fake.closed).toEqual([]);
         fake.send(fake.latest(), {
           type: "events_api",
           envelope_id: "env-beta",
@@ -958,12 +992,37 @@ describe("slack", () => {
         await settle();
         const inbound = (await w.api("GET", `/api/connections/${beta.id}/inbound`, { token: w.adminToken })).body;
         expect(inbound.map((e: any) => e.status)).toEqual(["dispatched"]);
-        // the app's own workspace pausing keeps the socket for Beta
-        await w.api("PATCH", `/api/connections/${conn.id}`, { token: w.adminToken, json: { status: "paused" } });
-        await w.waitFor(async () => fake.closed.length === 0 && fake.sockets.length === 1);
+        // with no workspace left, nothing to connect for
+        await w.api("DELETE", `/api/connections/${beta.id}`, { token: w.adminToken });
+        await w.waitFor(async () => fake.closed.length === 1);
       } finally {
         await fake.stop();
       }
+    });
+
+    it("upgrading: a connection that held its app's keys becomes an app under its id, its events URL unchanged", async () => {
+      // as the data was before apps: one connection with the app's keys and its bot token
+      const legacy = newId("conn");
+      await db()
+        .insert(connections)
+        .values({
+          id: legacy,
+          platform: "slack",
+          name: "legacy",
+          credentialsEncrypted: secretBox().encrypt(JSON.stringify({ bot_token: BOT_TOKEN, signing_secret: SECRET })),
+          externalWorkspaceId: "T1",
+          botUserId: "UBOT",
+          settings: { role_id: w.ids.dev },
+        });
+      await normalizeSlackApps(db());
+      const [row] = await db().select().from(connections).where(eq(connections.id, legacy));
+      expect(row.slackAppId).toBe(legacy);
+      expect(JSON.parse(secretBox().decrypt(row.credentialsEncrypted!))).toEqual({ bot_token: BOT_TOKEN });
+      expect((await apps()).find((a: any) => a.id === legacy)).toMatchObject({ name: "legacy", has_credentials: true });
+      // Slack keeps using the address it has, which names the old connection, now the app
+      const { raw, headers } = signed({ type: "url_verification", challenge: "c-legacy" });
+      const res = await w.api("POST", `/api/integrations/slack/${legacy}/events`, { payload: raw, headers });
+      expect(res.body).toEqual({ challenge: "c-legacy" });
     });
   });
 

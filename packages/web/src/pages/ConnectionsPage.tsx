@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Connection, ExternalConversation, OutboundMessage } from "../api/types";
+import type { Connection, ExternalConversation, OutboundMessage, SlackApp } from "../api/types";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
@@ -24,6 +24,7 @@ import {
 } from "./connectionParts";
 import { FeishuSetup } from "./FeishuSetup";
 import { GithubSetup, MANIFEST_KEY, type ManifestReturn } from "./GithubSetup";
+import { SlackAppDetail } from "./SlackApps";
 import { SlackInstall } from "./SlackInstall";
 import { SlackSetup } from "./SlackSetup";
 
@@ -66,28 +67,23 @@ interface Setup {
   mode?: "socket" | "http";
   /** GitHub: the browser came back from creating the app. */
   manifest?: ManifestReturn;
-  /** Slack: install the app this connection holds in another workspace. */
-  installApp?: Connection;
+  /** Slack: install this app in another workspace. */
+  installApp?: SlackApp;
 }
 
-/**
- * New Slack connections: a new Slack app, or an app witden already has installed in another workspace. A
- * workspace installed that way resumes the installation guide.
- */
+/** New Slack connections: a new Slack app, or an app witden has installed in another workspace. */
 function SlackStart({
   setup,
-  rows,
+  apps,
   onCreated,
   onClose,
 }: {
   setup: Setup;
-  rows: Connection[];
+  apps: SlackApp[];
   onCreated: (c: Connection) => void;
   onClose: (c: Connection | null) => void;
 }) {
-  // Connections holding a Slack app (not ones installed through another).
-  const apps = rows.filter((c) => c.platform === "slack" && !c.install_of && c.has_credentials);
-  const [install, setInstall] = useState(!!setup.installApp || !!setup.conn?.install_of);
+  const [install, setInstall] = useState(!!setup.installApp);
   const choice =
     !setup.conn && apps.length ? (
       <div className="setup-modes">
@@ -110,7 +106,6 @@ function SlackStart({
     <SlackInstall
       apps={apps}
       app={setup.installApp ?? null}
-      installed={setup.conn?.install_of ? setup.conn : null}
       header={choice}
       onInstalled={onCreated}
       onClose={onClose}
@@ -144,14 +139,17 @@ function manifestReturn(params: URLSearchParams): { conn: string; manifest: Mani
 export default function ConnectionsPage() {
   const res = useResource(() => api.get<Connection[]>("/api/connections"), []);
   const caps = useResource(() => api.get<CapabilityMatrix>("/api/integrations/capabilities"), []);
+  const apps = useResource(() => api.get<SlackApp[]>("/api/slack-apps"), []);
   const [selected, setSelected] = useState<string | null>(null);
+  // A Slack app shown instead of a connection (app ids may equal a connection's: apps made before had theirs).
+  const [selectedApp, setSelectedApp] = useState<string | null>(null);
   const [setup, setSetup] = useState<Setup | null>(null);
   const [showCaps, setShowCaps] = useState(false);
   const [params, setParams] = useSearchParams();
 
   useEffect(() => {
-    if (!selected && res.data?.length) setSelected(res.data[0].id);
-  }, [res.data, selected]);
+    if (!selected && !selectedApp && res.data?.length) setSelected(res.data[0].id);
+  }, [res.data, selected, selectedApp]);
 
   // Back from GitHub: resume that connection's guide with the code, and drop it from the address bar.
   useEffect(() => {
@@ -164,12 +162,49 @@ export default function ConnectionsPage() {
     if (conn) setSetup({ platform: "github", conn, manifest: back.manifest });
   }, [params, res.data, setParams]);
 
-  const current = res.data?.find((c) => c.id === selected) ?? null;
+  const current = selectedApp ? null : (res.data?.find((c) => c.id === selected) ?? null);
+  const currentApp = selectedApp ? (apps.data?.find((a) => a.id === selectedApp) ?? null) : null;
+  const reload = () => {
+    void res.reload();
+    void apps.reload();
+  };
+  const openConnection = (id: string) => {
+    setSelectedApp(null);
+    setSelected(id);
+  };
+  const openApp = (id: string) => {
+    setSelected(null);
+    setSelectedApp(id);
+  };
   const closeSetup = (c: Connection | null) => {
     setSetup(null);
-    if (c) setSelected(c.id);
-    void res.reload();
+    if (c) openConnection(c.id);
+    reload();
   };
+  // Slack workspaces are listed under their app; other connections on their own.
+  const listed = (rows: Connection[]) => {
+    const appIds = new Set((apps.data ?? []).map((a) => a.id));
+    return {
+      others: rows.filter((c) => c.platform !== "slack" || !c.slack_app || !appIds.has(c.slack_app.id)),
+      apps: (apps.data ?? []).map((a) => ({ app: a, workspaces: rows.filter((c) => c.slack_app?.id === a.id) })),
+    };
+  };
+  const item = (c: Connection) => (
+    <button
+      type="button"
+      className={`conn-item${c.id === selected && !selectedApp ? " conn-on" : ""}`}
+      onClick={() => openConnection(c.id)}
+    >
+      <span className="conn-name">
+        {c.name}
+        <Tag>{c.slack_app ? "Slack 工作区" : (PLATFORM_LABEL[c.platform] ?? c.platform)}</Tag>
+      </span>
+      <StatusChip meta={genericStatus(c.status)} compact />
+      {c.status_reason ? (
+        <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>{c.status_reason}</span>
+      ) : null}
+    </button>
+  );
 
   return (
     <div className="page">
@@ -204,10 +239,10 @@ export default function ConnectionsPage() {
       {setup?.platform === "slack" ? (
         <SlackStart
           setup={setup}
-          rows={res.data ?? []}
+          apps={apps.data ?? []}
           onCreated={(c) => {
-            setSelected(c.id);
-            void res.reload();
+            openConnection(c.id);
+            reload();
           }}
           onClose={closeSetup}
         />
@@ -245,42 +280,68 @@ export default function ConnectionsPage() {
       ) : (
         <Loaded res={res}>
           {(rows) =>
-            rows.length ? (
+            rows.length || apps.data?.length ? (
               <div className="split">
                 <ResizeHandle name="connections" side="start" min={180} max={480} />
                 <ul className="conn-list">
-                  {rows.map((c) => (
-                    <li key={c.id}>
+                  {listed(rows).apps.map(({ app, workspaces }) => (
+                    <li key={`app:${app.id}`}>
                       <button
                         type="button"
-                        className={`conn-item${c.id === selected ? " conn-on" : ""}`}
-                        onClick={() => setSelected(c.id)}
+                        className={`conn-item conn-app${app.id === selectedApp ? " conn-on" : ""}`}
+                        onClick={() => openApp(app.id)}
                       >
                         <span className="conn-name">
-                          {c.name}
-                          <Tag>{PLATFORM_LABEL[c.platform] ?? c.platform}</Tag>
+                          {app.name}
+                          <Tag>Slack 应用</Tag>
                         </span>
-                        <StatusChip meta={genericStatus(c.status)} compact />
-                        {c.status_reason ? (
-                          <span className={`reason reason-${c.status === "error" ? "bad" : "info"}`}>
-                            {c.status_reason}
-                          </span>
-                        ) : null}
+                        <span className="small muted">
+                          {workspaces.length ? `${workspaces.length} 个工作区` : "还没有安装到工作区"}
+                        </span>
                       </button>
+                      {workspaces.length ? (
+                        <ul className="conn-subs">
+                          {workspaces.map((c) => (
+                            <li key={c.id}>{item(c)}</li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </li>
                   ))}
+                  {listed(rows).others.map((c) => (
+                    <li key={c.id}>{item(c)}</li>
+                  ))}
                 </ul>
+                {currentApp ? (
+                  <SlackAppDetail
+                    key={`app:${currentApp.id}`}
+                    app={currentApp}
+                    onChanged={(a) => {
+                      apps.setData((prev) => prev?.map((x) => (x.id === a.id ? a : x)));
+                      void res.reload();
+                    }}
+                    onDeleted={() => {
+                      setSelectedApp(null);
+                      reload();
+                    }}
+                    onInstall={() => setSetup({ platform: "slack", conn: null, installApp: currentApp })}
+                    onOpenWorkspace={openConnection}
+                  />
+                ) : null}
                 {current ? (
                   <ConnectionDetail
                     key={current.id}
                     conn={current}
-                    onChanged={(c) => res.setData((prev) => prev?.map((x) => (x.id === c.id ? c : x)))}
+                    onChanged={(c) => {
+                      res.setData((prev) => prev?.map((x) => (x.id === c.id ? c : x)));
+                      void apps.reload();
+                    }}
                     onDeleted={() => {
                       setSelected(null);
-                      void res.reload();
+                      reload();
                     }}
                     onGuide={(mode) => setSetup({ platform: current.platform, conn: current, mode })}
-                    onInstall={() => setSetup({ platform: "slack", conn: null, installApp: current })}
+                    onOpenApp={openApp}
                   />
                 ) : null}
               </div>
@@ -368,15 +429,15 @@ function ConnectionDetail({
   onChanged,
   onDeleted,
   onGuide,
-  onInstall,
+  onOpenApp,
 }: {
   conn: Connection;
   onChanged: (c: Connection) => void;
   onDeleted: () => void;
   /** Open the step-by-step setup, optionally (Slack) on the other way of connecting. */
   onGuide: (mode?: "socket" | "http") => void;
-  /** Slack: install this connection's app in another workspace. */
-  onInstall: () => void;
+  /** Slack: show the app this workspace is installed in. */
+  onOpenApp: (appId: string) => void;
 }) {
   const { can } = useAuth();
   const dir = useDirectory();
@@ -416,9 +477,9 @@ function ConnectionDetail({
             <button type="button" className="btn btn-sm" onClick={() => onGuide()}>
               设置引导
             </button>
-            {conn.platform === "slack" && !conn.install_of && conn.has_credentials ? (
-              <button type="button" className="btn btn-sm" onClick={onInstall}>
-                安装到其他工作区
+            {conn.slack_app ? (
+              <button type="button" className="btn btn-sm" onClick={() => onOpenApp(conn.slack_app!.id)}>
+                查看应用
               </button>
             ) : null}
             <button
@@ -513,18 +574,10 @@ function ConnectionDetail({
             </button>
           </div>
         )}
-        {conn.install_of ? (
+        {conn.platform === "slack" && conn.slack_mode === "http" ? (
           <div className="callout">
-            这个工作区是通过应用「{conn.app_connection?.name ?? "?"}
-            」安装的：它只保存自己的机器人令牌，接收消息用的是那个应用的
-            {conn.slack_mode === "socket" ? "连接（Socket Mode）" : "事件地址"}
-            。应用的令牌、接入方式等在那个接入中修改；需要更换这里的令牌时，重新安装一次即可。
-          </div>
-        ) : null}
-        {conn.platform === "slack" && conn.slack_mode === "http" && !conn.install_of ? (
-          <div className="callout">
-            这个接入使用事件地址，需要公网地址。改用 Socket Mode 后，witden 主动连到
-            Slack，不需要公网地址；设置引导会说明如何让原来的 Slack 应用打开 Socket Mode。{" "}
+            这个工作区所属的应用使用事件地址，需要公网地址。改用 Socket Mode 后，witden 主动连到
+            Slack，不需要公网地址，应用的所有工作区都随之改用；设置引导会说明如何让 Slack 应用打开 Socket Mode。{" "}
             <button type="button" className="btn btn-xs" onClick={() => onGuide("socket")}>
               改用 Socket Mode
             </button>
@@ -555,16 +608,16 @@ function ConnectionDetail({
                     string,
                     ReactNode,
                   ],
-                  conn.install_of
-                    ? (["所属的应用", conn.app_connection?.name ?? "?"] as [string, ReactNode])
-                    : ([
-                        "安装到的其他工作区",
-                        conn.installs?.length ? (
-                          conn.installs.map((i) => i.name).join("、")
-                        ) : (
-                          <span className="muted">没有（可以点击“安装到其他工作区”）</span>
-                        ),
-                      ] as [string, ReactNode]),
+                  [
+                    "所属的 Slack 应用",
+                    conn.slack_app ? (
+                      <button type="button" className="btn btn-xs" onClick={() => onOpenApp(conn.slack_app!.id)}>
+                        {conn.slack_app.name}
+                      </button>
+                    ) : (
+                      <span className="text-bad">没有</span>
+                    ),
+                  ] as [string, ReactNode],
                 ]
               : []),
             conn.slack_mode === "socket"
@@ -836,10 +889,10 @@ function ConnectionForm({
   const [settings, setSettings] = useState(settingsOf(conn));
   const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
   const [slackMode, setSlackMode] = useState<"socket" | "http">(conn?.slack_mode ?? "socket");
-  // A Slack workspace installed through an app gets its token by installing; the rest is the app's.
-  const installed = !!conn?.install_of;
-  const fields = installed
-    ? []
+  // A Slack workspace's own credential is its bot token; the app's keys are edited on the app.
+  const workspace = platform === "slack" && !!conn;
+  const fields: [string, string][] = workspace
+    ? [["bot_token", "Bot User OAuth Token"]]
     : platform === "github"
       ? GITHUB_FIELDS[githubAuth]
       : platform === "slack"
@@ -907,13 +960,13 @@ function ConnectionForm({
           </select>
         </Field>
       ) : null}
-      {installed ? (
+      {workspace ? (
         <p className="small muted">
-          这个工作区通过应用「{conn?.app_connection?.name ?? "?"}
-          」安装，凭据只有它自己的机器人令牌；需要更换时重新安装一次。
+          这里只填这个工作区的机器人令牌。应用的令牌、接入方式和 OAuth 凭据在应用「{conn?.slack_app?.name ?? "?"}
+          」中修改。
         </p>
       ) : null}
-      {platform === "slack" && !installed ? (
+      {platform === "slack" && !workspace ? (
         <Field
           label="接入方式"
           hint={

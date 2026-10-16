@@ -62,7 +62,7 @@ export const REJECTED: Record<string, string> = {
 };
 
 /** The platform's latest call to the events URL was refused (after any accepted one). */
-export function lastRejected(conn: Connection): { at: string; reason: string } | null {
+export function lastRejected(conn: { webhook?: Connection["webhook"] }): { at: string; reason: string } | null {
   const w = conn.webhook;
   if (!w?.rejected_at) return null;
   const accepted = [w.verified_at, w.received_at].filter(Boolean).sort().at(-1);

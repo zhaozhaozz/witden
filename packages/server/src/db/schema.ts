@@ -5,17 +5,7 @@
  * Computers never get access to it: their state lives in their own volumes, managed by the Docker Manager.
  */
 import { sql } from "drizzle-orm";
-import {
-  type AnyPgColumn,
-  boolean,
-  index,
-  integer,
-  jsonb,
-  pgTable,
-  text,
-  timestamp,
-  uniqueIndex,
-} from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const id = () => text("id").primaryKey();
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
@@ -541,17 +531,32 @@ export const memories = pgTable("memories", {
 
 // --- integrations ----------------------------------------------------------------------------------------
 
+/**
+ * A Slack app: its own credentials (the app-level token for Socket Mode, or the signing secret for the events
+ * URL; optionally the OAuth client that installs it in more workspaces). Each workspace it is installed in is a
+ * connection (``connections.slack_app_id``) holding that workspace's bot token. The app outlives any of them.
+ */
+export const slackApps = pgTable("slack_apps", {
+  id: id(),
+  name: text("name").notNull().unique(),
+  /** Slack's id for the app (A…), once Slack has told it. */
+  appId: text("app_id"),
+  credentialsEncrypted: text("credentials_encrypted"),
+  createdBy: text("created_by"),
+  createdAt: created(),
+  updatedAt: updated(),
+});
+
+export type SlackApp = typeof slackApps.$inferSelect;
+
 export const connections = pgTable("connections", {
   id: id(),
   platform: text("platform").notNull(),
   name: text("name").notNull().unique(),
   externalWorkspaceId: text("external_workspace_id"),
   botUserId: text("bot_user_id"),
-  /**
-   * Slack: this workspace was added to the app held by that connection (OAuth). It keeps only its own bot
-   * token; the app's credentials, socket and events URL are the other connection's.
-   */
-  installOf: text("install_of").references((): AnyPgColumn => connections.id),
+  /** Slack: the app this workspace is installed in (its token, socket and events URL are the app's). */
+  slackAppId: text("slack_app_id").references(() => slackApps.id),
   credentialsEncrypted: text("credentials_encrypted"),
   settings: json<Json>("settings").notNull().default({}),
   status: text("status").notNull().default("active"),

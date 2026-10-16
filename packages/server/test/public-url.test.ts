@@ -76,7 +76,10 @@ describe("public address", () => {
       token: h.adminToken,
       json: { platform: "slack", name: "acme", credentials: { bot_token: "xoxb-1", signing_secret: "s" } },
     });
-    expect(conn.body.events_url).toBe(`https://witden.example.com/api/integrations/slack/${conn.body.id}/events`);
+    // a Slack workspace is reached through its app's events URL
+    expect(conn.body.events_url).toBe(
+      `https://witden.example.com/api/integrations/slack/${conn.body.slack_app.id}/events`,
+    );
     expect((await h.api("GET", "/api/settings/public-url", { token: h.adminToken })).body).toMatchObject({
       url: "https://witden.example.com",
       saved: "https://witden.example.com",

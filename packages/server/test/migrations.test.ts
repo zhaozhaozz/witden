@@ -495,3 +495,41 @@ describe("0022_role_settings", () => {
     await db.close();
   });
 });
+
+describe("0024_slack_apps", () => {
+  it("turns each Slack connection that held an app into an app under its id; workspaces point at it", async () => {
+    const db = new PGlite();
+    const tags = fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.replace(/\.sql$/, ""))
+      .sort();
+    for (const tag of tags.filter((t) => t < "0024")) await apply(db, tag);
+    await db.exec(`
+      insert into connections (id, platform, name, credentials_encrypted, external_workspace_id)
+        values ('conn_app', 'slack', 'acme', 'v1.iv.tag.app', 'T1'),
+               ('conn_hub', 'github', 'hub', 'v1.iv.tag.gh', null);
+      insert into connections (id, platform, name, credentials_encrypted, external_workspace_id, install_of)
+        values ('conn_beta', 'slack', 'Beta', 'v1.iv.tag.beta', 'T2', 'conn_app');
+    `);
+    await apply(db, "0024_slack_apps");
+    await apply(db, "0025_drop_install_of");
+    // the app keeps the id Slack's events URL names, and the credentials (split at start by the API)
+    expect((await db.query("select id, name, credentials_encrypted from slack_apps")).rows).toEqual([
+      { id: "conn_app", name: "acme", credentials_encrypted: "v1.iv.tag.app" },
+    ]);
+    expect((await db.query("select id, slack_app_id from connections order by id")).rows).toEqual([
+      { id: "conn_app", slack_app_id: "conn_app" },
+      { id: "conn_beta", slack_app_id: "conn_app" },
+      { id: "conn_hub", slack_app_id: null },
+    ]);
+    const columns = (
+      await db.query("select column_name from information_schema.columns where table_name = 'connections'")
+    ).rows as { column_name: string }[];
+    expect(columns.map((c) => c.column_name)).not.toContain("install_of");
+    // deleting the workspace the app came from leaves the app and its other workspace
+    await db.exec("delete from connections where id = 'conn_app'");
+    expect((await db.query("select count(*)::int as n from slack_apps")).rows).toEqual([{ n: 1 }]);
+    await db.close();
+  });
+});

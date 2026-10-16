@@ -169,6 +169,20 @@
       "when": 1792150900729,
       "tag": "0023_slack_app_installs",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792169176124,
+      "tag": "0024_slack_apps",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792169184900,
+      "tag": "0025_drop_install_of",
+      "breakpoints": true
     }
   ]
 }

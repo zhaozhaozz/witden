@@ -95,7 +95,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 
 - 各平台的事件接口 `/api/integrations/<平台>/<接入>/events`，每个接口都校验平台的签名或令牌；
 - 公网地址的检查接口 `/api/integrations/probe`；
-- Slack 安装回调 `/api/integrations/slack/oauth`：把一个 Slack 应用安装到其他工作区时，Slack 把安装人的浏览器带到这里，只完成控制台中发起的安装（见[接入 Slack](slack.md#10-把应用安装到多个工作区)）；
+- Slack 安装回调 `/api/integrations/slack/oauth`：把一个 Slack 应用安装到其他工作区时，Slack 把安装人的浏览器带到这里，只完成控制台中发起的安装（见[接入 Slack](slack.md#10-slack-应用与多个工作区)）；
 - 角色头像 `/api/avatars/<文件>`：以角色身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。
 
 其他请求一律返回 404，包括控制台页面和所有管理接口。公网地址只能转发到这个端口。消息中“在 witden 中查看”等链接仍然指向 `WITDEN_PUBLIC_URL`（控制台的内网地址），只有能访问内网的人可以打开。

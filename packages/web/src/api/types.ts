@@ -664,6 +664,25 @@ export interface Memory {
   created_at: string;
 }
 
+/** A Slack app: shared by the workspaces it is installed in, each of which is a connection. */
+export interface SlackApp {
+  id: string;
+  name: string;
+  /** Slack's id for the app (A…), once known. */
+  app_id: string | null;
+  slack_mode: "socket" | "http";
+  socket: Connection["socket"];
+  events_url: string;
+  webhook: Connection["webhook"];
+  /** Its app-level token or signing secret is saved. */
+  has_credentials: boolean;
+  /** Its OAuth client is saved, so it can be installed in more workspaces. */
+  slack_oauth: boolean;
+  workspaces: { id: string; name: string; team_id: string | null; status: string }[];
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface Connection {
   id: string;
   platform: "slack" | "feishu" | string;
@@ -686,13 +705,8 @@ export interface Connection {
   slack_mode?: "socket" | "http";
   /** Slack Socket Mode: the state of the server's socket (the app's, for a workspace installed through one). */
   socket?: { state: "connecting" | "connected" | "error"; since: string; error?: string } | null;
-  /** Slack: this workspace was installed through the app another connection holds (OAuth). */
-  install_of?: string | null;
-  app_connection?: { id: string; name: string } | null;
-  /** Slack, a connection holding an app: its OAuth client is saved, so it can be installed in more workspaces. */
-  slack_oauth?: boolean;
-  /** Slack, a connection holding an app: the workspaces installed through it. */
-  installs?: { id: string; name: string; team_id: string | null }[];
+  /** Slack: the app this workspace is installed in (its token, socket and events URL are the app's). */
+  slack_app?: { id: string; name: string } | null;
   /** How the platform's calls to the events URL went lately (kept in the server's memory). */
   webhook?: {
     verified_at?: string;

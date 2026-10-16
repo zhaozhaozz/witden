@@ -3433,6 +3433,18 @@ img.avatar-role.avatar-colored {
 .conn-detail {
   min-width: 0;
 }
+/* A Slack app, with the workspaces it is installed in beneath it. */
+.conn-app {
+  border-left: 3px solid var(--harbor-2);
+}
+.conn-subs {
+  list-style: none;
+  margin: 6px 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
 /* Choosing a platform and the step-by-step setup guides, shown in the page. */
 .platform-cards {

@@ -28,6 +28,7 @@ import { absoluteAvatarUrl } from "../services/appearance.js";
 import { artifactPath } from "../services/files.js";
 import { consoleBase, webhookBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, getAdapter, type InboundAction, register } from "./base.js";
+import { appCredentials, appOf } from "./slack-apps.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 import { noteWebhook } from "./webhook-status.js";
 
@@ -117,32 +118,13 @@ export class SlackClient {
   }
 }
 
-/** Socket Mode (an app-level token) or HTTP to the events URL (a signing secret). */
-export const slackMode = (creds: Record<string, string>): "socket" | "http" => (creds.app_token ? "socket" : "http");
-
 /**
- * Check Slack credentials when they are entered, catching the usual mix-ups: Slack shows several tokens and
- * secrets, and an app-level token (xapp-) saved as the signing secret fails every event's signature check.
+ * Check a workspace's credentials when entered: its bot token, not one of the other tokens Slack shows. What
+ * the app holds (app-level token, signing secret, OAuth client) is checked by checkAppCredentials (slack-apps.ts).
  */
-/**
- * ``installed``: a workspace installed through another connection's app, which holds only its bot token. The
- * OAuth client (client_id, client_secret) is optional: it lets the app be installed in more workspaces.
- */
-export function checkCredentials(creds: Record<string, string>, opts: { installed?: boolean } = {}): void {
+export function checkCredentials(creds: Record<string, string>): void {
   if (creds.bot_token && !creds.bot_token.startsWith("xoxb-"))
     throw new BadRequest("bot_token must be the Bot User OAuth Token (xoxb-…) from OAuth & Permissions");
-  if (creds.app_token && !creds.app_token.startsWith("xapp-"))
-    throw new BadRequest("app_token must be an app-level token (xapp-…) with the connections:write scope");
-  if (creds.signing_secret && /^(xapp-|xox[a-z]-)/.test(creds.signing_secret))
-    throw new BadRequest(
-      "signing_secret is a Slack token, not the Signing Secret: copy it from Basic Information → App Credentials",
-    );
-  if (creds.client_id && !/^\d+\.\d+$/.test(creds.client_id))
-    throw new BadRequest("client_id must be the app's Client ID (digits.digits) from Basic Information");
-  if (creds.client_secret && /^(xapp-|xox[a-z]-)/.test(creds.client_secret))
-    throw new BadRequest("client_secret is a Slack token, not the Client Secret: copy it from Basic Information");
-  if (!opts.installed && !creds.app_token && !creds.signing_secret)
-    throw new BadRequest("an app_token (Socket Mode) or a signing_secret (events URL) is required");
 }
 
 /**
@@ -153,7 +135,8 @@ export async function acceptSlackEvent(conn: Connection, payload: any): Promise<
   if (payload?.type !== "event_callback" || conn.status !== "active") return;
   if (payload.team_id && conn.externalWorkspaceId && payload.team_id !== conn.externalWorkspaceId)
     throw new Forbidden("event from another workspace");
-  noteWebhook(conn.id, "received");
+  // The events URL is the app's: what reached it is shown with the app.
+  noteWebhook(conn.slackAppId ?? conn.id, "received");
   const { acceptEvents } = await import("./inbound.js");
   await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, payload));
 }
@@ -227,11 +210,13 @@ export class SlackAdapter implements Adapter {
     return new SlackClient(token);
   }
 
-  async test(_db: Db, conn: Connection) {
+  async test(db: Db, conn: Connection) {
     const client = this.client(conn);
     const data = await client.call("auth.test", {});
-    // Socket Mode: the app-level token must be able to open a socket (it needs connections:write).
-    const appToken = credentials(conn).app_token;
+    // Socket Mode: the app's token must be able to open a socket (it needs connections:write). Credentials being
+    // tried before they are saved carry it with the workspace's.
+    const app = await appOf(db, conn);
+    const appToken = credentials(conn).app_token ?? (app ? appCredentials(app).app_token : undefined);
     if (appToken) await new SlackClient(appToken).call("apps.connections.open", {});
     conn.externalWorkspaceId = data.team_id;
     conn.botUserId = data.user_id;

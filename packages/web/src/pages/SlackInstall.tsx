@@ -1,6 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { api, errorMessage } from "../api/client";
-import type { Connection } from "../api/types";
+import type { Connection, SlackApp } from "../api/types";
 import { useAction } from "../ui/feedback";
 import { CopyText, Field, Section } from "../ui/kit";
 import { PublicAddressStep } from "./PublicAddress";
@@ -42,7 +42,7 @@ function authorizeUrl(s: Started): string {
   return `https://slack.com/oauth/v2/authorize?${q.toString()}`;
 }
 
-const modeText = (c: Connection) => (c.slack_mode === "socket" ? "Socket Mode" : "事件地址");
+const modeText = (a: SlackApp) => (a.slack_mode === "socket" ? "Socket Mode" : "事件地址");
 
 /**
  * Install a Slack app witden already has (a connection holding it) in another workspace, via Slack's OAuth:
@@ -59,15 +59,16 @@ export function SlackInstall({
   onClose,
 }: {
   /** Slack connections holding an app. */
-  apps: Connection[];
-  app?: Connection | null;
+  apps: SlackApp[];
+  app?: SlackApp | null;
+  /** A workspace installed this way, to continue with. */
   installed?: Connection | null;
   header?: ReactNode;
   onInstalled: (c: Connection) => void;
   onClose: (c: Connection | null) => void;
 }) {
-  const [app, setApp] = useState<Connection | null>(
-    initialApp ?? apps.find((a) => a.id === installed?.install_of) ?? (apps.length === 1 ? apps[0] : null),
+  const [app, setApp] = useState<SlackApp | null>(
+    initialApp ?? apps.find((a) => a.id === installed?.slack_app?.id) ?? (apps.length === 1 ? apps[0] : null),
   );
   const [conn, setConn] = useState<Connection | null>(installed ?? null);
   const [method, setMethod] = useState<Method>("public");
@@ -76,7 +77,7 @@ export function SlackInstall({
   const { step, setStep, reached, go, num } = useSteps(FLOW, start);
 
   const refreshApp = async (id: string) => {
-    const fresh = (await api.get<Connection[]>("/api/connections")).find((c) => c.id === id);
+    const fresh = (await api.get<SlackApp[]>("/api/slack-apps")).find((a) => a.id === id);
     if (fresh) setApp(fresh);
     return fresh ?? null;
   };
@@ -130,7 +131,7 @@ export function SlackInstall({
     access: conn ? (
       <AccessStep
         conn={conn}
-        intro={`这是应用在工作区「${conn.name}」中的机器人，默认代表与应用相同的角色。选择它在这个工作区代表 witden 中的哪个角色：这里发给机器人的消息都交给这个角色处理。`}
+        intro={`这是应用在工作区「${conn.name}」中的机器人，默认代表与应用的第一个工作区相同的角色。选择它在这个工作区代表 witden 中的哪个角色：这里发给机器人的消息都交给这个角色处理。`}
         account="Slack 账号"
         onSaved={(c) => {
           setConn(c);
@@ -167,10 +168,10 @@ export function SlackInstall({
     >
       {header}
       <p className="setup-intro">
-        一个 Slack 应用可以安装到多个工作区（例如不同的组织），不需要为每个工作区各建一个应用。每个工作区在 witden
-        中是一个单独的接入，有自己的频道、私信、关联的账号和机器人代表的角色；应用的令牌和与 Slack
-        的连接由原来的接入统一使用。安装用的是 Slack 的 OAuth：安装的人在 Slack 中确认后，witden
-        换取这个工作区的机器人令牌。
+        一个 Slack
+        应用可以安装到多个工作区（例如不同的组织），不需要为每个工作区各建一个应用。每个工作区是应用下的一个接入，有自己的频道、私信、关联的账号和机器人代表的角色；应用的令牌和与
+        Slack 的连接由它的所有工作区共用，删除任何一个工作区都不影响应用和其他工作区。安装用的是 Slack 的
+        OAuth：安装的人在 Slack 中确认后，witden 换取这个工作区的机器人令牌。
       </p>
       <SetupSteps
         flow={FLOW}
@@ -187,20 +188,12 @@ export function SlackInstall({
   );
 }
 
-function PickApp({
-  apps,
-  value,
-  onPick,
-}: {
-  apps: Connection[];
-  value: Connection | null;
-  onPick: (a: Connection) => void;
-}) {
-  const [picked, setPicked] = useState<Connection | null>(value);
-  if (!apps.length) return <p className="muted">还没有可以安装的 Slack 应用：先用“新建 Slack 应用”接入一个工作区。</p>;
+function PickApp({ apps, value, onPick }: { apps: SlackApp[]; value: SlackApp | null; onPick: (a: SlackApp) => void }) {
+  const [picked, setPicked] = useState<SlackApp | null>(value);
+  if (!apps.length) return <p className="muted">还没有 Slack 应用：先用“新建一个 Slack 应用”接入一个工作区。</p>;
   return (
     <>
-      <p>选择要安装到另一个工作区的应用。列出的是 witden 中直接接入的 Slack 应用（不是通过安装加入的工作区）。</p>
+      <p>选择要安装到另一个工作区的 Slack 应用。</p>
       <div className="pick setup-roles" role="radiogroup" aria-label="Slack 应用">
         {apps.map((a) => (
           <label key={a.id} className={`pick-item${picked?.id === a.id ? " pick-on" : ""}`}>
@@ -209,7 +202,9 @@ function PickApp({
               <span>{a.name}</span>
               <span className="pick-hint">
                 {modeText(a)}
-                {a.installs?.length ? `，已安装到 ${a.installs.map((i) => i.name).join("、")}` : ""}
+                {a.workspaces.length
+                  ? `，已安装到 ${a.workspaces.map((x) => x.name).join("、")}`
+                  : "，还没有安装到工作区"}
               </span>
             </span>
           </label>
@@ -224,7 +219,7 @@ function PickApp({
   );
 }
 
-function ClientStep({ app, onSaved }: { app: Connection; onSaved: () => Promise<void> }) {
+function ClientStep({ app, onSaved }: { app: SlackApp; onSaved: () => Promise<void> }) {
   const { run, busy } = useAction();
   const [id, setId] = useState("");
   const [secret, setSecret] = useState("");
@@ -236,7 +231,7 @@ function ClientStep({ app, onSaved }: { app: Connection; onSaved: () => Promise<
       Object.entries({ client_id: id.trim(), client_secret: secret.trim() }).filter(([, v]) => v),
     );
     if (Object.keys(credentials).length) {
-      const out = await run(() => api.patch<Connection>(`/api/connections/${app.id}`, { credentials }), "已保存");
+      const out = await run(() => api.patch<SlackApp>(`/api/slack-apps/${app.id}`, { credentials }), "已保存");
       if (!out) return;
     }
     await onSaved();
@@ -287,7 +282,7 @@ function CallbackStep({
   onMethod,
   onReady,
 }: {
-  app: Connection;
+  app: SlackApp;
   method: Method;
   onMethod: (m: Method) => void;
   onReady: (redirect: string) => void;
@@ -300,7 +295,7 @@ function CallbackStep({
   const check = async (m: Method) => {
     setError(null);
     try {
-      const out = await api.post<Started>(`/api/connections/${app.id}/slack-install`, {
+      const out = await api.post<Started>(`/api/slack-apps/${app.id}/install`, {
         method: m,
         ...(m === "manual" ? { redirect_uri: address.trim() } : {}),
       });
@@ -422,7 +417,7 @@ function InstallStep({
   num,
   onInstalled,
 }: {
-  app: Connection;
+  app: SlackApp;
   method: Method;
   redirect: string;
   num: (k: StepKey) => number;
@@ -438,14 +433,12 @@ function InstallStep({
   const begin = useCallback(async () => {
     setError(null);
     try {
-      const out = await api.post<Started>(`/api/connections/${app.id}/slack-install`, {
+      const out = await api.post<Started>(`/api/slack-apps/${app.id}/install`, {
         method,
         ...(method === "manual" ? { redirect_uri: redirect } : {}),
       });
       const rows = await api.get<Connection[]>("/api/connections");
-      before.current = new Map(
-        rows.filter((c) => c.install_of === app.id || c.id === app.id).map((c) => [c.id, c.updated_at]),
-      );
+      before.current = new Map(rows.filter((c) => c.slack_app?.id === app.id).map((c) => [c.id, c.updated_at]));
       setStarted(out);
     } catch (err) {
       setError(errorMessage(err));
@@ -465,7 +458,7 @@ function InstallStep({
         const rows = await api.get<Connection[]>("/api/connections");
         const seen = before.current;
         const done = rows.find(
-          (c) => (c.install_of === app.id || c.id === app.id) && (!seen?.has(c.id) || seen.get(c.id) !== c.updated_at),
+          (c) => c.slack_app?.id === app.id && (!seen?.has(c.id) || seen.get(c.id) !== c.updated_at),
         );
         if (done && !stopped) onInstalled(done);
       } catch {
@@ -480,7 +473,7 @@ function InstallStep({
 
   const complete = async () => {
     const out = await run(() =>
-      api.post<Connection>(`/api/connections/${app.id}/slack-install/complete`, { url: pasted.trim() }),
+      api.post<Connection>(`/api/slack-apps/${app.id}/install/complete`, { url: pasted.trim() }),
     );
     if (out) onInstalled(out);
   };

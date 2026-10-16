@@ -1,5 +1,5 @@
 /** Chat connections, conversations, deliveries, publishing topics outward, and the platform webhooks. */
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { recheckActiveTasks } from "../agent/revocation.js";
 import { type Db, transaction } from "../db/client.js";
@@ -13,10 +13,20 @@ import {
   outboundMessages,
   processedEvents,
   roles,
+  type SlackApp,
+  slackApps,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
+import {
+  appCredentials,
+  appOf,
+  freeAppName,
+  getApp,
+  mergedAppCredentials,
+  splitCredentials,
+} from "../integrations/slack-apps.js";
 import {
   CALLBACK_PATH,
   checkRedirect,
@@ -51,43 +61,48 @@ const decrypted = (conn: Connection): Record<string, string> =>
     ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
     : {};
 
-/** A Slack connection's app and the workspaces installed through it (integrations/slack-install.ts). */
-async function familyOf(db: Db, conn: Connection): Promise<Connection[]> {
-  if (conn.platform !== "slack") return [];
-  return db
-    .select()
-    .from(connections)
-    .where(conn.installOf ? eq(connections.id, conn.installOf) : eq(connections.installOf, conn.id));
+/** The Slack app of each Slack connection among ``rows`` (or of ``conn``). */
+async function appsFor(db: Db, rows: Connection[]): Promise<SlackApp[]> {
+  const ids = [...new Set(rows.map((c) => c.slackAppId).filter((x): x is string => !!x))];
+  return ids.length ? db.select().from(slackApps).where(inArray(slackApps.id, ids)) : [];
 }
 
-/**
- * ``base``: the public address (services/public-url.ts). ``family``: other connections, among them the app a
- * Slack workspace was installed through, or those installed through this one.
- */
-function connOut(conn: Connection, base: string, family: Connection[] = []) {
+/** How a Slack app connects and where it is installed; never its credentials. */
+function appOut(app: SlackApp, base: string, workspaces: Connection[]) {
+  const creds = appCredentials(app);
+  return {
+    ...row(app),
+    // Socket Mode, with the state of this process's socket, or the events URL.
+    slack_mode: creds.app_token ? "socket" : "http",
+    socket: slackSockets.state(app.id),
+    events_url: `${base}/api/integrations/slack/${app.id}/events`,
+    // Whether Slack has reached the events URL, and whether its signature matched.
+    webhook: webhookStatus(app.id),
+    has_credentials: !!(creds.app_token || creds.signing_secret),
+    // whether it can be installed in more workspaces (its OAuth client is saved)
+    slack_oauth: !!(creds.client_id && creds.client_secret),
+    workspaces: workspaces
+      .filter((c) => c.slackAppId === app.id)
+      .map((c) => ({ id: c.id, name: c.name, team_id: c.externalWorkspaceId, status: c.status })),
+  };
+}
+
+/** ``base``: the public address (services/public-url.ts). ``apps``: the Slack apps of the connections shown. */
+function connOut(conn: Connection, base: string, apps: SlackApp[] = []) {
   const creds = decrypted(conn);
-  // A workspace installed through another connection's app connects as that app does.
-  const app = conn.installOf ? (family.find((c) => c.id === conn.installOf) ?? null) : null;
-  const appCreds = app ? decrypted(app) : creds;
+  // A Slack workspace connects as its app does: the app's socket or events URL.
+  const app = conn.slackAppId ? (apps.find((a) => a.id === conn.slackAppId) ?? null) : null;
+  const appCreds = app ? appCredentials(app) : {};
   return {
     ...row(conn),
     // How it connects, never the credentials themselves. GitHub: an app or a bot account.
     // none yet while the setup guide is creating the app
     ...(conn.platform === "github" ? { github_auth: creds.app_id ? "app" : creds.token ? "token" : undefined } : {}),
-    // Slack: Socket Mode, with the state of this process's socket, or the events URL.
     ...(conn.platform === "slack"
       ? {
+          slack_app: app ? { id: app.id, name: app.name } : null,
           slack_mode: appCreds.app_token ? "socket" : "http",
-          socket: slackSockets.state(app?.id ?? conn.id),
-          ...(conn.installOf
-            ? { app_connection: app ? { id: app.id, name: app.name } : null }
-            : {
-                // whether it can be installed in more workspaces (OAuth client saved), and where it is
-                slack_oauth: !!(creds.client_id && creds.client_secret),
-                installs: family
-                  .filter((c) => c.installOf === conn.id)
-                  .map((c) => ({ id: c.id, name: c.name, team_id: c.externalWorkspaceId })),
-              }),
+          socket: app ? slackSockets.state(app.id) : null,
         }
       : {}),
     // a GitHub connection the setup guide created before its app exists has none yet
@@ -96,7 +111,7 @@ function connOut(conn: Connection, base: string, family: Connection[] = []) {
     // Slack sends every workspace's events to the app's address.
     events_url: `${base}/api/integrations/${conn.platform}/${app?.id ?? conn.id}/events`,
     // Whether the platform has reached the events URL, and whether its signature matched.
-    webhook: webhookStatus(conn.id),
+    webhook: webhookStatus(app?.id ?? conn.id),
   };
 }
 
@@ -105,22 +120,12 @@ function connOut(conn: Connection, base: string, family: Connection[] = []) {
  * way of connecting drops the credentials of the way left behind.
  */
 async function mergedCredentials(conn: Connection, entered: Record<string, unknown>): Promise<string> {
+  // Slack: only the workspace's bot token is the connection's; what is the app's is kept on the app.
   const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
   const given = Object.fromEntries(Object.entries(trimmed(entered)).filter(([, v]) => v));
-  if (conn.installOf) {
-    // A workspace installed through an app holds only its bot token; the rest is the app's.
-    const appKeys = Object.keys(given).filter((k) => k !== "bot_token");
-    if (appKeys.length) throw new BadRequest(`${appKeys.join(", ")} 属于应用本身，请在应用所在的接入中修改`);
-    (await import("../integrations/slack.js")).checkCredentials({ ...current, ...given }, { installed: true });
-    return secretBox().encrypt(JSON.stringify({ ...current, ...given }));
-  }
   if (conn.platform === "github") {
     if (given.token) for (const k of ["app_id", "private_key"]) delete current[k];
     if (given.app_id || given.private_key) delete current.token;
-  }
-  if (conn.platform === "slack") {
-    if (given.app_token) delete current.signing_secret;
-    if (given.signing_secret) delete current.app_token;
   }
   for (const [k, v] of Object.entries(given)) current[k] = v;
   if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
@@ -166,7 +171,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       const base = await webhookBase(db);
       const rows = await db.select().from(connections).orderBy(connections.name);
-      return rows.map((c) => connOut(c, base, rows));
+      const apps = await appsFor(db, rows);
+      return rows.map((c) => connOut(c, base, apps));
     }),
   );
 
@@ -204,16 +210,44 @@ export async function integrationRoutes(app: FastifyInstance) {
       // (its webhook URL names the connection): until then the connection has none.
       const pending = b.platform === "github" && !Object.values(creds).some(Boolean);
       if (b.platform === "github" && !pending) (await import("../integrations/github.js")).checkCredentials(creds);
-      if (b.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(creds);
       if ((await db.select().from(connections).where(eq(connections.name, b.name)).limit(1)).length)
         throw new BadRequest("a connection with this name exists");
+      // Slack: a workspace of an app witden has (slack_app_id), or of a new app made from the app's keys.
+      let slackAppId: string | null = null;
+      let saved = creds;
+      if (b.platform === "slack") {
+        const { app: appKeys, workspace } = splitCredentials(creds);
+        (await import("../integrations/slack.js")).checkCredentials(workspace);
+        saved = workspace;
+        if (b.slackAppId) {
+          slackAppId = (await getApp(db, String(b.slackAppId))).id;
+          if (Object.keys(appKeys).length) throw new BadRequest("the app's keys are changed on the app");
+        } else {
+          const [made] = await db
+            .insert(slackApps)
+            .values({
+              id: newId("sapp"),
+              name: await freeAppName(db, String(b.appName || b.name)),
+              credentialsEncrypted: secretBox().encrypt(JSON.stringify(mergedAppCredentials(null, appKeys))),
+              createdBy: user.id,
+            })
+            .returning();
+          slackAppId = made.id;
+          await audit(db, "slack_app.create", {
+            actorType: "user",
+            actorId: user.id,
+            detail: { app: made.id, name: made.name },
+          });
+        }
+      }
       const [conn] = await db
         .insert(connections)
         .values({
           id: newId("conn"),
           platform: b.platform,
           name: String(b.name),
-          credentialsEncrypted: secretBox().encrypt(JSON.stringify(creds)),
+          slackAppId,
+          credentialsEncrypted: secretBox().encrypt(JSON.stringify(saved)),
           settings: await cleanSettings(db, b.settings ?? {}),
           createdBy: user.id,
         })
@@ -225,7 +259,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         detail: { platform: conn.platform, name: conn.name },
       });
       after(() => slackSockets.sync());
-      return connOut(conn, await webhookBase(db), await familyOf(db, conn));
+      return connOut(conn, await webhookBase(db), await appsFor(db, [conn]));
     }),
   );
 
@@ -237,14 +271,34 @@ export async function integrationRoutes(app: FastifyInstance) {
       const b = body(req);
       const update: Partial<Connection> = {};
       if (b.name) update.name = b.name;
-      if (b.credentials) update.credentialsEncrypted = await mergedCredentials(conn, b.credentials);
+      if (b.credentials) {
+        let entered = trimmed(b.credentials);
+        if (conn.platform === "slack") {
+          // The app's keys (e.g. switching it to Socket Mode from a workspace's guide) go to the app.
+          const { app: appKeys, workspace } = splitCredentials(entered);
+          if (Object.keys(appKeys).length) {
+            const slackApp = await appOf(db, conn);
+            if (!slackApp) throw new BadRequest("this Slack connection has no app");
+            await db
+              .update(slackApps)
+              .set({
+                credentialsEncrypted: secretBox().encrypt(JSON.stringify(mergedAppCredentials(slackApp, appKeys))),
+              })
+              .where(eq(slackApps.id, slackApp.id));
+          }
+          entered = workspace;
+        }
+        if (Object.values(entered).some(Boolean)) update.credentialsEncrypted = await mergedCredentials(conn, entered);
+      }
       if (b.settings) update.settings = await cleanSettings(db, { ...conn.settings, ...b.settings });
       if (b.status) {
         if (!["active", "paused"].includes(b.status)) throw new BadRequest("status must be active or paused");
         update.status = b.status;
         update.statusReason = b.status === "active" ? null : `paused by ${user.name}`;
       }
-      const [updated] = await db.update(connections).set(update).where(eq(connections.id, conn.id)).returning();
+      const [updated] = Object.keys(update).length
+        ? await db.update(connections).set(update).where(eq(connections.id, conn.id)).returning()
+        : [conn];
       // Roles taken off the external members' list stop their work at once.
       if (b.settings) await recheckActiveTasks(db, "the connection's settings changed");
       await audit(db, "connection.update", {
@@ -254,7 +308,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         detail: { fields: Object.keys(b), status: updated.status },
       });
       after(() => slackSockets.sync());
-      return connOut(updated, await webhookBase(db), await familyOf(db, updated));
+      return connOut(updated, await webhookBase(db), await appsFor(db, [updated]));
     }),
   );
 
@@ -262,12 +316,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     "/api/connections/:id",
     authed(async ({ db, user, req, after }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const installed = await db
-        .select({ name: connections.name })
-        .from(connections)
-        .where(eq(connections.installOf, params(req).id));
-      if (installed.length)
-        throw new BadRequest(`这个应用还安装在 ${installed.map((c) => c.name).join("、")}，请先删除这些接入`);
+      // A Slack workspace only: its app and the app's other workspaces stay as they are.
       await db.delete(connections).where(eq(connections.id, params(req).id));
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
       after(() => slackSockets.sync());
@@ -303,17 +352,80 @@ export async function integrationRoutes(app: FastifyInstance) {
     }),
   );
 
-  // Installing a Slack app in another workspace (integrations/slack-install.ts): the state and redirect
-  // address for Slack's authorize page. "public": Slack sends the browser to the public address, which completes
-  // the installation; "manual": to any HTTPS address, whose final URL is pasted back (…/complete).
+  // --- Slack apps (integrations/slack-apps.ts) -------------------------------------------------------------
+
+  app.get(
+    "/api/slack-apps",
+    authed(async ({ db, user }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const base = await webhookBase(db);
+      const workspaces = await db.select().from(connections).where(eq(connections.platform, "slack"));
+      return (await db.select().from(slackApps).orderBy(slackApps.name)).map((a) => appOut(a, base, workspaces));
+    }),
+  );
+
+  app.patch(
+    "/api/slack-apps/:id",
+    authed(async ({ db, user, req, after }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const slackApp = await getApp(db, params(req).id);
+      const b = body(req);
+      const update: Partial<SlackApp> = {};
+      if (b.name && b.name !== slackApp.name) {
+        const [taken] = await db
+          .select()
+          .from(slackApps)
+          .where(eq(slackApps.name, String(b.name)))
+          .limit(1);
+        if (taken) throw new BadRequest("a Slack app with this name exists");
+        update.name = String(b.name);
+      }
+      if (b.credentials) {
+        const { app: appKeys, workspace } = splitCredentials(trimmed(b.credentials));
+        if (Object.values(workspace).some(Boolean))
+          throw new BadRequest("a bot token belongs to a workspace: change it on that workspace's connection");
+        update.credentialsEncrypted = secretBox().encrypt(JSON.stringify(mergedAppCredentials(slackApp, appKeys)));
+      }
+      const [updated] = Object.keys(update).length
+        ? await db.update(slackApps).set(update).where(eq(slackApps.id, slackApp.id)).returning()
+        : [slackApp];
+      await audit(db, "slack_app.update", {
+        actorType: "user",
+        actorId: user.id,
+        detail: { app: slackApp.id, fields: Object.keys(b) },
+      });
+      after(() => slackSockets.sync());
+      const workspaces = await db.select().from(connections).where(eq(connections.slackAppId, slackApp.id));
+      return appOut(updated, await webhookBase(db), workspaces);
+    }),
+  );
+
+  app.delete(
+    "/api/slack-apps/:id",
+    authed(async ({ db, user, req, after }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const slackApp = await getApp(db, params(req).id);
+      const workspaces = await db.select().from(connections).where(eq(connections.slackAppId, slackApp.id));
+      if (workspaces.length)
+        throw new BadRequest(
+          `这个应用还安装在 ${workspaces.map((c) => c.name).join("、")}：先删除这些工作区的接入，再删除应用`,
+        );
+      await db.delete(slackApps).where(eq(slackApps.id, slackApp.id));
+      await audit(db, "slack_app.delete", { actorType: "user", actorId: user.id, detail: { app: slackApp.id } });
+      after(() => slackSockets.sync());
+      return { ok: true };
+    }),
+  );
+
+  // Installing an app in another workspace (integrations/slack-install.ts): the state and redirect address for
+  // Slack's authorize page. "public": Slack sends the browser to the public address, which completes the
+  // installation; "manual": to any HTTPS address, whose final URL is pasted back (…/complete).
   app.post(
-    "/api/connections/:id/slack-install",
+    "/api/slack-apps/:id/install",
     authed(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const app = await getConn(db, params(req).id);
-      if (app.platform !== "slack" || app.installOf)
-        throw new BadRequest("请选择持有 Slack 应用的接入（不是通过应用安装的工作区）");
-      const creds = decrypted(app);
+      const slackApp = await getApp(db, params(req).id);
+      const creds = appCredentials(slackApp);
       if (!creds.client_id || !creds.client_secret) throw new BadRequest("请先保存应用的 Client ID 和 Client Secret");
       const b = body(req);
       let redirect: string;
@@ -322,15 +434,15 @@ export async function integrationRoutes(app: FastifyInstance) {
       } else if (b.method === "manual") {
         redirect = checkRedirect(String(b.redirectUri ?? ""));
       } else throw new BadRequest("method must be public or manual");
-      return { client_id: creds.client_id, redirect_uri: redirect, state: installState(app.id, redirect) };
+      return { client_id: creds.client_id, redirect_uri: redirect, state: installState(slackApp.id, redirect) };
     }),
   );
 
   app.post(
-    "/api/connections/:id/slack-install/complete",
+    "/api/slack-apps/:id/install/complete",
     authedNoTx(async ({ db, user, req }) => {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
-      const app = await getConn(db, params(req).id);
+      const slackApp = await getApp(db, params(req).id);
       const b = body(req);
       // The address the browser ended up on, or its code and state.
       let code = String(b.code ?? "");
@@ -349,17 +461,17 @@ export async function integrationRoutes(app: FastifyInstance) {
       }
       if (!code || !state) throw new BadRequest("这个地址中没有安装代码：请粘贴安装后浏览器停留的页面地址");
       const s = readState(state);
-      if (s.app !== app.id) throw new BadRequest("这次安装是为另一个应用发起的");
+      if (s.app !== slackApp.id) throw new BadRequest("这次安装是为另一个应用发起的");
       let installed: Connection;
       try {
-        const inst = await exchangeCode(app, code, s.redirectUri);
+        const inst = await exchangeCode(slackApp, code, s.redirectUri);
         installed = await transaction(async (tx) => {
-          const c = await installWorkspace(tx, app, inst, user.id);
+          const c = await installWorkspace(tx, slackApp, inst, user.id);
           await audit(tx, "connection.slack_install", {
             actorType: "user",
             actorId: user.id,
             connectionId: c.id,
-            detail: { app: app.id, team: inst.teamId, via: "pasted" },
+            detail: { slack_app: slackApp.id, team: inst.teamId, via: "pasted" },
           });
           return c;
         });
@@ -368,7 +480,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         throw new BadRequest(installProblem(err));
       }
       void slackSockets.sync();
-      return connOut(installed, await webhookBase(db), await familyOf(db, installed));
+      return connOut(installed, await webhookBase(db), await appsFor(db, [installed]));
     }),
   );
 
@@ -381,7 +493,20 @@ export async function integrationRoutes(app: FastifyInstance) {
       if (entered) {
         // Credentials not saved yet (e.g. switching ways): try them, keep the connection as it is.
         try {
-          const candidate = { ...conn, credentialsEncrypted: await mergedCredentials(conn, entered) };
+          let tried = trimmed(entered);
+          let appKeys: Record<string, string> = {};
+          if (conn.platform === "slack") {
+            // Switching the app's way is tried with the app's keys as they would be after saving.
+            const split = splitCredentials(tried);
+            const slackApp = await appOf(db, conn);
+            appKeys = Object.keys(split.app).length ? mergedAppCredentials(slackApp, split.app) : {};
+            tried = split.workspace;
+          }
+          const own = JSON.parse(secretBox().decrypt(await mergedCredentials(conn, tried)));
+          const candidate = {
+            ...conn,
+            credentialsEncrypted: secretBox().encrypt(JSON.stringify({ ...own, ...appKeys })),
+          };
           return { ok: true, ...(await (await getAdapter(conn)).test(db, candidate)) };
         } catch (err) {
           if (err instanceof BadRequest) throw err;
