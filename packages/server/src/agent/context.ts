@@ -160,11 +160,13 @@ async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
     const platform = PLATFORMS[src.source] ?? src.source;
     const place = conv?.name ?? ref.conversation;
     const meta = (conv?.meta ?? {}) as { kind?: string; title?: string };
+    // A whole Slack channel or Feishu group chat is one topic.
+    const group = src.source === "feishu" ? `${platform} group chat «${place}»` : `${platform} #${place}`;
     where =
       conv?.kind === "im"
         ? `a ${platform} direct message`
         : meta.kind === "channel"
-          ? `${platform} #${place}, posted directly in the channel`
+          ? `${group}, posted directly in it`
           : meta.kind
             ? `${platform} ${place}, ${meta.kind.replace("_", " ")} «${meta.title ?? ""}»`
             : `${platform} ${place}`;
@@ -185,7 +187,7 @@ async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
       .limit(THREAD_MESSAGES);
     const shown: string[] = [];
     for (const m of posts.reverse()) if (m.id !== src.id) shown.push(await historyLine(db, m));
-    where = where.replace(", posted directly in the channel", "") + `, as a reply in the thread of ${src.replyToId}`;
+    where = where.replace(", posted directly in it", "") + `, as a reply in the thread of ${src.replyToId}`;
     thread = `The thread so far:\n${shown.join("\n") || "(its first message is not in this topic)"}\n\n`;
   }
   return `${thread}The message you are answering:

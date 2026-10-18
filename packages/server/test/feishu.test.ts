@@ -2,11 +2,11 @@
  * Feishu end to end: events over the long connection (the SDK's client replaced by a stand-in, as the SDK
  * itself is not under test here) or at the verified events URL, Open API calls out.
  */
-import { asc } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { connections, externalIdentities, tasks } from "../src/db/schema.js";
+import { connections, externalIdentities, tasks, topics, users } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
@@ -20,9 +20,13 @@ const TOKEN = "feishu-verification-token";
 const json = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
-/** Feishu Open API stand-in: one bot, every chat has alice as its only member; sent messages are recorded. */
+/**
+ * Feishu Open API stand-in: one bot; the group oc_group (产品群) has alice and bob, other chats only alice; the
+ * contact directory knows carol only (the others are outside the app's contact range). Sent messages are recorded.
+ */
 class FakeFeishu {
   sent: { path: string; body: any }[] = [];
+  asked: string[] = [];
 
   fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -32,11 +36,26 @@ class FakeFeishu {
       return json({ code: 0, msg: "ok", tenant_access_token: "t-123", expire: 7200 });
     if ((init?.headers as Record<string, string>)?.authorization !== "Bearer t-123")
       return json({ code: 99991663, msg: "invalid access token" });
+    this.asked.push(path);
     if (path === "bot/v3/info")
       // the shape Feishu documents: the bot beside code, not in data
       return json({ code: 0, msg: "ok", bot: { app_name: "witden", open_id: "ou_bot" } });
+    if (path === "im/v1/chats/oc_group") return json({ code: 0, data: { name: "产品群", chat_mode: "group" } });
+    if (path === "im/v1/chats/oc_group/members")
+      return json({
+        code: 0,
+        data: {
+          items: [
+            { member_id_type: "open_id", member_id: "ou_alice", name: "Alice 张" },
+            { member_id_type: "open_id", member_id: "ou_bob", name: "Bob 李" },
+          ],
+          has_more: false,
+        },
+      });
     if (/^im\/v1\/chats\/[^/]+\/members$/.test(path))
-      return json({ code: 0, data: { items: [{ member_id: "ou_alice" }], has_more: false } });
+      return json({ code: 0, data: { items: [{ member_id: "ou_alice", name: "Alice 张" }], has_more: false } });
+    if (path === "contact/v3/users/ou_carol") return json({ code: 0, data: { user: { name: "Carol 王" } } });
+    if (path.startsWith("contact/v3/users/")) return json({ code: 41050, msg: "no user authority error" });
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
       this.sent.push({ path, body });
       return json({ code: 0, data: { message_id: `om_out_${this.sent.length}` } });
@@ -73,7 +92,16 @@ class FakeLink {
 
 const textEvent = (
   text: string,
-  o: { sender?: string; senderType?: string; id?: string; chatType?: string; token?: string } = {},
+  o: {
+    sender?: string;
+    senderType?: string;
+    id?: string;
+    chatType?: string;
+    chat?: string;
+    root?: string;
+    atBot?: boolean;
+    token?: string;
+  } = {},
 ) => ({
   schema: "2.0",
   header: {
@@ -85,10 +113,12 @@ const textEvent = (
     sender: { sender_type: o.senderType ?? "user", sender_id: { open_id: o.sender ?? "ou_alice" } },
     message: {
       message_id: o.id ?? "om_1",
-      chat_id: "oc_dm_alice",
+      chat_id: o.chat ?? "oc_dm_alice",
       chat_type: o.chatType ?? "p2p",
       message_type: "text",
-      content: JSON.stringify({ text }),
+      content: JSON.stringify({ text: o.atBot ? `@_user_1 ${text}` : text }),
+      ...(o.root ? { root_id: o.root, parent_id: o.root } : {}),
+      ...(o.atBot ? { mentions: [{ key: "@_user_1", id: { open_id: "ou_bot" }, name: "witden" }] } : {}),
     },
   },
 });
@@ -302,6 +332,78 @@ describe("feishu long connection", () => {
         ),
       });
     expect((await current("conn_old")).feishu_mode).toBe("http");
+  });
+});
+
+describe("feishu groups and names", () => {
+  const group = (text: string, id: string, o: { sender?: string; root?: string } = {}) =>
+    textEvent(text, { id, chatType: "group", chat: "oc_group", atBot: true, ...o });
+
+  it("a group is one topic named after it; replies in a thread point at its first message and are answered there", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    let n = 0;
+    w.scripts.dev = () => reply(`answer ${++n}`);
+
+    // two questions straight into the group: one topic, titled with the group's name
+    await link.push(group("第一个问题", "om_g1"));
+    await link.push(group("第二个问题", "om_g2"));
+    await w.waitFor(async () => (await allTasks()).length === 2);
+    const tasksNow = await allTasks();
+    expect(new Set(tasksNow.map((t) => t.topicId)).size).toBe(1);
+    const topicId = tasksNow[0].topicId;
+    const topic = (await w.api("GET", `/api/topics/${topicId}`, { token: w.alice })).body;
+    expect(topic.title).toBe("#产品群");
+    await w.drain();
+    await deliverPending();
+    // asked in the group itself, answered in the group itself
+    expect(feishu.sent.map((m) => [m.path, m.body.receive_id])).toEqual([
+      ["im/v1/messages", "oc_group"],
+      ["im/v1/messages", "oc_group"],
+    ]);
+
+    // a reply in the first question's thread joins the same topic, under that question, and is answered there
+    await link.push(group("接着问", "om_g3", { root: "om_g1" }));
+    await w.waitFor(async () => (await allTasks()).length === 3);
+    const msgs = (await w.messages(topicId)) as any[];
+    const first = msgs.find((m) => m.content === "第一个问题");
+    expect(msgs.find((m) => m.content === "接着问").reply_to_id).toBe(first.id);
+    await w.drain();
+    await deliverPending();
+    expect(feishu.sent.at(-1)).toMatchObject({ path: "im/v1/messages/om_g1/reply", body: { reply_in_thread: true } });
+    expect((await allTasks()).every((t) => t.topicId === topicId)).toBe(true);
+  });
+
+  it("names people from the group's member list, or from the contact directory in a private chat", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    await patch(conn.id, { settings: { auto_provision_users: true } });
+    w.scripts.dev = () => reply("ok");
+    const nameOf = async (openId: string) => {
+      const [ident] = await db().select().from(externalIdentities).where(eq(externalIdentities.externalUserId, openId));
+      const [user] = ident?.userId ? await db().select().from(users).where(eq(users.id, ident.userId)) : [];
+      return user?.name;
+    };
+
+    // bob, unknown to witden, becomes an external member under his name in the group
+    await link.push(group("我是 bob", "om_b1", { sender: "ou_bob" }));
+    await w.waitFor(async () => (await nameOf("ou_bob")) === "Bob 李");
+    // carol writes privately: her name comes from the contact directory, and so does her chat's title
+    await link.push(textEvent("我是 carol", { id: "om_c1", sender: "ou_carol", chat: "oc_p2p_carol" }));
+    await w.waitFor(async () => (await nameOf("ou_carol")) === "Carol 王");
+    const dm = (await db().select().from(topics).where(eq(topics.kind, "dm"))).find((t) => t.title === "Carol 王");
+    expect(dm).toBeTruthy();
+    // dave is outside the contact range: he keeps the placeholder name, and is not asked about again soon
+    await link.push(textEvent("我是 dave", { id: "om_d1", sender: "ou_dave", chat: "oc_p2p_dave" }));
+    await w.waitFor(async () => (await nameOf("ou_dave")) === "feishu-ou_dave");
+    await link.push(textEvent("还是 dave", { id: "om_d2", sender: "ou_dave", chat: "oc_p2p_dave" }));
+    await w.drain();
+    expect(feishu.asked.filter((p) => p === "contact/v3/users/ou_dave")).toHaveLength(1);
+    // the group's name and members were each asked for once
+    expect(feishu.asked.filter((p) => p === "im/v1/chats/oc_group")).toHaveLength(1);
+    expect(feishu.asked.filter((p) => p === "im/v1/chats/oc_group/members")).toHaveLength(1);
   });
 });
 

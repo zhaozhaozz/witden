@@ -326,6 +326,85 @@ describe("0017_slack_channel_topics", () => {
   });
 });
 
+describe("0026_feishu_group_topics", () => {
+  it("merges a Feishu group's topics into one topic for the group; private chats and Slack stay", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0026")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into users (id, name) values ('usr_a', 'alice'), ('usr_b', 'bob');
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into connections (id, platform, name) values ('conn_f', 'feishu', 'lark'), ('conn_s', 'slack', 'acme');
+      insert into external_conversations (id, connection_id, external_id, kind, name) values
+        ('conv_g', 'conn_f', 'oc_group', 'private', null), ('conv_p', 'conn_f', 'oc_p2p', 'im', null),
+        ('conv_s', 'conn_s', 'C1', 'public', 'general');
+      insert into topics (id, title, kind, source, created_by, created_at) values
+        ('top_1', '#oc_group: 你好', 'group', 'feishu', 'usr_a', '2026-10-18 08:00'),
+        ('top_2', '#oc_group: 帮我看看', 'group', 'feishu', 'usr_b', '2026-10-18 08:05'),
+        ('top_p', 'alice', 'dm', 'feishu', 'usr_a', '2026-10-18 07:00'),
+        ('top_s', '#general', 'group', 'slack', 'usr_a', '2026-10-18 06:00');
+      insert into external_thread_links (id, connection_id, conversation_id, thread_key, topic_id) values
+        ('lnk_1', 'conn_f', 'conv_g', 'om_1', 'top_1'),
+        ('lnk_2', 'conn_f', 'conv_g', 'om_2', 'top_2'),
+        ('lnk_p', 'conn_f', 'conv_p', '__dm__', 'top_p'),
+        ('lnk_s', 'conn_s', 'conv_s', '__channel__', 'top_s');
+      insert into topic_participants (id, topic_id, participant_type, participant_id) values
+        ('tp_1', 'top_1', 'user', 'usr_a'), ('tp_1r', 'top_1', 'role', 'role_dev'),
+        ('tp_2', 'top_2', 'user', 'usr_b'), ('tp_2r', 'top_2', 'role', 'role_dev');
+      insert into messages (id, topic_id, author_type, author_id, content, source, external_ref, created_at) values
+        ('msg_1', 'top_1', 'user', 'usr_a', '你好', 'feishu', '{"conversation": "oc_group", "ts": "om_1", "thread": "om_1"}', '2026-10-18 08:00'),
+        ('msg_1r', 'top_1', 'role', 'role_dev', '你好 alice', 'web', null, '2026-10-18 08:00:30'),
+        ('msg_2', 'top_2', 'user', 'usr_b', '帮我看看', 'feishu', '{"conversation": "oc_group", "ts": "om_2", "thread": "om_2"}', '2026-10-18 08:05'),
+        ('msg_2b', 'top_2', 'user', 'usr_b', '在回复里', 'feishu', '{"conversation": "oc_group", "ts": "om_3", "thread": "om_2"}', '2026-10-18 08:06'),
+        ('msg_p', 'top_p', 'user', 'usr_a', '私聊', 'feishu', '{"conversation": "oc_p2p", "ts": "om_9", "thread": "__dm__"}', '2026-10-18 07:00');
+      insert into agent_sessions (id, topic_id, role_id, notes, runs, created_at) values
+        ('ses_1', 'top_1', 'role_dev', '[{"task_id": "tsk_1", "request": "你好", "result": "a", "at": "1"}]', 1, '2026-10-18 08:00'),
+        ('ses_2', 'top_2', 'role_dev', '[{"task_id": "tsk_2", "request": "帮我看看", "result": "b", "at": "2"}]', 1, '2026-10-18 08:05');
+      insert into tasks (id, topic_id, owner_role_id, title, instruction, session_id, labels) values
+        ('tsk_2', 'top_2', 'role_dev', '帮我看看', '帮我看看', 'ses_2', '["topic:top_2"]');
+    `);
+    await apply(db, "0026_feishu_group_topics");
+    const q = async (sql: string) => (await db.query(sql)).rows as any[];
+    expect(await q("select id, title from topics order by id")).toEqual([
+      { id: "top_1", title: "#oc_group" },
+      { id: "top_p", title: "alice" },
+      { id: "top_s", title: "#general" },
+    ]);
+    expect(await q("select thread_key, topic_id from external_thread_links order by topic_id")).toEqual([
+      { thread_key: "__channel__", topic_id: "top_1" },
+      { thread_key: "__dm__", topic_id: "top_p" },
+      { thread_key: "__channel__", topic_id: "top_s" },
+    ]);
+    // the role's answer was in the reply chain of the message it answered (sent with reply_in_thread)
+    expect(
+      await q("select id, topic_id, reply_to_id from messages where topic_id = 'top_1' order by created_at"),
+    ).toEqual([
+      { id: "msg_1", topic_id: "top_1", reply_to_id: null },
+      { id: "msg_1r", topic_id: "top_1", reply_to_id: "msg_1" },
+      { id: "msg_2", topic_id: "top_1", reply_to_id: null },
+      { id: "msg_2b", topic_id: "top_1", reply_to_id: "msg_2" },
+    ]);
+    const sessions = await q("select id, topic_id, runs, notes from agent_sessions");
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ id: "ses_1", topic_id: "top_1", runs: 2 });
+    expect(sessions[0].notes.map((n: any) => n.task_id)).toEqual(["tsk_1", "tsk_2"]);
+    expect(await q("select topic_id, session_id, labels from tasks")).toEqual([
+      { topic_id: "top_1", session_id: "ses_1", labels: ["topic:top_1"] },
+    ]);
+    expect(
+      await q("select participant_type, participant_id from topic_participants where topic_id = 'top_1' order by 2"),
+    ).toEqual([
+      { participant_type: "role", participant_id: "role_dev" },
+      { participant_type: "user", participant_id: "usr_a" },
+      { participant_type: "user", participant_id: "usr_b" },
+    ]);
+    await db.close();
+  });
+});
+
 describe("0018_connection_role", () => {
   async function upTo0018() {
     const db = new PGlite();

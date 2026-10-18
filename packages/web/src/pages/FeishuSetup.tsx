@@ -173,7 +173,7 @@ export function FeishuSetup({
       <TryStep
         conn={conn}
         platform="飞书"
-        where="提问的消息串或私聊中"
+        where="提问的地方（群里、消息串或私聊中）"
         accessStep={num("access")}
         idle={
           mode === "socket"
@@ -214,7 +214,7 @@ export function FeishuSetup({
       <p className="setup-intro">
         {switching
           ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、机器人代表的角色和已关联的账号都保持不变。`
-          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的角色：群里的一条消息连同它的回复（消息串）是 witden 中的一个话题，角色在同一个消息串中回复；私聊是一个话题。飞书接入目前为实验性，只同步文字消息。`}
+          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的角色：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；角色在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字消息。`}
       </p>
       <div className="setup-modes">
         <div className="segmented">
@@ -297,6 +297,21 @@ function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: (
               ))}
             </tbody>
           </table>
+          <details className="setup-more">
+            <summary>可选权限</summary>
+            <ul className="setup-list">
+              <li>
+                私聊中显示对方的名字：开通 <code>contact:contact.base:readonly</code>（获取通讯录基本信息）和{" "}
+                <code>contact:user.base:readonly</code>（获取用户基本信息），并在 <b>权限管理 → 数据权限</b>{" "}
+                中把通讯录权限范围设为使用机器人的成员。群聊中的名字从群成员列表读取，不需要这两项。
+              </li>
+              <li>
+                记录群里的所有消息：开通 <code>im:message.group_msg</code>
+                （获取群组中所有消息，需要企业管理员审核）。没有 @
+                机器人的消息也会记入话题，但不交给角色；不开通时只记录 @ 机器人的消息。
+              </li>
+            </ul>
+          </details>
         </li>
         {mode === "http" ? (
           <li>

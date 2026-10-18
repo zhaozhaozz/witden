@@ -183,6 +183,13 @@
       "when": 1792169184900,
       "tag": "0025_drop_install_of",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792321577762,
+      "tag": "0026_feishu_group_topics",
+      "breakpoints": true
     }
   ]
 }

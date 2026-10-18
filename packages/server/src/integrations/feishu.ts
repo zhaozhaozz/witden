@@ -2,7 +2,7 @@
  * Feishu adapter (experimental): text messages in groups and bot DMs. Files and edits are not synchronised.
  * Events arrive over the long connection witden keeps open (feishu-socket.ts) or at the events URL.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { type Db, db as getDb } from "../db/client.js";
 import {
   type Connection,
@@ -15,11 +15,25 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
-import { type Adapter, type InboundAction, register } from "./base.js";
+import { type Adapter, CHANNEL, type InboundAction, register } from "./base.js";
 import { noteWebhook } from "./webhook-status.js";
 
 const API = "https://open.feishu.cn/open-apis/";
 const tokenCache = new Map<string, { token: string; expires: number }>();
+
+// Names are only for display, looked up while an event waits for its answer (Feishu allows 3 s): each lookup
+// gives up quickly, and what is known (or known to be missing) is kept for a while.
+const LOOKUP_MS = 1500;
+const NAME_TTL_MS = 60 * 60_000;
+const MEMBERS_TTL_MS = 10 * 60_000;
+const names = new Map<string, { name: string | null; at: number }>();
+const chatNames = new Map<string, { name: string | null; at: number }>();
+const memberLists = new Map<string, { members: { id: string; name: string | null }[]; at: number }>();
+
+function known<T>(cache: Map<string, { at: number } & T>, key: string, ttl: number): T | undefined {
+  const hit = cache.get(key);
+  return hit && Date.now() - hit.at < ttl ? hit : undefined;
+}
 
 export let feishuFetch: typeof fetch = (...args) => fetch(...args);
 export function setFeishuFetch(fn: typeof fetch): void {
@@ -85,7 +99,7 @@ export class FeishuAdapter implements Adapter {
     conn: Connection,
     method: string,
     path: string,
-    opts: { params?: Record<string, string>; body?: unknown } = {},
+    opts: { params?: Record<string, string>; body?: unknown; timeoutMs?: number } = {},
   ) {
     const qs = opts.params ? `?${new URLSearchParams(opts.params).toString()}` : "";
     const res: any = await (
@@ -93,6 +107,7 @@ export class FeishuAdapter implements Adapter {
         method,
         headers: { authorization: `Bearer ${await this.token(conn)}`, "content-type": "application/json" },
         body: opts.body ? JSON.stringify(opts.body) : undefined,
+        ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
       })
     ).json();
     if (res.code !== 0) throw new Error(`Feishu ${path} failed: ${res.msg}`);
@@ -119,23 +134,93 @@ export class FeishuAdapter implements Adapter {
       throw new Unauthorized("bad Feishu verification token");
   }
 
-  async syncMembers(db: Db, conn: Connection, conv: ExternalConversation): Promise<void> {
-    const members: string[] = [];
+  /**
+   * A chat's members with their names (the list carries them, so no contact permission is needed); the bot
+   * is not among them. Kept briefly, so naming a sender and syncing members ask Feishu once.
+   */
+  private async members(conn: Connection, chatId: string, timeoutMs?: number) {
+    const key = `${conn.id}:${chatId}`;
+    const hit = known(memberLists, key, 60_000);
+    if (hit) return hit.members;
+    const members: { id: string; name: string | null }[] = [];
     let page: string | undefined;
     do {
-      const data = await this.call(conn, "GET", `im/v1/chats/${conv.externalId}/members`, {
+      const data = await this.call(conn, "GET", `im/v1/chats/${chatId}/members`, {
         params: { member_id_type: "open_id", page_size: "100", ...(page ? { page_token: page } : {}) },
+        timeoutMs,
       });
-      members.push(...(data.items ?? []).map((m: any) => m.member_id).filter(Boolean));
+      for (const m of data.items ?? []) if (m.member_id) members.push({ id: m.member_id, name: m.name || null });
       page = data.has_more ? data.page_token : undefined;
     } while (page);
+    memberLists.set(key, { members, at: Date.now() });
+    for (const m of members) if (m.name) names.set(`${conn.id}:${m.id}`, { name: m.name, at: Date.now() });
+    return members;
+  }
+
+  /** A group's name: kept with the conversation once known, asked of Feishu otherwise; null when unnamed. */
+  private async chatName(db: Db, conn: Connection, chatId: string): Promise<string | null> {
+    const [conv] = await db
+      .select({ name: externalConversations.name })
+      .from(externalConversations)
+      .where(and(eq(externalConversations.connectionId, conn.id), eq(externalConversations.externalId, chatId)))
+      .limit(1);
+    if (conv?.name) return conv.name;
+    const key = `${conn.id}:${chatId}`;
+    const hit = known(chatNames, key, NAME_TTL_MS);
+    if (hit) return hit.name;
+    let name: string | null = null;
+    try {
+      name = (await this.call(conn, "GET", `im/v1/chats/${chatId}`, { timeoutMs: LOOKUP_MS })).name || null;
+    } catch {
+      // titled by its id until the name is known
+    }
+    chatNames.set(key, { name, at: Date.now() });
+    return name;
+  }
+
+  /**
+   * A person's name: from the group's member list, or else from the contact directory, which needs the
+   * contact permissions and the person within the app's contact range (the only way in a private chat).
+   */
+  private async userName(conn: Connection, openId: string, chatId: string | null): Promise<string | null> {
+    const key = `${conn.id}:${openId}`;
+    const hit = known(names, key, NAME_TTL_MS);
+    if (hit) return hit.name;
+    if (chatId) {
+      try {
+        await this.members(conn, chatId, LOOKUP_MS);
+        const found = known(names, key, NAME_TTL_MS);
+        if (found) return found.name;
+      } catch {
+        // try the directory
+      }
+    }
+    let name: string | null = null;
+    try {
+      const data = await this.call(conn, "GET", `contact/v3/users/${openId}`, {
+        params: { user_id_type: "open_id" },
+        timeoutMs: LOOKUP_MS,
+      });
+      name = data.user?.name || null;
+    } catch {
+      // keep the id: names are only for display
+    }
+    names.set(key, { name, at: Date.now() });
+    return name;
+  }
+
+  /** Group chats: their member list defines who can see what is posted there. */
+  async syncMembers(db: Db, conn: Connection, conv: ExternalConversation, force = false): Promise<void> {
+    if (conv.kind === "im") return;
+    if (!force && conv.membersSyncedAt && Date.now() - conv.membersSyncedAt.getTime() < MEMBERS_TTL_MS) return;
+    const members = await this.members(conn, conv.externalId);
     await db
       .update(externalConversations)
-      .set({ memberIds: members, membersSyncedAt: new Date() })
+      .set({ memberIds: members.map((m) => m.id), membersSyncedAt: new Date() })
       .where(eq(externalConversations.id, conv.id));
   }
 
-  async parse(_db: Db, conn: Connection, payload: any): Promise<InboundAction[]> {
+  async parse(db: Db, conn: Connection, payload: any): Promise<InboundAction[]> {
     if (payload?.header?.event_type !== "im.message.receive_v1") return [];
     const event = payload.event ?? {};
     if (event.sender?.sender_type !== "user") return []; // ignore bots, ourselves included
@@ -148,25 +233,33 @@ export class FeishuAdapter implements Adapter {
       text = "";
     }
     const p2p = msg.chat_type === "p2p";
+    const chatId: string = msg.chat_id ?? "";
+    const sender: string = event.sender?.sender_id?.open_id ?? "";
     let addressed = p2p;
     for (const m of msg.mentions ?? []) {
       const isBot = m.id?.open_id === conn.botUserId;
       addressed ||= isBot;
       text = text.split(m.key ?? "").join(isBot ? "" : `@${m.name ?? ""}`);
+      // a mention names the person mentioned, at no cost
+      if (!isBot && m.id?.open_id && m.name) names.set(`${conn.id}:${m.id.open_id}`, { name: m.name, at: Date.now() });
     }
+    const id: string = msg.message_id ?? "";
     return [
       {
         kind: "message",
         message: {
           connectionId: conn.id,
-          eventKey: `msg:${msg.message_id}`,
-          conversationId: msg.chat_id ?? "",
+          eventKey: `msg:${id}`,
+          conversationId: chatId,
           conversationKind: p2p ? "im" : "private",
-          conversationName: null,
-          threadKey: p2p ? "__dm__" : (msg.root_id ?? msg.message_id ?? ""),
-          messageTs: msg.message_id ?? "",
-          userId: event.sender?.sender_id?.open_id ?? "",
-          userName: null,
+          conversationName: p2p ? null : await this.chatName(db, conn, chatId),
+          // a reply (in a thread or quoting) belongs to the message its chain started from
+          threadKey: p2p ? "__dm__" : msg.root_id || id,
+          // A group is one topic, as Feishu shows it; replies stay visible as replies.
+          ...(p2p ? {} : { topicKey: CHANNEL }),
+          messageTs: id,
+          userId: sender,
+          userName: sender ? await this.userName(conn, sender, p2p ? null : chatId) : null,
           text: text.trim(),
           addressed,
         },
