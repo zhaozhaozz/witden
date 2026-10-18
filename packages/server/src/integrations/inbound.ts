@@ -7,8 +7,9 @@
  * Identity is the platform user id, never a display name.
  */
 import { createHash } from "node:crypto";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { dispatchHumanMessage, saveMessage } from "../agent/dispatch.js";
+import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -54,8 +55,9 @@ export interface InboundMessage {
   /** The bot was mentioned (or it is a DM). */
   addressed: boolean;
   /**
-   * Another bot wrote it: recorded for context, never handed to a role (so bots cannot set each other off).
-   * Its sender is kept as an external member even where the connection makes none for people.
+   * Another bot wrote it: recorded for context, and handed to the role only where the connection takes bots'
+   * requests (``bot_requests``), so many in a row at most. Its sender is kept as an external member even where
+   * the connection makes none for people.
    */
   fromBot?: boolean;
   files?: Record<string, any>[];
@@ -195,6 +197,7 @@ export async function resolveIdentity(
     .from(externalIdentities)
     .where(and(eq(externalIdentities.connectionId, conn.id), eq(externalIdentities.externalUserId, externalUserId)))
     .limit(1);
+  const previous = ident?.displayName ?? null;
   if (!ident) {
     [ident] = await db
       .insert(externalIdentities)
@@ -219,13 +222,20 @@ export async function resolveIdentity(
   }
   if (!ident.userId) return null;
   const [user] = await db.select().from(users).where(eq(users.id, ident.userId)).limit(1);
-  // An external member first seen without a name takes it once the platform tells it, and so does its DM.
-  if (user && displayName && user.externalConnectionId === conn.id && user.name === placeholder) {
+  // An external member goes by the name the platform gives: once it is known, and when it changes there (unless
+  // someone renamed them in witden). Their DM, titled by that name, follows.
+  if (
+    user &&
+    displayName &&
+    user.externalConnectionId === conn.id &&
+    user.name !== displayName &&
+    (user.name === placeholder || user.name === previous)
+  ) {
     await db.update(users).set({ name: displayName }).where(eq(users.id, user.id));
     await db
       .update(topics)
       .set({ title: displayName })
-      .where(and(eq(topics.createdBy, user.id), eq(topics.kind, "dm"), eq(topics.title, placeholder)));
+      .where(and(eq(topics.createdBy, user.id), eq(topics.kind, "dm"), eq(topics.title, user.name)));
     user.name = displayName;
   }
   return user?.isActive ? user : null;
@@ -352,6 +362,29 @@ async function threadRoot(db: Db, topic: Topic, msg: InboundMessage): Promise<st
   return root?.id ?? null;
 }
 
+/** Requests from bots in a topic's conversation since the last message a person wrote there. */
+async function botRequestsInARow(db: Db, topic: Topic, conversationId: string): Promise<number> {
+  const recent = await db
+    .select({ ref: messages.externalRef })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.topicId, topic.id),
+        eq(messages.authorType, "user"),
+        sql`${messages.externalRef}->>'conversation' = ${conversationId}`,
+      ),
+    )
+    .orderBy(desc(messages.createdAt))
+    .limit(200);
+  let n = 0;
+  for (const { ref } of recent) {
+    const r = (ref ?? {}) as { bot?: boolean; request?: boolean };
+    if (!r.bot) break;
+    if (r.request) n++;
+  }
+  return n;
+}
+
 export type Reply = (text: string) => Promise<void>;
 
 /** Process one inbound message exactly once. ``reply`` posts a direct notice back (e.g. "not linked"). */
@@ -393,17 +426,34 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     // The bot stands for one role: everything addressed to it goes to that role. A bot without a role takes no
     // requests; the dispatcher says so.
     const bound = typeof conn.settings.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
-    const roleIds = bound && msg.addressed && !msg.fromBot ? [bound] : [];
+    // Another bot's request: only where the connection takes them, and not without end (bots answering each
+    // other): after so many in a row with nobody else asking in between, they are only recorded.
+    let addressed = msg.addressed;
+    let botLimit = false;
+    if (msg.fromBot && addressed) {
+      if (!conn.settings.bot_requests) addressed = false;
+      else if ((await botRequestsInARow(db, topic, msg.conversationId)) >= settings().maxAutoRounds) {
+        addressed = false;
+        botLimit = true;
+      }
+    }
+    const roleIds = bound && addressed ? [bound] : [];
     const present = [];
     for (const rid of roleIds) if (await topicSvc.participant(db, topic.id, "role", rid)) present.push(rid);
     let stored = await saveMessage(db, topic, "user", user.id, msg.text, {
       mentions: present.map((id) => ({ type: "role" as const, id })),
       replyToId: await threadRoot(db, topic, msg),
       source: conn.platform,
-      externalRef: { conversation: msg.conversationId, ts: msg.messageTs, thread: msg.threadKey },
+      externalRef: {
+        conversation: msg.conversationId,
+        ts: msg.messageTs,
+        thread: msg.threadKey,
+        ...(msg.fromBot ? { bot: true, ...(addressed ? { request: true } : {}) } : {}),
+      },
     });
     if (msg.files?.length) stored = await ingestFiles(db, conn, topic, stored, user, msg.files);
-    if (!msg.addressed || msg.fromBot) return { status: "stored", topic_id: topic.id };
+    if (botLimit) return { status: "bot_limit", topic_id: topic.id };
+    if (!addressed) return { status: "stored", topic_id: topic.id };
     if (roleIds.length && !present.length) {
       // The role is not in this thread yet: the dispatcher checks it and brings it in.
       [stored] = await db

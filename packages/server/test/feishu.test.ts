@@ -4,12 +4,14 @@
  */
 import { asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { settings } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { connections, externalIdentities, tasks, topics, users } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { messageText, setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
+import { resolveIdentity } from "../src/integrations/inbound.js";
 import { secretBox } from "../src/security/crypto.js";
 import { reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -435,7 +437,7 @@ describe("feishu: other bots and rich messages", () => {
   });
   const card = (title: string, text: string) => ({ title, elements: [[{ tag: "text", text }]] });
 
-  it("other bots' messages are context for the role, never requests; this bot's own never come back", async () => {
+  it("by default other bots' messages are context for the role, not requests; this bot's own never come back", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
     await w.waitFor(async () => link.open().length === 1);
     await ready(conn);
@@ -481,6 +483,63 @@ describe("feishu: other bots and rich messages", () => {
     await link.push(raw(sentId, "text", { text: "看到了" }, { app: true, sender: { open_id: "ou_other_form" } }));
     await w.drain();
     expect(((await w.messages(topic.id)) as any[]).length).toBe(before);
+  });
+
+  it("a connection may take other bots' requests, so many in a row until a person speaks", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    expect((await patch(conn.id, { settings: { bot_requests: "yes" } })).status).toBe(400);
+    expect((await patch(conn.id, { settings: { bot_requests: true } })).body.settings.bot_requests).toBe(true);
+    w.scripts.dev = () => reply("收到");
+    const s = settings();
+    const saved = s.maxAutoRounds;
+    s.maxAutoRounds = 2;
+    try {
+      const ci = { open_id: "ou_ci_bot_42" };
+      const fromCi = (id: string) =>
+        raw(id, "text", { text: "@_user_1 帮忙看看" }, { app: true, sender: ci, atBot: true });
+      // two requests from the bot are taken; the third waits for a person
+      for (const id of ["om_b1", "om_b2"]) {
+        await link.push(fromCi(id));
+        await w.waitFor(async () => (await allTasks()).length === Number(id.slice(-1)));
+        await w.drain();
+      }
+      await link.push(fromCi("om_b3"));
+      await w.drain();
+      expect(await allTasks()).toHaveLength(2);
+      const statuses = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken }))
+        .body as any[];
+      expect(statuses.find((e) => e.event_key === "msg:om_b3")?.status).toBe("bot_limit");
+      // a person asks; then the bot's requests are taken again
+      await link.push(textEvent("我来问一句", { id: "om_p", chatType: "group", chat: "oc_group", atBot: true }));
+      await w.waitFor(async () => (await allTasks()).length === 3);
+      await w.drain();
+      await link.push(fromCi("om_b4"));
+      await w.waitFor(async () => (await allTasks()).length === 4);
+      // the bot asked as an external member, for the role its connection stands for
+      const fromBot = (await allTasks()).filter((t) => t.requesterUserId !== w.ids.alice);
+      expect(fromBot.every((t) => t.ownerRoleId === w.ids.dev)).toBe(true);
+    } finally {
+      s.maxAutoRounds = saved;
+    }
+  });
+
+  it("external members follow later name changes on the platform, unless renamed in witden", async () => {
+    const created = (await create({ app_id: APP_ID, app_secret: "app-secret" }, { auto_provision_users: true })).body;
+    const [conn] = await db().select().from(connections).where(eq(connections.id, created.id));
+    const user = (await resolveIdentity(db(), conn, "ou_n", "用户398268"))!;
+    await db()
+      .insert(topics)
+      .values({ id: "top_dm_n", title: "用户398268", kind: "dm", source: "feishu", createdBy: user.id });
+    // the name was set in Feishu: the member and their private chat take it
+    await resolveIdentity(db(), conn, "ou_n", "王小明");
+    expect((await db().select().from(users).where(eq(users.id, user.id)))[0].name).toBe("王小明");
+    expect((await db().select().from(topics).where(eq(topics.id, "top_dm_n")))[0].title).toBe("王小明");
+    // renamed in witden: a later change on the platform does not overwrite it
+    await db().update(users).set({ name: "小明（测试）" }).where(eq(users.id, user.id));
+    await resolveIdentity(db(), conn, "ou_n", "王明");
+    expect((await db().select().from(users).where(eq(users.id, user.id)))[0].name).toBe("小明（测试）");
   });
 
   it("rich-text posts and cards are read as text; a post that @-mentions the bot is a request", async () => {

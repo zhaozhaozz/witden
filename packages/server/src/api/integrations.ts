@@ -2,6 +2,7 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { recheckActiveTasks } from "../agent/revocation.js";
+import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -57,7 +58,9 @@ const PLATFORMS: Record<string, string[]> = {
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id", "feishu_mode"]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id", "feishu_mode", "bot_requests"]);
+/** Settings only a Feishu connection has. */
+const FEISHU_SETTINGS = new Set(["feishu_mode", "bot_requests"]);
 
 /** The long connections of Slack apps and Feishu connections follow what was just saved. */
 const syncSockets = () => Promise.all([slackSockets.sync(), feishuSockets.sync()]);
@@ -112,7 +115,14 @@ function connOut(conn: Connection, base: string, apps: SlackApp[] = []) {
         }
       : {}),
     // Feishu: the long connection, with the state of this process's client, or the events URL.
-    ...(conn.platform === "feishu" ? { feishu_mode: feishuMode(conn), socket: feishuSockets.state(conn.id) } : {}),
+    // and how many requests from other bots in a row it takes (bot_requests) before waiting for a person
+    ...(conn.platform === "feishu"
+      ? {
+          feishu_mode: feishuMode(conn),
+          socket: feishuSockets.state(conn.id),
+          bot_request_limit: settings().maxAutoRounds,
+        }
+      : {}),
     // a GitHub connection the setup guide created before its app exists has none yet
     has_credentials: Object.values(creds).some(Boolean),
     capabilities: CAPABILITIES[conn.platform] ?? {},
@@ -160,10 +170,14 @@ const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, String(v ?? "").trim()]));
 
 async function cleanSettings(db: Db, s: Record<string, any>, platform: string): Promise<Record<string, any>> {
-  const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k) || (k === "feishu_mode" && platform !== "feishu"));
+  const unknown = Object.keys(s).filter(
+    (k) => !SETTINGS_KEYS.has(k) || (FEISHU_SETTINGS.has(k) && platform !== "feishu"),
+  );
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
   if (s.feishu_mode !== undefined && !["socket", "http"].includes(s.feishu_mode))
     throw new BadRequest("feishu_mode must be socket (long connection) or http (events URL)");
+  if (s.bot_requests !== undefined && typeof s.bot_requests !== "boolean")
+    throw new BadRequest("bot_requests must be true or false");
   // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");

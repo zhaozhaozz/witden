@@ -637,6 +637,12 @@ function ConnectionDetail({
                     string,
                     ReactNode,
                   ],
+                  [
+                    "其他机器人的消息",
+                    conn.settings?.bot_requests
+                      ? `@ 这个机器人时交给角色（连续 ${conn.bot_request_limit ?? 8} 次机器人请求后，等有人发言再继续）`
+                      : "只作为上下文，不交给角色",
+                  ] as [string, ReactNode],
                 ]
               : []),
             (conn.slack_mode ?? conn.feishu_mode) === "socket"
@@ -1053,7 +1059,12 @@ function ConnectionForm({
           )}
         </Field>
       ))}
-      <ConnectionSettingsFields platform={platform} value={settings} onChange={setSettings} />
+      <ConnectionSettingsFields
+        platform={platform}
+        value={settings}
+        onChange={setSettings}
+        botLimit={conn?.bot_request_limit}
+      />
       <div className="btn-row">
         <button type="submit" className="btn btn-primary" disabled={disabled}>
           {busy ? "处理中…" : conn ? "保存" : "创建接入"}

@@ -209,7 +209,13 @@ export function AccessStep({
         管理员账号的人可以使用（最后一步可以直接关联你自己的账号）。要让其他人也能使用，开启“允许未关联的人使用”。
       </p>
       <div className="form form-narrow">
-        <ConnectionSettingsFields platform={conn.platform} value={settings} onChange={setSettings} chooseRole={false} />
+        <ConnectionSettingsFields
+          platform={conn.platform}
+          value={settings}
+          onChange={setSettings}
+          chooseRole={false}
+          botLimit={conn.bot_request_limit}
+        />
       </div>
       <div className="setup-next">
         <button

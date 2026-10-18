@@ -324,7 +324,8 @@ export class FeishuAdapter implements Adapter {
               ? await this.userName(conn, sender, p2p ? null : chatId)
               : null,
           text: text.trim(),
-          addressed: addressed && !fromBot,
+          // whether another bot's request goes to the role is the connection's choice (inbound.ts)
+          addressed,
           ...(fromBot ? { fromBot: true } : {}),
         },
       },

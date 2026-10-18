@@ -697,6 +697,8 @@ export interface Connection {
     custom_identity?: boolean;
     /** Feishu: how events arrive (absent: the events URL, as before there was a choice). */
     feishu_mode?: "socket" | "http";
+    /** Feishu: other bots @-mentioning the bot go to its role. */
+    bot_requests?: boolean;
     [key: string]: unknown;
   };
   has_credentials: boolean;
@@ -707,6 +709,8 @@ export interface Connection {
   slack_mode?: "socket" | "http";
   /** Feishu: events over the long connection witden keeps open, or sent to the events URL. */
   feishu_mode?: "socket" | "http";
+  /** Feishu: requests from other bots in a row taken before waiting for a person (with bot_requests). */
+  bot_request_limit?: number;
   /**
    * Slack Socket Mode or the Feishu long connection: the state of the server's connection (a Slack workspace
    * shows its app's).

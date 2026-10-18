@@ -201,7 +201,7 @@ server {
 | `WITDEN_SESSION_TTL_HOURS` | `168` | 登录会话有效期（小时）。 |
 | `WITDEN_MAX_TASK_STEPS` | `60` | 单个任务的最大步数上限。 |
 | `WITDEN_MAX_DELEGATION_DEPTH` | `3` | 角色之间委托的最大层数。 |
-| `WITDEN_MAX_AUTO_ROUNDS` | `8` | 角色之间自动讨论的最大轮次（话题可设置更低的值）。 |
+| `WITDEN_MAX_AUTO_ROUNDS` | `8` | 角色之间自动讨论的最大轮次（话题可设置更低的值）；也是飞书接入开启“其他机器人 @ 这个机器人时，也交给角色处理”后，连续接受机器人请求的次数上限。 |
 | `WITDEN_INSTANCE_WAIT_SECONDS` | `300` | 虚拟电脑不可用时任务的最长等待时间。 |
 | `WITDEN_TOOL_OUTPUT_LIMIT` | `12000` | 单次工具输出交给模型的最大字符数。 |
 | `WITDEN_ALLOWED_RUNTIMES` | `runc,runsc,sysbox-runc,kata-runtime` | 模板可以选择的容器运行时。 |

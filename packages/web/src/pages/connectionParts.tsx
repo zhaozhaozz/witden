@@ -17,6 +17,7 @@ export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "ba
   // recorded before every thread was synced (migration 0016)
   sync_off: ["会话不同步", "off"],
   connection_paused: ["接入已暂停", "off"],
+  bot_limit: ["机器人连续请求已达上限，只记录", "wait"],
   unknown_connection: ["接入不存在", "bad"],
   unlinked_user: ["账号未关联成员", "bad"],
   failed: ["处理失败", "bad"],
@@ -182,12 +183,15 @@ export interface ConnSettings {
   role_id: string | null;
   auto_provision_users: boolean;
   custom_identity: boolean;
+  /** Feishu only: other bots @-mentioning the bot go to its role (otherwise their messages are context only). */
+  bot_requests?: boolean;
 }
 
 export const settingsOf = (conn: Connection | null): ConnSettings => ({
   role_id: typeof conn?.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null,
   auto_provision_users: !!conn?.settings?.auto_provision_users,
   custom_identity: !!conn?.settings?.custom_identity,
+  ...(conn?.platform === "feishu" ? { bot_requests: !!conn.settings?.bot_requests } : {}),
 });
 
 /** Who may use the bot and how roles appear; shared by the connection form and setup guides. */
@@ -196,10 +200,13 @@ export function ConnectionSettingsFields({
   value,
   onChange,
   chooseRole = true,
+  botLimit = 8,
 }: {
   platform: string;
   value: ConnSettings;
   onChange: (next: ConnSettings) => void;
+  /** Feishu: requests from other bots in a row before waiting for a person (the server's MAX_AUTO_ROUNDS). */
+  botLimit?: number;
   /** Show the role choice (the setup guide asks for it on its own). */
   chooseRole?: boolean;
 }) {
@@ -238,6 +245,20 @@ export function ConnectionSettingsFields({
         <span className="field-hint">
           外部成员可以使用这个机器人代表的角色{value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。
         </span>
+      ) : null}
+      {platform === "feishu" ? (
+        <>
+          <Toggle
+            checked={!!value.bot_requests}
+            onChange={(v) => set({ bot_requests: v })}
+            label="其他机器人 @ 这个机器人时，也交给角色处理"
+          />
+          <span className="field-hint">
+            关闭时（默认），群里其他机器人发的消息只记入话题、作为角色的上下文。开启后，其他机器人 @
+            这个机器人的消息也交给角色；为防止机器人之间来回触发，连续 {botLimit}{" "}
+            次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。
+          </span>
+        </>
       ) : null}
       {platform === "slack" ? (
         <Toggle
