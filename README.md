@@ -23,7 +23,7 @@ witden 让你拥有一组“AI 员工”。每位 AI 员工（称为**角色**�
 - 控制台汇集角色的全部会话，按来源分组：控制台里的话题与私信，Slack、飞书中的 thread 和私信，GitHub 上的 issue 和 pull request；所有管理员都可以查看，加入话题的角色可以阅读全部历史。
 - 角色响应方式按话题设置：“主动 @”（默认）只在角色被 @ 时响应；“自动”模式下，没有 @ 的消息也可以由角色处理——只有一个角色时由它判断是否需要回复，有多个角色时由调度模型决定交给哪些角色。
 - 消息支持 Markdown、图片和 Mermaid 流程图；角色工作时实时显示思考状态、正在使用的工具和逐字生成的回答。
-- 接入 Slack（飞书为实验性支持）：一个频道对应一个话题，和 Slack 中看到的一致，thread 中的消息显示为回复；角色在提问的地方回答，也可以像人一样连续发几条消息。消息格式自动转换。Slack、GitHub、飞书都由控制台按步骤引导设置（GitHub App 一键创建）。Slack 默认使用 Socket Mode，由 witden 主动连到 Slack，不需要公网地址。接入 GitHub 等需要公网地址时，公网只开放单独的事件端口，控制台留在内网；没有公网 IP 时，可以使用 Docker Compose 中可选的 Cloudflare Tunnel 服务。
+- 接入 Slack（飞书为实验性支持）：一个频道对应一个话题，和 Slack 中看到的一致，thread 中的消息显示为回复；角色在提问的地方回答，也可以像人一样连续发几条消息。消息格式自动转换。Slack、GitHub、飞书都由控制台按步骤引导设置（GitHub App 一键创建）。Slack 默认使用 Socket Mode、飞书默认使用长连接，都由 witden 主动连到平台，不需要公网地址。接入 GitHub 等需要公网地址时，公网只开放单独的事件端口，控制台留在内网；没有公网 IP 时，可以使用 Docker Compose 中可选的 Cloudflare Tunnel 服务。
 - 接入 GitHub（GitHub App 或机器人账号）：在 issue 或 pull request 中 @ 机器人即可让角色工作，回复以评论发回；公开仓库中的内部资料需要批准才会发出。
 
 **虚拟电脑**
@@ -97,7 +97,7 @@ node packages/server/dist/cli.js serve
 - [安全说明](docs/security.md)：平台提供的保护、部署方的责任、已知限制
 - [接入 Slack](docs/slack.md)：创建 Slack App、连接、选择机器人代表的角色与身份关联
 - [接入 GitHub](docs/github.md)：一键创建 GitHub App 或使用机器人账号、Webhook、在 issue 和 pull request 中使用
-- [接入飞书](docs/feishu.md)（实验性）：创建企业自建应用、权限、事件订阅与版本发布
+- [接入飞书](docs/feishu.md)（实验性）：长连接或事件地址、创建企业自建应用、权限、事件订阅与版本发布
 - [参与开发](CONTRIBUTING.md)：开发环境、测试与代码约定
 
 ## 许可证

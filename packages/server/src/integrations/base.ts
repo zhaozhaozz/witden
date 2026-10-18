@@ -15,6 +15,14 @@ export type InboundAction =
   | { kind: "edit"; connectionId: string; conversationId: string; ts: string; text: string }
   | { kind: "delete"; connectionId: string; conversationId: string; ts: string };
 
+/** A connection witden keeps open to a platform (Slack Socket Mode, Feishu long connection). */
+export interface SocketState {
+  state: "connecting" | "connected" | "error";
+  since: string;
+  /** Why it is down: the platform's error code or message. */
+  error?: string;
+}
+
 export interface Adapter {
   platform: string;
   test(db: Db, conn: Connection): Promise<Record<string, unknown>>;
@@ -47,14 +55,20 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
   },
   feishu: {
     status: "experimental",
-    account_types: ["Feishu/Lark custom app (bot)"],
+    account_types: [
+      "Feishu self-built app (bot); Lark is not supported",
+      "long connection with the app's ID and secret (no public address), or events sent to a public URL",
+    ],
     conversations: ["group chat", "p2p chat with the bot"],
     threads: "reply threads (root_id) map to topics; p2p chats map to one topic",
     mentions: "@bot plus @role-handle in text",
     files: "not synchronised yet (shown as a notice)",
     role_identity: "name prefix in message text",
     edits_deletes: "not synchronised",
-    limits: ["event encryption must be disabled"],
+    limits: [
+      "events URL: event encryption must be disabled",
+      "long connection: Feishu gives each event to one connected client, so an app connected to two deployments splits its events",
+    ],
   },
   github: {
     status: "supported",

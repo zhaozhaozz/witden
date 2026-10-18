@@ -695,6 +695,8 @@ export interface Connection {
     auto_provision_users?: boolean;
     /** Slack: other roles brought in speak under their own name and icon. */
     custom_identity?: boolean;
+    /** Feishu: how events arrive (absent: the events URL, as before there was a choice). */
+    feishu_mode?: "socket" | "http";
     [key: string]: unknown;
   };
   has_credentials: boolean;
@@ -703,7 +705,12 @@ export interface Connection {
   external_workspace_id: string | null;
   /** Slack: events over a socket witden keeps open (Socket Mode), or sent to the events URL. */
   slack_mode?: "socket" | "http";
-  /** Slack Socket Mode: the state of the server's socket (the app's, for a workspace installed through one). */
+  /** Feishu: events over the long connection witden keeps open, or sent to the events URL. */
+  feishu_mode?: "socket" | "http";
+  /**
+   * Slack Socket Mode or the Feishu long connection: the state of the server's connection (a Slack workspace
+   * shows its app's).
+   */
   socket?: { state: "connecting" | "connected" | "error"; since: string; error?: string } | null;
   /** Slack: the app this workspace is installed in (its token, socket and events URL are the app's). */
   slack_app?: { id: string; name: string } | null;

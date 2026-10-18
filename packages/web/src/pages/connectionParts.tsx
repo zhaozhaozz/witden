@@ -22,19 +22,41 @@ export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "ba
   failed: ["处理失败", "bad"],
 };
 
-/** The state of a Slack Socket Mode connection, in words. */
-export function socketText(socket: Connection["socket"]): { text: string; tone: "ok" | "wait" | "bad" } {
-  if (!socket) return { text: "未连接（接入已暂停，或还没有保存 App-Level Token）", tone: "wait" };
+/** Why Slack refused a Socket Mode connection. */
+function slackWhy(e: string): string {
+  if (/link_disabled/.test(e)) return "应用没有打开 Socket Mode：在应用的 Socket Mode 页面打开 Enable Socket Mode";
+  if (/missing_scope/.test(e))
+    return "App-Level Token 缺少 connections:write 权限：在 App-Level Tokens 中重新生成并添加这个权限";
+  if (/invalid_auth|not_authed|token_revoked|not_allowed_token_type/.test(e)) return "App-Level Token 不正确或已撤销";
+  return e;
+}
+
+/** Why Feishu's long connection is down, by the error codes Feishu's SDK knows. */
+function feishuWhy(e: string): string {
+  if (/code[=:] ?514\b|auth_failed/.test(e)) return "App ID 或 App Secret 不正确";
+  if (/1000040350|exceed_conn_limit/.test(e))
+    return "这个应用的长连接数已达上限（每个应用最多 50 个）：检查是否还有其他程序用这个应用连接飞书";
+  if (/code[=:] ?403\b|forbidden/.test(e)) return "飞书不允许这个应用使用长连接：长连接只支持企业自建应用";
+  if (/1000040343/.test(e)) return "飞书返回内部错误。App ID 不存在时也是这个错误，请核对 App ID";
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|connect failed|socket hang up/i.test(e))
+    return `连不上飞书，请检查服务器的网络或代理（${e}）`;
+  return e;
+}
+
+/** The state of a connection witden keeps open (Slack Socket Mode, the Feishu long connection), in words. */
+export function socketText(
+  socket: Connection["socket"],
+  platform: string,
+): { text: string; tone: "ok" | "wait" | "bad" } {
+  if (!socket)
+    return {
+      text: platform === "feishu" ? "未连接（接入已暂停）" : "未连接（接入已暂停，或还没有保存 App-Level Token）",
+      tone: "wait",
+    };
   if (socket.state === "connected") return { text: "已连接", tone: "ok" };
-  if (socket.state === "connecting") return { text: "正在连接", tone: "wait" };
   const e = socket.error ?? "";
-  const why = /link_disabled/.test(e)
-    ? "应用没有打开 Socket Mode：在应用的 Socket Mode 页面打开 Enable Socket Mode"
-    : /missing_scope/.test(e)
-      ? "App-Level Token 缺少 connections:write 权限：在 App-Level Tokens 中重新生成并添加这个权限"
-      : /invalid_auth|not_authed|token_revoked|not_allowed_token_type/.test(e)
-        ? "App-Level Token 不正确或已撤销"
-        : e;
+  const why = platform === "feishu" ? feishuWhy(e) : slackWhy(e);
+  if (socket.state === "connecting") return { text: why ? `正在连接：${why}` : "正在连接", tone: "wait" };
   return { text: `连接失败，正在重试：${why}`, tone: "bad" };
 }
 
@@ -59,6 +81,8 @@ export const REJECTED: Record<string, string> = {
   "bad GitHub signature": "签名不对",
   "connection has no webhook secret": "还没有保存 Webhook Secret",
   "bad Feishu verification token": "Verification Token 不对",
+  "this connection receives events over the long connection":
+    "这个接入使用长连接，飞书却仍在把事件推送到事件地址：在飞书开发者后台把订阅方式改为“使用长连接接收事件”",
 };
 
 /** The platform's latest call to the events URL was refused (after any accepted one). */
@@ -82,11 +106,8 @@ export interface InboundEvent {
 export const CREDENTIAL_FIELDS: Record<string, [string, string][]> = {
   // Slack: see SLACK_FIELDS (Socket Mode, or the events URL)
   slack: [],
-  feishu: [
-    ["app_id", "App ID"],
-    ["app_secret", "App Secret"],
-    ["verification_token", "Verification Token"],
-  ],
+  // Feishu: see FEISHU_FIELDS (the long connection, or the events URL)
+  feishu: [],
   // GitHub: see GITHUB_FIELDS (a GitHub App, or a bot account's token)
   github: [],
 };
@@ -100,6 +121,19 @@ export const SLACK_FIELDS: Record<"socket" | "http", [string, string][]> = {
   http: [
     ["bot_token", "Bot User OAuth Token"],
     ["signing_secret", "Signing Secret"],
+  ],
+};
+
+/** The long connection (recommended: no public address) or the events URL, which also checks a token. */
+export const FEISHU_FIELDS: Record<"socket" | "http", [string, string][]> = {
+  socket: [
+    ["app_id", "App ID"],
+    ["app_secret", "App Secret"],
+  ],
+  http: [
+    ["app_id", "App ID"],
+    ["app_secret", "App Secret"],
+    ["verification_token", "Verification Token"],
   ],
 };
 

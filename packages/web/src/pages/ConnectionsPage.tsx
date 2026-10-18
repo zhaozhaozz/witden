@@ -11,6 +11,7 @@ import { ResizeHandle } from "../ui/resize";
 import {
   ConnectionSettingsFields,
   CREDENTIAL_FIELDS,
+  FEISHU_FIELDS,
   GITHUB_FIELDS,
   Identities,
   INBOUND_STATUS,
@@ -56,14 +57,14 @@ const PLATFORM_CHOICES: [string, string, string][] = [
     "GitHub",
     "在 issue 和 pull request 中 @ 机器人，以 GitHub App 或机器人账号的身份回复。按步骤引导完成设置，App 一键创建；需要公网地址。",
   ],
-  ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。按步骤引导完成设置，需要公网地址。"],
+  ["feishu", "飞书（实验性）", "在群聊和私聊中 @ 机器人。按步骤引导完成设置，默认使用长连接，不需要公网地址。"],
 ];
 
 /** A new connection (``conn`` null) or the guide resumed for an existing one. */
 interface Setup {
   platform: string | null;
   conn: Connection | null;
-  /** Slack: open the guide on this way of connecting (to switch an existing connection). */
+  /** Slack, Feishu: open the guide on this way of connecting (to switch an existing connection). */
   mode?: "socket" | "http";
   /** GitHub: the browser came back from creating the app. */
   manifest?: ManifestReturn;
@@ -259,6 +260,7 @@ export default function ConnectionsPage() {
       ) : setup?.platform === "feishu" ? (
         <FeishuSetup
           initial={setup.conn}
+          initialMode={setup.mode}
           onCreated={(c) => {
             setSelected(c.id);
             void res.reload();
@@ -583,6 +585,15 @@ function ConnectionDetail({
             </button>
           </div>
         ) : null}
+        {conn.platform === "feishu" && conn.feishu_mode === "http" ? (
+          <div className="callout">
+            这个接入使用事件地址，需要公网地址。改用长连接后，witden
+            主动连到飞书，不需要公网地址；设置引导会说明如何在飞书开发者后台修改订阅方式。{" "}
+            <button type="button" className="btn btn-xs" onClick={() => onGuide("socket")}>
+              改用长连接
+            </button>
+          </div>
+        ) : null}
         {rejected ? (
           <div className="callout callout-bad" role="alert">
             {fmtRelative(rejected.at)}，witden 收到了 {PLATFORM_LABEL[conn.platform] ?? conn.platform}{" "}
@@ -620,11 +631,19 @@ function ConnectionDetail({
                   ] as [string, ReactNode],
                 ]
               : []),
-            conn.slack_mode === "socket"
+            ...(conn.platform === "feishu"
               ? [
-                  "与 Slack 的连接",
-                  <Tag key="socket" tone={socketText(conn.socket).tone}>
-                    {socketText(conn.socket).text}
+                  ["接入方式", conn.feishu_mode === "socket" ? "长连接（不需要公网地址）" : "事件地址（HTTP）"] as [
+                    string,
+                    ReactNode,
+                  ],
+                ]
+              : []),
+            (conn.slack_mode ?? conn.feishu_mode) === "socket"
+              ? [
+                  conn.platform === "slack" ? "与 Slack 的连接" : "与飞书的连接",
+                  <Tag key="socket" tone={socketText(conn.socket, conn.platform).tone}>
+                    {socketText(conn.socket, conn.platform).text}
                   </Tag>,
                 ]
               : ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
@@ -889,6 +908,7 @@ function ConnectionForm({
   const [settings, setSettings] = useState(settingsOf(conn));
   const [githubAuth, setGithubAuth] = useState<"app" | "token">(conn?.github_auth ?? "app");
   const [slackMode, setSlackMode] = useState<"socket" | "http">(conn?.slack_mode ?? "socket");
+  const [feishuMode, setFeishuMode] = useState<"socket" | "http">(conn?.feishu_mode ?? "socket");
   // A Slack workspace's own credential is its bot token; the app's keys are edited on the app.
   const workspace = platform === "slack" && !!conn;
   const fields: [string, string][] = workspace
@@ -897,33 +917,39 @@ function ConnectionForm({
       ? GITHUB_FIELDS[githubAuth]
       : platform === "slack"
         ? SLACK_FIELDS[slackMode]
-        : (CREDENTIAL_FIELDS[platform] ?? []);
+        : platform === "feishu"
+          ? FEISHU_FIELDS[feishuMode]
+          : (CREDENTIAL_FIELDS[platform] ?? []);
   // Switching an existing connection to the other way needs that way's keys; the key both ways share stays.
   const switching =
     !!conn &&
     ((platform === "github" && (conn.github_auth ?? "token") !== githubAuth) ||
-      (platform === "slack" && (conn.slack_mode ?? "http") !== slackMode));
-  const shared = platform === "github" ? "webhook_secret" : "bot_token";
+      (platform === "slack" && (conn.slack_mode ?? "http") !== slackMode) ||
+      (platform === "feishu" && (conn.feishu_mode ?? "http") !== feishuMode));
+  const shared =
+    platform === "github" ? ["webhook_secret"] : platform === "feishu" ? ["app_id", "app_secret"] : ["bot_token"];
   // New connections need every field; an existing one keeps what is left empty.
-  const required = fields.filter(([k]) => !conn || (switching && k !== shared));
+  const required = fields.filter(([k]) => !conn || (switching && !shared.includes(k)));
   const missing = required.some(([k]) => !creds[k]?.trim());
   const disabled = busy || !name.trim() || missing || !settings.role_id;
 
   const submit = async () => {
     const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
+    // Feishu: the way is a setting; switching to the long connection drops the verification token.
+    const saved = platform === "feishu" ? { ...settings, feishu_mode: feishuMode } : settings;
     const out = await run(
       () =>
         conn
           ? api.patch<Connection>(`/api/connections/${conn.id}`, {
               name: name.trim(),
-              settings,
+              settings: saved,
               ...(Object.keys(filled).length ? { credentials: filled } : {}),
             })
           : api.post<Connection>("/api/connections", {
               platform,
               name: name.trim(),
               credentials: filled,
-              settings,
+              settings: saved,
             }),
       conn ? "已保存" : "接入已创建，请把事件地址配置到平台后台，然后测试连接",
     );
@@ -981,12 +1007,30 @@ function ConnectionForm({
           </select>
         </Field>
       ) : null}
+      {platform === "feishu" ? (
+        <Field
+          label="接入方式"
+          hint={
+            feishuMode === "socket"
+              ? "witden 主动连到飞书接收消息，不需要公网地址。保存后还要在飞书开发者后台把订阅方式改为“使用长连接接收事件”。"
+              : "飞书把消息推送到 witden 的公网事件地址，需要 Verification Token。"
+          }
+        >
+          <select
+            value={feishuMode}
+            onChange={(e) => (setFeishuMode(e.target.value as "socket" | "http"), setCreds({}))}
+          >
+            <option value="socket">长连接（推荐）</option>
+            <option value="http">事件地址（HTTP）</option>
+          </select>
+        </Field>
+      ) : null}
       {fields.map(([k, label]) => (
         <Field
           key={k}
           label={label}
           description={platform === "slack" ? SLACK_FIELD_HELP[k] : undefined}
-          hint={conn && (!switching || k === shared) ? "留空保持不变" : undefined}
+          hint={conn && (!switching || shared.includes(k)) ? "留空保持不变" : undefined}
         >
           {k === "private_key" ? (
             <textarea

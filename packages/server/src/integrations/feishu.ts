@@ -1,6 +1,9 @@
-/** Feishu / Lark adapter (experimental): text messages in groups and bot DMs. Files and edits are not synchronised. */
+/**
+ * Feishu adapter (experimental): text messages in groups and bot DMs. Files and edits are not synchronised.
+ * Events arrive over the long connection witden keeps open (feishu-socket.ts) or at the events URL.
+ */
 import { eq } from "drizzle-orm";
-import type { Db } from "../db/client.js";
+import { type Db, db as getDb } from "../db/client.js";
 import {
   type Connection,
   type ExternalConversation,
@@ -13,6 +16,7 @@ import {
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
 import { type Adapter, type InboundAction, register } from "./base.js";
+import { noteWebhook } from "./webhook-status.js";
 
 const API = "https://open.feishu.cn/open-apis/";
 const tokenCache = new Map<string, { token: string; expires: number }>();
@@ -24,6 +28,34 @@ export function setFeishuFetch(fn: typeof fetch): void {
 
 export function credentials(conn: Connection): Record<string, string> {
   return conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
+}
+
+/**
+ * How a connection receives events: "socket", over the long connection witden opens with the app's ID and
+ * secret (no public address); "http", pushed to the events URL and checked with the verification token.
+ * Connections made before there was a choice use the events URL.
+ */
+export type FeishuMode = "socket" | "http";
+export const feishuMode = (conn: Pick<Connection, "settings">): FeishuMode =>
+  conn.settings?.feishu_mode === "socket" ? "socket" : "http";
+
+/** A Feishu App ID; the SDK's long connection refuses any other form without a word. */
+export const APP_ID = /^cli_[0-9a-f]{16}$/i;
+
+/** The credentials a way of receiving events needs; the verification token is the events URL's only. */
+export function checkCredentials(creds: Record<string, string>, mode: FeishuMode): void {
+  const missing = ["app_id", "app_secret", ...(mode === "http" ? ["verification_token"] : [])].filter((k) => !creds[k]);
+  if (missing.length) throw new BadRequest(`missing credentials: ${missing.join(", ")}`);
+  if (mode === "socket" && !APP_ID.test(creds.app_id))
+    throw new BadRequest("app_id must be the App ID on the app's 凭证与基础信息 page: cli_ and 16 hex digits");
+}
+
+/** A Feishu event from the events URL (verified there) or the long connection: queued for processing. */
+export async function acceptFeishuEvent(conn: Connection, payload: any): Promise<void> {
+  noteWebhook(conn.id, "received");
+  if (conn.status !== "active") return;
+  const { acceptEvents } = await import("./inbound.js");
+  await acceptEvents(conn.id, await new FeishuAdapter().parse(getDb(), conn, payload));
 }
 
 export class FeishuAdapter implements Adapter {
@@ -77,6 +109,9 @@ export class FeishuAdapter implements Adapter {
   }
 
   verify(conn: Connection, payload: any): void {
+    // Feishu still pushing here means its console was not switched to the long connection.
+    if (feishuMode(conn) === "socket")
+      throw new Unauthorized("this connection receives events over the long connection");
     if (payload?.encrypt) throw new BadRequest("encrypted Feishu events are not supported; disable the encrypt key");
     const token = payload?.header?.token ?? payload?.token;
     const expected = credentials(conn).verification_token;

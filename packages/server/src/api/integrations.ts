@@ -19,6 +19,8 @@ import {
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
+import { checkCredentials as checkFeishu, type FeishuMode, feishuMode } from "../integrations/feishu.js";
+import { feishuSockets } from "../integrations/feishu-socket.js";
 import {
   appCredentials,
   appOf,
@@ -50,14 +52,18 @@ import { authed, authedNoTx, body, params, query, row } from "./http.js";
 const PLATFORMS: Record<string, string[]> = {
   // Socket Mode (app_token) or the events URL (signing_secret); checked by checkCredentials.
   slack: ["bot_token"],
-  feishu: ["app_id", "app_secret", "verification_token"],
+  // The long connection, or the events URL (also verification_token); checked by checkCredentials.
+  feishu: ["app_id", "app_secret"],
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id"]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id", "feishu_mode"]);
+
+/** The long connections of Slack apps and Feishu connections follow what was just saved. */
+const syncSockets = () => Promise.all([slackSockets.sync(), feishuSockets.sync()]);
 
 const decrypted = (conn: Connection): Record<string, string> =>
-  ["github", "slack"].includes(conn.platform) && conn.credentialsEncrypted
+  ["github", "slack", "feishu"].includes(conn.platform) && conn.credentialsEncrypted
     ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted))
     : {};
 
@@ -105,6 +111,8 @@ function connOut(conn: Connection, base: string, apps: SlackApp[] = []) {
           socket: app ? slackSockets.state(app.id) : null,
         }
       : {}),
+    // Feishu: the long connection, with the state of this process's client, or the events URL.
+    ...(conn.platform === "feishu" ? { feishu_mode: feishuMode(conn), socket: feishuSockets.state(conn.id) } : {}),
     // a GitHub connection the setup guide created before its app exists has none yet
     has_credentials: Object.values(creds).some(Boolean),
     capabilities: CAPABILITIES[conn.platform] ?? {},
@@ -117,9 +125,14 @@ function connOut(conn: Connection, base: string, apps: SlackApp[] = []) {
 
 /**
  * A connection's credentials with newly entered ones applied, checked and encrypted. Switching to the other
- * way of connecting drops the credentials of the way left behind.
+ * way of connecting drops the credentials of the way left behind. ``feishu``: the way a Feishu connection is
+ * switching to (default: its current one).
  */
-async function mergedCredentials(conn: Connection, entered: Record<string, unknown>): Promise<string> {
+async function mergedCredentials(
+  conn: Connection,
+  entered: Record<string, unknown>,
+  feishu: FeishuMode = feishuMode(conn),
+): Promise<string> {
   // Slack: only the workspace's bot token is the connection's; what is the app's is kept on the app.
   const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
   const given = Object.fromEntries(Object.entries(trimmed(entered)).filter(([, v]) => v));
@@ -128,6 +141,15 @@ async function mergedCredentials(conn: Connection, entered: Record<string, unkno
     if (given.app_id || given.private_key) delete current.token;
   }
   for (const [k, v] of Object.entries(given)) current[k] = v;
+  if (conn.platform === "feishu") {
+    // The long connection is authenticated by the app's ID and secret alone.
+    if (feishu === "socket") {
+      if (given.verification_token)
+        throw new BadRequest("verification_token is for the events URL; set feishu_mode to http to use it");
+      delete current.verification_token;
+    }
+    checkFeishu(current, feishu);
+  }
   if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
   if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(current);
   return secretBox().encrypt(JSON.stringify(current));
@@ -137,9 +159,11 @@ async function mergedCredentials(conn: Connection, entered: Record<string, unkno
 const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
   Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, String(v ?? "").trim()]));
 
-async function cleanSettings(db: Db, s: Record<string, any>): Promise<Record<string, any>> {
-  const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k));
+async function cleanSettings(db: Db, s: Record<string, any>, platform: string): Promise<Record<string, any>> {
+  const unknown = Object.keys(s).filter((k) => !SETTINGS_KEYS.has(k) || (k === "feishu_mode" && platform !== "feishu"));
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
+  if (s.feishu_mode !== undefined && !["socket", "http"].includes(s.feishu_mode))
+    throw new BadRequest("feishu_mode must be socket (long connection) or http (events URL)");
   // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");
@@ -210,6 +234,14 @@ export async function integrationRoutes(app: FastifyInstance) {
       // (its webhook URL names the connection): until then the connection has none.
       const pending = b.platform === "github" && !Object.values(creds).some(Boolean);
       if (b.platform === "github" && !pending) (await import("../integrations/github.js")).checkCredentials(creds);
+      // Feishu: the long connection unless asked otherwise or given the events URL's verification token.
+      const settings = await cleanSettings(db, b.settings ?? {}, b.platform);
+      if (b.platform === "feishu") {
+        settings.feishu_mode ??= creds.verification_token ? "http" : "socket";
+        if (settings.feishu_mode === "socket" && creds.verification_token)
+          throw new BadRequest("verification_token is for the events URL; set feishu_mode to http to use it");
+        checkFeishu(creds, settings.feishu_mode);
+      }
       if ((await db.select().from(connections).where(eq(connections.name, b.name)).limit(1)).length)
         throw new BadRequest("a connection with this name exists");
       // Slack: a workspace of an app witden has (slack_app_id), or of a new app made from the app's keys.
@@ -248,7 +280,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           name: String(b.name),
           slackAppId,
           credentialsEncrypted: secretBox().encrypt(JSON.stringify(saved)),
-          settings: await cleanSettings(db, b.settings ?? {}),
+          settings,
           createdBy: user.id,
         })
         .returning();
@@ -258,7 +290,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { platform: conn.platform, name: conn.name },
       });
-      after(() => slackSockets.sync());
+      after(syncSockets);
       return connOut(conn, await webhookBase(db), await appsFor(db, [conn]));
     }),
   );
@@ -271,8 +303,13 @@ export async function integrationRoutes(app: FastifyInstance) {
       const b = body(req);
       const update: Partial<Connection> = {};
       if (b.name) update.name = b.name;
-      if (b.credentials) {
-        let entered = trimmed(b.credentials);
+      if (b.settings) update.settings = await cleanSettings(db, { ...conn.settings, ...b.settings }, conn.platform);
+      // A Feishu connection changing its way: the credentials are checked (the token dropped) for the new one.
+      const feishuTo =
+        conn.platform === "feishu" && update.settings ? feishuMode({ settings: update.settings }) : undefined;
+      const switching = !!feishuTo && feishuTo !== feishuMode(conn);
+      if (b.credentials || switching) {
+        let entered = trimmed(b.credentials ?? {});
         if (conn.platform === "slack") {
           // The app's keys (e.g. switching it to Socket Mode from a workspace's guide) go to the app.
           const { app: appKeys, workspace } = splitCredentials(entered);
@@ -288,9 +325,9 @@ export async function integrationRoutes(app: FastifyInstance) {
           }
           entered = workspace;
         }
-        if (Object.values(entered).some(Boolean)) update.credentialsEncrypted = await mergedCredentials(conn, entered);
+        if (Object.values(entered).some(Boolean) || switching)
+          update.credentialsEncrypted = await mergedCredentials(conn, entered, feishuTo);
       }
-      if (b.settings) update.settings = await cleanSettings(db, { ...conn.settings, ...b.settings });
       if (b.status) {
         if (!["active", "paused"].includes(b.status)) throw new BadRequest("status must be active or paused");
         update.status = b.status;
@@ -307,7 +344,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         connectionId: conn.id,
         detail: { fields: Object.keys(b), status: updated.status },
       });
-      after(() => slackSockets.sync());
+      after(syncSockets);
       return connOut(updated, await webhookBase(db), await appsFor(db, [updated]));
     }),
   );
@@ -319,7 +356,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       // A Slack workspace only: its app and the app's other workspaces stay as they are.
       await db.delete(connections).where(eq(connections.id, params(req).id));
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
-      after(() => slackSockets.sync());
+      after(syncSockets);
       return { ok: true };
     }),
   );
@@ -524,8 +561,8 @@ export async function integrationRoutes(app: FastifyInstance) {
             ...(conn.status === "error" ? { status: "active" } : {}),
           })
           .where(eq(connections.id, conn.id));
-        // A Socket Mode connection that just passed connects (again) right away.
-        void slackSockets.sync();
+        // A Socket Mode or long connection that just passed connects (again) right away.
+        void syncSockets();
         return { ok: true, ...info };
       } catch (err) {
         await db

@@ -108,8 +108,8 @@ export function SlackAppDetail({
             app.slack_mode === "socket"
               ? [
                   "与 Slack 的连接",
-                  <Tag key="socket" tone={inUse ? socketText(app.socket).tone : "off"}>
-                    {inUse ? socketText(app.socket).text : "未连接：还没有安装到工作区"}
+                  <Tag key="socket" tone={inUse ? socketText(app.socket, "slack").tone : "off"}>
+                    {inUse ? socketText(app.socket, "slack").text : "未连接：还没有安装到工作区"}
                   </Tag>,
                 ]
               : ["事件地址", <CopyText key="url" text={app.events_url} />],

@@ -35,6 +35,7 @@ import { handleProxyMessage } from "./compute/model-proxy.js";
 import { type Settings, setSettings } from "./config.js";
 import { openDatabase, setDatabase, transaction } from "./db/client.js";
 import { deliverPending } from "./integrations/delivery.js";
+import { feishuSockets } from "./integrations/feishu-socket.js";
 import { processInbound } from "./integrations/inbound.js";
 import { normalizeSlackApps } from "./integrations/slack-apps.js";
 import { slackSockets } from "./integrations/slack-socket.js";
@@ -171,8 +172,10 @@ export async function start(opts: StartOptions): Promise<Witden> {
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
     void reconcile().catch(() => {});
     timers.push(setInterval(() => void reconcile().catch(() => {}), 30_000));
-    // Slack connections in Socket Mode receive their events over sockets this process keeps open.
+    // Slack apps in Socket Mode and Feishu connections on the long connection receive their events over
+    // connections this process keeps open.
     slackSockets.start();
+    feishuSockets.start();
     // Inbound chat events left queued or half-processed by a crash.
     const sweep = () => rt.background("inbound.sweep", async () => void (await processInbound()));
     sweep();
@@ -200,6 +203,7 @@ export async function start(opts: StartOptions): Promise<Witden> {
       await app?.close();
       await webhookApp?.close();
       slackSockets.stop();
+      feishuSockets.stop();
       await rt.hub?.close();
       await rt.drain();
       await bus.close();

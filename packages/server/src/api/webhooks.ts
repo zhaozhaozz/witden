@@ -149,16 +149,15 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
   app.post("/api/integrations/feishu/:id/events", async (req, reply) => {
     const conn = await getConn(getDb(), params(req).id);
     if (conn.platform !== "feishu") throw new NotFound("unknown connection");
-    const adapter = (await getAdapter(conn)) as import("../integrations/feishu.js").FeishuAdapter;
+    const { acceptFeishuEvent, FeishuAdapter } = await import("../integrations/feishu.js");
+    const adapter = new FeishuAdapter();
     const payload: any = req.body ?? {};
     rejectedIf(conn.id, !!(payload?.header?.token ?? payload?.token), () => adapter.verify(conn, payload));
     if (payload.type === "url_verification") {
       noteWebhook(conn.id, "verified");
       return reply.send({ challenge: payload.challenge });
     }
-    noteWebhook(conn.id, "received");
-    if (conn.status !== "active") return { ok: true };
-    await acceptEvents(conn.id, await adapter.parse(getDb(), conn, payload));
+    await acceptFeishuEvent(conn, payload);
     return { ok: true };
   });
 }

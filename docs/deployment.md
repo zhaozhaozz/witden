@@ -53,7 +53,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
    - `WITDEN_MANAGER_TOKEN`、`WITDEN_INTERNAL_TOKEN`、`POSTGRES_PASSWORD`：任意足够长的随机字符串，例如 `openssl rand -hex 24`。
    - `DOCKER_GID`：Docker socket 所属的组，`stat -c %g /var/run/docker.sock`。
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
-   - `WITDEN_PUBLIC_URL`：在内网访问控制台的地址，消息中的链接指向这里。Slack、GitHub、飞书需要的公网事件地址在控制台中设置和检查，见 2.4。
+   - `WITDEN_PUBLIC_URL`：在内网访问控制台的地址，消息中的链接指向这里。GitHub，以及使用事件地址的 Slack、飞书接入需要的公网事件地址在控制台中设置和检查，见 2.4。
 
 2. 构建虚拟电脑镜像和平台镜像：
 
@@ -91,7 +91,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 
 ### 2.4 公网事件地址
 
-控制台不对公网开放。Slack 默认使用 Socket Mode，由 witden 主动连到 Slack，不需要公网地址；GitHub、飞书，以及选择“事件地址（HTTP）”的 Slack 接入，需要把事件推送到一个公网地址，为此 witden 有一个单独的**事件端口**（`WITDEN_WEBHOOK_PORT`，默认 8325）。它只提供：
+控制台不对公网开放。Slack 默认使用 Socket Mode、飞书默认使用长连接，都由 witden 主动连到平台，不需要公网地址；GitHub，以及选择“事件地址（HTTP）”的 Slack、飞书接入，需要把事件推送到一个公网地址，为此 witden 有一个单独的**事件端口**（`WITDEN_WEBHOOK_PORT`，默认 8325）。它只提供：
 
 - 各平台的事件接口 `/api/integrations/<平台>/<接入>/events`，每个接口都校验平台的签名或令牌；
 - 公网地址的检查接口 `/api/integrations/probe`；
@@ -109,7 +109,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 在控制台中设置这个地址有两个入口，修改的是同一项设置，效果相同：
 
 - **设置 → 系统管理 → 公网地址**：随时查看当前地址及其检查结果，配置 Cloudflare Tunnel 或填写自己的地址，也可以重新检查或清除已保存的地址。
-- **设置引导中的“准备公网事件地址”**：接入 GitHub、飞书，或以“事件地址（HTTP）”方式接入 Slack 时是引导的第一步，地址通过检查后才能进入下一步；用公网地址把 Slack 应用安装到其他工作区时，安装引导中也有这一部分。
+- **设置引导中的“准备公网事件地址”**：接入 GitHub，或以“事件地址（HTTP）”方式接入 Slack、飞书时是引导的第一步，地址通过检查后才能进入下一步；用公网地址把 Slack 应用安装到其他工作区时，安装引导中也有这一部分。
 
 保存后立即生效，不需要重启；没有设置或清除后，事件地址按 `WITDEN_PUBLIC_URL` 生成，只适合各平台能直接访问控制台的内部环境。清除地址不会修改已经填写在 Slack、GitHub、飞书中的事件地址。保存前，witden 会做以下检查：
 

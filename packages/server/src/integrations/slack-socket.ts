@@ -14,15 +14,9 @@ import WebSocket from "ws";
 import { db as getDb } from "../db/client.js";
 import { connections, slackApps } from "../db/schema.js";
 import { Forbidden, WitdenError } from "../errors.js";
+import type { SocketState } from "./base.js";
 import { acceptSlackEvent, SlackClient } from "./slack.js";
 import { appCredentials, workspaceConnection } from "./slack-apps.js";
-
-export interface SocketState {
-  state: "connecting" | "connected" | "error";
-  since: string;
-  /** Why the socket is down: a Slack error code (invalid_auth, missing_scope, link_disabled…) or a message. */
-  error?: string;
-}
 
 /** Reconnect delays and the liveness ping; tests shorten them. */
 export const socketTiming = { firstRetryMs: 1000, maxRetryMs: 60_000, pingMs: 30_000 };

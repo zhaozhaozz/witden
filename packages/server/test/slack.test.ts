@@ -1,4 +1,4 @@
-/** Chat integrations end to end: signed Slack webhooks in, Web API calls out (and a small Feishu check). */
+/** Slack end to end: signed webhooks and Socket Mode in, Web API calls out. Feishu: feishu.test.ts. */
 import { createHmac } from "node:crypto";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
@@ -21,7 +21,6 @@ import {
 } from "../src/db/schema.js";
 import { getAdapter } from "../src/integrations/base.js";
 import { deliverPending } from "../src/integrations/delivery.js";
-import { setFeishuFetch } from "../src/integrations/feishu.js";
 import { enqueueInbound, processInbound } from "../src/integrations/inbound.js";
 import { setSlackFetch } from "../src/integrations/slack.js";
 import { normalizeSlackApps } from "../src/integrations/slack-apps.js";
@@ -224,7 +223,6 @@ async function link(connectionId: string, externalUserId: string, userId: string
 let w: World;
 afterEach(async () => {
   setSlackFetch((...args) => fetch(...args));
-  setFeishuFetch((...args) => fetch(...args));
   await w.close();
 });
 
@@ -1108,113 +1106,5 @@ describe("slack", () => {
     await w.drain();
     await deliverPending();
     expect(slack.posts.some((p) => p.thread_ts === root && p.text.includes("not assigned"))).toBe(false);
-  });
-});
-
-/** Feishu Open API stand-in: one bot, every chat has alice as its only member; sent messages are recorded. */
-class FakeFeishu {
-  sent: { path: string; body: any }[] = [];
-
-  fetch: typeof fetch = async (input, init) => {
-    const url = new URL(String(input));
-    const path = url.pathname.replace("/open-apis/", "");
-    const body = init?.body ? JSON.parse(String(init.body)) : {};
-    if (path === "auth/v3/tenant_access_token/internal")
-      return json({ code: 0, msg: "ok", tenant_access_token: "t-123", expire: 7200 });
-    if ((init?.headers as Record<string, string>)?.authorization !== "Bearer t-123")
-      return json({ code: 99991663, msg: "invalid access token" });
-    if (path === "bot/v3/info")
-      // the shape Feishu documents: the bot beside code, not in data
-      return json({ code: 0, msg: "ok", bot: { app_name: "witden", open_id: "ou_bot" } });
-    if (/^im\/v1\/chats\/[^/]+\/members$/.test(path))
-      return json({ code: 0, data: { items: [{ member_id: "ou_alice" }], has_more: false } });
-    if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
-      this.sent.push({ path, body });
-      return json({ code: 0, data: { message_id: `om_out_${this.sent.length}` } });
-    }
-    return json({ code: 404, msg: `unknown ${path}` });
-  };
-}
-
-describe("feishu", () => {
-  const TOKEN = "feishu-verification-token";
-  let feishu: FakeFeishu;
-  let conn: any;
-
-  const send = (payload: unknown) =>
-    w.api("POST", `/api/integrations/feishu/${conn.id}/events`, {
-      payload: JSON.stringify(payload),
-      headers: { "content-type": "application/json" },
-    });
-  const textEvent = (
-    text: string,
-    o: { sender?: string; senderType?: string; id?: string; chatType?: string } = {},
-  ) => ({
-    schema: "2.0",
-    header: { event_id: `ev_${o.id ?? "om_1"}`, event_type: "im.message.receive_v1", token: TOKEN },
-    event: {
-      sender: { sender_type: o.senderType ?? "user", sender_id: { open_id: o.sender ?? "ou_alice" } },
-      message: {
-        message_id: o.id ?? "om_1",
-        chat_id: "oc_dm_alice",
-        chat_type: o.chatType ?? "p2p",
-        message_type: "text",
-        content: JSON.stringify({ text }),
-      },
-    },
-  });
-
-  beforeEach(async () => {
-    w = await buildWorld();
-    feishu = new FakeFeishu();
-    setFeishuFetch(feishu.fetch);
-    const res = await w.api("POST", "/api/connections", {
-      token: w.adminToken,
-      json: {
-        platform: "feishu",
-        name: "lark",
-        credentials: { app_id: "cli_1", app_secret: "app-secret", verification_token: TOKEN },
-      },
-    });
-    expect(res.status, res.raw).toBe(200);
-    conn = res.body;
-    expect((await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken })).body).toMatchObject({
-      ok: true,
-      bot: "witden",
-      bot_open_id: "ou_bot",
-    });
-    await link(conn.id, "ou_alice", w.ids.alice);
-    await w.api("PATCH", `/api/connections/${conn.id}`, {
-      token: w.adminToken,
-      json: { settings: { role_id: w.ids.dev } },
-    });
-  });
-
-  it("verification token, DM task from a linked user, bots ignored, encryption refused", async () => {
-    expect((await send({ type: "url_verification", challenge: "abc", token: TOKEN })).body).toEqual({
-      challenge: "abc",
-    });
-    expect((await send({ type: "url_verification", challenge: "abc", token: "wrong" })).status).toBe(401);
-    expect((await send({ type: "url_verification", challenge: "abc" })).status).toBe(401);
-    expect((await send({ encrypt: "c2VjcmV0" })).status).toBe(400);
-
-    w.scripts.dev = () => reply("hi alice");
-    await send(textEvent("hello there"));
-    await w.waitFor(async () => (await allTasks()).length === 1);
-    const [task] = await allTasks();
-    expect(task.ownerRoleId).toBe(w.ids.dev);
-    expect(task.requesterUserId).toBe(w.ids.alice);
-    const topic = (await w.api("GET", `/api/topics/${task.topicId}`, { token: w.alice })).body;
-    expect(topic.kind).toBe("dm");
-
-    await send(textEvent("hello from a bot", { sender: "ou_bot", senderType: "app", id: "om_2" }));
-    await w.drain();
-    expect(await allTasks()).toHaveLength(1);
-    await deliverPending();
-    expect(feishu.sent).toHaveLength(1);
-    expect(feishu.sent[0].path).toBe("im/v1/messages");
-    expect(feishu.sent[0].body.receive_id).toBe("oc_dm_alice");
-    // the bot is dev: no name in front
-    expect(JSON.parse(feishu.sent[0].body.content).text).toBe("hi alice");
   });
 });

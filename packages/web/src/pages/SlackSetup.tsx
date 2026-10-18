@@ -843,7 +843,7 @@ export function SlackTryStep({
         socket ? (
           <p className="small">
             与 Slack 的连接（Socket Mode）：
-            <Tag tone={socketText(live.socket).tone}>{socketText(live.socket).text}</Tag>
+            <Tag tone={socketText(live.socket, "slack").tone}>{socketText(live.socket, "slack").text}</Tag>
           </p>
         ) : null
       }
