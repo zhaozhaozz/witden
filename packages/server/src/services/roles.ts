@@ -11,6 +11,7 @@ import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   computerInstances,
+  connections,
   knowledgeSpaces,
   memories,
   modelConfigs,
@@ -21,6 +22,7 @@ import {
   type User,
 } from "../db/schema.js";
 import { BadRequest, Conflict, NotFound } from "../errors.js";
+import { parseFeishuGroup } from "../integrations/feishu-tools.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
 import { EFFORT_LEVELS, effortChoices } from "./effort.js";
@@ -127,7 +129,8 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     );
   const admin = current?.systemAdmin ?? false;
   if ("allowedTools" in data) {
-    const unknown = (data.allowedTools ?? []).filter((t: string) => !(t in TOOL_GROUPS));
+    await checkFeishuGrants(db, data.allowedTools ?? []);
+    const unknown = (data.allowedTools ?? []).filter((t: string) => !(t in TOOL_GROUPS) && !parseFeishuGroup(t));
     if (unknown.length)
       throw new BadRequest(
         `unknown tool groups ${unknown.join(", ")}; available: ${Object.keys(TOOL_GROUPS).join(", ")}`,
@@ -137,7 +140,10 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   if (!admin && (out.allowedTools ?? current?.allowedTools ?? []).some((t) => ADMIN_TOOL_GROUPS.has(t)))
     throw new BadRequest("the config tools are only for system administrator roles");
   if ("approvalRequired" in data) {
-    const unknown = (data.approvalRequired ?? []).filter((t: string) => !(t in TOOL_GROUPS) && !TOOLS.has(t));
+    await checkFeishuGrants(db, data.approvalRequired ?? []);
+    const unknown = (data.approvalRequired ?? []).filter(
+      (t: string) => !(t in TOOL_GROUPS) && !TOOLS.has(t) && !parseFeishuGroup(t),
+    );
     if (unknown.length) throw new BadRequest(`unknown tools ${unknown.join(", ")}`);
     out.approvalRequired = [...new Set<string>(data.approvalRequired)].sort();
   }
@@ -301,4 +307,17 @@ export async function disableRole(db: Db, user: User, role: Role, onTasks: strin
   else throw new BadRequest("on_tasks must be cancel, reassign or pause");
   await db.update(roles).set({ status: "disabled" }).where(eq(roles.id, role.id));
   return { affected_tasks: active.map((t) => t.id), on_tasks: onTasks };
+}
+
+/** Feishu grants (``feishu:<connection>:<product>:read|write``) name a Feishu connection and a mode the product has. */
+async function checkFeishuGrants(db: Db, groups: string[]): Promise<void> {
+  for (const g of groups) {
+    if (!g.startsWith("feishu:")) continue;
+    const p = parseFeishuGroup(g);
+    if (!p) throw new BadRequest(`${g} is not a Feishu permission (feishu:<connection>:<product>:read|write)`);
+    if (![...TOOLS.values()].some((t) => t.group === `feishu:${p.product}:${p.mode}`))
+      throw new BadRequest(`Feishu ${p.product} has no ${p.mode} tools`);
+    const [conn] = await db.select().from(connections).where(eq(connections.id, p.connectionId)).limit(1);
+    if (conn?.platform !== "feishu") throw new BadRequest(`${p.connectionId} is not a Feishu connection`);
+  }
 }

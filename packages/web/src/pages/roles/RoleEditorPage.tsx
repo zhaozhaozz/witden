@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
-import type { AgentSession, Instance, KnowledgeSpace, ModelConfig, Role, RoleImpact, ToolGroup } from "../../api/types";
+import type {
+  AgentSession,
+  FeishuTools,
+  Instance,
+  KnowledgeSpace,
+  ModelConfig,
+  Role,
+  RoleImpact,
+  ToolGroup,
+} from "../../api/types";
 import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
 import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
@@ -29,6 +38,7 @@ import {
 import { ResizeHandle } from "../../ui/resize";
 import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
+import { type FeishuGranted, FeishuPermissions } from "./FeishuPermissions";
 import { defaultPermissions, PermissionList } from "./PermissionList";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
@@ -139,6 +149,23 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const [draft, setDraft] = useState<Draft>(() => toDraft(role));
   const [dialog, setDialog] = useState<null | "copy" | "disable">(null);
   const toolGroups = useResource(() => api.get<ToolGroup[]>("/api/roles/tool-groups"), []);
+  const feishuTools = useResource(() => api.get<FeishuTools>("/api/roles/feishu-tools"), []);
+  // What Feishu has granted each app, to say beside a product the app cannot offer yet.
+  const feishuGranted = useResource(async () => {
+    const apps = (await api.get<FeishuTools>("/api/roles/feishu-tools")).apps;
+    const out: FeishuGranted = {};
+    await Promise.all(
+      apps.map(async (a) => {
+        const r = await api
+          .get<{ ok: boolean; products?: { key: string; read: boolean; write: boolean }[] }>(
+            `/api/connections/${a.id}/feishu-scopes`,
+          )
+          .catch(() => null);
+        out[a.id] = r?.ok ? Object.fromEntries((r.products ?? []).map((p) => [p.key, p])) : null;
+      }),
+    );
+    return out;
+  }, []);
   const models = useResource(() => api.get<ModelConfig[]>("/api/models"), []);
   // Models grouped under their providers for the picker; System 1 decision models cannot chat, so no role uses them.
   const instances = useResource(() => api.get<Instance[]>("/api/instances"), []);
@@ -549,6 +576,22 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 )}
               </Loaded>
             </FieldGroup>
+            {!isAdmin && feishuTools.data?.apps.length ? (
+              <FieldGroup
+                label="飞书工具"
+                hint="角色通过 witden 使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台。每个飞书应用（公司）单独设置；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，发到别处需要批准。"
+              >
+                <FeishuPermissions
+                  data={feishuTools.data}
+                  granted={feishuGranted.data ?? undefined}
+                  allowed={draft.allowed_tools}
+                  approval={draft.approval_required}
+                  onChange={(allowed, approval) =>
+                    setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
+                  }
+                />
+              </FieldGroup>
+            ) : null}
             <FieldGroup label="可以联系、委托的角色">
               <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
               {!draft.any_contact ? (

@@ -24,6 +24,7 @@ import {
   socketText,
 } from "./connectionParts";
 import { FeishuSetup } from "./FeishuSetup";
+import { FeishuScopeCheck } from "./feishuParts";
 import { GithubSetup, MANIFEST_KEY, type ManifestReturn } from "./GithubSetup";
 import { SlackAppDetail } from "./SlackApps";
 import { SlackInstall } from "./SlackInstall";
@@ -708,6 +709,14 @@ function ConnectionDetail({
               : "应用的权限、事件订阅、版本发布和试用步骤见“设置引导”。"}
         </p>
       </Section>
+      {conn.platform === "feishu" ? (
+        <Section title="飞书应用的权限">
+          <p className="small muted">
+            向飞书查询这个应用现在开通了哪些权限。基础权限决定能否收发消息、显示名字；扩展决定角色能用哪些飞书工具（在角色的权限中按应用设置）。
+          </p>
+          <FeishuScopeCheck conn={conn} />
+        </Section>
+      ) : null}
       <Tabs
         value={tab}
         onChange={setTab}

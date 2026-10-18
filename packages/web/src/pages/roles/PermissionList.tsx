@@ -103,10 +103,20 @@ export function PermissionList({
   /** Offer "恢复默认" when the settings differ from these. */
   defaults?: { allowed: string[]; approval: string[] } | null;
 }) {
-  // Approvals for always-available tools are not shown here; keep them when restoring defaults.
+  // Approvals for always-available tools are not shown here, nor the Feishu tools (FeishuPermissions): keep them
+  // when restoring defaults.
   const always = approval.filter((a) => alwaysTools.includes(a));
+  const feishu = (xs: string[]) => xs.filter((x) => x.startsWith("feishu:"));
   const isDefault =
-    !defaults || (sameSet(allowed, defaults.allowed) && sameSet(approval, [...defaults.approval, ...always]));
+    !defaults ||
+    (sameSet(
+      allowed.filter((x) => !x.startsWith("feishu:")),
+      defaults.allowed,
+    ) &&
+      sameSet(
+        approval.filter((x) => !x.startsWith("feishu:")),
+        [...defaults.approval, ...always],
+      ));
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const toggle = (g: string) =>
     setOpen((prev) => {
@@ -202,7 +212,12 @@ export function PermissionList({
             type="button"
             className="btn btn-xs"
             title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆、其他话题和修改自己的职责说明需要询问"
-            onClick={() => onChange([...defaults.allowed], [...defaults.approval, ...always])}
+            onClick={() =>
+              onChange(
+                [...defaults.allowed, ...feishu(allowed)],
+                [...defaults.approval, ...always, ...feishu(approval)],
+              )
+            }
           >
             恢复默认
           </button>

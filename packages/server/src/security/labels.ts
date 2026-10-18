@@ -2,7 +2,7 @@
  * Information-flow labels.
  *
  * Every piece of data an AI task reads carries a label naming where it came from (`topic:<id>`,
- * `user:<id>`, `space:<id>` or `public`). Each label has a *reader set*: the people allowed to see that
+ * `user:<id>`, `space:<id>`, `feishu:<connection_id>` or `public`). Each label has a *reader set*: the people allowed to see that
  * data. Before a task sends anything to a destination (a topic, an external channel), the destination's
  * audience must be a subset of the readers of every label the task has read. This stops one person's DM
  * from leaking into a channel and stops delegation from widening access: permissions are checked on the
@@ -56,6 +56,12 @@ export function describeReaders(r: Readers): string {
 export const topicLabel = (topicId: string) => `topic:${topicId}`;
 export const userLabel = (userId: string) => `user:${userId}`;
 export const spaceLabel = (spaceId: string) => `space:${spaceId}`;
+/**
+ * Data read from a company's Feishu through its app (calendars, documents, bases, sheets…): visible inside that
+ * company's Feishu. It may go back to that company's Feishu conversations and the console; anywhere else (another
+ * company, Slack, GitHub) needs its release approved.
+ */
+export const feishuLabel = (connectionId: string) => `feishu:${connectionId}`;
 
 export async function externalPrincipal(db: Db, connectionId: string, externalUserId: string): Promise<string> {
   const [ident] = await db
@@ -117,6 +123,7 @@ export async function labelReaders(db: Db, label: string): Promise<Readers> {
   const ident = label.slice(idx + 1);
   if (kind === "topic") return topicReaders(db, ident);
   if (kind === "user") return readers([CONSOLE], [`u:${ident}`]);
+  if (kind === "feishu") return readers([CONSOLE, `ws:${ident}`]);
   if (kind === "space") {
     const ids = await usersWithPermission(db, Perm.KNOWLEDGE_READ, ident);
     return readers(

@@ -516,6 +516,12 @@ export interface ToolGroup {
   default_ask?: string[];
 }
 
+/** The Feishu tools roles may be given, and the Feishu apps (companies) they can be given for. */
+export interface FeishuTools {
+  products: { key: string; label: string; description: string; read: string[]; write: string[] }[];
+  apps: { id: string; name: string; status: string }[];
+}
+
 export interface Capabilities {
   chat?: boolean | null;
   tools?: boolean | null;

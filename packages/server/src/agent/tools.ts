@@ -15,6 +15,7 @@ import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { memories, messages, modelConfigs, roles, type Task, tasks, topics, users } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
+import { feishuNeedsApproval, grantedApps, parseFeishuGroup } from "../integrations/feishu-tools.js";
 import { externalContext } from "../integrations/links.js";
 import { findCredential } from "../security/crypto.js";
 import { spaceLabel, topicLabel, userLabel } from "../security/labels.js";
@@ -27,6 +28,7 @@ import * as topicSvc from "../services/topics.js";
 import { publishTaskStatus, textRestricted } from "./control.js";
 import { delegate } from "./dispatch.js";
 import { deliver } from "./output.js";
+import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -1057,14 +1059,27 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ minutes: int, reason: str }, ["minutes", "reason"]),
       followUpLater,
     ),
+    ...ALL_FEISHU_TOOLS,
   ].map((t) => [t.name, t]),
 );
+
+/**
+ * A Feishu tool (group ``feishu:<product>:<mode>``) is offered when the task may use that product and mode of at
+ * least one Feishu app; ``feishu_apps`` when it may use any.
+ */
+function feishuOffered(group: string, tools: string[]): boolean {
+  if (group === "feishu:apps") return tools.some((t) => !!parseFeishuGroup(t));
+  const [, product, mode] = group.split(":");
+  return grantedApps(tools, product, mode as "read" | "write").length > 0;
+}
 
 export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   const groups = new Set<string>(envelope.tools ?? []);
   return [...TOOLS.values()].filter(
     (t) =>
-      (t.group === null || groups.has(t.group)) &&
+      (t.group === null ||
+        groups.has(t.group) ||
+        (t.group.startsWith("feishu:") && feishuOffered(t.group, envelope.tools ?? []))) &&
       // Declining to answer is for messages that reached the role without an @-mention.
       (t.name !== "stay_silent" || !!envelope.auto) &&
       // The configuration tools only for a system administrator's own work.
@@ -1074,9 +1089,15 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   );
 }
 
-export function needsApproval(envelope: Record<string, any>, tool: ToolSpec): boolean {
+export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
   const required = new Set<string>(envelope.approval_required ?? []);
-  return required.has(tool.name) || (tool.group !== null && required.has(tool.group));
+  if (required.has(tool.name)) return true;
+  // A Feishu tool asks when its app's product asks (the app comes from the call).
+  if (tool.group?.startsWith("feishu:") && tool.group !== "feishu:apps") {
+    const [, product, mode] = tool.group.split(":");
+    return feishuNeedsApproval(envelope, product, mode as "read" | "write", args);
+  }
+  return tool.group !== null && required.has(tool.group);
 }
 
 /** Tools whose effect inside the computer cannot be safely repeated after an interruption. */

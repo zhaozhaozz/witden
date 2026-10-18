@@ -8,6 +8,7 @@ import {
   agentSessions,
   type ComputerInstance,
   computerInstances,
+  connections,
   type ModelConfig,
   type ModelProvider,
   type Role,
@@ -15,6 +16,7 @@ import {
   topics,
 } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
+import { FEISHU_PRODUCTS } from "../integrations/feishu-tools.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { avatarFile, MAX_AVATAR_BYTES, saveAvatar } from "../services/appearance.js";
 import { audit } from "../services/audit.js";
@@ -100,6 +102,29 @@ export async function serveAvatar(req: FastifyRequest, reply: FastifyReply) {
 }
 
 export async function roleRoutes(app: FastifyInstance) {
+  // The Feishu tools a role can be given, per product, and the Feishu apps (companies) to give them for.
+  app.get(
+    "/api/roles/feishu-tools",
+    authed(async ({ db, user }) => {
+      await requirePerm(db, user, Perm.ROLE_MANAGE);
+      const toolsOf = (key: string, mode: string) =>
+        [...TOOLS.values()].filter((t) => t.group === `feishu:${key}:${mode}`).map((t) => t.name);
+      const apps = await db.select().from(connections).where(eq(connections.platform, "feishu"));
+      return {
+        products: FEISHU_PRODUCTS.map((p) => ({
+          key: p.key,
+          label: p.label,
+          description: p.description,
+          read: toolsOf(p.key, "read"),
+          write: toolsOf(p.key, "write"),
+        })),
+        apps: apps
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((c) => ({ id: c.id, name: c.name, status: c.status })),
+      };
+    }),
+  );
+
   app.get(
     "/api/roles/tool-groups",
     authed(async () => [

@@ -1451,6 +1451,44 @@ textarea.prompt {
   font-weight: 500;
   color: var(--wait);
 }
+/* Feishu tools in the role editor and the Feishu permission check */
+.perm-app {
+  padding: 8px 10px 2px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.feishu-products {
+  display: grid;
+  gap: 6px;
+  margin: 6px 0 10px;
+  max-width: 80ch;
+}
+.feishu-products .pick-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.feishu-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 2px;
+  color: var(--ink-3);
+}
+.feishu-check-row {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line-2);
+}
+.feishu-check-name {
+  min-width: 7em;
+  font-size: 13px;
+}
+.feishu-check .btn-row {
+  margin-top: 8px;
+}
 .perm-choice {
   flex: none;
   flex-wrap: nowrap;

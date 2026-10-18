@@ -137,7 +137,8 @@ export class FeishuAdapter implements Adapter {
     return res.tenant_access_token;
   }
 
-  private async call(
+  /** A Feishu Open API call with the app's tenant token; also used by the Feishu tools (feishu-tools.ts). */
+  async call(
     conn: Connection,
     method: string,
     path: string,
@@ -152,7 +153,8 @@ export class FeishuAdapter implements Adapter {
         ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
       })
     ).json();
-    if (res.code !== 0) throw new Error(`Feishu ${path} failed: ${res.msg}`);
+    // the code tells a missing scope (99991672) from a resource the app was not given (91403, 1254302…)
+    if (res.code !== 0) throw new Error(`Feishu ${path} failed (${res.code}): ${res.msg}`);
     // v1 APIs answer in ``data``; older ones (bot/v3/info) put their fields beside ``code``
     return res.data ?? res;
   }

@@ -23,6 +23,13 @@ import { deliverPending } from "../integrations/delivery.js";
 import { checkCredentials as checkFeishu, type FeishuMode, feishuMode } from "../integrations/feishu.js";
 import { feishuSockets } from "../integrations/feishu-socket.js";
 import {
+  FEISHU_BASE_SCOPES,
+  FEISHU_PRODUCTS,
+  grantedScopes,
+  parseFeishuGroup,
+  productStatus,
+} from "../integrations/feishu-tools.js";
+import {
   appCredentials,
   appOf,
   freeAppName,
@@ -369,9 +376,52 @@ export async function integrationRoutes(app: FastifyInstance) {
       await requirePerm(db, user, Perm.CONNECTION_MANAGE);
       // A Slack workspace only: its app and the app's other workspaces stay as they are.
       await db.delete(connections).where(eq(connections.id, params(req).id));
+      // What roles were allowed to do with this Feishu app goes with it.
+      for (const r of await db.select().from(roles)) {
+        const keep = (xs: string[]) => xs.filter((g) => parseFeishuGroup(g)?.connectionId !== params(req).id);
+        if (
+          keep(r.allowedTools).length !== r.allowedTools.length ||
+          keep(r.approvalRequired).length !== r.approvalRequired.length
+        )
+          await db
+            .update(roles)
+            .set({ allowedTools: keep(r.allowedTools), approvalRequired: keep(r.approvalRequired) })
+            .where(eq(roles.id, r.id));
+      }
       await audit(db, "connection.delete", { actorType: "user", actorId: user.id, connectionId: params(req).id });
       after(syncSockets);
       return { ok: true };
+    }),
+  );
+
+  // What a Feishu app applies for: the base scopes, and each product's for the Feishu tools (the setup guide).
+  app.get(
+    "/api/integrations/feishu/catalog",
+    authed(async ({ db, user }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      return { base: FEISHU_BASE_SCOPES, products: FEISHU_PRODUCTS };
+    }),
+  );
+
+  // Which of them Feishu has granted this app, asked of Feishu now.
+  app.get(
+    "/api/connections/:id/feishu-scopes",
+    authedNoTx(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const conn = await getConn(db, params(req).id);
+      if (conn.platform !== "feishu") throw new BadRequest("not a Feishu connection");
+      let granted: Set<string>;
+      try {
+        granted = await grantedScopes(conn);
+      } catch (err) {
+        return { ok: false, error: (err as Error).message };
+      }
+      return {
+        ok: true,
+        granted: [...granted].sort(),
+        base: FEISHU_BASE_SCOPES.map((s) => ({ scope: s.scope, name: s.name, granted: granted.has(s.scope) })),
+        products: productStatus(granted),
+      };
     }),
   );
 

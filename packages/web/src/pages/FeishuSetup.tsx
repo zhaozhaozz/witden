@@ -3,8 +3,9 @@ import { api } from "../api/client";
 import type { Connection } from "../api/types";
 import { fmtRelative } from "../lib/format";
 import { useAction } from "../ui/feedback";
-import { CopyText, Field, Section, Tag } from "../ui/kit";
+import { CopyText, Field, Loaded, Section, Tag } from "../ui/kit";
 import { socketText } from "./connectionParts";
+import { FeishuScopePicker, useFeishuCatalog } from "./feishuParts";
 import { PublicAddressStep } from "./PublicAddress";
 import { AccessStep, SetupSteps, TryStep, useLiveConnection, WebhookStatus } from "./setupParts";
 
@@ -34,24 +35,6 @@ const flowOf = (mode: Mode, switching: boolean) => FLOW[mode].filter((k) => !swi
 type StepNumber = (k: StepKey) => number;
 
 /** The permissions witden's Feishu adapter uses: [scope, name in the Feishu console, what for]. */
-/** The permissions witden asks for: [scope, name in the Feishu console, what for]. */
-const SCOPES: [string, string, string][] = [
-  ["im:message.group_at_msg:readonly", "接收群聊中@机器人消息事件", "收到群里 @ 机器人的消息"],
-  ["im:message.p2p_msg:readonly", "读取用户发给机器人的单聊消息", "收到发给机器人的私聊消息"],
-  ["im:message:send_as_bot", "以应用的身份发消息", "发送角色的回复"],
-  ["im:chat:readonly", "获取群组信息", "读取群名和群成员（包括名字），判断回复会被谁看到"],
-  ["contact:contact.base:readonly", "获取通讯录基本信息", "私聊中显示对方的名字（与下一项一起）"],
-  ["contact:user.base:readonly", "获取用户基本信息", "私聊中显示对方的名字（与上一项一起）"],
-  [
-    "im:message.group_msg.include_bot:read",
-    "获取群组中用户和机器人发送的消息",
-    "群里没有 @ 机器人的消息，包括其他机器人发的，也记入话题，作为角色的上下文，但不交给角色",
-  ],
-];
-
-/** Pasted into 权限管理 → 批量导入/导出, it applies for all of them at once. */
-const SCOPES_JSON = JSON.stringify({ scopes: { tenant: SCOPES.map(([s]) => s), user: [] } }, null, 2);
-
 const CONSOLE = "https://open.feishu.cn/app";
 
 /** The long connection takes only a complete App ID (the server checks it the same way). */
@@ -276,6 +259,7 @@ export function FeishuSetup({
 }
 
 function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: () => void }) {
+  const catalog = useFeishuCatalog();
   return (
     <>
       <p>
@@ -295,34 +279,9 @@ function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: (
         </li>
         <li>
           打开 <b>权限管理</b>，点击 <b>批量导入/导出</b>，把下面的内容粘贴到导入框中，点击 <b>申请开通</b>
-          ，一次申请下表的 {SCOPES.length} 项权限（也可以在搜索框中输入权限标识，逐项开通）：
-          <div className="setup-field">
-            <CopyText text={SCOPES_JSON} label="权限列表（JSON）" />
-            <pre className="mono-block">{SCOPES_JSON}</pre>
-          </div>
-          <table className="table table-compact setup-table">
-            <thead>
-              <tr>
-                <th>权限</th>
-                <th>名称</th>
-                <th>用途</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SCOPES.map(([scope, name, why]) => (
-                <tr key={scope}>
-                  <td>
-                    <code>{scope}</code>
-                  </td>
-                  <td>{name}</td>
-                  <td className="muted">{why}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="small muted">
-            是否需要审核以申请时页面上的标注为准，企业管理员可以调整。版本中有需要审核的权限时，整个版本要等企业管理员在飞书管理后台通过后才生效；不想等的话，可以先删掉那一项，以后再申请并发布新版本。
-          </p>
+          ，一次申请全部权限（也可以在搜索框中输入权限标识，逐项开通）。基础权限每个接入都需要；扩展按需勾选，勾选后
+          JSON 随之更新。以后也可以在接入详情中检测已开通的权限、申请更多。
+          <Loaded res={catalog}>{(c) => <FeishuScopePicker catalog={c} />}</Loaded>
         </li>
         <li>
           在 <b>权限管理 → 数据权限</b> 中，把 <b>通讯录权限范围</b> 设为会使用机器人的成员（例如全部成员）。witden

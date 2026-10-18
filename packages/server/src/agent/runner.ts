@@ -293,7 +293,10 @@ export class TaskRunner {
         });
         return { skip: true as const };
       }
-      if (needsApproval(task.envelope, spec) && !(task.envelope.approved_calls ?? []).includes(call.id)) {
+      if (
+        needsApproval(task.envelope, spec, call.arguments) &&
+        !(task.envelope.approved_calls ?? []).includes(call.id)
+      ) {
         await this.requestApproval(tx, task, call);
         return null;
       }

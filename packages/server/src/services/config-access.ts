@@ -36,6 +36,11 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       { method: "GET", path: "/api/roles/:id" },
       { method: "GET", path: "/api/roles/tool-groups", note: "tool permission groups" },
       {
+        method: "GET",
+        path: "/api/roles/feishu-tools",
+        note: "Feishu tools by product and the Feishu apps; a role gets them per app in allowed_tools as feishu:<connection>:<product>:read|write (a write group in approval_required asks first)",
+      },
+      {
         method: "POST",
         path: "/api/roles",
         note: 'name, handle, description, system_prompt, model_config_id, reasoning_effort (one of the levels in the model\'s capabilities.effort, or null for its default), model_params, instance_id, allowed_tools (groups), approval_required (groups or tools), allowed_contacts (role ids or "*"), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color',
@@ -115,6 +120,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
         note: "name, status (active | paused), settings: role_id (the role its bot stands for), auto_provision_users, custom_identity, feishu_mode (Feishu: socket = long connection, http = events URL, which needs a verification token only a person can enter), bot_requests (Feishu: other bots @-mentioning the bot go to its role)",
       },
       { method: "POST", path: "/api/connections/:id/test", note: "test the saved credentials" },
+      { method: "GET", path: "/api/connections/:id/feishu-scopes", note: "permissions Feishu has granted the app" },
       { method: "DELETE", path: "/api/connections/:id", note: "a Slack connection is one workspace; its app stays" },
       { method: "GET", path: "/api/slack-apps", note: "Slack apps and the workspaces each is installed in" },
       { method: "PATCH", path: "/api/slack-apps/:id", note: "name" },
