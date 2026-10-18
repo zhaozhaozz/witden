@@ -53,6 +53,11 @@ export interface InboundMessage {
   text: string;
   /** The bot was mentioned (or it is a DM). */
   addressed: boolean;
+  /**
+   * Another bot wrote it: recorded for context, never handed to a role (so bots cannot set each other off).
+   * Its sender is kept as an external member even where the connection makes none for people.
+   */
+  fromBot?: boolean;
   files?: Record<string, any>[];
   /** The thread itself, where the platform has one with its own identity (a GitHub issue or pull request). */
   thread?: { kind: string; title?: string; url?: string };
@@ -181,7 +186,10 @@ export async function resolveIdentity(
   conn: Connection,
   externalUserId: string,
   displayName: string | null,
+  bot = false,
 ): Promise<User | null> {
+  // The name until the platform tells the real one.
+  const placeholder = bot ? `机器人 ${externalUserId.slice(-6)}` : `${conn.platform}-${externalUserId}`;
   let [ident] = await db
     .select()
     .from(externalIdentities)
@@ -196,10 +204,10 @@ export async function resolveIdentity(
     // informational only; never used to decide identity
     await db.update(externalIdentities).set({ displayName }).where(eq(externalIdentities.id, ident.id));
   }
-  if (!ident.userId && conn.settings.auto_provision_users) {
+  if (!ident.userId && (conn.settings.auto_provision_users || bot)) {
     // An external member of this connection: uses only the role its bot stands for, has no console sign-in.
     const user = await createUser(db, {
-      name: displayName || `${conn.platform}-${externalUserId}`,
+      name: displayName || placeholder,
       externalConnectionId: conn.id,
     });
     await db.update(externalIdentities).set({ userId: user.id }).where(eq(externalIdentities.id, ident.id));
@@ -212,7 +220,6 @@ export async function resolveIdentity(
   if (!ident.userId) return null;
   const [user] = await db.select().from(users).where(eq(users.id, ident.userId)).limit(1);
   // An external member first seen without a name takes it once the platform tells it, and so does its DM.
-  const placeholder = `${conn.platform}-${externalUserId}`;
   if (user && displayName && user.externalConnectionId === conn.id && user.name === placeholder) {
     await db.update(users).set({ name: displayName }).where(eq(users.id, user.id));
     await db
@@ -364,7 +371,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
         .catch((err) => console.warn("[witden] member sync failed", err.message));
     }
     // Every thread of a conversation the bot is in is recorded; only messages addressed to it reach roles.
-    const user = await resolveIdentity(db, conn, msg.userId, msg.userName);
+    const user = await resolveIdentity(db, conn, msg.userId, msg.userName, !!msg.fromBot);
     if (!user) {
       await audit(db, "inbound.unlinked_user", {
         actorType: "external",
@@ -386,7 +393,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     // The bot stands for one role: everything addressed to it goes to that role. A bot without a role takes no
     // requests; the dispatcher says so.
     const bound = typeof conn.settings.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
-    const roleIds = bound && msg.addressed ? [bound] : [];
+    const roleIds = bound && msg.addressed && !msg.fromBot ? [bound] : [];
     const present = [];
     for (const rid of roleIds) if (await topicSvc.participant(db, topic.id, "role", rid)) present.push(rid);
     let stored = await saveMessage(db, topic, "user", user.id, msg.text, {
@@ -396,7 +403,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
       externalRef: { conversation: msg.conversationId, ts: msg.messageTs, thread: msg.threadKey },
     });
     if (msg.files?.length) stored = await ingestFiles(db, conn, topic, stored, user, msg.files);
-    if (!msg.addressed) return { status: "stored", topic_id: topic.id };
+    if (!msg.addressed || msg.fromBot) return { status: "stored", topic_id: topic.id };
     if (roleIds.length && !present.length) {
       // The role is not in this thread yet: the dispatcher checks it and brings it in.
       [stored] = await db

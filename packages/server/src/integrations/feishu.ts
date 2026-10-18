@@ -10,6 +10,7 @@ import {
   externalConversations,
   type Message,
   type OutboundMessage,
+  outboundMessages,
   roles,
   users,
 } from "../db/schema.js";
@@ -70,6 +71,47 @@ export async function acceptFeishuEvent(conn: Connection, payload: any): Promise
   if (conn.status !== "active") return;
   const { acceptEvents } = await import("./inbound.js");
   await acceptEvents(conn.id, await new FeishuAdapter().parse(getDb(), conn, payload));
+}
+
+/**
+ * The words of a message: plain text; a rich-text post (title and paragraphs, @ as the mention key so it is
+ * replaced like in text); or a card's titles and texts. Images, files and other kinds have none (null).
+ */
+export function messageText(type: string, raw: string | undefined): string | null {
+  let content: any;
+  try {
+    content = JSON.parse(raw ?? "{}");
+  } catch {
+    return null;
+  }
+  if (type === "text") return String(content.text ?? "");
+  if (type === "post") {
+    // either {title, content} or the same per language: {zh_cn: {title, content}}
+    const post = Array.isArray(content.content)
+      ? content
+      : (Object.values(content).find((v: any) => v?.content) as any);
+    if (!post) return null;
+    const lines: string[] = post.title ? [String(post.title)] : [];
+    for (const paragraph of post.content ?? []) {
+      const parts = (Array.isArray(paragraph) ? paragraph : []).map((el: any) =>
+        el.tag === "at" ? (el.user_id ?? `@${el.user_name ?? ""}`) : el.tag === "img" ? "[图片]" : (el.text ?? ""),
+      );
+      lines.push(parts.join(""));
+    }
+    return lines.join("\n");
+  }
+  if (type === "interactive") {
+    const texts: string[] = [];
+    const walk = (v: any, key = "") => {
+      if (typeof v === "string") {
+        if (["text", "title", "content"].includes(key) && v.trim() && !texts.includes(v)) texts.push(v);
+      } else if (Array.isArray(v)) for (const x of v) walk(x, key);
+      else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(x, k);
+    };
+    walk(content);
+    return texts.length ? texts.join("\n") : null;
+  }
+  return null;
 }
 
 export class FeishuAdapter implements Adapter {
@@ -222,21 +264,35 @@ export class FeishuAdapter implements Adapter {
       .where(eq(externalConversations.id, conv.id));
   }
 
+  /** A message this connection posted (its id is recorded once Feishu accepted it). */
+  private async sentByUs(db: Db, conn: Connection, messageId: string): Promise<boolean> {
+    const [row] = await db
+      .select({ id: outboundMessages.id })
+      .from(outboundMessages)
+      .where(and(eq(outboundMessages.connectionId, conn.id), eq(outboundMessages.externalTs, messageId)))
+      .limit(1);
+    return !!row;
+  }
+
   async parse(db: Db, conn: Connection, payload: any): Promise<InboundAction[]> {
     if (payload?.header?.event_type !== "im.message.receive_v1") return [];
     const event = payload.event ?? {};
-    if (event.sender?.sender_type !== "user") return []; // ignore bots, ourselves included
     const msg = event.message ?? {};
-    if (msg.message_type !== "text") return [];
-    let text = "";
-    try {
-      text = JSON.parse(msg.content ?? "{}").text ?? "";
-    } catch {
-      text = "";
-    }
+    const id: string = msg.message_id ?? "";
     const p2p = msg.chat_type === "p2p";
     const chatId: string = msg.chat_id ?? "";
-    const sender: string = event.sender?.sender_id?.open_id ?? "";
+    const ids = event.sender?.sender_id ?? {};
+    // Other bots' messages in a group (they arrive with im:message.group_msg.include_bot:read) are recorded for
+    // context but never handed to roles, so bots cannot set each other off; this bot's own never come back in.
+    const fromBot = event.sender?.sender_type !== "user";
+    const sender: string = ids.open_id || ids.union_id || ids.user_id || ids.app_id || "";
+    if (fromBot) {
+      if (p2p || !sender || ids.open_id === conn.botUserId) return [];
+      if (ids.app_id && ids.app_id === credentials(conn).app_id) return [];
+      if (await this.sentByUs(db, conn, id)) return [];
+    }
+    let text = messageText(msg.message_type, msg.content);
+    if (text === null) return [];
     let addressed = p2p;
     for (const m of msg.mentions ?? []) {
       const isBot = m.id?.open_id === conn.botUserId;
@@ -245,7 +301,7 @@ export class FeishuAdapter implements Adapter {
       // a mention names the person mentioned, at no cost
       if (!isBot && m.id?.open_id && m.name) names.set(`${conn.id}:${m.id.open_id}`, { name: m.name, at: Date.now() });
     }
-    const id: string = msg.message_id ?? "";
+    if (fromBot && !text.trim()) return [];
     return [
       {
         kind: "message",
@@ -261,9 +317,15 @@ export class FeishuAdapter implements Adapter {
           ...(p2p ? {} : { topicKey: CHANNEL }),
           messageTs: id,
           userId: sender,
-          userName: sender ? await this.userName(conn, sender, p2p ? null : chatId) : null,
+          // bots are in neither the member list nor the directory: only a mention names them
+          userName: fromBot
+            ? (known(names, `${conn.id}:${sender}`, NAME_TTL_MS)?.name ?? null)
+            : sender
+              ? await this.userName(conn, sender, p2p ? null : chatId)
+              : null,
           text: text.trim(),
-          addressed,
+          addressed: addressed && !fromBot,
+          ...(fromBot ? { fromBot: true } : {}),
         },
       },
     ];

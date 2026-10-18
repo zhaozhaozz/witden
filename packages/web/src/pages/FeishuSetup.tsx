@@ -34,22 +34,18 @@ const flowOf = (mode: Mode, switching: boolean) => FLOW[mode].filter((k) => !swi
 type StepNumber = (k: StepKey) => number;
 
 /** The permissions witden's Feishu adapter uses: [scope, name in the Feishu console, what for]. */
-/**
- * The permissions witden asks for: [scope, name in the Feishu console, what for, review]. Feishu reviews only
- * some permissions, and an enterprise's administrator may change which; the console marks them when applying.
- */
-const SCOPES: [string, string, string, string][] = [
-  ["im:message.group_at_msg:readonly", "接收群聊中@机器人消息事件", "收到群里 @ 机器人的消息", "一般免审"],
-  ["im:message.p2p_msg:readonly", "读取用户发给机器人的单聊消息", "收到发给机器人的私聊消息", "一般免审"],
-  ["im:message:send_as_bot", "以应用的身份发消息", "发送角色的回复", "一般免审"],
-  ["im:chat:readonly", "获取群组信息", "读取群名和群成员（包括名字），判断回复会被谁看到", "一般免审"],
-  ["contact:contact.base:readonly", "获取通讯录基本信息", "私聊中显示对方的名字（与下一项一起）", "一般免审"],
-  ["contact:user.base:readonly", "获取用户基本信息", "私聊中显示对方的名字（与上一项一起）", "一般免审"],
+/** The permissions witden asks for: [scope, name in the Feishu console, what for]. */
+const SCOPES: [string, string, string][] = [
+  ["im:message.group_at_msg:readonly", "接收群聊中@机器人消息事件", "收到群里 @ 机器人的消息"],
+  ["im:message.p2p_msg:readonly", "读取用户发给机器人的单聊消息", "收到发给机器人的私聊消息"],
+  ["im:message:send_as_bot", "以应用的身份发消息", "发送角色的回复"],
+  ["im:chat:readonly", "获取群组信息", "读取群名和群成员（包括名字），判断回复会被谁看到"],
+  ["contact:contact.base:readonly", "获取通讯录基本信息", "私聊中显示对方的名字（与下一项一起）"],
+  ["contact:user.base:readonly", "获取用户基本信息", "私聊中显示对方的名字（与上一项一起）"],
   [
-    "im:message.group_msg",
-    "获取群组中所有消息",
-    "群里没有 @ 机器人的消息也记入话题，但不交给角色",
-    "敏感权限；是否审核看企业设置，以页面标注为准",
+    "im:message.group_msg.include_bot:read",
+    "获取群组中用户和机器人发送的消息",
+    "群里没有 @ 机器人的消息，包括其他机器人发的，也记入话题，作为角色的上下文，但不交给角色",
   ],
 ];
 
@@ -229,7 +225,7 @@ export function FeishuSetup({
       <p className="setup-intro">
         {switching
           ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、机器人代表的角色和已关联的账号都保持不变。`
-          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的角色：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；角色在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字消息。`}
+          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的角色：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；角色在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字（包括富文本和卡片中的文字）。`}
       </p>
       <div className="setup-modes">
         <div className="segmented">
@@ -310,26 +306,22 @@ function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: (
                 <th>权限</th>
                 <th>名称</th>
                 <th>用途</th>
-                <th>审核</th>
               </tr>
             </thead>
             <tbody>
-              {SCOPES.map(([scope, name, why, review]) => (
+              {SCOPES.map(([scope, name, why]) => (
                 <tr key={scope}>
                   <td>
                     <code>{scope}</code>
                   </td>
                   <td>{name}</td>
                   <td className="muted">{why}</td>
-                  <td className={review.startsWith("敏感") ? "text-wait" : "muted"}>{review}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="small muted">
-            飞书的权限分为免审和需要审核两类，企业管理员可以调整，以申请时页面上的标注为准（例如“获取群组中所有消息”虽是敏感权限，在有的企业中为免审）。版本中有标为需要审核的权限时，整个版本要等企业管理员在飞书管理后台通过后才生效；不想等的话，可以先删掉那一项，以后再申请并发布新版本。
-            搜索时还会看到“获取群组中用户和机器人发送的消息”（im:message.group_msg.include_bot:read），不需要开通：它多出的只是其他机器人发的消息，witden
-            不记录机器人发的消息。
+            是否需要审核以申请时页面上的标注为准，企业管理员可以调整。版本中有需要审核的权限时，整个版本要等企业管理员在飞书管理后台通过后才生效；不想等的话，可以先删掉那一项，以后再申请并发布新版本。
           </p>
         </li>
         <li>

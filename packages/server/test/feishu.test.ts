@@ -8,7 +8,7 @@ import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { connections, externalIdentities, tasks, topics, users } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
-import { setFeishuFetch } from "../src/integrations/feishu.js";
+import { messageText, setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
 import { secretBox } from "../src/security/crypto.js";
 import { reply } from "./support/harness.js";
@@ -408,6 +408,118 @@ describe("feishu groups and names", () => {
     // the group's name and members were each asked for once
     expect(feishu.asked.filter((p) => p === "im/v1/chats/oc_group")).toHaveLength(1);
     expect(feishu.asked.filter((p) => p === "im/v1/chats/oc_group/members")).toHaveLength(1);
+  });
+});
+
+describe("feishu: other bots and rich messages", () => {
+  /** A message as Feishu pushes it: any type, from a person or (sender_type "app") another bot. */
+  const raw = (
+    id: string,
+    type: string,
+    content: unknown,
+    o: { app?: boolean; sender?: Record<string, string>; atBot?: boolean } = {},
+  ) => ({
+    schema: "2.0",
+    header: { event_id: `ev_${id}`, event_type: "im.message.receive_v1" },
+    event: {
+      sender: { sender_type: o.app ? "app" : "user", sender_id: o.sender ?? { open_id: "ou_alice" } },
+      message: {
+        message_id: id,
+        chat_id: "oc_group",
+        chat_type: "group",
+        message_type: type,
+        content: JSON.stringify(content),
+        ...(o.atBot ? { mentions: [{ key: "@_user_1", id: { open_id: "ou_bot" }, name: "witden" }] } : {}),
+      },
+    },
+  });
+  const card = (title: string, text: string) => ({ title, elements: [[{ tag: "text", text }]] });
+
+  it("other bots' messages are context for the role, never requests; this bot's own never come back", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    let prompt = "";
+    w.scripts.dev = (messages, turn) => {
+      if (turn === 0) prompt = String(messages.find((m) => m.role === "user")?.content ?? "");
+      return reply("看到了");
+    };
+    const ci = { open_id: "ou_ci_bot_42" };
+
+    // a CI bot's card goes into the group's topic, under the bot's (placeholder) name, and starts nothing
+    await link.push(
+      raw("om_ci1", "interactive", card("构建失败", "main 分支 #812 单元测试失败"), { app: true, sender: ci }),
+    );
+    // nor does it when it @-mentions this bot
+    await link.push(raw("om_ci2", "text", { text: "@_user_1 请处理" }, { app: true, sender: ci, atBot: true }));
+    // this bot's own messages are not taken back in: by its id, its app or a message it sent
+    await link.push(raw("om_own1", "text", { text: "自己的消息" }, { app: true, sender: { open_id: "ou_bot" } }));
+    await link.push(raw("om_own2", "text", { text: "自己的消息" }, { app: true, sender: { app_id: APP_ID } }));
+    await w.drain();
+    expect(await allTasks()).toHaveLength(0);
+    const [topic] = await db().select().from(topics).where(eq(topics.title, "#产品群"));
+    const stored = (await w.messages(topic.id)) as any[];
+    expect(stored.map((m) => m.content)).toEqual(["构建失败\nmain 分支 #812 单元测试失败", "请处理"]);
+    const [identity] = await db()
+      .select()
+      .from(externalIdentities)
+      .where(eq(externalIdentities.externalUserId, "ou_ci_bot_42"));
+    const [botUser] = await db().select().from(users).where(eq(users.id, identity.userId!));
+    expect(botUser.name).toBe("机器人 bot_42");
+
+    // a person's question: the role sees the bot's card among the recent messages
+    await link.push(textEvent("刚才的构建怎么回事", { id: "om_q1", chatType: "group", chat: "oc_group", atBot: true }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    expect(prompt).toContain("机器人 bot_42: 构建失败");
+    expect(prompt).toContain("main 分支 #812 单元测试失败");
+
+    // the role's answer, once Feishu reports it back as a bot message, is not recorded a second time
+    await deliverPending();
+    const sentId = `om_out_${feishu.sent.length}`;
+    const before = ((await w.messages(topic.id)) as any[]).length;
+    await link.push(raw(sentId, "text", { text: "看到了" }, { app: true, sender: { open_id: "ou_other_form" } }));
+    await w.drain();
+    expect(((await w.messages(topic.id)) as any[]).length).toBe(before);
+  });
+
+  it("rich-text posts and cards are read as text; a post that @-mentions the bot is a request", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    w.scripts.dev = () => reply("好的");
+    await link.push(
+      raw(
+        "om_p1",
+        "post",
+        {
+          zh_cn: {
+            title: "周报",
+            content: [
+              [
+                { tag: "at", user_id: "@_user_1", user_name: "witden" },
+                { tag: "text", text: " 帮我整理 " },
+                { tag: "a", text: "这份文档", href: "https://example.com" },
+              ],
+              [{ tag: "img", image_key: "img_1" }],
+            ],
+          },
+        },
+        { atBot: true },
+      ),
+    );
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    expect((await allTasks())[0].instruction).toBe("周报\n 帮我整理 这份文档\n[图片]");
+    // an image alone has no words: not recorded
+    await link.push(raw("om_img", "image", { image_key: "img_2" }));
+    await w.drain();
+    expect(messageText("image", JSON.stringify({ image_key: "x" }))).toBeNull();
+    expect(
+      messageText(
+        "interactive",
+        JSON.stringify({ header: { title: { content: "标题" } }, elements: [{ text: { content: "正文" } }] }),
+      ),
+    ).toBe("标题\n正文");
   });
 });
 
