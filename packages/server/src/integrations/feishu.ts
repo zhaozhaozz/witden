@@ -185,16 +185,18 @@ export class FeishuAdapter implements Adapter {
   private async userName(conn: Connection, openId: string, chatId: string | null): Promise<string | null> {
     const key = `${conn.id}:${openId}`;
     const hit = known(names, key, NAME_TTL_MS);
-    if (hit) return hit.name;
+    if (hit?.name) return hit.name;
+    // A name the directory would not give may still be in a group's member list (itself kept for a minute).
     if (chatId) {
       try {
         await this.members(conn, chatId, LOOKUP_MS);
         const found = known(names, key, NAME_TTL_MS);
-        if (found) return found.name;
+        if (found?.name) return found.name;
       } catch {
         // try the directory
       }
     }
+    if (hit) return null;
     let name: string | null = null;
     try {
       const data = await this.call(conn, "GET", `contact/v3/users/${openId}`, {

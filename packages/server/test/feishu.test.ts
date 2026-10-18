@@ -387,9 +387,13 @@ describe("feishu groups and names", () => {
       return user?.name;
     };
 
-    // bob, unknown to witden, becomes an external member under his name in the group
+    // bob writes privately first, outside the contact range: a placeholder name, for him and his chat
+    await link.push(textEvent("我是 bob", { id: "om_b0", sender: "ou_bob", chat: "oc_p2p_bob" }));
+    await w.waitFor(async () => (await nameOf("ou_bob")) === "feishu-ou_bob");
+    // then in the group: the member list names him, and his private chat takes the name too
     await link.push(group("我是 bob", "om_b1", { sender: "ou_bob" }));
     await w.waitFor(async () => (await nameOf("ou_bob")) === "Bob 李");
+    expect((await db().select().from(topics).where(eq(topics.kind, "dm"))).map((t) => t.title)).toContain("Bob 李");
     // carol writes privately: her name comes from the contact directory, and so does her chat's title
     await link.push(textEvent("我是 carol", { id: "om_c1", sender: "ou_carol", chat: "oc_p2p_carol" }));
     await w.waitFor(async () => (await nameOf("ou_carol")) === "Carol 王");
