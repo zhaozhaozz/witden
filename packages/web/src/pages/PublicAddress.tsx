@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { CopyText, Field, Tag } from "../ui/kit";
 
@@ -32,26 +32,28 @@ interface TunnelStatus {
   origin: string | null;
 }
 
+type Mode = "tunnel" | "proxy";
+
 /** Why an address cannot be used, in the words of someone setting it up. */
 function explain(c: UrlCheck): string {
   const d = c.detail ? `（${c.detail}）` : "";
   switch (c.problem) {
     case "https":
-      return "必须是 https:// 开头的地址：Slack 只把事件发到 HTTPS 地址。";
+      return "必须是 https:// 开头的地址：Slack、GitHub、飞书都只把事件发到 HTTPS 地址。";
     case "format":
       return "请填写“https://域名”形式的地址，不带路径。";
     case "private":
-      return "这是本机或内网地址，Slack 访问不到。";
+      return "这是本机或内网地址，外部平台访问不到。";
     case "dns":
       return `解析不到这个域名${d}，公共 DNS 中也没有查到。检查 DNS 记录是否已经生效。`;
     case "tls":
-      return `HTTPS 证书无效${d}。Slack 不接受自签名或过期的证书。`;
+      return `HTTPS 证书无效${d}。这些平台不接受自签名或过期的证书。`;
     case "unreachable":
       return `witden 服务器连不上这个地址${d}。检查防火墙是否放行 443 端口，反向代理或隧道是否在运行。`;
     case "timeout":
       return "访问这个地址超时。检查防火墙和反向代理。";
     case "redirect":
-      return `这个地址返回了重定向${c.detail ? `（到 ${c.detail}）` : ""}。Slack 不跟随重定向，请填写最终的地址。`;
+      return `这个地址返回了重定向${c.detail ? `（到 ${c.detail}）` : ""}。这些平台不跟随重定向，请填写最终的地址。`;
     case "http":
       return `这个地址能访问，但返回了 ${c.detail ?? "错误"}：反向代理可能没有转发到 witden。`;
     case "not_witden":
@@ -86,16 +88,14 @@ const CADDY = `hooks.example.com {
 }`;
 
 /**
- * First step of connecting a platform that pushes events: a public HTTPS address that leads back to this
- * witden, set up behind the user's own proxy or through the optional Cloudflare Tunnel, and checked before
- * going on.
+ * The public address and the Cloudflare Tunnel as the connection wizards and "系统管理 → 公网地址" both see
+ * them: one platform setting behind the same endpoints, so a change in either place is the same change.
  */
-export function PublicAddressStep({ onNext }: { onNext: (url: string) => void }) {
+export function usePublicAddress({ onSaved }: { onSaved?: () => void } = {}) {
   const [current, setCurrent] = useState<PublicUrl | null>(null);
   const [check, setCheck] = useState<UrlCheck | null>(null);
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
-  const [mode, setMode] = useState<"tunnel" | "proxy">("tunnel");
-  const [changing, setChanging] = useState(false);
+  const [mode, setMode] = useState<Mode>("tunnel");
   const [busy, setBusy] = useState(false);
   // The last address tried and how its check went (shown under the form that tried it).
   const [tried, setTried] = useState<SaveResult | null>(null);
@@ -110,7 +110,8 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
       if (stopped) return;
       setCurrent(cur);
       setTunnel(tun);
-      if (!tun.available) setMode("proxy");
+      // Open on the way the address was set up: one saved while no tunnel token is kept came from a proxy.
+      if (!tun.available || (cur.saved && !tun.token)) setMode("proxy");
       const c = await api.post<UrlCheck>("/api/settings/public-url/check", { url: cur.url });
       if (!stopped) setCheck(c);
     })();
@@ -127,7 +128,7 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
       if (out.saved) {
         setCurrent((c) => (c ? { ...c, url: out.url, saved: out.url } : c));
         setCheck(out.check);
-        setChanging(false);
+        onSaved?.();
       }
       return out;
     } finally {
@@ -135,77 +136,147 @@ export function PublicAddressStep({ onNext }: { onNext: (url: string) => void })
     }
   };
 
+  const recheck = async () => {
+    if (!current) return;
+    const before = check;
+    setTried(null);
+    setCheck(null);
+    try {
+      setCheck(await api.post<UrlCheck>("/api/settings/public-url/check", { url: current.url }));
+    } catch {
+      setCheck(before);
+    }
+  };
+
+  // Forget the saved address: event addresses fall back to WITDEN_PUBLIC_URL, the console's own address.
+  const clear = async () => {
+    setBusy(true);
+    try {
+      const out = await api.put<SaveResult>("/api/settings/public-url", { url: "" });
+      setTried(null);
+      setCurrent((c) => (c ? { ...c, url: out.url, saved: null } : c));
+      setCheck(null);
+      setCheck(await api.post<UrlCheck>("/api/settings/public-url/check", { url: out.url }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickMode = (m: Mode) => {
+    setMode(m);
+    setTried(null);
+  };
+
   // A saved address that failed the check was kept on purpose (forced); it still counts as ready.
   const forced = !!tried?.saved && !!tried.check && !tried.check.ok;
-  const ready = !!current && (check?.ok || forced);
+  const ready = !!current && (!!check?.ok || forced);
 
+  return { current, check, tunnel, setTunnel, mode, pickMode, busy, tried, save, recheck, clear, forced, ready };
+}
+
+export type PublicAddress = ReturnType<typeof usePublicAddress>;
+
+/** What the public address is for and what it has to satisfy. */
+export function PublicAddressIntro() {
   return (
     <>
       <p>
-        Slack 会把消息推送到 witden 的<b>事件地址</b>，即这里的公网地址加上固定路径。控制台不对公网开放：witden
-        有一个单独的<b>事件端口 8325</b>，只接收 Slack、GitHub、飞书推送的事件（另外提供角色头像给 Slack
-        下载），不提供控制台和任何其他接口。公网地址需要满足：
+        Slack、GitHub、飞书会把事件推送到 witden 的<b>事件地址</b>
+        ，即这里的公网地址加上固定路径。控制台不对公网开放：witden 有一个单独的<b>事件端口 8325</b>
+        ，只接收这些平台推送的事件（另外提供 Slack 安装回调和角色头像），不提供控制台和任何其他接口。公网地址需要满足：
       </p>
       <ul className="setup-list">
-        <li>以 https:// 开头，证书有效（Slack 不接受自签名证书）；</li>
+        <li>以 https:// 开头，证书有效（这些平台不接受自签名证书）；</li>
         <li>能从公网访问，并且只转发到 witden 的事件端口，不能转发到控制台端口 8320。</li>
       </ul>
-      <div className="setup-events">
-        当前公网地址 {current ? <code>{current.url}</code> : <span className="muted">读取中…</span>}{" "}
-        {!current || !check ? (
-          <span className="muted small">正在检查…</span>
-        ) : check.ok ? (
-          <>
-            <Tag tone="ok">已通过检查</Tag>
-            {check.publicDns ? <PublicDnsNote address={check.publicDns} /> : null}
-          </>
-        ) : forced ? (
-          <Tag tone="wait">未通过检查，按你的选择继续使用</Tag>
-        ) : (
-          <>
-            <Tag tone="bad">还不能用</Tag> <span className="small">{explain(check)}</span>
-          </>
-        )}
+    </>
+  );
+}
+
+/** The address in use and how its latest check went. */
+export function PublicAddressStatus({ a, actions }: { a: PublicAddress; actions?: ReactNode }) {
+  const { current, check, forced } = a;
+  return (
+    <div className="setup-events">
+      当前公网地址 {current ? <code>{current.url}</code> : <span className="muted">读取中…</span>}{" "}
+      {current && !current.saved ? (
+        <span className="small muted">（还没有设置，暂按 WITDEN_PUBLIC_URL 生成）</span>
+      ) : null}{" "}
+      {!current || !check ? (
+        <span className="muted small">正在检查…</span>
+      ) : check.ok ? (
+        <>
+          <Tag tone="ok">已通过检查</Tag>
+          {check.publicDns ? <PublicDnsNote address={check.publicDns} /> : null}
+        </>
+      ) : forced ? (
+        <Tag tone="wait">未通过检查，按你的选择继续使用</Tag>
+      ) : (
+        <>
+          <Tag tone="bad">还不能用</Tag> <span className="small">{explain(check)}</span>
+        </>
+      )}
+      {actions ? <div className="btn-row setup-status-actions">{actions}</div> : null}
+    </div>
+  );
+}
+
+/** The two ways to get an address: the Cloudflare Tunnel beside witden, or the user's own proxy. */
+export function PublicAddressSetup({ a }: { a: PublicAddress }) {
+  const { current, check, ready, tunnel, setTunnel, mode, pickMode, busy, tried, save } = a;
+  if (!current) return null;
+  return (
+    <>
+      <div className="segmented setup-modes">
+        <button type="button" className={mode === "tunnel" ? "seg seg-on" : "seg"} onClick={() => pickMode("tunnel")}>
+          Cloudflare Tunnel（推荐，无需公网 IP 和证书）
+        </button>
+        <button type="button" className={mode === "proxy" ? "seg seg-on" : "seg"} onClick={() => pickMode("proxy")}>
+          自己的域名和反向代理（nginx、Caddy 等）
+        </button>
       </div>
+      {mode === "tunnel" ? (
+        <TunnelSetup
+          status={tunnel}
+          onStatus={setTunnel}
+          current={current.url}
+          auto={!!check && !ready}
+          tried={tried}
+          busy={busy}
+          onUse={(url) => save(url)}
+        />
+      ) : (
+        <ProxySetup tried={tried} busy={busy} onSave={save} />
+      )}
+    </>
+  );
+}
+
+/**
+ * First step of connecting a platform that pushes events: a public HTTPS address that leads back to this
+ * witden, set up behind the user's own proxy or through the optional Cloudflare Tunnel, and checked before
+ * going on.
+ */
+export function PublicAddressStep({ onNext }: { onNext: (url: string) => void }) {
+  const [changing, setChanging] = useState(false);
+  const a = usePublicAddress({ onSaved: () => setChanging(false) });
+  const { current, ready } = a;
+
+  return (
+    <>
+      <PublicAddressIntro />
+      <PublicAddressStatus a={a} />
       {ready && !changing ? (
         <p className="small muted">
-          witden 已经通过这个地址访问到自己的事件端口，并确认从这个地址打不开控制台；订阅事件时 Slack 还会再验证一次。{" "}
+          witden 已经通过这个地址访问到自己的事件端口，并确认从这个地址打不开控制台；接入时平台还会再验证一次。{" "}
           <button type="button" className="btn btn-xs" onClick={() => setChanging(true)}>
             更换地址
           </button>
         </p>
-      ) : current ? (
-        <>
-          <div className="segmented setup-modes">
-            <button
-              type="button"
-              className={mode === "tunnel" ? "seg seg-on" : "seg"}
-              onClick={() => (setMode("tunnel"), setTried(null))}
-            >
-              Cloudflare Tunnel（推荐，无需公网 IP 和证书）
-            </button>
-            <button
-              type="button"
-              className={mode === "proxy" ? "seg seg-on" : "seg"}
-              onClick={() => (setMode("proxy"), setTried(null))}
-            >
-              自己的域名和反向代理（nginx、Caddy 等）
-            </button>
-          </div>
-          {mode === "tunnel" ? (
-            <TunnelSetup
-              status={tunnel}
-              onStatus={setTunnel}
-              current={current.url}
-              tried={tried}
-              busy={busy}
-              onUse={(url) => save(url)}
-            />
-          ) : (
-            <ProxySetup tried={tried} busy={busy} onSave={save} />
-          )}
-        </>
-      ) : null}
+      ) : (
+        <PublicAddressSetup a={a} />
+      )}
+      <p className="small muted">这里保存的就是“设置 → 系统管理 → 公网地址”中的设置，以后也可以在那里查看和修改。</p>
       <div className="setup-next">
         <button
           type="button"
@@ -339,6 +410,7 @@ function TunnelSetup({
   status,
   onStatus,
   current,
+  auto,
   tried,
   busy,
   onUse,
@@ -346,6 +418,8 @@ function TunnelSetup({
   status: TunnelStatus | null;
   onStatus: (s: TunnelStatus) => void;
   current: string;
+  /** A detected route may be checked and saved without a click: the address in use has not passed its check. */
+  auto: boolean;
   tried: SaveResult | null;
   busy: boolean;
   onUse: (url: string) => Promise<SaveResult>;
@@ -381,13 +455,15 @@ function TunnelSetup({
   const ours = routes.filter((r) => r.service.replace(/\/+$/, "") === origin);
   const candidate = ours[0] ? `https://${ours[0].hostname}` : null;
 
-  // A route to witden appeared: check it and use it, without another click.
+  // A route to witden appeared: check it and use it, without another click. An address that already works is
+  // never replaced this way (the settings page shows this part all the time); a button offers the route instead.
+  const offered = status?.state === "connected" && !!candidate && candidate !== current;
   useEffect(() => {
-    if (status?.state !== "connected" || !candidate || candidate === current) return;
+    if (!auto || !offered || !candidate) return;
     if (attempted.current.has(candidate)) return;
     attempted.current.add(candidate);
     void onUse(candidate);
-  }, [status?.state, candidate, current, onUse]);
+  }, [auto, offered, candidate, onUse]);
 
   const notRunning = !!status?.token && status.state === "not_running";
   useEffect(() => {
@@ -500,7 +576,7 @@ function TunnelSetup({
         <li>
           在这个 tunnel 的 <b>Routes</b> 标签中点击 <b>Add route → Published application</b>：填写子域名（例如
           hooks）并选择域名，<b>Service URL</b> 填 {origin ? <CopyText text={origin} /> : null}，点击 <b>Add route</b>。
-          路由生效后，witden 会自动发现它、检查并保存为公网地址。
+          路由生效后，witden 会自动发现它、检查并保存为公网地址；如果当前已有通过检查的公网地址，则由你确认是否改用。
           {routes.length ? (
             <ul className="plain-list setup-routes">
               {routes.map((r) => (
@@ -521,7 +597,16 @@ function TunnelSetup({
           ) : null}
         </li>
       </ol>
-      {candidate && busy ? <div className="small muted">正在检查 {candidate}…</div> : null}
+      {candidate && busy ? (
+        <div className="small muted">正在检查 {candidate}…</div>
+      ) : offered && candidate && !auto && tried?.check?.url !== candidate ? (
+        <div className="small">
+          这个 tunnel 有指向事件端口的路由 <code>{candidate}</code>，与当前公网地址不同。{" "}
+          <button type="button" className="btn btn-xs" onClick={() => void onUse(candidate)}>
+            检查并改用这个地址
+          </button>
+        </div>
+      ) : null}
       {/* A new DNS record can take a moment: the automatic check may fail once. */}
       <CheckResult tried={tried} busy={busy} onRetry={candidate ? () => void onUse(candidate) : undefined} />
     </>

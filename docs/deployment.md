@@ -106,7 +106,12 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 - 能从公网访问，并且只转发到事件端口；
 - 只包含协议和域名，不带路径。
 
-在控制台中设置这个地址：以“事件地址（HTTP）”方式接入 Slack 时，引导的第一步“准备公网事件地址”。保存后立即生效，不需要重启；没有设置时，事件地址按 `WITDEN_PUBLIC_URL` 生成，只适合各平台能直接访问控制台的内部环境。保存前，witden 会做以下检查：
+在控制台中设置这个地址有两个入口，修改的是同一项设置，效果相同：
+
+- **设置 → 系统管理 → 公网地址**：随时查看当前地址及其检查结果，配置 Cloudflare Tunnel 或填写自己的地址，也可以重新检查或清除已保存的地址。
+- **设置引导中的“准备公网事件地址”**：接入 GitHub、飞书，或以“事件地址（HTTP）”方式接入 Slack 时是引导的第一步，地址通过检查后才能进入下一步；用公网地址把 Slack 应用安装到其他工作区时，安装引导中也有这一部分。
+
+保存后立即生效，不需要重启；没有设置或清除后，事件地址按 `WITDEN_PUBLIC_URL` 生成，只适合各平台能直接访问控制台的内部环境。清除地址不会修改已经填写在 Slack、GitHub、飞书中的事件地址。保存前，witden 会做以下检查：
 
 1. 通过这个地址请求事件端口的检查接口，核对用主密钥派生的签名，确认请求回到的是当前这个部署的事件端口。
 2. 请求这个地址的 `/api/health`，确认从这个地址打不开控制台。
@@ -144,15 +149,17 @@ server {
 }
 ```
 
+配置好反向代理后，在控制台中选择“自己的域名和反向代理”，填写地址（例如 `https://hooks.example.com`）并点击“检查并使用”。
+
 **方式二：Cloudflare Tunnel。** Compose 中的 `tunnel` 服务（镜像 `witden/tunnel`，内含 cloudflared）主动连接 Cloudflare，不需要公网 IP、开放端口或自己管理证书；域名需要托管在 Cloudflare。它随 `docker compose up -d` 一起启动，在填写 token 之前只是等待，不需要修改 `.env` 或在服务器上执行其他命令。
 
 1. 在 Cloudflare 控制台的 **Networking → Tunnels** 中点击 **Create a tunnel**，输入名称后创建；在安装说明中选择 Docker，复制命令中 `--token` 后面的内容（也可以复制整条命令）。不需要运行这条命令。
-2. 在 witden 控制台接入 Slack 的第一步选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务几秒内读取到它并连接 Cloudflare，页面显示连接状态。
-3. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8325`（事件端口，不是控制台的 8320）。witden 从 tunnel 读取到这条路由后，自动检查并保存为公网事件地址；指向 8320 的路由会在页面上标出，并且通不过检查。
+2. 在 witden 控制台的“设置 → 系统管理 → 公网地址”（或设置引导中的“准备公网事件地址”）中选择“Cloudflare Tunnel”，粘贴 token 并保存。witden 把 token 写入数据卷 `witden-tunnel`，`tunnel` 服务几秒内读取到它并连接 Cloudflare，页面显示连接状态。
+3. 在这个 tunnel 的 **Routes** 标签中点击 **Add route → Published application**，填写子域名并选择域名，**Service URL** 填 `http://api:8325`（事件端口，不是控制台的 8320）。witden 从 tunnel 读取到这条路由后自动检查：当前还没有通过检查的公网事件地址时，检查通过即保存；已经有通过检查的地址时，不会自动替换，页面显示“检查并改用这个地址”，由你决定是否改用。指向 8320 的路由会在页面上标出，并且通不过检查。
 
 在控制台中更换 token 后，`tunnel` 服务会自动用新 token 重新连接；点击“停用 tunnel”会删除 token 并断开连接。之后可以在 Cloudflare 中删除这个 tunnel。完全不需要这个服务时，可以执行 `docker compose rm -sf tunnel`，或在 `docker-compose.yml` 中删除它。
 
-单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8325`），再在控制台中填写并检查地址。
+单进程部署可以自行运行 cloudflared（`cloudflared tunnel run --token <token>`，路由指向 `http://localhost:8325`），再在控制台中选择“自己的域名和反向代理”，填写并检查地址。
 
 ## 3. 首次配置
 
