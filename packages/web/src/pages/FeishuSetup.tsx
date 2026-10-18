@@ -34,12 +34,27 @@ const flowOf = (mode: Mode, switching: boolean) => FLOW[mode].filter((k) => !swi
 type StepNumber = (k: StepKey) => number;
 
 /** The permissions witden's Feishu adapter uses: [scope, name in the Feishu console, what for]. */
-const SCOPES: [string, string, string][] = [
-  ["im:message.group_at_msg:readonly", "接收群聊中@机器人消息事件", "收到群里 @ 机器人的消息"],
-  ["im:message.p2p_msg:readonly", "读取用户发给机器人的单聊消息", "收到发给机器人的私聊消息"],
-  ["im:message:send_as_bot", "以应用的身份发消息", "发送角色的回复"],
-  ["im:chat:readonly", "获取群组信息", "读取群成员，判断回复会被谁看到"],
+/**
+ * The permissions witden asks for: [scope, name in the Feishu console, what for, review]. Feishu reviews only
+ * some permissions, and an enterprise's administrator may change which; the console marks them when applying.
+ */
+const SCOPES: [string, string, string, string][] = [
+  ["im:message.group_at_msg:readonly", "接收群聊中@机器人消息事件", "收到群里 @ 机器人的消息", "一般免审"],
+  ["im:message.p2p_msg:readonly", "读取用户发给机器人的单聊消息", "收到发给机器人的私聊消息", "一般免审"],
+  ["im:message:send_as_bot", "以应用的身份发消息", "发送角色的回复", "一般免审"],
+  ["im:chat:readonly", "获取群组信息", "读取群名和群成员（包括名字），判断回复会被谁看到", "一般免审"],
+  ["contact:contact.base:readonly", "获取通讯录基本信息", "私聊中显示对方的名字（与下一项一起）", "一般免审"],
+  ["contact:user.base:readonly", "获取用户基本信息", "私聊中显示对方的名字（与上一项一起）", "一般免审"],
+  [
+    "im:message.group_msg",
+    "获取群组中所有消息",
+    "群里没有 @ 机器人的消息也记入话题，但不交给角色",
+    "敏感权限，需要企业管理员审核",
+  ],
 ];
+
+/** Pasted into 权限管理 → 批量导入/导出, it applies for all of them at once. */
+const SCOPES_JSON = JSON.stringify({ scopes: { tenant: SCOPES.map(([s]) => s), user: [] } }, null, 2);
 
 const CONSOLE = "https://open.feishu.cn/app";
 
@@ -283,35 +298,42 @@ function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: (
           在应用左侧打开 <b>添加应用能力</b>，找到 <b>机器人</b> 并点击 <b>添加</b>。
         </li>
         <li>
-          打开 <b>权限管理</b>，搜索并开通下面 4 项权限（在搜索框中输入权限标识即可找到）：
+          打开 <b>权限管理</b>，点击 <b>批量导入/导出</b>，把下面的内容粘贴到导入框中，点击 <b>申请开通</b>
+          ，一次申请下表的 {SCOPES.length} 项权限（也可以在搜索框中输入权限标识，逐项开通）：
+          <div className="setup-field">
+            <CopyText text={SCOPES_JSON} label="权限列表（JSON）" />
+            <pre className="mono-block">{SCOPES_JSON}</pre>
+          </div>
           <table className="table table-compact setup-table">
+            <thead>
+              <tr>
+                <th>权限</th>
+                <th>名称</th>
+                <th>用途</th>
+                <th>审核</th>
+              </tr>
+            </thead>
             <tbody>
-              {SCOPES.map(([scope, name, why]) => (
+              {SCOPES.map(([scope, name, why, review]) => (
                 <tr key={scope}>
                   <td>
                     <code>{scope}</code>
                   </td>
                   <td>{name}</td>
                   <td className="muted">{why}</td>
+                  <td className={review.startsWith("敏感") ? "text-wait" : "muted"}>{review}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <details className="setup-more">
-            <summary>可选权限</summary>
-            <ul className="setup-list">
-              <li>
-                私聊中显示对方的名字：开通 <code>contact:contact.base:readonly</code>（获取通讯录基本信息）和{" "}
-                <code>contact:user.base:readonly</code>（获取用户基本信息），并在 <b>权限管理 → 数据权限</b>{" "}
-                中把通讯录权限范围设为使用机器人的成员。群聊中的名字从群成员列表读取，不需要这两项。
-              </li>
-              <li>
-                记录群里的所有消息：开通 <code>im:message.group_msg</code>
-                （获取群组中所有消息，需要企业管理员审核）。没有 @
-                机器人的消息也会记入话题，但不交给角色；不开通时只记录 @ 机器人的消息。
-              </li>
-            </ul>
-          </details>
+          <p className="small muted">
+            飞书的权限分为免审和需要审核两类，企业管理员可以调整，以申请时页面上的标注为准。版本中有需要审核的权限时，整个版本要等企业管理员在飞书管理后台通过后才生效。不想等审核，可以先删掉“获取群组中所有消息”，以后再申请并发布新版本；在那之前群话题中只记录
+            @ 机器人的消息。
+          </p>
+        </li>
+        <li>
+          在 <b>权限管理 → 数据权限</b> 中，把 <b>通讯录权限范围</b> 设为会使用机器人的成员（例如全部成员）。witden
+          只读取人的名字；不设置时私聊中显示对方的 ID，群聊中的名字不受影响（从群成员列表读取）。
         </li>
         {mode === "http" ? (
           <li>
@@ -324,7 +346,7 @@ function AppStep({ mode, num, onNext }: { mode: Mode; num: StepNumber; onNext: (
         {mode === "socket"
           ? `先不要配置事件订阅：飞书要等 witden 用长连接连上之后，才允许把订阅方式保存为长连接，放在第 ${num("events")} 步。`
           : `先不要配置事件订阅：请求地址要等 witden 保存了 Verification Token 后才能通过飞书的验证，放在第 ${num("events")} 步。`}
-        开通的权限要在发布版本后才生效（第 {num("publish")} 步）。
+        开通的权限和数据权限要在发布版本后才生效（第 {num("publish")} 步）。
       </div>
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
@@ -664,7 +686,8 @@ function PublishStep({
           填写版本号（例如 1.0.0）和更新说明；在 <b>可用范围</b> 中选择能使用这个机器人的成员或部门。
         </li>
         <li>
-          点击 <b>保存</b>，再点击 <b>申请线上发布</b>。如果企业要求审核，等企业管理员在飞书管理后台通过审核。
+          点击 <b>保存</b>，再点击 <b>申请线上发布</b>
+          。版本中有需要审核的权限（例如“获取群组中所有消息”）或企业要求审核时，等企业管理员在飞书管理后台通过，这个版本才生效。
         </li>
         <li>发布后回到这里测试连接：witden 读取机器人的信息。</li>
       </ol>
