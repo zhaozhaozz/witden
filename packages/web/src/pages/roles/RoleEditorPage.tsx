@@ -11,6 +11,7 @@ import type {
   RoleImpact,
   ToolGroup,
 } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
 import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
@@ -210,6 +211,10 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const dirty = !role || changed.length > 0;
   // What would be lost: changes to a role, or anything typed into a new one.
   const unsaved = role ? changed.length > 0 : JSON.stringify(draft) !== JSON.stringify(fresh());
+  // Changed elsewhere (another person, the system administrator role): show it, unless edits here would be lost.
+  useConfigChanged(["roles"], () => {
+    if (role && !unsaved) reload();
+  });
   const selectedModel =
     models.data?.find((m) => m.id === draft.model_config_id) ??
     (role?.model && role.model.id === draft.model_config_id ? role.model : null);

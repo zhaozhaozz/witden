@@ -132,6 +132,21 @@ describe("system administrator role", () => {
     expect(task.status).toBe("completed");
   });
 
+  it("consoles hear what it changed, as they hear what people change", async () => {
+    const seen: any[] = [];
+    const stop = runtime().bus.subscribe((e) => {
+      if (e.type === "config.changed") seen.push({ ...e.data, channels: e.channels });
+    });
+    await runAdmin([
+      call("read_config", { path: "/api/roles" }),
+      call("change_config", { method: "POST", path: "/api/roles", body: { name: "Writer", handle: "writer" } }),
+    ]);
+    await new Promise((r) => setTimeout(r, 100));
+    stop();
+    // reading changes nothing; creating the role tells every console to fetch the roles again
+    expect(seen).toEqual([{ area: "roles", channels: ["config"] }]);
+  });
+
   it("can neither read nor set secrets, nor manage accounts, nor reach beyond the configuration", async () => {
     const results = await runAdmin([
       call("change_config", {

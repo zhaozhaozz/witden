@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { KnowledgeSpace, Memory } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { fmtRelative } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
@@ -11,6 +12,7 @@ import { ResizeHandle } from "../../ui/resize";
 export function KnowledgeTab() {
   const { run, busy } = useAction();
   const spaces = useResource(() => api.get<KnowledgeSpace[]>("/api/knowledge-spaces"), []);
+  useConfigChanged(["knowledge"], spaces.reload);
   const [selected, setSelected] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");

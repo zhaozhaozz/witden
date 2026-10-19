@@ -13,7 +13,7 @@ import { Forbidden, Unauthorized } from "../errors.js";
 import { runtime } from "../runtime.js";
 import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
-import type { BusEvent } from "../services/events.js";
+import { type BusEvent, CONFIG_CHANNEL } from "../services/events.js";
 import { canView } from "../services/topics.js";
 import { resolveToken } from "../services/users.js";
 import { extractToken, query } from "./http.js";
@@ -48,6 +48,8 @@ export async function allowed(userId: string, matched: string[], event: BusEvent
     if (kind === "topic" && !(await topicOk(user, ident))) return false;
     if (kind === "task" && !(await taskOk(user, ident))) return false;
     if (kind === "admin" && !(await adminOk(user))) return false;
+    // Which configuration area changed: for console accounts (external members never sign in).
+    if (kind === CONFIG_CHANNEL && user.externalConnectionId) return false;
   }
   // Step previews can carry whatever the task has read.
   if (event.type === "task.step" && !(await taskOk(user, event.data.task_id))) return false;
@@ -73,7 +75,9 @@ export async function eventRoutes(app: FastifyInstance) {
       channels.add("admin");
     }
     // Inbox: which topics the person can view got new messages (for unread markers); never message content.
+    // The same always-open stream tells the console which configuration area changed.
     const inbox = q.inbox === "true";
+    if (inbox) channels.add(CONFIG_CHANNEL);
     const viewable = new Map<string, { ok: boolean; until: number }>();
     const canViewTopic = async (topicId: string) => {
       const hit = viewable.get(topicId);

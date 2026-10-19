@@ -69,4 +69,26 @@ describe("inbox stream", () => {
     expect(topics.find((t: any) => t.id === dm.id).dm_role_id).toBe(w.ids.dev);
     expect(topics.find((t: any) => t.id === w.ids.topic).dm_role_id).toBeUndefined();
   });
+
+  it("tells every console which configuration area changed, so lists refresh without a reload", async () => {
+    const bob = listen(w.bob);
+    await bob.ready;
+    await new Promise((r) => setTimeout(r, 100));
+    const made = await w.api("POST", "/api/roles", {
+      token: w.alice,
+      json: { name: "Writer", handle: "writer", model_config_id: w.ids.model },
+    });
+    expect(made.status, made.raw).toBe(200);
+    // a refused change announces nothing
+    expect((await w.api("POST", "/api/roles", { token: w.alice, json: { name: "", handle: "" } })).status).toBe(400);
+    await w.api("POST", "/api/knowledge-spaces", { token: w.adminToken, json: { name: "handbook" } });
+    await w.waitFor(async () => bob.events.filter((e) => e.type === "config.changed").length >= 2);
+    await new Promise((r) => setTimeout(r, 200));
+    bob.stop();
+    // only the area travels; the console fetches the rest itself
+    expect(bob.events.filter((e) => e.type === "config.changed").map((e) => e.data)).toEqual([
+      { area: "roles" },
+      { area: "knowledge" },
+    ]);
+  });
 });

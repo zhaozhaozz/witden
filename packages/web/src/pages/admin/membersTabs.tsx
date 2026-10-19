@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { User } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { fmtRelative } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -14,6 +15,7 @@ export function MembersTab() {
   const { confirm } = useFeedback();
   const { run } = useAction();
   const res = useResource(() => api.get<User[]>("/api/users"), []);
+  useConfigChanged(["users"], res.reload);
   const [editing, setEditing] = useState<User | "new" | null>(null);
 
   return (

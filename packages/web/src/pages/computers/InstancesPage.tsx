@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
 import type { Instance, Template } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
@@ -35,6 +36,7 @@ export default function InstancesPage() {
   const [creating, setCreating] = useState(false);
   const res = useResource(() => api.get<Instance[]>("/api/instances"), []);
   const templates = useResource(() => api.get<Template[]>("/api/templates"), []);
+  useConfigChanged(["computers"], () => Promise.all([res.reload(), templates.reload()]));
   const refresh = useDebounced(() => void res.reload(), 500);
   const live = useLiveEvents(can("audit.view") || can("instance.manage") ? { admin: true } : null, (type) => {
     if (type.startsWith("instance.")) refresh();

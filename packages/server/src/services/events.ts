@@ -46,6 +46,28 @@ export async function publish(db: Db, type: string, data: Record<string, any>, .
   await db.execute(sql`select pg_notify(${EVENTS_CHANNEL}, ${encode({ type, data, channels })})`);
 }
 
+/**
+ * Configuration that every console lists (roles, people, models, computers, connections, knowledge, settings)
+ * changed, by a person in another browser or by the system administrator role. Only the area travels — the
+ * consoles fetch what they show again — so every signed-in console account may receive it.
+ */
+export const CONFIG_CHANNEL = "config";
+const CONFIG_AREAS: [RegExp, string][] = [
+  [/^\/api\/roles(\/|$)/, "roles"],
+  [/^\/api\/users(\/|$)/, "users"],
+  [/^\/api\/(model-providers|models)(\/|$)/, "models"],
+  [/^\/api\/(instances|templates)(\/|$)/, "computers"],
+  [/^\/api\/(connections|slack-apps|identities)(\/|$)/, "connections"],
+  [/^\/api\/knowledge-spaces(\/|$)/, "knowledge"],
+  [/^\/api\/settings(\/|$)/, "settings"],
+];
+
+/** Which configuration area a successful change through this route touched, if any. */
+export function configArea(method: string, route: string): string | null {
+  if (!["POST", "PUT", "PATCH", "DELETE"].includes(method)) return null;
+  return CONFIG_AREAS.find(([re]) => re.test(route))?.[1] ?? null;
+}
+
 /** Wake workers (``tasks``) or the outbound sender (``outbound``) after commit. */
 export async function wake(db: Db, what: "tasks" | "outbound"): Promise<void> {
   await db.execute(sql`select pg_notify(${WAKE_CHANNEL}, ${what})`);

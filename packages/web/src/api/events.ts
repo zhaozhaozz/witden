@@ -11,7 +11,8 @@ export type LiveEventType =
   | "instance.operator"
   | "instance.runner"
   | "emergency.stop"
-  | "topic.activity";
+  | "topic.activity"
+  | "config.changed";
 
 const EVENT_TYPES: LiveEventType[] = [
   "message.created",
@@ -24,6 +25,7 @@ const EVENT_TYPES: LiveEventType[] = [
   "instance.runner",
   "emergency.stop",
   "topic.activity",
+  "config.changed",
 ];
 
 export interface StreamScope {

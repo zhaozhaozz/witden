@@ -34,7 +34,7 @@ import { ExecutionGateway, type GatewayClient, HttpGatewayClient } from "./compu
 import { RunnerHub, stdioTransport } from "./compute/hub.js";
 import { handleProxyMessage } from "./compute/model-proxy.js";
 import { type Settings, setSettings } from "./config.js";
-import { openDatabase, setDatabase, transaction } from "./db/client.js";
+import { db as getDb, openDatabase, setDatabase, transaction } from "./db/client.js";
 import { deliverPending } from "./integrations/delivery.js";
 import { feishuSockets } from "./integrations/feishu-socket.js";
 import { processInbound } from "./integrations/inbound.js";
@@ -42,7 +42,7 @@ import { normalizeSlackApps } from "./integrations/slack-apps.js";
 import { slackSockets } from "./integrations/slack-socket.js";
 import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
-import { EventBus } from "./services/events.js";
+import { CONFIG_CHANNEL, configArea, EventBus, publish } from "./services/events.js";
 import { reconcile } from "./services/instances.js";
 import { bootstrapLaya } from "./services/model-configs.js";
 import { proxyConfigFor } from "./services/model-proxy.js";
@@ -100,6 +100,12 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
   await app.register(websocket);
   await app.register(multipart, { limits: { fileSize: 60 * 1024 * 1024 } });
   app.setErrorHandler(sendError);
+  // After a change has been committed, consoles hear which configuration area to fetch again — including
+  // changes the system administrator role makes (it calls these same routes through app.inject).
+  app.addHook("onResponse", async (req, reply) => {
+    const area = reply.statusCode < 300 ? configArea(req.method, req.routeOptions.url ?? "") : null;
+    if (area) await publish(getDb(), "config.changed", { area }, CONFIG_CHANNEL).catch(() => {});
+  });
   app.get("/api/health", async () => ({ ok: true, version: "0.2.0" }));
   for (const routes of [
     authRoutes,

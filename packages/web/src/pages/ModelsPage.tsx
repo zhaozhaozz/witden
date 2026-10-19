@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
+import { useConfigChanged } from "../lib/configEvents";
 import { fmtLatency, fmtNumber, fmtRelative, fmtTokens, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
@@ -58,6 +59,7 @@ type Dialog =
 export default function ModelsPage() {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const res = useResource(() => api.get<ModelProvider[]>("/api/model-providers"), []);
+  useConfigChanged(["models"], res.reload);
   const done = () => {
     setDialog(null);
     void res.reload();

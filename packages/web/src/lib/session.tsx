@@ -1,6 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { api, getToken, setToken, setUnauthorizedHandler } from "../api/client";
 import type { Me, Role, User } from "../api/types";
+import { useConfigChanged } from "./configEvents";
 
 // --- auth ------------------------------------------------------------------------------------------
 
@@ -103,6 +104,8 @@ export function DirectoryProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void reload();
   }, [reload]);
+  // A role or person added or changed elsewhere (e.g. by the system administrator role) appears at once.
+  useConfigChanged(["roles", "users"], reload);
 
   const value = useMemo(() => {
     const userById = new Map(users.map((u) => [u.id, u]));

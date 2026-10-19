@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { Template } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { fmtRelative, linesToList, listToLines } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
@@ -32,6 +33,7 @@ export default function TemplatesPage() {
   const [copying, setCopying] = useState<Template | null>(null);
   const [copyName, setCopyName] = useState("");
   const res = useResource(() => api.get<Template[]>("/api/templates"), []);
+  useConfigChanged(["computers"], res.reload);
 
   return (
     <div className="page">

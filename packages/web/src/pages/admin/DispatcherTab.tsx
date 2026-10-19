@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { ModelConfig } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { fmtLatency, SYSTEM_ONE_HINT } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useUnsavedChanges } from "../../lib/unsaved";
@@ -19,6 +20,7 @@ interface DispatcherSetting {
 export function DispatcherTab() {
   const setting = useResource(() => api.get<DispatcherSetting>("/api/settings/dispatcher"), []);
   const models = useResource(() => api.get<ModelConfig[]>("/api/models"), []);
+  useConfigChanged(["models"], models.reload);
   const { run, busy } = useAction();
   const [picked, setPicked] = useState("");
   useEffect(() => {

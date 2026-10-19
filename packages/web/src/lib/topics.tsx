@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useLiveEvents } from "../api/events";
 import type { Topic } from "../api/types";
 import { NewTopicDialog, OpenDmDialog } from "../pages/topics/topicDialogs";
+import { announceConfigChange } from "./configEvents";
 import { useInterval } from "./hooks";
 
 const SEEN_KEY = "witden.topics.seen";
@@ -85,6 +86,11 @@ export function TopicsProvider({ children }: { children: ReactNode }) {
   useInterval(() => void reload(), 60_000);
 
   useLiveEvents({ inbox: true }, (type, data) => {
+    // Roles, people, models ... changed elsewhere: whatever lists that area fetches it again.
+    if (type === "config.changed") {
+      announceConfigChange(String(data.area));
+      return;
+    }
     if (type !== "topic.activity") return;
     const topicId = String(data.topic_id);
     const at = String(data.at ?? new Date().toISOString());

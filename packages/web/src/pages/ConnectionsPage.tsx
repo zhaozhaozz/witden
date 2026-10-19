@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { Connection, ExternalConversation, OutboundMessage, SlackApp } from "../api/types";
+import { useConfigChanged } from "../lib/configEvents";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
@@ -157,6 +158,7 @@ export default function ConnectionsPage() {
   const res = useResource(() => api.get<Connection[]>("/api/connections"), []);
   const caps = useResource(() => api.get<CapabilityMatrix>("/api/integrations/capabilities"), []);
   const apps = useResource(() => api.get<SlackApp[]>("/api/slack-apps"), []);
+  useConfigChanged(["connections"], () => Promise.all([res.reload(), apps.reload()]));
   const [selected, setSelected] = useState<string | null>(null);
   // A Slack app shown instead of a connection (app ids may equal a connection's: apps made before had theirs).
   const [selectedApp, setSelectedApp] = useState<string | null>(null);

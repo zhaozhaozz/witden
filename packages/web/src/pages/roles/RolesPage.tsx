@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Role } from "../../api/types";
+import { useConfigChanged } from "../../lib/configEvents";
 import { fmtNumber, genericStatus, instanceStatus, permissionLabels } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { Avatar, ComputerBadge, Empty, Handle, Loaded, PageHeader, StatusChip, Tag } from "../../ui/kit";
@@ -9,6 +10,7 @@ import { translateWarning } from "./roleParts";
 export default function RolesPage() {
   const nav = useNavigate();
   const res = useResource(() => api.get<Role[]>("/api/roles"), []);
+  useConfigChanged(["roles"], res.reload);
   return (
     <div className="page">
       <PageHeader
