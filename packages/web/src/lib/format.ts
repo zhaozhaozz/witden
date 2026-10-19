@@ -207,6 +207,8 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   files: "文件",
   desktop: "桌面操作",
   browser: "浏览器",
+  system_software: "系统软件",
+  software_list: "软件清单",
   collaborate: "协作委托",
   memory: "记忆",
   topics: "读取其他话题",
@@ -223,7 +225,7 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
     key: "computer",
     label: "虚拟电脑",
     hint: "在角色自己的虚拟电脑里工作",
-    groups: ["shell", "terminal", "files", "browser", "desktop"],
+    groups: ["shell", "terminal", "files", "browser", "desktop", "system_software", "software_list"],
   },
   { key: "collaborate", label: "协作", hint: "联系其他角色，把工作交给它们", groups: ["collaborate"] },
   { key: "knowledge", label: "资料", hint: "平台上的记忆和知识空间，以及其他话题", groups: ["memory", "topics"] },
@@ -257,6 +259,9 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   files: "读写和整理虚拟电脑里的文件；也可以把虚拟电脑里的文件分享到话题",
   desktop: "查看虚拟电脑的屏幕，操作它的鼠标和键盘",
   browser: "操作虚拟电脑里的浏览器（桌面上可见的或后台的），下载的文件保存在虚拟电脑里",
+  system_software:
+    "请平台在虚拟电脑里安装或卸载系统软件包（apt）。角色自己没有 root 权限，由平台以 root 执行固定的安装命令；镜像自带的软件不能卸载。不在软件清单里的软件，重置虚拟电脑后会消失",
+  software_list: "修改虚拟电脑的软件清单：清单里的软件包在虚拟电脑每次启动时自动安装，重置后也会装回",
   collaborate: "给其他角色发消息、委派任务（受「可以联系的角色」限制），不在虚拟电脑里",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",
   topics:
@@ -336,6 +341,10 @@ export const TOOL_LABEL: Record<string, string> = {
   browser_download: "下载文件到虚拟电脑",
   browser_screenshot: "网页截图",
   browser_close: "关闭浏览器",
+  install_packages: "安装系统软件",
+  uninstall_packages: "卸载系统软件",
+  software_list: "查看软件清单",
+  edit_software_list: "修改软件清单",
   message_role: "联系其他角色",
   delegate_task: "委派任务",
   start_task: "拆出独立任务",
@@ -417,6 +426,8 @@ const AUDIT_LABEL: Record<string, string> = {
   "instance.takeover": "接管虚拟电脑",
   "instance.handback": "交还虚拟电脑",
   "instance.vnc": "打开实时画面",
+  "instance.software_list": "修改软件清单",
+  "instance.software_install": "按软件清单安装",
   "runner.rejected": "拒绝 Runner 连接",
 };
 

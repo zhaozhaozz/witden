@@ -14,6 +14,7 @@ export type LiveEventType =
   | "instance.status"
   | "instance.operator"
   | "instance.runner"
+  | "instance.software"
   | "emergency.stop"
   | "topic.activity"
   | "config.changed";
@@ -28,6 +29,7 @@ const EVENT_TYPES: LiveEventType[] = [
   "instance.status",
   "instance.operator",
   "instance.runner",
+  "instance.software",
   "emergency.stop",
   "topic.activity",
   "config.changed",

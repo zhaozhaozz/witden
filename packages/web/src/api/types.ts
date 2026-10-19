@@ -321,12 +321,10 @@ export interface Template {
   env: Record<string, string>;
   persistent_paths: string[];
   credential_paths: string[];
-  /** What the image contains, for people to read; nothing is installed from it. */
+  /** Debian packages a new computer's software list starts with (installed whenever it starts). */
   software: string[];
   default_resources: Resources;
   cap_add: string[];
-  /** Passwordless `sudo apt-get` in the computer (privilege escalation allowed; root inside). */
-  sudo_apt: boolean;
   runtime: string | null;
   desktop: Dict | null;
   archived: boolean;
@@ -334,6 +332,15 @@ export interface Template {
   created_at: string;
   updated_at: string;
   instance_count: number;
+}
+
+/** The latest automatic install of a computer's software list. */
+export interface SoftwareStatus {
+  state: "installing" | "ok" | "failed";
+  packages: string[];
+  missing?: string[];
+  error?: string;
+  at: string;
 }
 
 export interface Resources {
@@ -394,6 +401,9 @@ export interface Instance {
   runner_info: RunnerInfo | null;
   runner: RunnerStatus;
   last_started_at: string | null;
+  /** This computer's software list: Debian packages installed (when missing) whenever it starts. */
+  software: string[];
+  software_status: SoftwareStatus | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;

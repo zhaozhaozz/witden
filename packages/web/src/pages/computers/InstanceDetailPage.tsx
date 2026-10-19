@@ -41,6 +41,7 @@ import {
   toDraft,
 } from "./computerParts";
 import { ModelAccessTab } from "./ModelAccessTab";
+import { SoftwareTab } from "./SoftwareTab";
 
 type Lifecycle = "start" | "stop" | "restart" | "reset" | "delete";
 
@@ -118,6 +119,7 @@ export default function InstanceDetailPage() {
                   { key: "screen", label: "屏幕", hidden: !desktop },
                   { key: "console", label: "控制台", hidden: !can("instance.control") },
                   { key: "sessions", label: "会话" },
+                  { key: "software", label: "软件" },
                   { key: "models", label: "模型访问" },
                   { key: "backups", label: "备份与复制", hidden: !can("instance.manage") },
                   { key: "tasks", label: "任务", badge: inst.active_tasks?.length },
@@ -129,6 +131,7 @@ export default function InstanceDetailPage() {
               {tab === "screen" && desktop ? <ScreenTab inst={inst} reload={() => void res.reload()} /> : null}
               {tab === "console" ? <OperatorConsole inst={inst} /> : null}
               {tab === "sessions" ? <SessionsTab inst={inst} /> : null}
+              {tab === "software" ? <SoftwareTab inst={inst} onChanged={(i) => res.setData(i)} /> : null}
               {tab === "models" ? <ModelAccessTab inst={inst} /> : null}
               {tab === "backups" ? <BackupsTab inst={inst} reload={() => void res.reload()} /> : null}
               {tab === "tasks" ? <TasksTab inst={inst} /> : null}
@@ -144,7 +147,7 @@ export default function InstanceDetailPage() {
 const PREVIEW_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   [
     /^software installed or files changed outside persistent paths/,
-    () => "持久化目录之外安装的软件和改动的文件（容器层）",
+    () => "持久化目录之外安装的软件和改动的文件（容器层）；软件清单中的软件会在启动后重新安装",
   ],
   [
     /^running processes, terminal and browser sessions, desktop state$/,
