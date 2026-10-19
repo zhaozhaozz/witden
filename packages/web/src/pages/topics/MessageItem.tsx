@@ -245,14 +245,8 @@ export function MessageItem({
           <MessageText content={msg.content} mentions={mentionTokens} />
         )}
         {msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
-        <div className="msg-foot">
-          {msg.edited_at ? <span className="small muted">已编辑</span> : null}
-          {msg.task_id ? (
-            <Link to={`/tasks/${msg.task_id}`} className="small">
-              来自任务
-            </Link>
-          ) : null}
-        </div>
+        {/* How a reply came about is in the conversation's runs (the topic's work panel), not under each message. */}
+        <div className="msg-foot">{msg.edited_at ? <span className="small muted">已编辑</span> : null}</div>
       </div>
       {!msg.deleted && (canEdit || canDelete) ? (
         <div className="msg-actions">

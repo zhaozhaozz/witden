@@ -110,12 +110,14 @@ export async function taskRoutes(app: FastifyInstance) {
       if (q.role_id) conds.push(eq(tasks.ownerRoleId, q.role_id));
       // "task": independent tasks only; "conversation": runs of the roles' conversations.
       if (q.kind) conds.push(eq(tasks.kind, q.kind));
+      // The runs of one conversation (agent session), newest first: its history in the topic's work panel.
+      if (q.session_id) conds.push(eq(tasks.sessionId, q.session_id));
       if (q.mine === "true") conds.push(eq(tasks.requesterUserId, user.id));
       const rows = await db
         .select()
         .from(tasks)
         .where(conds.length ? and(...conds) : undefined)
-        .orderBy(desc(tasks.updatedAt))
+        .orderBy(q.session_id ? desc(tasks.createdAt) : desc(tasks.updatedAt))
         .limit(Math.min(Number(q.limit ?? 200), 1000));
       const out = [];
       for (const t of rows) if (await canViewTask(db, user, t)) out.push(await taskOut(db, t, { viewer: user }));

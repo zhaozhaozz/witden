@@ -1,12 +1,61 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { AgentSession } from "../api/types";
+import type { AgentSession, Task } from "../api/types";
 import { fmtDateTime, fmtRelative, fmtTokens } from "../lib/format";
+import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useAction, useFeedback } from "../ui/feedback";
-import { Empty, RoleBadge, Tag } from "../ui/kit";
+import { Empty, Guarded, Loaded, RoleBadge, Tag } from "../ui/kit";
 import { TaskStatusChip } from "./tasks/taskParts";
+
+const RUNS_SHOWN = 10;
+
+/**
+ * The runs of one conversation, newest first. Each run began with a message (its title) and links to its
+ * execution record: what the role read, the tools it called and their results.
+ */
+export function SessionRuns({ session: s }: { session: AgentSession }) {
+  const [limit, setLimit] = useState(RUNS_SHOWN);
+  const res = useResource(
+    () => api.get<Task[]>("/api/tasks", { session_id: s.id, kind: "conversation", limit }),
+    // A run that starts or ends shows at once.
+    [s.id, limit, s.runs, s.open_run?.id, s.open_run?.status],
+  );
+  return (
+    <Loaded res={res}>
+      {(runs) =>
+        runs.length ? (
+          <>
+            <ol className="run-list">
+              {runs.map((t) => (
+                <li key={t.id}>
+                  <Link to={`/tasks/${t.id}`} className="run-item" title="查看这一轮的执行记录">
+                    <span className="run-title">
+                      <Guarded text={t.title} />
+                    </span>
+                    <span className="run-meta small muted">
+                      {t.requester ? <span>{t.requester.name}</span> : null}
+                      <span title={fmtDateTime(t.created_at)}>{fmtRelative(t.created_at)}</span>
+                      {t.status !== "completed" ? <TaskStatusChip status={t.status} compact /> : null}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ol>
+            {runs.length >= limit ? (
+              <button type="button" className="link-btn" onClick={() => setLimit(limit + 20)}>
+                显示更早的
+              </button>
+            ) : null}
+          </>
+        ) : (
+          <p className="small muted">还没有执行记录。</p>
+        )
+      }
+    </Loaded>
+  );
+}
 
 /**
  * Agent sessions: a role's conversation in one topic, one per role × topic, so a role working in several

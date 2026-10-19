@@ -25,6 +25,7 @@ import {
 } from "../../ui/kit";
 import { ApprovalCard } from "../approvalParts";
 import { MemoryList } from "../memoryParts";
+import { SessionRuns } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { TriggersTab } from "./TriggersTab";
@@ -152,6 +153,14 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
   const dir = useDirectory();
   const { confirm } = useFeedback();
   const { run, busy } = useAction();
+  // Conversations opened to show their runs.
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const reset = async (s: AgentSession) => {
     const name = s.role ? `@${s.role.handle}` : "角色";
     const ok = await confirm({
@@ -178,22 +187,48 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
             <ul className="task-cards">
               {rows.map((s) => {
                 const role = s.role ? { ...s.role, ...(dir.roleById.get(s.role.id) ?? {}) } : null;
+                const isOpen = open.has(s.id);
                 return (
                   <li key={s.id} className="task-card">
-                    <div className="task-card-head">
-                      {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的角色</span>}
-                      {s.open_run ? <TaskStatusChip status={s.open_run.status} compact /> : <Tag tone="off">空闲</Tag>}
-                    </div>
-                    <div
-                      className="small muted"
-                      title="上下文：角色在这里的对话目前占用的大小；达到整理点时，它会把前面的内容压缩成摘要。"
+                    {/* The whole head opens the conversation's runs, each linking to its execution record. */}
+                    <button
+                      type="button"
+                      className="session-toggle"
+                      aria-expanded={isOpen}
+                      title={isOpen ? "收起执行记录" : "查看每一轮的执行记录"}
+                      onClick={() => toggle(s.id)}
                     >
-                      上下文 {fmtTokens(s.context_tokens)}
-                      {s.compact_at ? ` / ${fmtTokens(s.compact_at)} 时整理` : ""}
-                      {s.compactions ? ` · 已整理 ${s.compactions} 次` : ""}
-                      {s.waiting ? ` · ${s.waiting} 条待读` : ""}
-                      {s.next_follow_up_at ? ` · ${fmtRelative(s.next_follow_up_at)}跟进` : ""}
-                    </div>
+                      <span className="task-card-head">
+                        <span className="session-who">
+                          <svg className="session-chevron" width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+                            <path
+                              d="M2 3.5 5 6.5 8 3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                            />
+                          </svg>
+                          {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的角色</span>}
+                          <span className="small muted">{s.runs} 轮</span>
+                        </span>
+                        {s.open_run ? (
+                          <TaskStatusChip status={s.open_run.status} compact />
+                        ) : (
+                          <Tag tone="off">空闲</Tag>
+                        )}
+                      </span>
+                      <span
+                        className="small muted"
+                        title="上下文：角色在这里的对话目前占用的大小；达到整理点时，它会把前面的内容压缩成摘要。"
+                      >
+                        上下文 {fmtTokens(s.context_tokens)}
+                        {s.compact_at ? ` / ${fmtTokens(s.compact_at)} 时整理` : ""}
+                        {s.compactions ? ` · 已整理 ${s.compactions} 次` : ""}
+                        {s.waiting ? ` · ${s.waiting} 条待读` : ""}
+                        {s.next_follow_up_at ? ` · ${fmtRelative(s.next_follow_up_at)}跟进` : ""}
+                      </span>
+                    </button>
                     <div className="btn-row">
                       {s.open_run ? (
                         <Link to={`/tasks/${s.open_run.id}`} className="btn btn-xs">
@@ -216,6 +251,7 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
                         onChanged={() => void res.reload()}
                       />
                     ) : null}
+                    {isOpen ? <SessionRuns session={s} /> : null}
                   </li>
                 );
               })}

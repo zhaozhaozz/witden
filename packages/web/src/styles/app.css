@@ -2939,6 +2939,71 @@ img.avatar-role.avatar-colored {
   color: var(--ink);
   overflow-wrap: anywhere;
 }
+/* A conversation in a topic's work panel: its head opens the list of its runs. */
+.session-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.session-who {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.session-chevron {
+  flex: none;
+  color: var(--ink-3);
+  transition: transform 0.15s;
+}
+.session-toggle[aria-expanded="false"] .session-chevron {
+  transform: rotate(-90deg);
+}
+.session-toggle:hover .session-chevron {
+  color: var(--ink);
+}
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+.run-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 6px;
+  border-radius: var(--radius);
+  color: var(--ink);
+}
+.run-item:hover {
+  background: rgba(23, 33, 43, 0.05);
+  text-decoration: none;
+}
+.run-title {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
 .task-card-meta {
   display: flex;
   flex-wrap: wrap;

@@ -278,6 +278,24 @@ describe("one conversation per role and topic", () => {
     const all = (await w.api("GET", `/api/tasks?topic_id=${w.ids.topic}`, { token: w.alice })).body;
     expect(all.filter((t: any) => t.kind === "conversation").length).toBeGreaterThan(0);
   });
+
+  it("lists the runs of one conversation, newest first, each with the message that started it", async () => {
+    w.scripts.dev = () => reply("ok");
+    for (const text of ["@dev first", "@dev second", "@dev third"]) {
+      await w.post(w.alice, w.ids.topic, text);
+      await w.drain();
+    }
+    const session = await sessionOf(w.ids.dev, w.ids.topic);
+    const list = async (q: string) =>
+      (await w.api("GET", `/api/tasks?session_id=${session.id}&kind=conversation${q}`, { token: w.alice })).body;
+    const runs = await list("");
+    expect(runs.map((t: any) => t.title)).toEqual(["@dev third", "@dev second", "@dev first"]);
+    expect(runs.every((t: any) => t.session_id === session.id && t.status === "completed")).toBe(true);
+    expect((await list("&limit=2")).map((t: any) => t.title)).toEqual(["@dev third", "@dev second"]);
+    // another role's conversation here is not part of it
+    const other = (await w.api("GET", "/api/tasks?session_id=nope", { token: w.alice })).body;
+    expect(other).toEqual([]);
+  });
 });
 
 describe("work a conversation hands out", () => {
