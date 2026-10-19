@@ -37,7 +37,7 @@ async function setStatus(id: string, status: SoftwareStatus | null): Promise<voi
 /** Install what is missing from the computer's software list (after every start, or when a person asks). */
 export async function installSoftwareList(id: string): Promise<SoftwareStatus | null> {
   const [inst] = await getDb().select().from(computerInstances).where(eq(computerInstances.id, id)).limit(1);
-  if (!inst || inst.status !== "running" || !inst.containerId) return null;
+  if (inst?.status !== "running" || !inst.containerId) return null;
   const packages = [...inst.software];
   if (!packages.length) {
     if (inst.softwareStatus) await setStatus(id, null);
