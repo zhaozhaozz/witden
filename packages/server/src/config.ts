@@ -31,6 +31,8 @@ export interface Settings {
   /** A Laya decision server (e.g. the optional "laya" compose service) to add as a System 1 model on start. */
   layaUrl: string | null;
   layaApiKey: string | null;
+  /** Where the model catalog (services/model-catalog.ts) is fetched from; null ("off") = never fetched. */
+  modelCatalogUrl: string | null;
   /** Remote Docker Manager; empty = run the manager in-process (single-host deployments). */
   managerUrl: string | null;
   managerToken: string | null;
@@ -72,6 +74,10 @@ const list = (key: string, def: string[]): string[] => {
         .filter(Boolean);
 };
 
+/** models.dev unless set; "off" turns fetching off (offline deployments). */
+const catalogUrl = (v: string | undefined): string | null =>
+  v === undefined ? "https://models.dev/api.json" : v.toLowerCase() === "off" ? null : v;
+
 export function loadSettings(overrides: Partial<Settings> = {}): Settings {
   const dataDir = path.resolve(overrides.dataDir ?? env("DATA_DIR") ?? "./data");
   const port = overrides.port ?? int("PORT", 8320);
@@ -94,6 +100,7 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     modelProxyPort: int("MODEL_PROXY_PORT", 8686),
     layaUrl: env("LAYA_URL") ?? null,
     layaApiKey: env("LAYA_API_KEY") ?? null,
+    modelCatalogUrl: catalogUrl(env("MODEL_CATALOG_URL")),
     managerUrl: env("MANAGER_URL") ?? null,
     managerToken: env("MANAGER_TOKEN") ?? null,
     internalToken: env("INTERNAL_TOKEN") ?? null,

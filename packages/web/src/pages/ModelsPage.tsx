@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
-import type { ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
+import type { CatalogStatus, ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
 import { useConfigChanged } from "../lib/configEvents";
 import { fmtLatency, fmtNumber, fmtRelative, fmtTokens, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
@@ -31,13 +31,27 @@ import {
   serviceReady,
 } from "./modelParts";
 
-/** Where a model's context window came from (shown on hover, and as the default in the editor). */
-const CONTEXT_SOURCE: Record<string, string> = {
-  model: "在这里设置的值",
-  provider: "服务商报告的值",
-  family: "已知模型的推荐值",
-  default: "未知模型的保守默认值",
-};
+/** Where a model's context window came from: a short label and the full explanation (on hover, in the editor). */
+function contextSource(m: ModelConfig): { short: string; long: string } {
+  const c = m.catalog;
+  switch (m.context?.source) {
+    case "model":
+      return { short: "手动设置", long: "在这里设置的值" };
+    case "provider":
+      return { short: "服务商报告", long: "服务商的模型列表报告的值" };
+    case "catalog":
+      if (!c) break;
+      if (c.basis === "official")
+        return { short: `models.dev · ${c.provider_name} 官方`, long: `models.dev 中 ${c.provider_name} 官方的数据` };
+      if (c.basis === "third_party")
+        return {
+          short: `models.dev · ${c.provider_name}`,
+          long: `models.dev 中 ${c.provider_name} 的数据（这个服务商就是这家第三方）`,
+        };
+      return { short: "models.dev · 多家服务商", long: "models.dev 中多数服务商列出的值（没有官方数据）" };
+  }
+  return { short: "默认值", long: "未知模型的保守默认值" };
+}
 
 const PROTOCOL_LABEL: Record<ModelProtocol, string> = {
   openai: "OpenAI 兼容协议",
@@ -80,6 +94,7 @@ export default function ModelsPage() {
           </button>
         }
       />
+      <CatalogBar onRefreshed={() => void res.reload()} />
       <Loaded res={res}>
         {(providers) =>
           providers.length ? (
@@ -123,6 +138,55 @@ export default function ModelsPage() {
         <ModelEditor model={dialog.model} systemOne={dialog.systemOne} onClose={() => setDialog(null)} onSaved={done} />
       ) : null}
     </div>
+  );
+}
+
+/** The model catalog (models.dev): where models' context windows and effort levels come from, and refreshing it. */
+function CatalogBar({ onRefreshed }: { onRefreshed: () => void }) {
+  const res = useResource(() => api.get<CatalogStatus>("/api/model-catalog"), []);
+  useConfigChanged(["models"], res.reload);
+  const { run, busy } = useAction();
+  const s = res.data;
+  if (!s) return null;
+  const refresh = () =>
+    run(async () => {
+      const out = await api.post<CatalogStatus & { matched: number; total: number }>("/api/model-catalog/refresh");
+      await res.reload();
+      onRefreshed();
+      return out;
+    }, "模型资料已更新");
+  return (
+    <section className="section catalog-bar">
+      <div>
+        <h2 className="catalog-title">模型资料</h2>
+        <p className="small muted">
+          上下文长度和思考程度取自{" "}
+          <a href="https://models.dev" target="_blank" rel="noreferrer">
+            models.dev
+          </a>
+          ：优先用模型官方的数据；服务商本身是 models.dev 收录的第三方（如
+          OpenRouter）时，用这家第三方的数据。服务商自己报告的值和在模型上填写的值优先。
+        </p>
+        <p className="small">
+          {s.fetched_at ? (
+            <>
+              {fmtRelative(s.fetched_at)}更新：{fmtNumber(s.providers)} 家服务商、{fmtNumber(s.models)} 个模型
+            </>
+          ) : (
+            <span className="muted">还没有获取，models.dev 也没有的模型按 64K 上下文处理</span>
+          )}
+        </p>
+      </div>
+      {s.url ? (
+        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => void refresh()}>
+          {busy ? "正在更新…" : "更新模型资料"}
+        </button>
+      ) : (
+        <span className="small muted" title="WITDEN_MODEL_CATALOG_URL=off">
+          这个部署关闭了获取模型资料
+        </span>
+      )}
+    </section>
   );
 }
 
@@ -322,13 +386,14 @@ function ModelRow({
           <div className="small muted">响应 {fmtLatency(caps.latency_ms)}</div>
         ) : null}
         {m.effort && m.effort.source !== "common" ? (
-          <div className="small muted" title={m.effort.source === "service" ? "模型服务报告" : "witden 已知的模型"}>
+          <div className="small muted" title={m.effort.source === "service" ? "模型服务报告" : "来自 models.dev"}>
             {m.effort.levels.length ? `思考程度：${m.effort.levels.join(" · ")}` : "没有思考程度设置"}
           </div>
         ) : null}
         {m.context ? (
-          <div className="small muted" title={CONTEXT_SOURCE[m.context.source]}>
-            上下文 {fmtTokens(m.context.window)} · {fmtTokens(m.context.compact_at)} 时整理对话
+          <div className="small muted" title={`上下文长度：${contextSource(m).long}`}>
+            上下文 {fmtTokens(m.context.window)} · {fmtTokens(m.context.compact_at)} 时整理对话（
+            {contextSource(m).short}）
           </div>
         ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
@@ -559,8 +624,8 @@ function ModelEditor({
             label="上下文长度（tokens）"
             hint={
               effective && !model.context_window
-                ? `留空按${CONTEXT_SOURCE[effective.source]}：${fmtNumber(effective.window)}`
-                : "留空按服务商报告或已知模型的推荐值"
+                ? `留空按${contextSource(model).long}：${fmtNumber(effective.window)}`
+                : "留空按服务商报告或 models.dev 的资料"
             }
           >
             <input

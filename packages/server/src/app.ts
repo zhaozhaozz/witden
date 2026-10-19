@@ -45,6 +45,7 @@ import { Runtime, setRuntime } from "./runtime.js";
 import { initSecretBox } from "./security/crypto.js";
 import { CONFIG_CHANNEL, configArea, EventBus, publish } from "./services/events.js";
 import { reconcile } from "./services/instances.js";
+import { catalogStatus, refreshCatalog } from "./services/model-catalog.js";
 import { bootstrapLaya } from "./services/model-configs.js";
 import { proxyConfigFor } from "./services/model-proxy.js";
 import { ensureSystemAdmin } from "./services/system-admin.js";
@@ -207,6 +208,14 @@ export async function start(opts: StartOptions): Promise<Witden> {
     };
     sweepTriggers();
     timers.push(setInterval(sweepTriggers, 5_000));
+    // The model catalog, fetched once while there is none; administrators refresh it on the models page.
+    const catalogUrl = settings.modelCatalogUrl;
+    if (catalogUrl)
+      rt.background("model-catalog.first", async () => {
+        if ((await catalogStatus(getDb(), catalogUrl)).fetched_at) return;
+        await refreshCatalog(catalogUrl, null);
+        await publish(getDb(), "config.changed", { area: "models" }, CONFIG_CHANNEL);
+      });
   }
   let worker: Worker | null = null;
   if (settings.processRole !== "api" && opts.startWorker !== false) {

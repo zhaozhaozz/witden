@@ -14,6 +14,6 @@ export const EFFORT_LABEL: Record<string, string> = {
 export interface EffortChoices {
   levels: string[];
   default: string | null;
-  /** service: reported by the model's service; known: witden's table of known models; common: the usual levels. */
-  source: "service" | "known" | "common";
+  /** service: reported by the model's service; catalog: the model catalog (models.dev); common: the usual levels. */
+  source: "service" | "catalog" | "common";
 }

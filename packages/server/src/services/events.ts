@@ -69,7 +69,7 @@ export const CONFIG_CHANNEL = "config";
 const CONFIG_AREAS: [RegExp, string][] = [
   [/^\/api\/roles(\/|$)/, "roles"],
   [/^\/api\/users(\/|$)/, "users"],
-  [/^\/api\/(model-providers|models)(\/|$)/, "models"],
+  [/^\/api\/(model-providers|models|model-catalog)(\/|$)/, "models"],
   [/^\/api\/(instances|templates)(\/|$)/, "computers"],
   [/^\/api\/(connections|slack-apps|identities)(\/|$)/, "connections"],
   [/^\/api\/knowledge-spaces(\/|$)/, "knowledge"],

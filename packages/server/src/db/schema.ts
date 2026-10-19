@@ -109,10 +109,12 @@ export const modelConfigs = pgTable(
     capabilities: json<Json>("capabilities").notNull().default({}),
     status: text("status").notNull().default("unchecked"), // unchecked | ok | error (capability check)
     dailyTokenLimit: integer("daily_token_limit"),
-    /** Context window in tokens; null = what the provider reports or the recommendation for the model name. */
+    /** Context window in tokens; null = what the provider reports or what the model catalog says. */
     contextWindow: integer("context_window"),
     /** A conversation is compacted when its context reaches this many tokens; null = recommended (3/4 of the window). */
     compactTokens: integer("compact_tokens"),
+    /** This model's entry in the model catalog (services/model-catalog.ts CatalogMatch); null = not listed. */
+    catalog: json<Record<string, any>>("catalog"),
     createdBy: text("created_by"),
     createdAt: created(),
     updatedAt: updated(),
@@ -886,6 +888,21 @@ export const nowSql = sql`now()`;
 export type OutboundMessage = typeof outboundMessages.$inferSelect;
 export type ExternalIdentity = typeof externalIdentities.$inferSelect;
 export type ApiSession = typeof apiSessions.$inferSelect;
+
+/**
+ * Facts about models from a public catalog (models.dev): one row, replaced whole on each refresh. `data` is
+ * the compact form (services/model-catalog.ts CatalogData): providers, their API address, their models' limits
+ * and effort levels.
+ */
+export const modelCatalog = pgTable("model_catalog", {
+  id: text("id").primaryKey(),
+  sourceUrl: text("source_url").notNull(),
+  data: json<Record<string, any>>("data").notNull(),
+  providers: integer("providers").notNull(),
+  models: integer("models").notNull(),
+  fetchedAt: ts("fetched_at").notNull(),
+  fetchedBy: text("fetched_by"),
+});
 
 /** Platform-wide settings edited in the console (e.g. the dispatcher model), keyed by name. */
 export const platformSettings = pgTable("platform_settings", {

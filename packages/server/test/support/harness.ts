@@ -55,6 +55,8 @@ export async function startHarness(overrides: Partial<Settings> = {}): Promise<H
     bootstrapAdminPassword: ADMIN.password,
     processRole: "all",
     instanceWaitSeconds: 300,
+    // Tests never fetch the model catalog from the internet (model-catalog.test.ts serves its own).
+    modelCatalogUrl: null,
     ...overrides,
   });
   const manager = new FakeManager();

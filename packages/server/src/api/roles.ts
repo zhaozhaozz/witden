@@ -71,7 +71,7 @@ async function roleOut(db: Db, role: Role, full: boolean) {
         provider: { id: found.provider.id, name: found.provider.name },
         capabilities: found.model.capabilities,
         status: found.model.status,
-        effort: effortChoices(found.provider.protocol, found.model.model, found.model.capabilities),
+        effort: effortChoices(found.provider.protocol, found.model),
       }
     : null;
   data.warnings = roleWarnings(role, inst, cfg, found?.provider);

@@ -6,8 +6,11 @@
  * - OpenRouter-style gateways: `reasoning.effort`; their model list reports `reasoning.supported_efforts`.
  * - DeepSeek: `reasoning_effort`; its model list reports `effort.supported_levels` and `default_level`.
  * - Other OpenAI-compatible services (OpenAI, vLLM, Ollama, ...): `reasoning_effort`; nothing reported, so the
- *   built-in table of known models (KNOWN_EFFORTS) or else the common levels are offered.
+ *   levels the model catalog lists (services/model-catalog.ts) or else the common levels are offered.
  */
+import type { ModelConfig } from "../db/schema.js";
+import type { CatalogMatch } from "./model-catalog.js";
+
 export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /** What a service reported about a model's effort, kept in the model's capabilities (`capabilities.effort`). */
@@ -56,27 +59,8 @@ export function listedEffort(model: any): EffortInfo | undefined {
   return undefined;
 }
 
-/**
- * Models whose levels are documented but not reported by their service. Matched on the model id (a gateway's
- * "vendor/" prefix ignored); the first match wins. Sources: each provider's model documentation.
- */
-export const KNOWN_EFFORTS: { model: RegExp; levels: string[]; default: string | null }[] = [
-  // OpenAI model pages: GPT-6 Astra and GPT-6.1 Sol take no "none"; GPT-6 Luna does. Sol and Luna default to medium.
-  { model: /^gpt-6-astra\b/, levels: ["low", "medium", "high", "xhigh", "max"], default: null },
-  { model: /^gpt-6\.1-sol\b/, levels: ["low", "medium", "high", "xhigh", "max"], default: "medium" },
-  { model: /^gpt-6-luna\b/, levels: ["none", "low", "medium", "high", "xhigh", "max"], default: "medium" },
-  // DeepSeek thinking mode (its model list reports the same): low, high and max; other levels are mapped.
-  { model: /^deepseek-/, levels: ["low", "high", "max"], default: "high" },
-];
-
-export function knownEffort(modelId: string): EffortInfo | undefined {
-  const id = modelId.toLowerCase().replace(/^.*\//, "");
-  const known = KNOWN_EFFORTS.find((k) => k.model.test(id));
-  return known ? { levels: known.levels, default: known.default, param: "reasoning_effort" } : undefined;
-}
-
-/** Where a model's levels came from: its service, witden's table of known models, or the common levels. */
-export type EffortSource = "service" | "known" | "common";
+/** Where a model's levels came from: its service, the model catalog, or the common levels. */
+export type EffortSource = "service" | "catalog" | "common";
 
 export interface EffortChoices {
   levels: string[];
@@ -85,16 +69,13 @@ export interface EffortChoices {
 }
 
 /** The levels a role may pick for a model (the console shows these; saving a role checks against them). */
-export function effortChoices(
-  protocol: string,
-  modelId: string,
-  capabilities: Record<string, any> | null | undefined,
-): EffortChoices {
-  const reported = capabilities?.effort as EffortInfo | null | undefined;
+export function effortChoices(protocol: string, m: Pick<ModelConfig, "capabilities" | "catalog">): EffortChoices {
+  const reported = m.capabilities?.effort as EffortInfo | null | undefined;
   if (reported && Array.isArray(reported.levels))
     return { levels: reported.levels, default: reported.default, source: "service" };
-  const known = protocol === "anthropic" ? undefined : knownEffort(modelId);
-  if (known) return { levels: known.levels, default: known.default, source: "known" };
+  // The catalog names no default level: the model's own default applies when a role picks none.
+  const listed = (m.catalog as CatalogMatch | null)?.efforts;
+  if (Array.isArray(listed)) return { levels: ordered(listed), default: null, source: "catalog" };
   return { levels: COMMON_EFFORTS[protocol] ?? [], default: null, source: "common" };
 }
 

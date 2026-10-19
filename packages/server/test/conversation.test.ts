@@ -11,7 +11,6 @@ import type { ChatMessage, ToolSchema } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { agentSessions, auditLogs, tasks } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
-import { recommendedWindow } from "../src/services/context-window.js";
 import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -334,17 +333,13 @@ describe("follow-ups", () => {
 });
 
 describe("model context settings", () => {
-  it("recommended by model family, reported by the provider, or set on the model", async () => {
-    expect(recommendedWindow("claude-opus-4-6")).toBe(1_000_000);
-    expect(recommendedWindow("claude-3-5-sonnet-20241022")).toBe(200_000);
-    expect(recommendedWindow("deepseek-chat")).toBe(128_000);
-    expect(recommendedWindow("gpt-4o-mini")).toBe(128_000);
-    expect(recommendedWindow("my-local-model")).toBeNull();
+  // The model catalog's windows: model-catalog.test.ts.
+  it("set on the model, or a conservative default", async () => {
     const model = async () =>
       (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body
         .flatMap((p: any) => p.models)
         .find((m: any) => m.id === w.ids.model);
-    // "x" is unknown: a conservative default window, compacted at three quarters
+    // "x" is in no catalog: a conservative default window, compacted at three quarters
     expect((await model()).context).toEqual({ window: 64_000, compact_at: 48_000, source: "default" });
     const patch = (json: Record<string, unknown>) =>
       w.api("PATCH", `/api/models/${w.ids.model}`, { token: w.adminToken, json });

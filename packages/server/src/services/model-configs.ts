@@ -24,6 +24,7 @@ import { secretBox } from "../security/crypto.js";
 import { audit } from "./audit.js";
 import { contextLimits } from "./context-window.js";
 import { type EffortInfo, withEffort } from "./effort.js";
+import { matchProviderModels } from "./model-catalog.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, LAYA_BOOTSTRAP, putSetting } from "./platform-settings.js";
 
 export const PROTOCOLS = new Set(["openai", "anthropic", "systemone"]);
@@ -138,6 +139,8 @@ export async function updateProvider(db: Db, p: ModelProvider, data: Record<stri
       .where(eq(modelConfigs.providerId, p.id));
   }
   const [row] = await db.update(modelProviders).set(update).where(eq(modelProviders.id, p.id)).returning();
+  // Another address may be another service in the model catalog (the maker instead of a third party ...).
+  if (addressChanged) await matchProviderModels(db, row);
   return row;
 }
 
@@ -225,7 +228,8 @@ export async function addModels(
       .returning();
     added.push(...rows);
   }
-  return added;
+  // With what the model catalog says about them.
+  return matchProviderModels(db, p, added);
 }
 
 /** Context window and compaction threshold of a model, with where the window came from. */

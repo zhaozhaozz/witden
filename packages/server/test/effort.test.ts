@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildModel, setFetch } from "../src/agent/llm.js";
 import { withEffort } from "../src/services/effort.js";
 import { setModelFactory } from "../src/services/model-configs.js";
+import { CATALOG_URL, catalogFetch } from "./support/catalog.js";
 import { reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -152,7 +153,10 @@ describe("reasoning effort", () => {
     await w.drain();
     expect(sent).toEqual([{ temperature: 0.2, reasoning_effort: "high" }]);
   });
-  it("reads DeepSeek's levels from its model list, and falls back to the table of known models", async () => {
+  it("reads DeepSeek's levels from its model list, and falls back to the model catalog", async () => {
+    w.settings.modelCatalogUrl = CATALOG_URL;
+    setFetch(catalogFetch());
+    expect((await admin("POST", "/api/model-catalog/refresh")).status).toBe(200);
     const p = (
       await admin("POST", "/api/model-providers", {
         name: "deepseek",
@@ -162,14 +166,14 @@ describe("reasoning effort", () => {
       })
     ).body;
     const [flash, sol, local] = p.models;
-    // before any check: the table of known models, else the common levels
+    // before any check: the levels the model catalog lists, else the common levels
     const listed = (await admin("GET", "/api/models")).body;
     const effortOf = (id: string) => listed.find((m: any) => m.id === id).effort;
-    expect(effortOf(flash.id)).toEqual({ levels: ["low", "high", "max"], default: "high", source: "known" });
+    expect(effortOf(flash.id)).toEqual({ levels: ["low", "high", "max"], default: null, source: "catalog" });
     expect(effortOf(sol.id)).toEqual({
       levels: ["low", "medium", "high", "xhigh", "max"],
-      default: "medium",
-      source: "known",
+      default: null,
+      source: "catalog",
     });
     expect(effortOf(local.id).source).toBe("common");
     const noNone = await admin("PATCH", `/api/roles/${w.ids.dev}`, {

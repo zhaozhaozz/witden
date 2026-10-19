@@ -3931,6 +3931,20 @@ img.avatar-role.avatar-colored {
 
 /* --- model providers (pages/ModelsPage.tsx) --------------------------------------------------------- */
 
+/* The model catalog (models.dev) above the providers: what it is, when it was fetched, and refreshing it. */
+.catalog-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.catalog-bar p {
+  margin: 4px 0 0;
+}
+.catalog-title {
+  margin: 0;
+  font-size: 15px;
+}
 .provider-head {
   display: flex;
   align-items: flex-start;

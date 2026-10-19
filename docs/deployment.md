@@ -208,6 +208,7 @@ server {
 | `WITDEN_ALLOWED_RUNTIMES` | `runc,runsc,sysbox-runc,kata-runtime` | 模板可以选择的容器运行时。 |
 | `WITDEN_MODEL_PROXY_PORT` | `8686` | 虚拟电脑内模型访问接口的端口。 |
 | `WITDEN_LAYA_URL` | — | Laya 服务的地址。设置后，平台启动时把它添加为 System 1 模型（见 2.3）。 |
+| `WITDEN_MODEL_CATALOG_URL` | `https://models.dev/api.json` | 模型资料（各模型的上下文长度、思考程度）的获取地址。平台第一次启动时获取一次，之后在“设置 → 模型”中点击“更新模型资料”时获取。无法访问外网时可以指向格式相同的内部镜像；设为 `off` 不获取，模型的上下文长度按服务商报告的值、在模型上填写的值或默认的 6.4 万计算。 |
 | `WITDEN_LAYA_API_KEY` | — | Laya 服务的密钥。Compose 部署中 `laya` 服务也使用这个值。 |
 | `WITDEN_CORS_ORIGINS` | 空 | 允许跨域访问 API 的来源，逗号分隔。 |
 

@@ -599,11 +599,13 @@ export interface ModelConfig {
   capabilities: Capabilities;
   status: "unchecked" | "ok" | "error";
   daily_token_limit: number | null;
-  /** Set by an administrator (null: the provider's report or the recommendation). */
+  /** Set by an administrator (null: the provider's report or the model catalog). */
   context_window: number | null;
   compact_tokens: number | null;
+  /** This model's entry in the model catalog (models.dev); null when it lists none. */
+  catalog: CatalogMatch | null;
   /** In effect: the window, the compaction threshold and where the window came from (null for decision models). */
-  context?: { window: number; compact_at: number; source: "model" | "provider" | "family" | "default" } | null;
+  context?: { window: number; compact_at: number; source: "model" | "provider" | "catalog" | "default" } | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -613,6 +615,32 @@ export interface ModelConfig {
   provider?: { id: string; name: string; protocol: ModelProtocol; status: ModelProvider["status"] };
   /** The reasoning effort levels a role may pick (null for decision models). */
   effort?: EffortChoices | null;
+}
+
+/** A model's entry in the model catalog (server: services/model-catalog.ts). */
+export interface CatalogMatch {
+  /** The catalog's provider, e.g. "deepseek" / "DeepSeek". */
+  provider: string;
+  provider_name: string;
+  model: string;
+  name: string;
+  /** official: the maker's data; third_party: the data of the third party this provider is; common: no maker lists it. */
+  basis: "official" | "third_party" | "common";
+  context: number;
+  input: number | null;
+  output: number | null;
+  efforts: string[] | null;
+  fetched_at: string;
+}
+
+/** Where the model catalog comes from and when it was fetched. */
+export interface CatalogStatus {
+  /** Where refreshing fetches from; null when it is turned off. */
+  url: string | null;
+  source_url: string | null;
+  fetched_at: string | null;
+  providers: number;
+  models: number;
 }
 
 /** openai / anthropic: chat models; systemone: decision models (TypeSafe Jev, Laya). */

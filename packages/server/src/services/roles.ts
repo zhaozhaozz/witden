@@ -107,13 +107,14 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
       );
     out.reasoningEffort = effort;
   }
-  // The effort must be one the role's model takes (as reported by its service, or the common levels).
+  // The effort must be one the role's model takes (reported by its service, listed in the model catalog, or the
+  // common levels).
   const effort = out.reasoningEffort !== undefined ? out.reasoningEffort : current?.reasoningEffort;
   const modelId = out.modelConfigId !== undefined ? out.modelConfigId : current?.modelConfigId;
   if (effort && modelId && ("reasoningEffort" in data || "modelConfigId" in data)) {
     const found = await modelWithProvider(db, modelId);
     if (found) {
-      const { levels, source } = effortChoices(found.provider.protocol, found.model.model, found.model.capabilities);
+      const { levels, source } = effortChoices(found.provider.protocol, found.model);
       if (!levels.includes(effort))
         throw new BadRequest(
           source === "common"

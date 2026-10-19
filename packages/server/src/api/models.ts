@@ -4,12 +4,14 @@
  */
 import { asc, eq, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { type ModelConfig, type ModelProvider, modelConfigs, modelProviders, type User } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { effortChoices } from "../services/effort.js";
+import { catalogStatus, refreshCatalog } from "../services/model-catalog.js";
 import * as svc from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, putSetting } from "../services/platform-settings.js";
 import { authed, authedNoTx, body, params, row } from "./http.js";
@@ -33,7 +35,7 @@ async function modelOut(db: Db, m: ModelConfig, p: ModelProvider) {
     used_by_roles: await svc.rolesUsing(db, m),
     tokens_today: await svc.tokensToday(db, { modelConfigId: m.id }),
     // The reasoning effort levels roles may pick, and where they came from (services/effort.ts).
-    effort: svc.isSystemOne(p) ? null : effortChoices(p.protocol, m.model, m.capabilities),
+    effort: svc.isSystemOne(p) ? null : effortChoices(p.protocol, m),
     // The window and compaction threshold conversations on this model use (services/context-window.ts).
     context: svc.isSystemOne(p) ? null : contextOut(svc.contextLimits(m)),
   };
@@ -92,6 +94,28 @@ export async function modelRoutes(app: FastifyInstance) {
   app.get(
     "/api/model-providers",
     authed(({ db, user }) => visible(db, user)),
+  );
+
+  // The model catalog (services/model-catalog.ts): where it comes from and when it was fetched.
+  app.get(
+    "/api/model-catalog",
+    authed(({ db }) => catalogStatus(db, settings().modelCatalogUrl)),
+  );
+  // Fetches the catalog (several MB) and matches every model again: no transaction is held meanwhile.
+  app.post(
+    "/api/model-catalog/refresh",
+    authedNoTx(async ({ db, user }) => {
+      await requirePerm(db, user, Perm.SECRETS_MANAGE);
+      const url = settings().modelCatalogUrl;
+      if (!url) throw new BadRequest("fetching the model catalog is turned off (WITDEN_MODEL_CATALOG_URL=off)");
+      const { status, matched, total } = await refreshCatalog(url, user.id);
+      await audit(db, "model_catalog.refresh", {
+        actorType: "user",
+        actorId: user.id,
+        detail: { source_url: url, providers: status.providers, models: status.models, matched, total },
+      });
+      return { ...status, matched, total };
+    }),
   );
 
   /** Flat list for pickers (role editor, grants, usage). */
