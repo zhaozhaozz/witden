@@ -7,6 +7,7 @@
  *   earlier part. Keeping the start identical lets model services reuse their prompt cache.
  * - In an independent task: the same kind of system prompt plus who asked and when, then the brief with
  *   recent topic messages.
+ * Both system prompts end with the role's own memory (services/role-memory.ts), the same wherever it works.
  * Nothing from other topics is included unless the role explicitly references it (read_topic).
  */
 import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
@@ -24,6 +25,7 @@ import {
   users,
 } from "../db/schema.js";
 import { channelsOf } from "../integrations/links.js";
+import { ROLE_MEMORY_SHOWN, roleMemories } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import type { ChatMessage } from "./llm.js";
 import { authorName } from "./tools.js";
@@ -58,6 +60,33 @@ export const TASK_RULES = `## This task
 - If the request is unclear, risky or irreversible, use ask_human and wait for the answer.
 - Use send_message to tell people something right away and keep working; use post_progress for long tasks so people can follow along.
 - When you are finished, reply with your final answer (no tool call). If you already said everything with send_message, the final answer may be empty and nothing more is posted.`;
+
+/** For a role with the memory tools: which of the three kinds of notes a thing belongs in. */
+export const MEMORY_RULES = `## Memory
+Your context stays in this topic and is summarised when it grows long. To keep something for later, save a note with remember and choose its scope by where it will matter again and who may see it there:
+- "topic" (the default): this topic only, or this DM when you are in one — decisions, agreements, who does what, open items. People and roles in this topic can see it; it is never used anywhere else.
+- "private": about the person who asked you, for them only — their preferences or personal details. It is used only in that person's DMs (with you or another role), never in a group topic.
+- "role": your own memory as this role. It is listed under "Your role memory" in every topic, DM, Slack channel, Feishu chat and GitHub thread where you work, so it may come up in front of anyone you talk to there. Use it only for what holds wherever you work: how you should work, team-wide conventions, lessons you learned. Never anything personal or confidential, or what matters in one place only. It can be added only while you work for a witden administrator, and not after reading material restricted to some people.
+When in doubt, choose the narrower scope. Write each note so it makes sense on its own later. recall searches the notes you may use here: this topic's, your role memory, the asker's private notes (in their DM) and the knowledge spaces you may read.`;
+
+/** Its latest role memory notes (oldest first), for every prompt of the role; nothing when there are none. */
+async function roleMemorySection(db: Db, role: Role, canRecall: boolean): Promise<string> {
+  const notes = await roleMemories(db, role.id);
+  if (!notes.length) return "";
+  const shown = notes.slice(-ROLE_MEMORY_SHOWN);
+  const older = notes.length - shown.length;
+  const lines = shown.map(
+    (m) => `- [${m.createdAt.toISOString().slice(0, 10)}] ${m.content.trim().replace(/\n/g, "\n  ")}`,
+  );
+  return [
+    "## Your role memory",
+    "What you keep as this role (some notes may come from administrators). It holds wherever you work.",
+    ...lines,
+    older ? `(${older} older notes are not listed here${canRecall ? "; recall searches them" : ""}.)` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 /** For a system administrator role: what its configuration tools are for and where they stop. */
 export const ADMIN_RULES = `## You are witden's system administrator
@@ -134,6 +163,9 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
     );
   }
   parts.push(role.systemAdmin ? ADMIN_RULES : "");
+  // Role memory is read live: a new note changes the prompt (and its cache) from the next model call on.
+  const memoryTools = (task.envelope?.tools ?? []).includes("memory");
+  parts.push(memoryTools ? MEMORY_RULES : "", await roleMemorySection(db, role, memoryTools));
   return parts.filter(Boolean).join("\n");
 }
 

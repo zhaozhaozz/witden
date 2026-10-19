@@ -103,6 +103,9 @@ export function ApprovalCard({
           </p>
           {flow?.sources ? <p className="small">资料来源：{flow.sources}</p> : null}
           <div className="muted small">调用 {toolCall.name}</div>
+          {toolCall.name === "remember" && !argsHidden ? (
+            <p className="small">{memoryScopeHint((toolCall.arguments as { scope?: string } | undefined)?.scope)}</p>
+          ) : null}
           {argsHidden ? (
             <p className="small muted">参数涉及你无权查看的资料，已隐藏。</p>
           ) : (
@@ -163,6 +166,14 @@ export function ApprovalCard({
       </footer>
     </article>
   );
+}
+
+/** Where a note the role asks to remember would be used (the scopes of the remember tool). */
+function memoryScopeHint(scope: string | undefined): string {
+  if (scope === "role")
+    return "角色记忆：角色在所有话题、私信以及 Slack、飞书、GitHub 中都会看到，可能出现在与它对话的任何人面前。";
+  if (scope === "private") return "私密记忆：只记给提问人，只在这个人的私信中使用。";
+  return "话题记忆：只在这个话题（或这段私信）中使用。";
 }
 
 /** Keep multiline text readable (e.g. a memory's content), with a bounded area for long requests. */

@@ -5,6 +5,7 @@ import type {
   AgentSession,
   Instance,
   KnowledgeSpace,
+  Memory,
   ModelConfig,
   PlatformTools,
   Role,
@@ -13,7 +14,7 @@ import type {
 } from "../../api/types";
 import { useConfigChanged } from "../../lib/configEvents";
 import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
-import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
+import { fmtNumber, fmtRelative, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useUnsavedChanges } from "../../lib/unsaved";
@@ -23,6 +24,7 @@ import {
   Capability,
   ColorPicker,
   ComputerBadge,
+  Empty,
   ErrorNote,
   Field,
   FieldGroup,
@@ -438,7 +440,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           <Section title="工作方式">
             <Field
               label="提示词"
-              hint="职责、工作规则、沟通方式与行为约束；需要角色长期记住的岗位知识（例如“发布前必须跑完 make check”）也写在这里。权限限制由系统执行，不依赖提示词。"
+              hint="职责、工作规则、沟通方式与行为约束。角色在工作中积累、在任何地方都适用的内容记在右侧的「角色记忆」中。权限限制由系统执行，不依赖提示词。"
             >
               <textarea
                 className="prompt"
@@ -729,6 +731,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 <ImpactView impact={role.impact} />
               </Section>
             ) : null}
+            <RoleMemories role={role} />
             <RoleSessions role={role} />
           </aside>
         ) : null}
@@ -814,7 +817,9 @@ function CopyRoleDialog({
         if (out) onDone(out);
       }}
     >
-      <p className="muted small">新角色拥有相同的提示词和设置，但身份独立：话题记忆、私信和进行中的任务不会被复制。</p>
+      <p className="muted small">
+        新角色拥有相同的提示词和设置，但身份独立：角色记忆、话题记忆、私信和进行中的任务不会被复制。
+      </p>
       <div className="form-row">
         <Field label="名称">
           <input value={name} onChange={(e) => setName(e.target.value)} />
@@ -893,6 +898,82 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
         </Field>
       ) : null}
     </FormModal>
+  );
+}
+
+const ROLE_MEMORY_MAX_CHARS = 1000;
+
+/** The role's own memory: listed in its system prompt wherever it works (server: services/role-memory.ts). */
+function RoleMemories({ role }: { role: Role }) {
+  const dir = useDirectory();
+  const { run, busy } = useAction();
+  const { confirm } = useFeedback();
+  const [text, setText] = useState("");
+  const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "role", role_id: role.id }), [role.id]);
+  return (
+    <Section title="角色记忆">
+      <p className="small muted">
+        角色记忆属于角色本身，在它工作的所有地方都适用：最近 30 条随系统提示词给出，角色在所有话题、私信以及
+        Slack、飞书、GitHub
+        中都会看到，更早的可以检索。角色可以在管理员请求的工作中自己记下（需要「记忆」权限），你也可以在这里添加。它可能出现在与角色对话的任何人面前，不要写入个人信息、机密，或只与某个话题、某个人有关的内容。
+      </p>
+      <form
+        className="note-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (!text.trim()) return;
+          const m = await run(
+            () => api.post<Memory>("/api/memories", { scope: "role", role_id: role.id, content: text.trim() }),
+            "已添加",
+          );
+          if (m) {
+            setText("");
+            res.setData((prev) => [m, ...(prev ?? [])]);
+          }
+        }}
+      >
+        <textarea
+          rows={2}
+          maxLength={ROLE_MEMORY_MAX_CHARS}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="例如：发布前必须跑完 make check"
+        />
+        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
+          添加
+        </button>
+      </form>
+      <Loaded res={res}>
+        {(rows) =>
+          rows.length ? (
+            <ul className="memory-list">
+              {rows.map((m) => (
+                <li key={m.id}>
+                  <div className="memory-text">{m.content}</div>
+                  <div className="small muted">
+                    {m.created_by_type === "role" ? "角色自己记下" : `${dir.userName(m.created_by_id)} 添加`} ·{" "}
+                    {fmtRelative(m.created_at)}
+                    <button
+                      type="button"
+                      className="link-btn"
+                      onClick={async () => {
+                        if (!(await confirm({ title: "删除这条角色记忆", danger: true, confirmLabel: "删除" }))) return;
+                        const ok = await run(() => api.del(`/api/memories/${m.id}`));
+                        if (ok) res.setData((prev) => prev?.filter((x) => x.id !== m.id));
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <Empty title="还没有角色记忆" />
+          )
+        }
+      </Loaded>
+    </Section>
   );
 }
 

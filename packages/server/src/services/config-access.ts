@@ -10,7 +10,7 @@
  */
 import { eq } from "drizzle-orm";
 import { transaction } from "../db/client.js";
-import { roles, tasks, topics, users } from "../db/schema.js";
+import { memories, roles, tasks, topics, users } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { runtime } from "../runtime.js";
@@ -137,13 +137,17 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
     ],
   },
   {
-    title: "Knowledge",
+    title: "Knowledge and role memory",
     endpoints: [
       { method: "GET", path: "/api/knowledge-spaces" },
       { method: "POST", path: "/api/knowledge-spaces", note: "name, description" },
-      { method: "GET", path: "/api/memories", note: "?scope=team&space_id= (team knowledge)" },
-      { method: "POST", path: "/api/memories", note: "scope: team, space_id, content" },
-      { method: "DELETE", path: "/api/memories/:id" },
+      {
+        method: "GET",
+        path: "/api/memories",
+        note: "?scope=team&space_id= (team knowledge) or ?scope=role&role_id= (a role's memory, shown to it wherever it works)",
+      },
+      { method: "POST", path: "/api/memories", note: "scope team + space_id, or scope role + role_id; content" },
+      { method: "DELETE", path: "/api/memories/:id", note: "team knowledge or role memory" },
     ],
   },
   {
@@ -161,8 +165,8 @@ const ENDPOINTS = AREAS.flatMap((a) => a.endpoints).map((e) => ({
   pattern: new RegExp(`^${e.path.replace(/:[a-z_]+/g, "[^/]+")}$`),
 }));
 
-/** Only team knowledge is configuration; topic notes and private notes are conversation material. */
-const MEMORY_SCOPES = new Set(["team"]);
+/** Team knowledge and role memory are configuration; topic notes and private notes are conversation material. */
+const MEMORY_SCOPES = new Set(["team", "role"]);
 
 /** Fields that carry a secret. A person enters these in the console; they never pass through a role. */
 const SECRET_KEYS = new Set([
@@ -271,12 +275,37 @@ async function guard(method: Method, pathname: string, query: URLSearchParams, b
     const [role] = await transaction((db) => db.select().from(roles).where(eq(roles.id, roleId)).limit(1));
     if (role?.systemAdmin) throw new Forbidden("system administrator roles are configured by people only");
   }
-  if (pathname === "/api/memories") {
-    const scope = method === "GET" ? query.get("scope") : (body as Record<string, unknown> | null)?.scope;
+  const memoryId = pathname.match(/^\/api\/memories\/([^/]+)$/)?.[1];
+  if (pathname === "/api/memories" || memoryId) {
+    let scope: unknown;
+    let memoryRoleId: unknown;
+    if (memoryId) {
+      const [m] = await transaction((db) => db.select().from(memories).where(eq(memories.id, memoryId)).limit(1));
+      if (!m) return; // the API answers that it does not exist
+      scope = m.scope;
+      memoryRoleId = m.roleId;
+    } else if (method === "GET") {
+      scope = query.get("scope");
+      memoryRoleId = query.get("role_id");
+    } else {
+      const b = body as Record<string, unknown> | null;
+      scope = b?.scope;
+      memoryRoleId = b?.role_id ?? b?.roleId;
+    }
     if (!MEMORY_SCOPES.has(String(scope)))
       throw new Forbidden(
-        "only team knowledge (scope team) is configuration; a role's job knowledge belongs in its prompt",
+        "only team knowledge (scope team) and role memory (scope role) are configuration; topic notes and private notes are not",
       );
+    if (scope === "role" && method !== "GET" && memoryRoleId) {
+      const [role] = await transaction((db) =>
+        db
+          .select()
+          .from(roles)
+          .where(eq(roles.id, String(memoryRoleId)))
+          .limit(1),
+      );
+      if (role?.systemAdmin) throw new Forbidden("system administrator roles are configured by people only");
+    }
   }
 }
 

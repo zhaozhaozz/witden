@@ -3,17 +3,19 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { knowledgeSpaces, type Memory, memories, topics, type User } from "../db/schema.js";
+import { knowledgeSpaces, type Memory, memories, roles, topics, type User } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { PUBLIC, spaceLabel, topicLabel, userCanRead, userLabel } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { ROLE_MEMORY_MAX_CHARS } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, body, params, query, row } from "./http.js";
 
 async function canReadMemory(db: Db, user: User, m: Memory): Promise<boolean> {
   let allowed = false;
   if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_READ, m.spaceId);
+  else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
   else if (m.scope === "topic") {
     const [topic] = m.topicId ? await db.select().from(topics).where(eq(topics.id, m.topicId)).limit(1) : [];
     allowed = !!topic && (await topicSvc.canView(db, user, topic));
@@ -92,7 +94,6 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       const b = body(req);
       const base = { id: newId("mem"), content: String(b.content ?? ""), createdByType: "user", createdById: user.id };
       let values: typeof memories.$inferInsert;
-      // Job knowledge per role is gone (migration 0022 moved it into the role prompts): the prompt says it.
       if (b.scope === "team") {
         if (
           !b.spaceId ||
@@ -101,18 +102,29 @@ export async function knowledgeRoutes(app: FastifyInstance) {
           throw new NotFound("knowledge space not found");
         await requirePerm(db, user, Perm.KNOWLEDGE_WRITE, b.spaceId);
         values = { ...base, scope: "team", spaceId: b.spaceId, labels: [spaceLabel(b.spaceId)] };
+      } else if (b.scope === "role") {
+        // The role's own memory, shown wherever it works: no source labels (services/role-memory.ts).
+        await requirePerm(db, user, Perm.ROLE_MANAGE);
+        if (!b.roleId || !(await db.select().from(roles).where(eq(roles.id, b.roleId)).limit(1)).length)
+          throw new NotFound("role not found");
+        const content = base.content.trim();
+        if (!content) throw new BadRequest("content is required");
+        if (content.length > ROLE_MEMORY_MAX_CHARS)
+          throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
+        values = { ...base, content, scope: "role", roleId: b.roleId, labels: [] };
       } else if (b.scope === "topic") {
         const topic = await topicSvc.getTopic(db, String(b.topicId ?? ""));
         if (!(await topicSvc.canPost(db, user, topic))) throw new Forbidden("you are not a participant of this topic");
         values = { ...base, scope: "topic", topicId: topic.id, labels: [topicLabel(topic.id)] };
       } else if (b.scope === "user") {
         values = { ...base, scope: "user", userId: user.id, labels: [userLabel(user.id)] };
-      } else throw new BadRequest("scope must be team, topic or user (a role's job knowledge belongs in its prompt)");
+      } else throw new BadRequest("scope must be team, role, topic or user");
       const [m] = await db.insert(memories).values(values).returning();
       await audit(db, "memory.create", {
         actorType: "user",
         actorId: user.id,
         topicId: m.topicId,
+        roleId: m.roleId,
         detail: { scope: m.scope, memory: m.id },
       });
       return row(m);
@@ -131,6 +143,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       let allowed = false;
       if (m.scope === "user") allowed = m.userId === user.id;
       else if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
+      else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
       else if (m.scope === "topic" && m.topicId)
         allowed =
           (await canReadMemory(db, user, m)) &&

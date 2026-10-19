@@ -24,6 +24,7 @@ import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
+import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import { topicPlace } from "./context.js";
 import { publishTaskStatus, textRestricted } from "./control.js";
@@ -722,14 +723,20 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
 
 // --- memory and references -----------------------------------------------------------------------------
 
+/**
+ * Save a note where it belongs: this topic (or DM), the person who asked (their DMs only), or the role itself
+ * (wherever it works; see services/role-memory.ts). The system prompt explains the choice (MEMORY_RULES).
+ */
 async function remember(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const scope = args.scope ?? "topic";
+  const content = String(args.content ?? "").trim();
+  if (!content) throw new BadRequest("content is required");
   return transaction(async (db) => {
     const { task, topic } = await load(ctx, db);
     const base = {
       id: newId("mem"),
       roleId: ctx.roleId,
-      content: String(args.content ?? ""),
+      content,
       sourceMessageIds: task.sourceMessageId ? [task.sourceMessageId] : [],
       createdByType: "role",
       createdById: ctx.roleId,
@@ -749,7 +756,14 @@ async function remember(ctx: ToolContext, args: Record<string, any>): Promise<To
         userId: task.requesterUserId,
         labels: [...new Set([...task.labels, userLabel(task.requesterUserId)])],
       });
-    } else throw new BadRequest("scope must be topic or private (role knowledge is curated by people)");
+    } else if (scope === "role") {
+      if (content.length > ROLE_MEMORY_MAX_CHARS)
+        throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
+      const refusal = await roleMemoryRefusal(db, task);
+      if (refusal) throw new Forbidden(refusal);
+      // No source labels: it is shown wherever the role works, which is what the refusal above checked.
+      await db.insert(memories).values({ ...base, scope: "role", labels: [] });
+    } else throw new BadRequest("scope must be topic, private or role");
     return { content: `remembered (${scope})` };
   });
 }
@@ -769,6 +783,8 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
     : [];
   const rows: [string, typeof memories.$inferSelect][] = [];
   const live = isNull(memories.deletedAt);
+  // The latest of these are in the system prompt already; older ones are found here.
+  for (const m of await roleMemories(db, ctx.roleId)) rows.push(["your role memory", m]);
   for (const m of await db
     .select()
     .from(memories)
@@ -1123,8 +1139,8 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "remember",
       "memory",
-      "Save a note: scope 'topic' (this topic) or 'private' (the requester only).",
-      obj({ content: str, scope: { type: "string", enum: ["topic", "private"] } }, ["content"]),
+      "Save a note. scope 'topic' (default): this topic or DM only. 'private': about the person who asked, used only in their DMs. 'role': your own memory as this role, shown to you wherever you work and possibly to anyone there — only lasting, non-confidential things that hold everywhere. See \"Memory\" in your instructions.",
+      obj({ content: str, scope: { type: "string", enum: ["topic", "private", "role"] } }, ["content"]),
       remember,
     ),
     spec(

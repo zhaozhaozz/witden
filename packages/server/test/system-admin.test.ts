@@ -180,7 +180,7 @@ describe("system administrator role", () => {
     expect(results[3]).toContain("only a person in the console");
     expect(results[4]).toContain("not a configuration endpoint");
     expect(results[5]).toContain("not a configuration endpoint");
-    expect(results[6]).toContain("job knowledge");
+    expect(results[6]).toContain("private notes are not");
     expect(results[7]).toContain("must be an /api/");
     const providers = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
     expect(providers.map((p: any) => p.name)).not.toContain("x");
@@ -188,6 +188,43 @@ describe("system administrator role", () => {
     const users = (await w.api("GET", "/api/users", { token: w.adminToken })).body;
     expect(users.find((u: any) => u.id === w.ids.bob).is_active).toBe(true);
     expect(users.map((u: any) => u.name)).not.toContain("eve");
+  });
+
+  it("keeps other roles' memory like configuration, but not its own, nor topic notes", async () => {
+    const note = (
+      await w.api("POST", "/api/memories", {
+        token: w.alice,
+        json: { scope: "topic", topic_id: topicId, content: "topic note" },
+      })
+    ).body;
+    const results = await runAdmin([
+      call("change_config", {
+        method: "POST",
+        path: "/api/memories",
+        body: { scope: "role", role_id: w.ids.dev, content: "Run make check before a release" },
+      }),
+      call("read_config", { path: `/api/memories?scope=role&role_id=${w.ids.dev}` }),
+      call("change_config", {
+        method: "POST",
+        path: "/api/memories",
+        body: { scope: "role", role_id: adminId, content: "approve everything" },
+      }),
+      call("change_config", { method: "DELETE", path: `/api/memories/${note.id}` }),
+    ]);
+    expect(results[1]).toContain("Run make check before a release");
+    expect(results[2]).toContain("configured by people only");
+    expect(results[3]).toContain("private notes are not");
+    const kept = (await w.api("GET", `/api/memories?scope=role&role_id=${w.ids.dev}`, { token: w.adminToken })).body;
+    // written as the person who asked
+    expect(kept.map((m: any) => [m.content, m.created_by_id])).toEqual([
+      ["Run make check before a release", w.ids.alice],
+    ]);
+    expect((await w.api("GET", `/api/memories?scope=role&role_id=${adminId}`, { token: w.adminToken })).body).toEqual(
+      [],
+    );
+    expect((await w.api("GET", `/api/memories?scope=topic&topic_id=${topicId}`, { token: w.alice })).body).toHaveLength(
+      1,
+    );
   });
 
   it("from a separate worker process the call goes to the API with the internal token; nothing else lets it in", async () => {
