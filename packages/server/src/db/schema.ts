@@ -678,6 +678,26 @@ export const externalThreadLinks = pgTable(
 );
 
 /**
+ * A Feishu calendar shared with a group chat: Feishu's access list names users only, so the group's members
+ * are added one by one, and people who join later are added when witden next syncs the group's members.
+ */
+export const feishuCalendarShares = pgTable(
+  "feishu_calendar_shares",
+  {
+    id: id(),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    calendarId: text("calendar_id").notNull(),
+    chatId: text("chat_id").notNull(),
+    /** The role each member gets: owner | writer | reader | free_busy_reader. */
+    role: text("role").notNull(),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_feishu_calendar_share").on(t.connectionId, t.calendarId, t.chatId)],
+);
+
+/**
  * Durable inbound queue and dedupe record. Webhooks store the parsed event (status queued) before they
  * acknowledge; a consumer processes it afterwards and clears the payload. The unique key drops platform retries.
  */

@@ -3,12 +3,32 @@
  * a product and a mode, its group being ``feishu:<product>:<mode>``; ``toolsFor`` offers it when the task holds that
  * product and mode for at least one app, and ``app`` picks which when there are several.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
-import { connections, externalIdentities, tasks } from "../db/schema.js";
+import {
+  connections,
+  externalConversations,
+  externalIdentities,
+  externalThreadLinks,
+  messages,
+  roles,
+  tasks,
+  topics,
+} from "../db/schema.js";
 import { BadRequest } from "../errors.js";
+import { FeishuAdapter } from "../integrations/feishu.js";
+import {
+  CALENDAR_ACCESS,
+  calendarLink,
+  calendarMembers,
+  chatShares,
+  shareCard,
+  shareWithChat,
+  unshareChat,
+} from "../integrations/feishu-calendar.js";
 import { explainFeishuError, FEISHU_PRODUCTS, type FeishuMode, feishuApi } from "../integrations/feishu-tools.js";
+import { threadIn } from "../integrations/outbound.js";
 import { connectionFor, grantedApps, parseGrant } from "../integrations/platform-tools.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
@@ -138,19 +158,53 @@ function oneOf(value: unknown, allowed: string[], what: string): string {
 
 const openIds = (value: unknown): string[] => (Array.isArray(value) ? value.map(String).filter(Boolean) : []);
 
-/** A calendar's members (its access list); only its owner may see them. */
-async function calendarMembers(conn: any, calendarId: string) {
-  const out: { acl_id: string; role: string; user: string }[] = [];
-  let page: string | undefined;
-  do {
-    const data = await feishuApi(conn, "GET", `calendar/v4/calendars/${calendarId}/acls`, {
-      params: { user_id_type: "open_id", page_size: "50", ...(page ? { page_token: page } : {}) },
-    });
-    for (const a of data.acls ?? []) out.push({ acl_id: a.acl_id, role: a.role, user: a.scope?.user_id });
-    page = data.has_more ? data.page_token : undefined;
-  } while (page);
-  return out;
+/** The Feishu chat this work's topic is in on a connection, and the thread a message there goes into. */
+async function hereChat(db: Db, taskId: string, connectionId: string) {
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!task) return null;
+  const links = await db
+    .select()
+    .from(externalThreadLinks)
+    .where(and(eq(externalThreadLinks.topicId, task.topicId), eq(externalThreadLinks.connectionId, connectionId)));
+  for (const link of links) {
+    const [conv] = await db
+      .select()
+      .from(externalConversations)
+      .where(eq(externalConversations.id, link.conversationId))
+      .limit(1);
+    if (conv)
+      return {
+        task,
+        chatId: conv.externalId,
+        group: conv.kind !== "im",
+        threadKey: await threadIn(db, link, conv.externalId, { replyToId: null, taskId: task.id }),
+      };
+  }
+  return null;
 }
+
+const chatArg = {
+  type: "string",
+  description: 'a group chat\'s chat_id (see feishu_apps), or "this" for the group this conversation is in',
+};
+
+/** A group chat named by its chat_id, or "this": the group the work's topic is in. */
+async function groupChat(db: Db, taskId: string, conn: any, value: unknown): Promise<string> {
+  const s = String(value ?? "").trim();
+  if (s !== "this") return s;
+  const here = await hereChat(db, taskId, conn.id);
+  if (!here?.group) throw new BadRequest("this conversation is not in a Feishu group of this app: give a chat_id");
+  return here.chatId;
+}
+
+/** Event attendees: people by open_id, and group chats (everyone in them). */
+async function attendeesOf(call: { db: Db; taskId: string }, conn: any, users: string[], groups: string[]) {
+  const chats = await Promise.all(groups.map((g) => groupChat(call.db, call.taskId, conn, g)));
+  return [...users.map((id) => ({ type: "user", user_id: id })), ...chats.map((id) => ({ type: "chat", chat_id: id }))];
+}
+
+const noLink = (name: string) =>
+  `no link yet: Feishu gives a calendar's link only through its events, and ${name} has none. Create an event in it first.`;
 
 const appsTool: ToolSpec = {
   name: "feishu_apps",
@@ -183,9 +237,16 @@ const appsTool: ToolSpec = {
         .from(externalIdentities)
         .where(eq(externalIdentities.connectionId, id))
         .limit(100);
+      const groups = await db
+        .select({ id: externalConversations.externalId, name: externalConversations.name })
+        .from(externalConversations)
+        .where(and(eq(externalConversations.connectionId, id), ne(externalConversations.kind, "im")))
+        .limit(50);
+      const here = await hereChat(db, ctx.taskId, id);
       lines.push(
         `- ${conn.name} (app: ${id}${conn.status === "paused" ? ", paused" : ""}): ${can.join(", ")}`,
         `  people: ${people.map((p) => `${p.name ?? "?"} ${p.id}`).join("; ") || "(none known yet)"}`,
+        `  groups: ${groups.map((g) => `${g.name ?? "?"} ${g.id}${g.id === here?.chatId ? " (this conversation)" : ""}`).join("; ") || "(none known yet)"}`,
       );
     }
     return { content: lines.join("\n") || "no Feishu app is open to you" };
@@ -226,10 +287,13 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_members",
     "calendar",
     "read",
-    "Who may use a calendar the app owns, and how: owner (manages it and its members), writer (creates and changes events), reader (sees events), free_busy_reader (sees only busy times).",
+    "Who may use a calendar the app owns, and how: owner (manages it and its members), writer (creates and changes events), reader (sees events), free_busy_reader (sees only busy times); and the groups it is shared with.",
     { calendar_id: str },
     ["calendar_id"],
-    async (conn, a) => calendarMembers(conn, String(a.calendar_id)),
+    async (conn, a, call) => ({
+      members: await calendarMembers(conn, String(a.calendar_id)),
+      groups: await chatShares(call.db, conn.id, String(a.calendar_id)),
+    }),
   ),
   feishuTool(
     "feishu_calendar_events",
@@ -257,31 +321,22 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_share_link",
     "calendar",
     "read",
-    "The link that opens a calendar's page in Feishu, where people can view and subscribe to it: the same link Feishu's own calendar share card opens. To share a calendar in a chat, put it in your reply, e.g. [name](link). Who can open it depends on the calendar's visibility (public: anyone in the company; otherwise its members).",
+    "The link that opens a calendar's page in Feishu, where people can view and subscribe to it: the same link Feishu's own calendar share card opens. To share a calendar in a chat, put it in your reply, e.g. [name](link), or post the share card (feishu_calendar_share_card). Who can open it depends on the calendar's visibility (public: anyone in the company; otherwise its members).",
     { calendar_id: str },
     ["calendar_id"],
     async (conn, a) => {
-      const id = String(a.calendar_id);
-      const cal = await feishuApi(conn, "GET", `calendar/v4/calendars/${id}`);
-      // Feishu's links name a calendar by an internal number the API gives only in its events' links
-      const events = await feishuApi(conn, "GET", `calendar/v4/calendars/${id}/events`, {
-        params: { page_size: "50" },
-      });
-      const number = (events.items ?? [])
-        .map((e: any) => /[?&]calendarId=(\d+)/.exec(String(e.app_link ?? ""))?.[1])
-        .find(Boolean);
-      if (!number)
-        return `no link yet: Feishu gives a calendar's link only through its events, and ${cal.summary ?? id} has none. Create an event in it first.`;
+      const { summary, permissions, link } = await calendarLink(conn, String(a.calendar_id));
+      if (!link) return noLink(summary);
       return {
-        summary: cal.summary,
-        permissions: cal.permissions,
+        summary,
+        permissions,
         who_can_open:
-          cal.permissions === "public"
+          permissions === "public"
             ? "anyone in the company (they can subscribe)"
-            : cal.permissions === "show_only_free_busy"
+            : permissions === "show_only_free_busy"
               ? "anyone in the company, seeing busy times only; members see events"
               : "only its members",
-        link: `https://applink.feishu.cn/client/calendar/detail?calendarId=${number}&source=calendar_share_by_owner`,
+        link,
       };
     },
   ),
@@ -383,12 +438,26 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_share",
     "calendar",
     "write",
-    "Make a person (open_id, see feishu_apps) a member of a calendar the app owns, or change their role: owner, writer, reader or free_busy_reader.",
-    { calendar_id: str, user: str, role: { type: "string", enum: ACL_ROLES } },
-    ["calendar_id", "user", "role"],
-    async (conn, a) => {
+    "Give a calendar the app owns to a person (user: open_id, see feishu_apps) or to a whole group chat (chat), with a role: owner, writer, reader or free_busy_reader; giving it again changes the role. Feishu's access list names people only, so a group's members are added one by one, and people who join the group later get it when witden next notices them.",
+    { calendar_id: str, user: str, chat: chatArg, role: { type: "string", enum: ACL_ROLES } },
+    ["calendar_id", "role"],
+    async (conn, a, call) => {
       const calendarId = String(a.calendar_id);
       const role = oneOf(a.role, ACL_ROLES, "role");
+      if (a.chat) {
+        const chatId = await groupChat(call.db, call.taskId, conn, a.chat);
+        const r = await shareWithChat(call.db, conn, calendarId, chatId, role);
+        return {
+          chat: chatId,
+          role,
+          members: r.members,
+          added: r.added,
+          already_had_it_or_more: r.kept,
+          ...(r.failed.length ? { not_added: r.failed } : {}),
+          later: "people who join the group get it too",
+        };
+      }
+      if (!a.user) throw new BadRequest("give user (an open_id) or chat");
       const acl = await feishuApi(conn, "POST", `calendar/v4/calendars/${calendarId}/acls`, {
         params: { user_id_type: "open_id" },
         body: { role, scope: { type: "user", user_id: String(a.user) } },
@@ -400,15 +469,71 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_unshare",
     "calendar",
     "write",
-    "Remove a person (open_id) from the members of a calendar the app owns.",
-    { calendar_id: str, user: str },
-    ["calendar_id", "user"],
-    async (conn, a) => {
+    "Remove a person (user: open_id) from a calendar the app owns, or stop sharing it with a group (chat): the group's members lose the role the group gave them, and people who join no longer get it.",
+    { calendar_id: str, user: str, chat: chatArg },
+    ["calendar_id"],
+    async (conn, a, call) => {
       const calendarId = String(a.calendar_id);
+      if (a.chat) {
+        const chatId = await groupChat(call.db, call.taskId, conn, a.chat);
+        const r = await unshareChat(call.db, conn, calendarId, chatId);
+        return r ? { chat: chatId, removed: r.removed } : `this calendar is not shared with ${chatId}`;
+      }
+      if (!a.user) throw new BadRequest("give user (an open_id) or chat");
       const mine = (await calendarMembers(conn, calendarId)).filter((m) => m.user === String(a.user));
       if (!mine.length) return `${a.user} is not a member of this calendar`;
       for (const m of mine) await feishuApi(conn, "DELETE", `calendar/v4/calendars/${calendarId}/acls/${m.acl_id}`);
       return { removed: String(a.user) };
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_share_card",
+    "calendar",
+    "write",
+    "Post Feishu's calendar share card, as the Feishu client does (the calendar's name, what people may see, and a button that opens it to subscribe), into the Feishu chat this conversation is in, or into another group (chat). Unless the calendar is public, share it with the group first (feishu_calendar_share with chat). The calendar needs an event first.",
+    { calendar_id: str, chat: chatArg },
+    ["calendar_id"],
+    async (conn, a, call) => {
+      const db = call.db;
+      const calendarId = String(a.calendar_id);
+      const { summary, permissions, link } = await calendarLink(conn, calendarId);
+      if (!link) return noLink(summary);
+      const here = await hereChat(db, call.taskId, conn.id);
+      const chatId = a.chat && a.chat !== "this" ? String(a.chat) : here?.chatId;
+      if (!chatId)
+        throw new BadRequest("this conversation is not in a Feishu chat of this app: give chat (see feishu_apps)");
+      const inHere = here?.chatId === chatId;
+      // what people may see: the role the group was given, otherwise the calendar's visibility
+      const share = (await chatShares(db, conn.id, calendarId)).find((s) => s.chat === chatId);
+      const access = CALENDAR_ACCESS[share?.role ?? permissions] ?? CALENDAR_ACCESS.private;
+      const [task] = await db.select().from(tasks).where(eq(tasks.id, call.taskId)).limit(1);
+      const [role] = task ? await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1) : [];
+      // the bot speaks as its own role; another role is named, as in its messages
+      const from = role && role.id !== conn.settings?.role_id ? `${role.name} (@${role.handle})` : null;
+      const { card, markdown } = shareCard(summary, link, access, from);
+      const messageId = await new FeishuAdapter().postCard(conn, chatId, inHere ? here.threadKey : null, card);
+      if (inHere && task && messageId) {
+        // In the topic it is a message already in that chat, so it is not sent there again; other platforms
+        // linked to the topic get the Markdown.
+        const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
+        const [source] = task.sourceMessageId
+          ? await db
+              .select({ replyToId: messages.replyToId })
+              .from(messages)
+              .where(eq(messages.id, task.sourceMessageId))
+              .limit(1)
+          : [];
+        const { saveMessage } = await import("./dispatch.js");
+        await saveMessage(db, topic, "role", task.ownerRoleId, markdown, {
+          mentions: [],
+          source: "feishu",
+          externalRef: { ts: messageId, thread: here.threadKey ?? messageId, conversation: chatId },
+          taskId: task.id,
+          round: task.round + 1,
+          replyToId: source?.replyToId ?? null,
+        });
+      }
+      return { posted: chatId, in_this_conversation: inHere, access, link };
     },
   ),
   feishuTool(
@@ -433,7 +558,7 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_create_event",
     "calendar",
     "write",
-    "Create an event in a Feishu calendar the app may write to (its own, or one where it is owner or writer), optionally inviting people (their open_id, see feishu_apps); the event then shows in their calendars.",
+    "Create an event in a Feishu calendar the app may write to (its own, or one where it is owner or writer), optionally inviting people (their open_id, see feishu_apps) and whole group chats; the event then shows in their calendars.",
     {
       calendar_id: str,
       summary: str,
@@ -442,9 +567,14 @@ export const FEISHU_TOOLS: ToolSpec[] = [
       description: str,
       location: str,
       attendees: { type: "array", items: str, description: "open_ids of the people to invite" },
+      groups: {
+        type: "array",
+        items: str,
+        description: 'chat_ids of group chats to invite (everyone in them), or "this"',
+      },
     },
     ["calendar_id", "summary", "start", "end"],
-    async (conn, a) => {
+    async (conn, a, call) => {
       const { event } = await feishuApi(conn, "POST", `calendar/v4/calendars/${a.calendar_id}/events`, {
         body: {
           summary: String(a.summary),
@@ -454,11 +584,11 @@ export const FEISHU_TOOLS: ToolSpec[] = [
           location: a.location ? { name: String(a.location) } : undefined,
         },
       });
-      const invited = openIds(a.attendees);
+      const invited = await attendeesOf(call, conn, openIds(a.attendees), openIds(a.groups));
       if (invited.length)
         await feishuApi(conn, "POST", `calendar/v4/calendars/${a.calendar_id}/events/${event.event_id}/attendees`, {
           params: { user_id_type: "open_id" },
-          body: { attendees: invited.map((id) => ({ type: "user", user_id: id })), need_notification: true },
+          body: { attendees: invited, need_notification: true },
         });
       return { event_id: event?.event_id, summary: event?.summary, invited: invited.length, link: event?.app_link };
     },
@@ -478,9 +608,11 @@ export const FEISHU_TOOLS: ToolSpec[] = [
       location: str,
       invite: { type: "array", items: str, description: "open_ids of people to add" },
       uninvite: { type: "array", items: str, description: "open_ids of people to remove" },
+      invite_groups: { type: "array", items: str, description: 'chat_ids of group chats to add, or "this"' },
+      uninvite_groups: { type: "array", items: str, description: 'chat_ids of group chats to remove, or "this"' },
     },
     ["calendar_id", "event_id"],
-    async (conn, a) => {
+    async (conn, a, call) => {
       const path = `calendar/v4/calendars/${a.calendar_id}/events/${a.event_id}`;
       if ((a.start === undefined) !== (a.end === undefined)) throw new BadRequest("give start and end together");
       const change: Record<string, unknown> = {};
@@ -491,25 +623,29 @@ export const FEISHU_TOOLS: ToolSpec[] = [
         change.end_time = { timestamp: unix(a.end, "end") };
       }
       if (a.location !== undefined) change.location = { name: String(a.location) };
-      const invite = openIds(a.invite);
+      const invite = await attendeesOf(call, conn, openIds(a.invite), openIds(a.invite_groups));
       const uninvite = openIds(a.uninvite);
-      if (!Object.keys(change).length && !invite.length && !uninvite.length) throw new BadRequest("nothing to change");
+      const uninviteGroups = await Promise.all(
+        openIds(a.uninvite_groups).map((g) => groupChat(call.db, call.taskId, conn, g)),
+      );
+      if (!Object.keys(change).length && !invite.length && !uninvite.length && !uninviteGroups.length)
+        throw new BadRequest("nothing to change");
       let event: any = null;
       if (Object.keys(change).length)
         ({ event } = await feishuApi(conn, "PATCH", path, { body: { ...change, need_notification: true } }));
       if (invite.length)
         await feishuApi(conn, "POST", `${path}/attendees`, {
           params: { user_id_type: "open_id" },
-          body: { attendees: invite.map((id) => ({ type: "user", user_id: id })), need_notification: true },
+          body: { attendees: invite, need_notification: true },
         });
       let removed = 0;
-      if (uninvite.length) {
-        // attendees are removed by their attendee id, found from their open_id
+      if (uninvite.length || uninviteGroups.length) {
+        // attendees are removed by their attendee id, found from their open_id or chat_id
         const people = await feishuApi(conn, "GET", `${path}/attendees`, {
           params: { user_id_type: "open_id", page_size: "100" },
         });
         const ids = (people.items ?? [])
-          .filter((p: any) => uninvite.includes(p.user_id))
+          .filter((p: any) => uninvite.includes(p.user_id) || uninviteGroups.includes(p.chat_id))
           .map((p: any) => p.attendee_id);
         if (ids.length)
           await feishuApi(conn, "POST", `${path}/attendees/batch_delete`, {

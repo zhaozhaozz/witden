@@ -18,7 +18,11 @@ import { CHANNEL } from "./base.js";
  * Where a message goes in a channel topic: into the thread it replies to, or into the thread of the message
  * its task answers; otherwise straight into the channel. So a role answers where it was asked.
  */
-async function answerThread(db: Db, msg: Message, conversation: string): Promise<string | null> {
+async function answerThread(
+  db: Db,
+  msg: Pick<Message, "replyToId" | "taskId">,
+  conversation: string,
+): Promise<string | null> {
   const ref = (m: Message | undefined) =>
     m?.externalRef?.conversation === conversation ? (m.externalRef as { ts?: string; thread?: string }) : null;
   if (msg.replyToId) {
@@ -35,6 +39,17 @@ async function answerThread(db: Db, msg: Message, conversation: string): Promise
     if (r?.thread && r.thread !== r.ts) return r.thread;
   }
   return null;
+}
+
+/** The thread a message goes into in a linked conversation (null: the conversation itself, or a DM). */
+export async function threadIn(
+  db: Db,
+  link: { threadKey: string },
+  conversation: string,
+  msg: Pick<Message, "replyToId" | "taskId">,
+): Promise<string | null> {
+  if (link.threadKey === "__dm__") return null;
+  return link.threadKey === CHANNEL ? answerThread(db, msg, conversation) : link.threadKey;
 }
 
 export async function mirrorMessage(db: Db, msg: Message): Promise<number> {
@@ -58,12 +73,7 @@ export async function mirrorMessage(db: Db, msg: Message): Promise<number> {
       .limit(1);
     if (existing) continue;
     const active = conn.status === "active";
-    const threadKey =
-      link.threadKey === "__dm__"
-        ? null
-        : link.threadKey === CHANNEL
-          ? await answerThread(db, msg, conv.externalId)
-          : link.threadKey;
+    const threadKey = await threadIn(db, link, conv.externalId, msg);
     await db.insert(outboundMessages).values({
       id: newId("out"),
       connectionId: conn.id,

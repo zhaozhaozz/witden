@@ -6,8 +6,18 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { externalIdentities, roles } from "../src/db/schema.js";
-import { setFeishuFetch } from "../src/integrations/feishu.js";
+import {
+  connections,
+  externalConversations,
+  externalIdentities,
+  externalThreadLinks,
+  feishuCalendarShares,
+  messages,
+  outboundMessages,
+  roles,
+} from "../src/db/schema.js";
+import { CHANNEL } from "../src/integrations/base.js";
+import { FeishuAdapter, setFeishuFetch } from "../src/integrations/feishu.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -18,6 +28,8 @@ const json = (body: unknown) =>
 class FakeFeishu {
   calls: { method: string; path: string; query: Record<string, string>; body: any }[] = [];
   granted = new Set(["im:message.p2p_msg:readonly", "calendar:calendar", "docx:document:readonly"]);
+  /** The members of the group oc_team. */
+  team = ["ou_alice_a", "ou_bob_a", "ou_carol_a", "ou_guest"];
   /** Paths answered as if the app lacked the scope. */
   missingScope = new Set<string>();
 
@@ -69,6 +81,8 @@ class FakeFeishu {
       return json({ code: 0, data: { calendar_id: "cal_team", summary: "团队日历", permissions: "private" } });
     if (path === "calendar/v4/calendars/cal_org" && method === "PATCH")
       return json({ code: 0, data: { calendar: { calendar_id: "cal_org", summary: "公司日历", ...body } } });
+    if (path === "calendar/v4/calendars/cal_org/acls" && method === "POST" && body.scope.user_id === "ou_guest")
+      return json({ code: 190003, msg: "user is not in the tenant" });
     if (path === "calendar/v4/calendars/cal_org/acls" && method === "POST")
       return json({ code: 0, data: { acl_id: "acl_new", role: body.role, scope: body.scope } });
     if (path === "calendar/v4/calendars/cal_org/acls")
@@ -78,11 +92,13 @@ class FakeFeishu {
           acls: [
             { acl_id: "acl_1", role: "writer", scope: { type: "user", user_id: "ou_alice_a" } },
             { acl_id: "acl_2", role: "owner", scope: { type: "user", user_id: "ou_admin_a" } },
+            { acl_id: "acl_b", role: "reader", scope: { type: "user", user_id: "ou_bob_a" } },
           ],
           has_more: false,
         },
       });
-    if (path === "calendar/v4/calendars/cal_org/acls/acl_1") return json({ code: 0, data: {} });
+    if (path === "calendar/v4/calendars/cal_org/acls/acl_1" || path === "calendar/v4/calendars/cal_org/acls/acl_b")
+      return json({ code: 0, data: {} });
     if (path === "calendar/v4/calendars/search")
       return json({
         code: 0,
@@ -110,6 +126,7 @@ class FakeFeishu {
               rsvp_status: "accept",
             },
             { attendee_id: "user_2", type: "user", user_id: "ou_bob_a", display_name: "bob", rsvp_status: "tentative" },
+            { attendee_id: "chat_1", type: "chat", chat_id: "oc_team", display_name: "团队群" },
           ],
         },
       });
@@ -139,6 +156,14 @@ class FakeFeishu {
     if (path === "vc/v1/reserves/apply")
       return json({ code: 0, data: { reserve: { meeting_no: "123456789", url: "https://vc.feishu.cn/j/123456789" } } });
     if (path === "task/v2/tasks") return json({ code: 0, data: { task: { guid: "task1", summary: body.summary } } });
+    // the team group (alice, bob and someone from another company), its calendar and an event for it
+    if (path === "im/v1/chats/oc_team/members")
+      return json({
+        code: 0,
+        data: { items: this.team.map((id) => ({ member_id: id, name: id })), has_more: false },
+      });
+    if (path === "im/v1/messages" && method === "POST")
+      return json({ code: 0, data: { message_id: `om_${body.msg_type}_${this.calls.length}` } });
     return json({ code: 404, msg: `unknown ${method} ${path}` });
   };
 
@@ -353,6 +378,135 @@ describe("feishu tools", () => {
       feishu.calls.find((c) => c.method === "POST" && c.path === "calendar/v4/calendars/cal_team/events/ev1/attendees")
         ?.body.attendees,
     ).toEqual([{ type: "user", user_id: "ou_carol_a" }]);
+  });
+
+  it("a calendar for a whole group: its members now and later, the group invited to events, the share card posted", async () => {
+    await grant([`feishu:${appA}:calendar:read`, `feishu:${appA}:calendar:write`]);
+    // the topic is the team group's conversation in 甲公司's Feishu, whose bot stands for @dev
+    await w.api("PATCH", `/api/connections/${appA}`, {
+      token: w.adminToken,
+      json: { settings: { role_id: w.ids.dev } },
+    });
+    const [conv] = await db()
+      .insert(externalConversations)
+      .values({
+        id: newId("ecv"),
+        connectionId: appA,
+        externalId: "oc_team",
+        kind: "private",
+        name: "团队群",
+        memberIds: ["ou_alice_a", "ou_bob_a", "ou_guest"],
+        membersSyncedAt: new Date(Date.now() - 3600_000),
+      })
+      .returning();
+    await db()
+      .insert(externalThreadLinks)
+      .values({
+        id: newId("lnk"),
+        connectionId: appA,
+        conversationId: conv.id,
+        threadKey: CHANNEL,
+        topicId: w.ids.topic,
+      });
+    let results: Record<string, string> = {};
+    w.scripts.dev = (m, turn) => {
+      if (turn === 0)
+        return reply("", [
+          call("feishu_apps", {}),
+          call("feishu_calendar_share", { calendar_id: "cal_org", chat: "this", role: "reader" }),
+          call("feishu_calendar_create_event", {
+            calendar_id: "cal_team",
+            summary: "全员会",
+            start: "2026-10-22T10:00:00+08:00",
+            end: "2026-10-22T11:00:00+08:00",
+            attendees: ["ou_carol_a"],
+            groups: ["this"],
+          }),
+          call("feishu_calendar_update_event", {
+            calendar_id: "cal_team",
+            event_id: "ev1",
+            uninvite_groups: ["oc_team"],
+          }),
+          call("feishu_calendar_share_card", { calendar_id: "cal_org" }),
+        ]);
+      if (turn === 1) {
+        results = resultsOf(m);
+        return reply("", [
+          call("feishu_calendar_members", { calendar_id: "cal_org" }),
+          call("feishu_calendar_unshare", { calendar_id: "cal_org", chat: "oc_team" }),
+        ]);
+      }
+      results = { ...results, ...resultsOf(m) };
+      return reply("done");
+    };
+    await w.post(w.alice, w.ids.topic, "@dev 把公司日历分享给这个群");
+    await w.drain();
+    const all = Object.values(results).join("\n");
+    expect(all).toContain("团队群 oc_team (this conversation)");
+    // members are added, except those who already have the role or more (alice writes, bob reads); the one
+    // from another company could not be, and says why
+    const added = feishu.calls.filter((c) => c.method === "POST" && c.path === "calendar/v4/calendars/cal_org/acls");
+    expect(added.map((c) => [c.body.scope.user_id, c.body.role])).toEqual([
+      ["ou_carol_a", "reader"],
+      ["ou_guest", "reader"],
+    ]);
+    expect(all).toContain('"added": 1');
+    expect(all).toContain('"already_had_it_or_more": 2');
+    expect(all).toContain("user is not in the tenant");
+    // the group is invited to the event as a group; removing it from another finds its attendee entry
+    expect(feishu.last("calendar/v4/calendars/cal_team/events/ev_new/attendees")?.body.attendees).toEqual([
+      { type: "user", user_id: "ou_carol_a" },
+      { type: "chat", chat_id: "oc_team" },
+    ]);
+    expect(feishu.last("calendar/v4/calendars/cal_team/events/ev1/attendees/batch_delete")?.body.attendee_ids).toEqual([
+      "chat_1",
+    ]);
+    // the share card goes into the group, as the client's does; the topic records it as already there
+    const card = feishu.calls.find((c) => c.path === "im/v1/messages" && c.body.msg_type === "interactive");
+    expect(card?.body.receive_id).toBe("oc_team");
+    const content = JSON.parse(card?.body.content);
+    expect(content.header.title.content).toBe("日历分享");
+    expect(JSON.stringify(content.elements)).toContain("可查看所有日程详情");
+    expect(content.elements[2].actions[0]).toMatchObject({
+      text: { content: "在日历中查看" },
+      url: "https://applink.feishu.cn/client/calendar/detail?calendarId=7698317119771184158&source=calendar_share_by_owner",
+    });
+    const [shared] = await db().select().from(messages).where(eq(messages.source, "feishu"));
+    expect(shared.content).toContain("**日历分享**");
+    expect(shared.externalRef).toMatchObject({ conversation: "oc_team" });
+    expect(await db().select().from(outboundMessages).where(eq(outboundMessages.messageId, shared.id))).toEqual([]);
+    // the calendar lists the group; stopping takes the group's role from its members, not other roles
+    expect(all).toContain('"chat": "oc_team"');
+    expect(feishu.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+      "calendar/v4/calendars/cal_org/acls/acl_b",
+    ]);
+    expect(await db().select().from(feishuCalendarShares)).toEqual([]);
+  });
+
+  it("people who join a group a calendar is shared with get it too", async () => {
+    await db()
+      .insert(feishuCalendarShares)
+      .values({ id: newId("fcs"), connectionId: appA, calendarId: "cal_org", chatId: "oc_team", role: "reader" });
+    const [conv] = await db()
+      .insert(externalConversations)
+      .values({
+        id: newId("ecv"),
+        connectionId: appA,
+        externalId: "oc_team",
+        kind: "private",
+        memberIds: ["ou_alice_a", "ou_bob_a"],
+        membersSyncedAt: new Date(Date.now() - 3600_000),
+      })
+      .returning();
+    feishu.team = ["ou_alice_a", "ou_bob_a", "ou_dave_a"];
+    const [conn] = await db().select().from(connections).where(eq(connections.id, appA));
+    await new FeishuAdapter().syncMembers(db(), conn, conv);
+    await w.waitFor(async () => feishu.calls.some((c) => c.method === "POST" && c.path.endsWith("/acls")));
+    expect(
+      feishu.calls.filter((c) => c.method === "POST" && c.path.endsWith("/acls")).map((c) => [c.path, c.body]),
+    ).toEqual([
+      ["calendar/v4/calendars/cal_org/acls", { role: "reader", scope: { type: "user", user_id: "ou_dave_a" } }],
+    ]);
   });
 
   it("documents, bases, sheets, meetings and tasks; refusals are explained", async () => {

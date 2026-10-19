@@ -246,6 +246,13 @@
       "when": 1792402821387,
       "tag": "0034_software_lists",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792406359572,
+      "tag": "0035_feishu_calendar_shares",
+      "breakpoints": true
     }
   ]
 }

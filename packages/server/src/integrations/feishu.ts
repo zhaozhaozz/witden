@@ -257,6 +257,22 @@ export class FeishuAdapter implements Adapter {
       .update(externalConversations)
       .set({ memberIds: members.map((m) => m.id), membersSyncedAt: new Date() })
       .where(eq(externalConversations.id, conv.id));
+    // People who joined since the last sync get the calendars shared with the group: afterwards, outside the
+    // message's transaction, as it calls Feishu once per calendar and person.
+    const before = conv.membersSyncedAt ? new Set(conv.memberIds) : null;
+    const joined = before ? members.map((m) => m.id).filter((id) => !before.has(id)) : [];
+    if (joined.length)
+      void import("./feishu-calendar.js")
+        .then((m) => m.followJoiners(getDb(), conn, conv.externalId, joined))
+        .catch((err) => console.warn("[witden] calendar shares for new members failed", err.message));
+  }
+
+  /** A message card into a chat, or into a thread of it (the calendar share card). */
+  async postCard(conn: Connection, chatId: string, threadKey: string | null, card: object): Promise<string | null> {
+    return this.post(conn, { conversationExternalId: chatId, threadKey } as OutboundMessage, {
+      msg_type: "interactive",
+      content: JSON.stringify(card),
+    });
   }
 
   /** A message this connection posted (its id is recorded once Feishu accepted it). */
