@@ -34,7 +34,6 @@ export async function saveArtifact(
   opts: {
     name: string;
     kind: string;
-    labels: string[];
     topicId?: string | null;
     taskId?: string | null;
     instanceId?: string | null;
@@ -63,7 +62,6 @@ export async function saveArtifact(
       instanceId: opts.instanceId ?? null,
       createdByType: opts.createdByType ?? "user",
       createdById: opts.createdById ?? null,
-      labels: opts.labels,
     })
     .returning();
   return art;

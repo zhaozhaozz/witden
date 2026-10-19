@@ -5,7 +5,6 @@ import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { knowledgeSpaces, type Memory, memories, roles, topics, type User } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
-import { PUBLIC, spaceLabel, topicLabel, userCanRead } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { ROLE_MEMORY_MAX_CHARS } from "../services/role-memory.js";
@@ -13,22 +12,13 @@ import * as topicSvc from "../services/topics.js";
 import { authed, body, params, query, row } from "./http.js";
 
 async function canReadMemory(db: Db, user: User, m: Memory): Promise<boolean> {
-  let allowed = false;
-  if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_READ, m.spaceId);
-  else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
-  else if (m.scope === "topic") {
+  if (m.scope === "team") return hasPermission(db, user, Perm.KNOWLEDGE_READ, m.spaceId);
+  if (m.scope === "role") return hasPermission(db, user, Perm.ROLE_MANAGE);
+  if (m.scope === "topic") {
     const [topic] = m.topicId ? await db.select().from(topics).where(eq(topics.id, m.topicId)).limit(1) : [];
-    allowed = !!topic && (await topicSvc.canView(db, user, topic));
+    return !!topic && (await topicSvc.canView(db, user, topic));
   }
-  // A note is never more visible than the material it was written from.
-  return (
-    allowed &&
-    (await userCanRead(
-      db,
-      user.id,
-      m.labels.filter((l) => l !== PUBLIC),
-    ))
-  );
+  return false;
 }
 
 export async function knowledgeRoutes(app: FastifyInstance) {
@@ -100,9 +90,9 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         )
           throw new NotFound("knowledge space not found");
         await requirePerm(db, user, Perm.KNOWLEDGE_WRITE, b.spaceId);
-        values = { ...base, scope: "team", spaceId: b.spaceId, labels: [spaceLabel(b.spaceId)] };
+        values = { ...base, scope: "team", spaceId: b.spaceId };
       } else if (b.scope === "role") {
-        // The role's own memory, shown wherever it works: no source labels (services/role-memory.ts).
+        // The role's own memory, shown wherever it works (services/role-memory.ts).
         await requirePerm(db, user, Perm.ROLE_MANAGE);
         if (!b.roleId || !(await db.select().from(roles).where(eq(roles.id, b.roleId)).limit(1)).length)
           throw new NotFound("role not found");
@@ -110,11 +100,11 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         if (!content) throw new BadRequest("content is required");
         if (content.length > ROLE_MEMORY_MAX_CHARS)
           throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
-        values = { ...base, content, scope: "role", roleId: b.roleId, labels: [] };
+        values = { ...base, content, scope: "role", roleId: b.roleId };
       } else if (b.scope === "topic") {
         const topic = await topicSvc.getTopic(db, String(b.topicId ?? ""));
         if (!(await topicSvc.canPost(db, user, topic))) throw new Forbidden("you are not a participant of this topic");
-        values = { ...base, scope: "topic", topicId: topic.id, labels: [topicLabel(topic.id)] };
+        values = { ...base, scope: "topic", topicId: topic.id };
       } else throw new BadRequest("scope must be team, role or topic");
       const [m] = await db.insert(memories).values(values).returning();
       await audit(db, "memory.create", {

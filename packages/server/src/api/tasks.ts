@@ -19,7 +19,6 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
-import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, body, params, query, row } from "./http.js";
@@ -29,11 +28,11 @@ async function canViewTask(db: Db, user: User, task: Task): Promise<boolean> {
   return (!!topic && (await topicSvc.canView(db, user, topic))) || (await hasPermission(db, user, Perm.AUDIT_VIEW));
 }
 
-/** Task text can carry material from elsewhere: show it only to people who may read every source. */
+/** Task text is shown to people who may see its topic (auditors may list tasks without reading them). */
 export async function contentVisible(db: Db, user: User | null, task: Task): Promise<boolean> {
   if (!user) return true;
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
-  return !!topic && (await topicSvc.canView(db, user, topic)) && (await userCanRead(db, user.id, task.labels));
+  return !!topic && (await topicSvc.canView(db, user, topic));
 }
 
 export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; viewer?: User } = {}) {
@@ -41,7 +40,7 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
     opts.detail && opts.viewer && (await hasPermission(db, opts.viewer, Perm.ROLE_MANAGE)) ? [] : ["roleSnapshot"];
   const data: Record<string, any> = row(task, exclude);
   if (!(await contentVisible(db, opts.viewer ?? null, task))) {
-    // Titles of delegated work, waits and results can carry material the task read; only structure stays visible.
+    // Titles of delegated work, waits and results are the topic's; only structure stays visible.
     for (const k of ["title", "instruction", "progress", "error", "status_reason", "result"])
       if (data[k]) data[k] = "[restricted]";
     data.wait = task.wait ? { type: task.wait.type } : null;
@@ -86,15 +85,13 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
 async function approvalOut(db: Db, a: Approval, user: User) {
   const data: Record<string, any> = row(a);
   const decide = await approvalSvc.canDecide(db, user, a);
-  const sees = decide && (await approvalSvc.canSeeMaterial(db, user, a));
-  // Held content and tool arguments are shown only to deciders who may read what the task has read.
-  if (!sees)
+  // Held content and tool arguments are shown only to people who decide approvals for the role.
+  if (!decide)
     data.detail =
       a.action === "disclose"
         ? { sources: a.detail.sources }
         : { tool: a.detail.tool_call?.name, arguments: "[restricted]" };
   data.can_decide = a.status === "pending" && decide;
-  data.can_approve = data.can_decide && sees;
   const [role] = await db.select().from(roles).where(eq(roles.id, a.roleId)).limit(1);
   data.role = role
     ? { id: role.id, handle: role.handle, name: role.name, color: role.color, avatar_url: role.avatarUrl }
@@ -152,7 +149,7 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get(
     "/api/tasks/:id/trace",
     authed(async ({ db, user, req }) => {
-      // Full chain: who asked from where, assignment reasoning, computer, envelope, labels, audit.
+      // Full chain: who asked from where, assignment reasoning, computer, envelope, audit.
       const task = await load(db, user, params(req).id);
       const visible = await contentVisible(db, user, task);
       const ext = await externalContext(db, task.topicId);
@@ -173,7 +170,6 @@ export async function taskRoutes(app: FastifyInstance) {
           : { conversation_kind: "internal" },
         assignment: task.assignment,
         envelope: task.envelope,
-        labels: task.labels,
         session_id: task.sessionId,
         // Execution-gateway journal: which computer operations ran, failed or have an uncertain outcome.
         tool_calls: (

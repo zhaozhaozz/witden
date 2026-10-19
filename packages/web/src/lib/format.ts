@@ -414,7 +414,7 @@ export function auditLabel(action: string): string {
 
 export const RESTRICTED = "[restricted]";
 
-/** Text fields of tasks that read material the viewer may not see come back as "[restricted]". */
+/** Text fields of tasks in topics the viewer may not see come back as "[restricted]". */
 export function isRestricted(v: unknown): boolean {
   return v === RESTRICTED;
 }

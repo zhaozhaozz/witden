@@ -88,14 +88,6 @@ function SessionItem({
           <span className="muted">已删除的角色</span>
         )}{" "}
         {s.status !== "active" ? <Tag tone="off">{s.status}</Tag> : null}
-        {s.restricted ? (
-          <Tag
-            tone="wait"
-            title="这段对话读过不是话题里每个人都能看的资料，之后的回答要等资料主人批准才会发出；清空上下文后恢复。"
-          >
-            读过受限资料
-          </Tag>
-        ) : null}
         {s.open_run ? (
           <Link to={`/tasks/${s.open_run.id}`}>
             <TaskStatusChip status={s.open_run.status} compact />

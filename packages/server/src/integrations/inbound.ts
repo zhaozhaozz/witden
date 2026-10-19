@@ -28,7 +28,6 @@ import {
   users,
 } from "../db/schema.js";
 import { runtime } from "../runtime.js";
-import { topicLabel } from "../security/labels.js";
 import { audit } from "../services/audit.js";
 import { saveArtifact } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
@@ -575,7 +574,6 @@ async function ingestFiles(
     const art = await saveArtifact(db, data, {
       name: f.name ?? "file",
       kind: "upload",
-      labels: [topicLabel(topic.id)],
       topicId: topic.id,
       createdByType: "user",
       createdById: user.id,

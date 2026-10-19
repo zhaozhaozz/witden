@@ -4,8 +4,9 @@
  * Everyone who signs in to the console is an administrator: the console is where the roles and computers are
  * configured, and it shows every conversation the roles take part in. The people the roles serve are outside
  * it — Slack / Feishu members and channels. A person from a connected workspace without a console account is
- * an *external member* of that connection and may use only the role its bot stands for. What reaches outside
- * people is controlled by the information-flow labels (security/labels.ts), not by these permissions.
+ * an *external member* of that connection and may use only the role its bot stands for. What a role may read and
+ * use is decided by its own permissions (tool groups, knowledge spaces, connections): whatever it may read, it may
+ * use wherever it works.
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";

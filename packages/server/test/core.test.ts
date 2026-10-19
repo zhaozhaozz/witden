@@ -1,4 +1,4 @@
-/** Security primitives, information-flow labels, model configurations and the model wire protocols. */
+/** Security primitives, audiences, model configurations and the model wire protocols. */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { plainTitle } from "../src/agent/dispatch.js";
@@ -15,8 +15,8 @@ import {
   topics,
 } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
+import { CONSOLE, isSubset, readers, topicReaders } from "../src/security/audience.js";
 import { findCredential, hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
-import { checkFlow, topicLabel, topicReaders, userLabel } from "../src/security/labels.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { setModelFactory } from "../src/services/model-configs.js";
 import { createUser } from "../src/services/users.js";
@@ -82,13 +82,15 @@ describe("with a database", () => {
     expect(await hasPermission(db(), carol, Perm.TOPIC_CREATE)).toBe(false);
   });
 
-  it("inside the console material flows freely; a channel's outside members may not see a DM or private notes", async () => {
+  it("a topic's audience: its people and the console; a linked channel's outside members widen it", async () => {
     const alice = await createUser(db(), { name: "alice", email: "a@x.io" });
     const bob = await createUser(db(), { name: "bob", email: "b@x.io" });
     const dm = await topic("dm", [alice.id]);
     const group = await topic("group", [alice.id, bob.id]);
-    const flow = async (labels: string[], to: string) => checkFlow(db(), labels, await topicReaders(db(), to));
-    expect((await flow([topicLabel(dm.id), userLabel(alice.id)], group.id)).allowed).toBe(true);
+    // whether everyone who sees ``to`` also sees ``from`` (publishing asks for confirmation when not)
+    const within = async (to: string, from: string) =>
+      isSubset(db(), await topicReaders(db(), to), await topicReaders(db(), from));
+    expect(await within(dm.id, group.id)).toBe(true);
     // the group is mirrored into a Slack channel with carol, who has no console account
     const [conn] = await db()
       .insert(connections)
@@ -114,15 +116,11 @@ describe("with a database", () => {
         threadKey: "1.0",
         topicId: group.id,
       });
-    const decision = await flow([topicLabel(dm.id), topicLabel(group.id)], group.id);
-    expect(decision.allowed).toBe(false);
-    expect(decision.blockedLabels).toEqual([topicLabel(dm.id)]);
-    expect((await flow([userLabel(alice.id)], group.id)).allowed).toBe(false);
-    // the channel's own content may go back to the console DM
-    expect((await flow([topicLabel(group.id)], dm.id)).allowed).toBe(true);
+    expect(await within(group.id, dm.id)).toBe(false);
+    expect(await within(dm.id, group.id)).toBe(true);
   });
 
-  it("public and private Slack channels; unknown membership and labels fail closed", async () => {
+  it("public and private Slack channels; unknown membership counts as the whole workspace", async () => {
     const alice = await createUser(db(), { name: "alice", email: "a@x.io" });
     const [conn] = await db()
       .insert(connections)
@@ -156,18 +154,18 @@ describe("with a database", () => {
         .insert(externalThreadLinks)
         .values({ id: newId("lnk"), connectionId: conn.id, conversationId: conv.id, threadKey: key, topicId: t.id });
     }
-    const flow = async (labels: string[], to: string) =>
-      (await checkFlow(db(), labels, await topicReaders(db(), to))).allowed;
-    // private channel (only alice) -> public channel: blocked; public -> private channel of workspace members: allowed
-    expect(await flow([topicLabel(tPrivate.id)], tPublic.id)).toBe(false);
-    expect(await flow([topicLabel(tPublic.id)], tPrivate.id)).toBe(true);
+    const within = async (to: string, from: string) =>
+      isSubset(db(), await topicReaders(db(), to), await topicReaders(db(), from));
+    // a public channel reaches more than a private one (only alice); a private one, no more than the workspace
+    expect(await within(tPublic.id, tPrivate.id)).toBe(false);
+    expect(await within(tPrivate.id, tPublic.id)).toBe(true);
     // unknown membership counts as the whole workspace
     await db()
       .update(externalConversations)
       .set({ membersSyncedAt: null })
       .where(eq(externalConversations.id, priv.id));
-    expect(await flow([userLabel(alice.id)], tPrivate.id)).toBe(false);
-    expect(await flow(["mystery:1"], tPrivate.id)).toBe(false);
+    const aliceOnly = readers([CONSOLE], [`u:${alice.id}`]);
+    expect(await isSubset(db(), await topicReaders(db(), tPrivate.id), aliceOnly)).toBe(false);
   });
 
   it("login and /me", async () => {

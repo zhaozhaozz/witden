@@ -28,7 +28,6 @@ import {
   taskSteps,
   tasks,
 } from "../db/schema.js";
-import { topicLabel } from "../security/labels.js";
 import * as topicSvc from "../services/topics.js";
 import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES } from "./context.js";
 import { ACTIVE } from "./control.js";
@@ -230,7 +229,6 @@ export async function resetContext(db: Db, s: AgentSession): Promise<void> {
     .set({
       contextFrom: await nextSessionSeq(db, s.id),
       contextTokens: 0,
-      labels: [],
       roster: null,
       notes: [],
       awaiting: null,
@@ -278,13 +276,9 @@ function freshConditions(s: AgentSession, role: Role, since: Date | null, fresh:
   return conds;
 }
 
-async function resultText(
-  db: Db,
-  item: InboxItem,
-  role: Role,
-): Promise<{ text: string; labels: string[]; round: number }> {
+async function resultText(db: Db, item: InboxItem, role: Role): Promise<{ text: string; round: number }> {
   const [t] = item.task_id ? await db.select().from(tasks).where(eq(tasks.id, item.task_id)).limit(1) : [];
-  if (!t) return { text: `A task you started (${item.task_id}) no longer exists.`, labels: [], round: 0 };
+  if (!t) return { text: `A task you started (${item.task_id}) no longer exists.`, round: 0 };
   const [owner] = await db.select().from(roles).where(eq(roles.id, t.ownerRoleId)).limit(1);
   const whose = t.ownerRoleId === role.id ? "Your task" : `@${owner?.handle ?? "?"}'s task`;
   const outcome =
@@ -292,7 +286,7 @@ async function resultText(
       ? (t.result ?? "").slice(0, RESULT_LIMIT) || "(no result)"
       : `${t.status}: ${t.statusReason ?? t.error ?? ""}`;
   const posted = t.envelope?.report_only ? "" : " (its answer was also posted in the topic)";
-  return { text: `${whose} ${t.id} «${t.title}» ended${posted}:\n${outcome}`, labels: t.labels, round: t.round };
+  return { text: `${whose} ${t.id} «${t.title}» ended${posted}:\n${outcome}`, round: t.round };
 }
 
 /**
@@ -373,14 +367,12 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   }
   if (notes.length) parts.push(notes.join("\n"));
 
-  const labels = new Set<string>([...run.labels, ...s.labels, topicLabel(topic.id)]);
   // Results of work handed out count as automatic rounds (a person's message starts again at 0).
   let resultRound = 0;
   for (const item of ready) {
     if (item.kind === "result") {
       const r = await resultText(db, item, role);
       parts.push(r.text);
-      for (const l of r.labels) labels.add(l);
       resultRound = Math.max(resultRound, r.round);
     } else if (item.kind === "timer") {
       parts.push(`Follow-up you scheduled (${item.at.slice(5, 16).replace("T", " ")}): ${item.note ?? ""}`);
@@ -405,7 +397,6 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   const latestItem = latest ? forYouItems.find((i) => i.message_id === latest.id) : undefined;
   const replyTo = [...ready].reverse().find((i) => i.reply_to)?.reply_to;
   const update: Partial<Task> = {
-    labels: [...labels],
     // The step budget counts per turn: each batch of new messages starts a fresh count.
     usage: { ...(run.usage ?? {}), turn_steps: 0, turn_tokens: 0 },
   };
@@ -432,7 +423,7 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   const inbox = pruned(s.inbox.map((i) => (readySet.has(i) ? { ...i, done: at } : i)));
   await db
     .update(agentSessions)
-    .set({ inbox, cursorAt, roster, labels: [...labels], wakeAt: nextWake(inbox) })
+    .set({ inbox, cursorAt, roster, wakeAt: nextWake(inbox) })
     .where(eq(agentSessions.id, s.id));
   return true;
 }
@@ -446,16 +437,6 @@ export async function lastBatchExplicit(db: Db, run: Task): Promise<boolean> {
     .orderBy(desc(taskSteps.seq))
     .limit(1);
   return !!step?.payload?.inbox?.explicit;
-}
-
-/** Labels read by the conversation also mark its session, so later runs carry them. */
-export async function addSessionLabels(db: Db, run: Task, labels: string[]): Promise<void> {
-  if (!labels.length || !run.sessionId) return;
-  const [s] = await db.select().from(agentSessions).where(eq(agentSessions.id, run.sessionId)).limit(1);
-  if (!s) return;
-  const merged = [...new Set([...s.labels, ...labels])];
-  if (merged.length !== s.labels.length)
-    await db.update(agentSessions).set({ labels: merged }).where(eq(agentSessions.id, s.id));
 }
 
 // --- people the role asked ------------------------------------------------------------------------------

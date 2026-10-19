@@ -1,9 +1,8 @@
 /**
  * Server-sent events: live messages, task status and computer state.
  *
- * Access is re-checked for every event, not only when the stream opens: a task may read restricted
- * material after someone subscribed, and people may be removed from a topic or deactivated while their
- * browser is still connected.
+ * Access is re-checked for every event, not only when the stream opens: people may be removed from a topic or
+ * deactivated while their browser is still connected.
  */
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
@@ -11,7 +10,6 @@ import { db as getDb } from "../db/client.js";
 import { tasks, topics, type User, users } from "../db/schema.js";
 import { Forbidden, Unauthorized } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { type BusEvent, CONFIG_CHANNEL } from "../services/events.js";
 import { canView } from "../services/topics.js";
@@ -27,7 +25,7 @@ async function topicOk(user: User, topicId: string | undefined): Promise<boolean
 async function taskOk(user: User, taskId: string | undefined): Promise<boolean> {
   const db = getDb();
   const [task] = taskId ? await db.select().from(tasks).where(eq(tasks.id, taskId)).limit(1) : [];
-  return !!task && (await topicOk(user, task.topicId)) && (await userCanRead(db, user.id, task.labels));
+  return !!task && (await topicOk(user, task.topicId));
 }
 
 async function adminOk(user: User): Promise<boolean> {

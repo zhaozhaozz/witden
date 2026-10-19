@@ -2,7 +2,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { computerInstances, type Task, tasks } from "../db/schema.js";
-import { checkFlow, topicReaders } from "../security/labels.js";
 import { audit } from "../services/audit.js";
 import { publish, wake } from "../services/events.js";
 import { currentLease, releaseTask } from "../services/leases.js";
@@ -19,22 +18,12 @@ export const ACTIVE = new Set([
   "paused",
 ]);
 
-/** True when the task has read material that may not be shown to everyone in its topic. */
-export async function textRestricted(db: Db, task: Task): Promise<boolean> {
-  return !(await checkFlow(db, task.labels, await topicReaders(db, task.topicId))).allowed;
-}
-
 async function publishTask(db: Db, task: Task): Promise<void> {
   const meta = { id: task.id, status: task.status, topic_id: task.topicId, owner_role_id: task.ownerRoleId };
-  const hidden = await textRestricted(db, task);
   await publish(
     db,
     "task.status",
-    {
-      ...meta,
-      reason: hidden && task.statusReason ? "[restricted]" : task.statusReason,
-      progress: hidden && task.progress ? "[restricted]" : task.progress,
-    },
+    { ...meta, reason: task.statusReason, progress: task.progress },
     `topic:${task.topicId}`,
     `task:${task.id}`,
   );

@@ -3,13 +3,8 @@
  * (permissions per connection and product: platform-tools.ts; the tools: agent/tools-github.ts). A connection may
  * be set to authenticate only (``auth_only``): it takes no messages and serves just these tools, e.g. a person's own
  * account doing what they would otherwise do by hand.
- *
- * What a tool reads from a public repository is public; from a private one it is labelled as that connection's
- * (``github:<connection>``). Writing to a repository sends task material to its readers — everyone for a public
- * one — so the information-flow check runs before a write (runner.ts, ``destination``).
  */
 import type { Connection } from "../db/schema.js";
-import { PUBLIC, type Readers, readers } from "../security/labels.js";
 import { GithubAdapter, type GithubClient } from "./github.js";
 
 export interface GithubProduct {
@@ -35,8 +30,6 @@ export const GITHUB_PRODUCTS: GithubProduct[] = [
   { key: "actions", label: "Actions", description: "查看工作流运行情况；重新运行、手动触发工作流" },
 ];
 
-export const githubLabel = (connectionId: string) => `github:${connectionId}`;
-
 /** owner/repo, as GitHub writes it. */
 export function repoName(value: unknown): string {
   const s = String(value ?? "")
@@ -52,28 +45,6 @@ export function repoName(value: unknown): string {
 
 export const githubClient = (conn: Connection, repo: string): Promise<GithubClient> =>
   new GithubAdapter().client(conn, repo);
-
-const visibility = new Map<string, { private: boolean; at: number }>();
-
-/** Whether a repository is private (asked of GitHub, kept ten minutes). */
-export async function isPrivate(conn: Connection, repo: string): Promise<boolean> {
-  const key = `${conn.id}:${repo}`;
-  const hit = visibility.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.private;
-  const { data } = await (await githubClient(conn, repo)).request("GET", `/repos/${repo}`);
-  visibility.set(key, { private: !!data?.private, at: Date.now() });
-  return !!data?.private;
-}
-
-/** Labels for what was read from a repository: none when public. */
-export async function repoLabels(conn: Connection, repo: string): Promise<string[]> {
-  return (await isPrivate(conn, repo)) ? [githubLabel(conn.id)] : [];
-}
-
-/** Who sees what is written to a repository: everyone, or (private) the people of that connection. */
-export async function repoAudience(conn: Connection, repo: string): Promise<Readers> {
-  return (await isPrivate(conn, repo)) ? readers([`ws:${conn.id}`]) : readers([PUBLIC]);
-}
 
 /** GitHub's answers to a call that went wrong, said so a role can tell the person what to do. */
 export function explainGithubError(err: Error): string {

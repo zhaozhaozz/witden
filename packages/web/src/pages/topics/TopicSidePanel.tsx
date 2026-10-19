@@ -178,14 +178,6 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
                   <li key={s.id} className="task-card">
                     <div className="task-card-head">
                       {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的角色</span>}
-                      {s.restricted ? (
-                        <Tag
-                          tone="wait"
-                          title="这段对话读过不是话题里每个人都能看的资料，之后的回答要等资料主人批准才会发出；清空上下文后恢复。"
-                        >
-                          读过受限资料
-                        </Tag>
-                      ) : null}
                       {s.open_run ? <TaskStatusChip status={s.open_run.status} compact /> : <Tag tone="off">空闲</Tag>}
                     </div>
                     <div

@@ -6,9 +6,8 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { externalIdentities, roles, tasks } from "../src/db/schema.js";
+import { externalIdentities, roles } from "../src/db/schema.js";
 import { setFeishuFetch } from "../src/integrations/feishu.js";
-import { checkFlow, readers } from "../src/security/labels.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -125,7 +124,7 @@ afterEach(async () => {
 });
 
 describe("feishu tools", () => {
-  it("are given per app and product; a company's data is labelled as that company's", async () => {
+  it("are given per app and product, each call with its own company's token", async () => {
     expect((await grant([`feishu:${appA}:calendar:read`, `feishu:${appB}:docs:read`])).status).toBe(200);
     let results: Record<string, string> = {};
     let offered: string[] = [];
@@ -158,11 +157,6 @@ describe("feishu tools", () => {
     expect(all).toContain(`you may not use docs (read) of the Feishu connection ${appA}`);
     // each call went with its own company's token
     expect(feishu.last("calendar/v4/calendars/cal_team/events")?.query.start_time).toBe("1792425600");
-    const [task] = await db().select().from(tasks).where(eq(tasks.id, posted.tasks[0].id));
-    expect(task.labels).toEqual(expect.arrayContaining([`feishu:${appA}`, `feishu:${appB}`]));
-    // 甲公司's data may go back into 甲公司's Feishu, not into 乙公司's
-    expect((await checkFlow(db(), [`feishu:${appA}`], readers([`ws:${appA}`]))).allowed).toBe(true);
-    expect((await checkFlow(db(), [`feishu:${appA}`], readers([`ws:${appB}`]))).allowed).toBe(false);
   });
 
   it("a write that asks waits for approval; then it runs with the attendees invited", async () => {

@@ -1,9 +1,9 @@
-/** Inline approval cards use the same gated material and decisions as the approvals page. */
+/** Inline approval cards use the same decisions as the approvals page. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtime } from "../src/runtime.js";
 import type { BusEvent } from "../src/services/events.js";
 import { call, reply } from "./support/harness.js";
-import { linkChannel, restrictedNote } from "./support/outside.js";
+import { linkChannel, teamNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -33,7 +33,7 @@ describe("conversation approvals", () => {
     const list = async () =>
       (await w.api("GET", `/api/approvals?topic_id=${w.ids.topic}&status=all`, { token: w.alice })).body;
     const [first] = await list();
-    expect(first).toMatchObject({ task_id: taskId, status: "pending", can_decide: true, can_approve: true });
+    expect(first).toMatchObject({ task_id: taskId, status: "pending", can_decide: true });
     expect(first.detail.tool_call.arguments.command).toBe(command);
     const notice = (await w.messages(w.ids.topic)).find((m) => m.approval_id === first.id);
     expect(notice).toMatchObject({ author_type: "system", task_id: taskId });
@@ -76,20 +76,17 @@ describe("conversation approvals", () => {
     expect((await w.api("GET", "/api/approvals?status=all", { token: w.alice })).status).toBe(400);
   });
 
-  it("links disclosure cards without putting held text in topic messages or events", async () => {
-    const secret = "internal-salary-12345";
+  it("what the role may read is answered without an approval card, also before a Slack channel", async () => {
+    const note = "the release train leaves on Thursdays";
     await linkChannel(w, w.ids.topic, ["UCAROL"]);
-    await restrictedNote(w, secret);
-    w.scripts.dev = (_m, turn) => (turn === 0 ? reply("", [call("recall", { query: "salary" })]) : reply(secret));
-    await w.post(w.alice, w.ids.topic, "@dev summarise salary");
+    await teamNote(w, note);
+    w.scripts.dev = (_m, turn) => (turn === 0 ? reply("", [call("recall", { query: "release" })]) : reply(note));
+    const taskId = (await w.post(w.alice, w.ids.topic, "@dev when do we release?")).tasks[0].id;
     await w.drain();
-    const [approval] = (await w.api("GET", `/api/approvals?topic_id=${w.ids.topic}&status=all`, { token: w.alice }))
-      .body;
-    expect(approval).toMatchObject({ action: "disclose", detail: { content: secret }, can_approve: true });
-    const messages = await w.messages(w.ids.topic);
-    expect(messages.find((m) => m.approval_id === approval.id)).toBeTruthy();
-    expect(JSON.stringify(messages)).not.toContain(secret);
-    await w.waitFor(() => events.find((e) => e.type === "approval.changed" && e.data.id === approval.id));
-    expect(JSON.stringify(events.filter((e) => e.channels.includes(`topic:${w.ids.topic}`)))).not.toContain(secret);
+    expect((await w.api("GET", `/api/approvals?topic_id=${w.ids.topic}&status=all`, { token: w.alice })).body).toEqual(
+      [],
+    );
+    expect((await w.task(taskId)).status).toBe("completed");
+    expect((await w.messages(w.ids.topic)).some((m) => m.author_type === "role" && m.content === note)).toBe(true);
   });
 });

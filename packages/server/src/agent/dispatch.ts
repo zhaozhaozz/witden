@@ -25,13 +25,12 @@ import { Forbidden } from "../errors.js";
 import { CHANNEL } from "../integrations/base.js";
 import { externalContext } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
-import { topicLabel } from "../security/labels.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
 import { publish, wake } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import * as topicSvc from "../services/topics.js";
-import { setStatus, textRestricted } from "./control.js";
+import { setStatus } from "./control.js";
 import { enqueue, rolesAwaiting } from "./conversation.js";
 import { appendStep } from "./transcript.js";
 
@@ -276,10 +275,6 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
   const conversation = o.kind === "conversation";
   if (conversation && !o.session) throw new Error("a conversation run needs its session");
   const found = await models.modelWithProvider(db, role.modelConfigId);
-  let labels = [topicLabel(topic.id)];
-  if (parent) labels = [...new Set([...parent.labels, ...labels])];
-  // A conversation carries what its context has read before.
-  if (conversation) labels = [...new Set([...labels, ...o.session!.labels])];
   const budget: Record<string, any> = {
     max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
     max_tokens: role.maxTokensPerTask,
@@ -320,7 +315,6 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
         // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered.
         ...((await externalContext(db, topic.id)).conversationKind ? { outside: true } : {}),
       },
-      labels,
       roleSnapshot: {
         config_version: role.configVersion,
         model_config_id: role.modelConfigId,
@@ -357,8 +351,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
     detail: { parent: parent?.id ?? null, source_message: task.sourceMessageId, assignment: o.assignment?.summary },
   });
   const meta = { id: task.id, topic_id: topic.id, owner_role_id: role.id, status: current.status };
-  const title = (await textRestricted(db, current)) ? "[restricted]" : current.title;
-  await publish(db, "task.created", { ...meta, title }, `topic:${topic.id}`);
+  await publish(db, "task.created", { ...meta, title: current.title }, `topic:${topic.id}`);
   await publish(db, "task.created", meta, "admin");
   await wake(db, "tasks");
   return current;

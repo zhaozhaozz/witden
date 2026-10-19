@@ -9,7 +9,6 @@ import { openRun, readyItems, resetContext } from "../agent/conversation.js";
 import type { Db } from "../db/client.js";
 import { type AgentSession, agentSessions, roles } from "../db/schema.js";
 import { Forbidden, NotFound } from "../errors.js";
-import { checkFlow, topicReaders } from "../security/labels.js";
 import { audit } from "../services/audit.js";
 import * as models from "../services/model-configs.js";
 import * as topicSvc from "../services/topics.js";
@@ -20,15 +19,12 @@ export async function sessionOut(db: Db, s: AgentSession) {
   const found = role?.modelConfigId ? await models.modelWithProvider(db, role.modelConfigId) : null;
   const limits = found && !models.isSystemOne(found.provider) ? models.contextLimits(found.model) : null;
   const run = await openRun(db, s.id);
-  // The context read material not everyone here may see: until it is cleared, its answers wait for approval.
-  const restricted = !(await checkFlow(db, s.labels, await topicReaders(db, s.topicId))).allowed;
   return {
-    // The inbox and the awaited people are internal bookkeeping; labels say what the context has read.
+    // The inbox and the awaited people are internal bookkeeping.
     ...row(s, ["inbox", "awaiting", "roster", "wakeAt", "cursorAt", "contextFrom"]),
     waiting: readyItems(s).length,
     next_follow_up_at: s.wakeAt?.toISOString() ?? null,
     open_run: run ? { id: run.id, status: run.status } : null,
-    restricted,
     context_window: limits?.window ?? null,
     compact_at: limits?.compactAt ?? null,
   };

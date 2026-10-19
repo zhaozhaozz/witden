@@ -13,12 +13,11 @@ import {
   type User,
 } from "../db/schema.js";
 import { Conflict, Forbidden } from "../errors.js";
-import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { approvalChanged } from "../services/events.js";
 import { recordSessionNote } from "./context.js";
-import { deferWhilePaused, setStatus, TERMINAL, textRestricted } from "./control.js";
+import { deferWhilePaused, setStatus, TERMINAL } from "./control.js";
 import { noteRunEnd, settle } from "./conversation.js";
 import { systemMessage } from "./dispatch.js";
 import { discardHeld, releaseApproved } from "./output.js";
@@ -27,18 +26,9 @@ import { appendStep, isConversation } from "./transcript.js";
 
 export async function canDecide(db: Db, user: User, approval: Approval): Promise<boolean> {
   if (!user.isActive) return false;
-  // Only the people whose material it is may release it to a wider audience (also a write that would send it out).
-  if (approval.action === "disclose" || approval.detail?.flow) return approval.approverUserIds.includes(user.id);
   return (
     approval.approverUserIds.includes(user.id) || (await hasPermission(db, user, Perm.APPROVAL_DECIDE, approval.roleId))
   );
-}
-
-/** Approving needs seeing: the decider must be allowed to read everything the request draws on. */
-export async function canSeeMaterial(db: Db, user: User, approval: Approval): Promise<boolean> {
-  if (approval.action === "disclose") return userCanRead(db, user.id, approval.detail.labels ?? []);
-  const [task] = await db.select().from(tasks).where(eq(tasks.id, approval.taskId)).limit(1);
-  return userCanRead(db, user.id, task?.labels ?? []);
 }
 
 /** Apply the decision, unless the task is paused (e.g. emergency stop): then it applies on resume. */
@@ -58,16 +48,13 @@ async function endWithAnswer(db: Db, task: Task, result: string, reason: string 
   }
   const done = await setStatus(db, task, "completed", reason, { result });
   if (isConversation(done)) await noteRunEnd(db, done);
-  else if (!reason && !(await textRestricted(db, done))) await recordSessionNote(db, done, result);
+  else if (!reason) await recordSessionNote(db, done, result);
   await notifyParent(db, done);
 }
 
 export async function decide(db: Db, approval: Approval, user: User, approve: boolean, note = ""): Promise<Approval> {
   if (approval.status !== "pending") throw new Conflict(`approval already ${approval.status}`);
   if (!(await canDecide(db, user, approval))) throw new Forbidden("you are not an approver for this request");
-  if (approve && !(await canSeeMaterial(db, user, approval))) {
-    throw new Forbidden("you cannot approve this: it draws on material you are not allowed to see (you can reject it)");
-  }
   const [decided] = await db
     .update(approvals)
     .set({ status: approve ? "approved" : "rejected", decidedBy: user.id, decidedAt: new Date() })
@@ -88,6 +75,7 @@ export async function decide(db: Db, approval: Approval, user: User, approve: bo
   const [topic] = await db.select().from(topics).where(eq(topics.id, approval.topicId)).limit(1);
   if (!task || !role || !topic || TERMINAL.has(task.status)) return decided;
   const verdict = `${approve ? "approved" : "rejected"} by ${user.name}${note ? `: ${note}` : ""}`;
+  // Messages held for disclosure exist only from before migration 0032; deciding them still posts or drops them.
   if (approval.action === "disclose") {
     await decideDisclosure(db, decided, task, role, topic, approve, verdict);
   } else {

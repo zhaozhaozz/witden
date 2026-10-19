@@ -129,7 +129,6 @@ export interface Artifact {
   instance_id: string | null;
   created_by_type: string;
   created_by_id: string | null;
-  labels: string[];
   created_at: string;
 }
 
@@ -209,7 +208,6 @@ export interface Task {
   depth: number;
   round: number;
   envelope: Dict;
-  labels: string[];
   assignment: Dict;
   budget: Dict;
   usage: Dict;
@@ -228,7 +226,7 @@ export interface Task {
   children?: { id: string; title: string; status: TaskStatus; owner_role_id: string }[];
   approvals?: Approval[];
   role_snapshot?: Dict;
-  /** The task read material this viewer may not see: text fields are "[restricted]", the log is hidden. */
+  /** The viewer may not see the task's topic: text fields are "[restricted]", the log is hidden. */
   content_restricted?: boolean;
 }
 
@@ -261,7 +259,6 @@ export interface TaskTrace {
   source: ExternalContext & Dict;
   assignment: Dict;
   envelope: Dict;
-  labels: string[];
   session_id: string | null;
   audit: AuditEntry[];
 }
@@ -279,14 +276,10 @@ export interface AgentSession {
   /** Size of the conversation's context at its last model call, in tokens. */
   context_tokens: number;
   compactions: number;
-  /** Labels of what the context has read. */
-  labels: string[];
   /** Items (messages, results, due follow-ups) waiting to be shown to the conversation. */
   waiting: number;
   next_follow_up_at: string | null;
   open_run: { id: string; status: TaskStatus } | null;
-  /** The context has read material not everyone in the topic may see: its answers wait for approval until cleared. */
-  restricted: boolean;
   /** The role's model: its context window and when the conversation is compacted (null: no chat model). */
   context_window: number | null;
   compact_at: number | null;
@@ -311,8 +304,6 @@ export interface Approval {
   decided_at: string | null;
   created_at: string;
   can_decide?: boolean;
-  /** Approving needs sight of the held material; deciders without it may only reject. */
-  can_approve?: boolean;
   role?: { id: string; handle: string; name?: string; color?: string | null; avatar_url?: string | null } | null;
 }
 
@@ -713,7 +704,6 @@ export interface Memory {
   user_id: string | null;
   content: string;
   source_message_ids: string[];
-  labels: string[];
   created_by_type: string;
   created_by_id: string | null;
   created_at: string;

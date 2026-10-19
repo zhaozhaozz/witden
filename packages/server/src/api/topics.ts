@@ -23,7 +23,6 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
 import { type ChannelInfo, channelsOf } from "../integrations/links.js";
-import { topicLabel, userCanRead } from "../security/labels.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
@@ -386,7 +385,6 @@ export async function topicRoutes(app: FastifyInstance) {
       const art = await saveArtifact(db, data, {
         name: file.filename || "upload",
         kind: "upload",
-        labels: [topicLabel(topic.id)],
         topicId: topic.id,
         createdByType: "user",
         createdById: user.id,
@@ -412,9 +410,7 @@ export async function topicRoutes(app: FastifyInstance) {
         .from(artifacts)
         .where(and(eq(artifacts.topicId, topic.id), isNull(artifacts.deletedAt)))
         .orderBy(desc(artifacts.createdAt));
-      const out = [];
-      for (const a of rows) if (await userCanRead(db, user.id, a.labels)) out.push(row(a));
-      return out;
+      return rows.map((a) => row(a));
     }),
   );
 
@@ -431,13 +427,11 @@ export async function topicRoutes(app: FastifyInstance) {
         const topic = await svc.getTopic(db, art.topicId);
         if (!(await svc.canDownload(db, user, topic))) throw new Forbidden("you cannot download files from this topic");
       } else {
-        // A file held for disclosure approval: only people who may read all of its sources.
+        // A file held with a message for disclosure approval (before migration 0032): people who see its task.
         const [task] = art.taskId ? await db.select().from(tasks).where(eq(tasks.id, art.taskId)).limit(1) : [];
         const topic = task ? await svc.getTopic(db, task.topicId) : null;
         if (!topic || !(await svc.canView(db, user, topic))) throw new Forbidden("you cannot download this file");
       }
-      if (!(await userCanRead(db, user.id, art.labels)))
-        throw new Forbidden("this file draws on material you are not allowed to see");
       await audit(db, "file.download", {
         actorType: "user",
         actorId: user.id,
@@ -531,7 +525,6 @@ export async function topicRoutes(app: FastifyInstance) {
         .set({
           notes: [],
           inbox: [],
-          labels: [],
           contextFrom: 0,
           contextTokens: 0,
           cursorAt: null,

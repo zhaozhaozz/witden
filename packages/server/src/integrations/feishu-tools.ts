@@ -2,8 +2,8 @@
  * Feishu tools: a company's Feishu calendar, documents, bases, sheets, meetings and tasks, used by roles through
  * the platform. The role never holds the app's credentials: each call is made here with the connection's tenant
  * token, after the server checked that the role may use that product of that app — and a person approved the call
- * where the role's settings ask for it (runner.ts). What comes back is labelled as visible inside that company's
- * Feishu (labels.ts ``feishu:<connection>``), so it reaches other companies, Slack or GitHub only once released.
+ * where the role's settings ask for it (runner.ts). What a role reads there it may use wherever it works: the
+ * permission to the app is the control.
  *
  * A role's permission is per app (connection) and product, kept in its tool lists as
  * ``feishu:<connection>:<product>:read`` / ``…:write``; a write group in ``approval_required`` asks first. Feishu
@@ -11,7 +11,6 @@
  * calendars shared with it.
  */
 import type { Connection } from "../db/schema.js";
-import { feishuLabel } from "../security/labels.js";
 import { FeishuAdapter } from "./feishu.js";
 
 export type FeishuMode = "read" | "write";
@@ -166,5 +165,3 @@ export async function feishuApi(
 ): Promise<any> {
   return new FeishuAdapter().call(conn, method, path, { ...opts, timeoutMs: 20_000 });
 }
-
-export const labelsFor = (conn: Connection) => [feishuLabel(conn.id)];

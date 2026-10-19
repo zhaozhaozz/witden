@@ -8,7 +8,7 @@ import { externalIdentities, externalThreadLinks, messages, tasks, topics } from
 import { deliverPending } from "../src/integrations/delivery.js";
 import { imagesAsLinks, setGithubFetch } from "../src/integrations/github.js";
 import { call, reply } from "./support/harness.js";
-import { restrictedNote } from "./support/outside.js";
+import { teamNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "github-webhook-secret";
@@ -225,17 +225,17 @@ describe("github", () => {
     expect(await texts()).not.toContain("second version");
   });
 
-  it("a public repository is readable by anyone: console-only material needs approval first", async () => {
-    await restrictedNote(w, "the staging password is hunter2");
+  it("a public repository gets what the role may read, like anywhere else: its permissions decide", async () => {
+    await teamNote(w, "staging lives at staging.acme.dev");
     w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("recall", { query: "staging" })]) : reply("The staging password is hunter2");
-    await send("issue_comment", commented("@witden-bot what is the staging password?", { number: 40 }));
+      turn === 0 ? reply("", [call("recall", { query: "staging" })]) : reply("Staging lives at staging.acme.dev");
+    await send("issue_comment", commented("@witden-bot where is staging?", { number: 40 }));
     await settle();
     await w.drain();
     const task = (await allTasks()).at(-1)!;
-    expect(task.status).toBe("waiting_approval");
+    expect(task.status).toBe("completed");
     await deliverPending();
-    expect(gh.comments.some((c) => c.body.includes("hunter2"))).toBe(false);
+    expect(gh.comments.some((c) => c.body.includes("staging.acme.dev"))).toBe(true);
   });
 });
 

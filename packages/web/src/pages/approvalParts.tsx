@@ -9,7 +9,7 @@ import { useAction } from "../ui/feedback";
 import { JsonBlock, RoleBadge, StatusChip } from "../ui/kit";
 
 function actionLabel(a: Approval): string {
-  if (a.action === "disclose") return "发送含受限资料的消息";
+  if (a.action === "disclose") return "发送暂扣的消息";
   return `使用工具：${TOOL_LABEL[a.action] ?? a.action}`;
 }
 
@@ -28,17 +28,12 @@ export function ApprovalCard({
   const [note, setNote] = useState("");
   const a = approval;
   const detail = a.detail ?? {};
-  // Readable tool approvals carry {tool_call}; for viewers who may not see the material: {tool, arguments: "[restricted]"}.
+  // Tool approvals carry {tool_call}; for viewers who do not decide approvals: {tool, arguments: "[restricted]"}.
   const toolCall =
     (detail.tool_call as { name?: string; arguments?: unknown } | undefined) ??
     (detail.tool ? { name: String(detail.tool), arguments: detail.arguments } : undefined);
   const argsHidden = isRestricted(toolCall?.arguments);
-  // Deciders who cannot see the held material may reject but not approve.
-  const rejectOnly = !!a.can_decide && a.can_approve === false;
-  const sources = detail.sources as string | string[] | undefined;
   const content = detail.content as string | undefined;
-  const labels = detail.labels as string[] | undefined;
-  const flow = detail.flow as { sources?: string } | undefined;
 
   const decide = async (approve: boolean) => {
     const out = await run(
@@ -67,15 +62,7 @@ export function ApprovalCard({
 
       {a.action === "disclose" ? (
         <div className="approval-body">
-          <p className="small">
-            角色想把一条消息发到这个话题，但消息用到了部分参与者无权查看的资料，需要资料所属方确认后才能发出。
-          </p>
-          {sources ? (
-            <div className="approval-sources">
-              <span className="muted small">资料来源</span>
-              <span>{Array.isArray(sources) ? sources.join("，") : sources}</span>
-            </div>
-          ) : null}
+          <p className="small">这条消息在升级前被暂扣，等待批准；批准后发到这个话题，拒绝则不发出。</p>
           {content !== undefined ? (
             <div className="held">
               <div className="muted small">被暂扣的消息</div>
@@ -84,30 +71,16 @@ export function ApprovalCard({
           ) : (
             <p className="muted small">消息内容只对有权审批的人可见。</p>
           )}
-          {labels?.length ? (
-            <div className="inline-list">
-              {labels.map((l) => (
-                <code key={l} className="id">
-                  {l}
-                </code>
-              ))}
-            </div>
-          ) : null}
         </div>
       ) : toolCall ? (
         <div className="approval-body">
-          <p className="small">
-            {flow
-              ? "此操作会把受限资料发送给原本无权查看的人，需要资料所属方确认。"
-              : "该角色的这类操作被设置为每次都需要人工批准。"}
-          </p>
-          {flow?.sources ? <p className="small">资料来源：{flow.sources}</p> : null}
+          <p className="small">该角色的这类操作被设置为每次都需要人工批准。</p>
           <div className="muted small">调用 {toolCall.name}</div>
           {toolCall.name === "remember" && !argsHidden ? (
             <p className="small">{memoryScopeHint((toolCall.arguments as { scope?: string } | undefined)?.scope)}</p>
           ) : null}
           {argsHidden ? (
-            <p className="small muted">参数涉及你无权查看的资料，已隐藏。</p>
+            <p className="small muted">参数只对有审批权限的人显示。</p>
           ) : (
             <ToolArguments value={toolCall.arguments ?? {}} />
           )}
@@ -118,11 +91,6 @@ export function ApprovalCard({
         </div>
       ) : null}
 
-      {rejectOnly ? (
-        <p className="small text-wait">
-          你可以拒绝这个请求，但批准需要能查看它涉及的全部资料，你没有这些资料的查看权限。
-        </p>
-      ) : null}
       <footer className="approval-foot">
         <div className="approval-meta small muted">
           <span title={fmtTime(a.created_at)}>{fmtRelative(a.created_at)}发起</span>
@@ -154,11 +122,9 @@ export function ApprovalCard({
             <button type="button" className="btn btn-sm btn-danger-ghost" disabled={busy} onClick={() => decide(false)}>
               拒绝
             </button>
-            {rejectOnly ? null : (
-              <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => decide(true)}>
-                批准
-              </button>
-            )}
+            <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => decide(true)}>
+              批准
+            </button>
           </div>
         ) : a.status === "pending" ? (
           <span className="small muted">等待审批人处理</span>

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtime } from "../src/runtime.js";
 import type { BusEvent } from "../src/services/events.js";
 import { call, reply } from "./support/harness.js";
-import { linkChannel, restrictedNote } from "./support/outside.js";
+import { linkChannel, teamNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -45,21 +45,16 @@ describe("live activity", () => {
     expect(final.content).toBe(answer);
   });
 
-  it("no streamed text while the material may not reach the topic's Slack channel", async () => {
-    const SECRET = "salary-12345";
+  it("an answer drawing on a knowledge space streams like any other, also into a Slack-linked topic", async () => {
+    const note = "the release train leaves on Thursdays";
     await linkChannel(w, w.ids.topic, ["UCAROL"]);
-    await restrictedNote(w, `alice earns ${SECRET}`);
-    w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("recall", { query: "alice" })]) : reply(`alice earns ${SECRET}`);
+    await teamNote(w, note);
+    w.scripts.dev = (_m, turn) => (turn === 0 ? reply("", [call("recall", { query: "release" })]) : reply(note));
     const id = (await w.post(w.alice, w.ids.topic, "@dev summarise")).tasks[0].id;
     await w.drain();
     await settle();
-    const seen = live(id);
-    expect(seen.map((e) => e.data.phase)).toEqual(["thinking", "tool", "thinking"]);
-    // nothing on the group topic's channel carries it (the DM's own events and task details are gated elsewhere)
-    const group = events.filter((e) => e.channels.includes(`topic:${w.ids.topic}`));
-    expect(JSON.stringify(group)).not.toContain(SECRET);
-    expect((await w.task(id)).status).toBe("waiting_approval");
+    expect(live(id).map((e) => e.data.phase)).toContain("writing");
+    expect((await w.task(id)).status).toBe("completed");
   });
 
   it("long messages in CJK still post and are announced", async () => {

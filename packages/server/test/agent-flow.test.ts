@@ -143,15 +143,11 @@ describe("permissions and isolation", () => {
     await w.drain();
     expect(results[0]).toContain(`${other.id} «Release blockers» in the witden console`);
     expect(results[1]).toContain("alice: the release waits for issue 12");
-    // not tracked as a source: the answer goes to the Slack channel (carol is outside the console) at once
+    // the role may read it, so it may use it: the answer goes to the Slack channel (carol is outside the console)
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
     expect((await w.messages(w.ids.topic)).at(-1).content).toBe(
       "From «Release blockers»: the release waits for issue 12",
     );
-    const session = (await w.api("GET", `/api/topics/${w.ids.topic}/sessions`, { token: w.alice })).body.find(
-      (x: any) => x.role_id === w.ids.dev,
-    );
-    expect(session.restricted).toBe(false);
     // a role without the permission is not offered the tool
     let offered: string[] = [];
     w.scripts.test = (_m, _turn, tools) => {

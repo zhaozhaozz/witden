@@ -393,8 +393,6 @@ export const agentSessions = pgTable(
     cursorAt: ts("cursor_at"),
     /** Earliest follow-up the role scheduled (worker wakes the conversation then). */
     wakeAt: ts("wake_at"),
-    /** Information-flow labels of everything in the context (it carries what earlier runs read). */
-    labels: json<string[]>("labels").notNull().default([]),
     /** People the role asked a question and whose next message here answers it, mention or not. */
     awaiting: json<{ user_ids: string[]; at: string } | null>("awaiting"),
     /** session_seq where the model context starts (0 = from the beginning). */
@@ -470,7 +468,6 @@ export const tasks = pgTable(
     depth: integer("depth").notNull().default(0),
     round: integer("round").notNull().default(0),
     envelope: json<Json>("envelope").notNull().default({}),
-    labels: json<string[]>("labels").notNull().default([]),
     roleSnapshot: json<Json>("role_snapshot").notNull().default({}),
     assignment: json<Json>("assignment").notNull().default({}),
     budget: json<Json>("budget").notNull().default({}),
@@ -575,7 +572,6 @@ export const artifacts = pgTable(
     instanceId: text("instance_id"),
     createdByType: text("created_by_type").notNull().default("user"),
     createdById: text("created_by_id"),
-    labels: json<string[]>("labels").notNull().default([]),
     createdAt: created(),
     deletedAt: ts("deleted_at"),
   },
@@ -591,7 +587,6 @@ export const memories = pgTable("memories", {
   userId: text("user_id"),
   content: text("content").notNull(),
   sourceMessageIds: json<string[]>("source_message_ids").notNull().default([]),
-  labels: json<string[]>("labels").notNull().default([]),
   createdByType: text("created_by_type").notNull().default("user"),
   createdById: text("created_by_id"),
   createdAt: created(),

@@ -1,5 +1,5 @@
 /**
- * The Feishu tools roles call (permissions, calls and labels: integrations/feishu-tools.ts). Each tool belongs to
+ * The Feishu tools roles call (permissions and calls: integrations/feishu-tools.ts). Each tool belongs to
  * a product and a mode, its group being ``feishu:<product>:<mode>``; ``toolsFor`` offers it when the task holds that
  * product and mode for at least one app, and ``app`` picks which when there are several.
  */
@@ -8,15 +8,8 @@ import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { connections, externalIdentities, tasks } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
-import {
-  explainFeishuError,
-  FEISHU_PRODUCTS,
-  type FeishuMode,
-  feishuApi,
-  labelsFor,
-} from "../integrations/feishu-tools.js";
+import { explainFeishuError, FEISHU_PRODUCTS, type FeishuMode, feishuApi } from "../integrations/feishu-tools.js";
 import { connectionFor, grantedApps, parseGrant } from "../integrations/platform-tools.js";
-import { readers } from "../security/labels.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
 const str = { type: "string" };
@@ -57,7 +50,7 @@ function tokenOf(value: unknown, what: string): string {
 
 /**
  * Run a Feishu call for a product and mode: the app is checked against the task's grants, Feishu's refusals are
- * explained, the result is labelled as that company's.
+ * explained.
  */
 function feishuTool(
   name: string,
@@ -73,32 +66,15 @@ function feishuTool(
     group: `feishu:${product}:${mode}`,
     description,
     parameters: obj({ ...properties, app: appArg }, required),
-    // What is written there is seen by that company's Feishu.
-    ...(mode === "write"
-      ? {
-          destination: async (ctx: ToolContext, args: Record<string, any>) => {
-            const db = ctx.db();
-            const conn = await connectionFor(
-              db,
-              await envelopeTools(db, ctx.taskId),
-              "feishu",
-              product,
-              mode,
-              args.app,
-            );
-            return readers([`ws:${conn.id}`]);
-          },
-        }
-      : {}),
     handler: async (ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> => {
       const db = ctx.db();
       const conn = await connectionFor(db, await envelopeTools(db, ctx.taskId), "feishu", product, mode, args.app);
       try {
         const out = await run(conn, args, { db, taskId: ctx.taskId });
-        return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)), labels: labelsFor(conn) };
+        return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
       } catch (err) {
         if (err instanceof BadRequest) throw err;
-        return { content: `error: ${explainFeishuError(err as Error)}`, labels: labelsFor(conn) };
+        return { content: `error: ${explainFeishuError(err as Error)}` };
       }
     },
   };
@@ -159,11 +135,9 @@ const appsTool: ToolSpec = {
       ),
     ];
     const lines: string[] = [];
-    const labels: string[] = [];
     for (const id of ids) {
       const [conn] = await db.select().from(connections).where(eq(connections.id, id)).limit(1);
       if (conn?.platform !== "feishu") continue;
-      labels.push(...labelsFor(conn));
       const can = FEISHU_PRODUCTS.flatMap((p) =>
         (["read", "write"] as FeishuMode[])
           .filter((m) => grantedApps(tools, "feishu", p.key, m).includes(id))
@@ -179,7 +153,7 @@ const appsTool: ToolSpec = {
         `  people: ${people.map((p) => `${p.name ?? "?"} ${p.id}`).join("; ") || "(none known yet)"}`,
       );
     }
-    return { content: lines.join("\n") || "no Feishu app is open to you", labels };
+    return { content: lines.join("\n") || "no Feishu app is open to you" };
   },
 };
 

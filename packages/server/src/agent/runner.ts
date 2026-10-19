@@ -27,20 +27,17 @@ import {
   tasks,
   topics,
   usageRecords,
-  users,
 } from "../db/schema.js";
-import { BadRequest, InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
+import { InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
 import { redact } from "../security/crypto.js";
-import { checkFlow, labelOwners, PUBLIC, type Readers, readers, topicLabel } from "../security/labels.js";
-import { isConsoleUser, Perm, usersWithPermission } from "../security/permissions.js";
+import { Perm, usersWithPermission } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { contextLimits } from "../services/context-window.js";
 import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import { initialMessages, recordSessionNote } from "./context.js";
-import { getTask, setStatus, TERMINAL, textRestricted } from "./control.js";
+import { getTask, setStatus, TERMINAL } from "./control.js";
 import {
-  addSessionLabels,
   COMPACT_PROMPT,
   inject,
   lastBatchExplicit,
@@ -52,7 +49,7 @@ import {
 import { systemMessage } from "./dispatch.js";
 import { LiveFeed, type LiveTarget } from "./live.js";
 import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
-import { deliver, describeLabel } from "./output.js";
+import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
 import { appendStep, isConversation, loadTranscript } from "./transcript.js";
@@ -63,7 +60,7 @@ interface Prepared {
   tools: { name: string; description: string; parameters: Record<string, any> }[];
   modelConfigId: string;
   live: LiveTarget;
-  /** Whether the answer may be streamed into the topic while it is written (see textRestricted). */
+  /** Whether the answer is streamed into the topic while it is written (not for a summary). */
   showText: boolean;
   conversation: boolean;
   /** The conversation's context reached its threshold: summarise it before going on. */
@@ -332,7 +329,7 @@ export class TaskRunner {
         return this.failIn(tx, task, "step budget exhausted before the work was finished");
       if (budget.max_tokens && tokens >= budget.max_tokens)
         return this.failIn(tx, task, "token budget exhausted before the work was finished");
-      return { ...base, messages: [initial[0], ...transcript], showText: !(await textRestricted(tx, task)) };
+      return { ...base, messages: [initial[0], ...transcript], showText: true };
     });
   }
 
@@ -446,16 +443,6 @@ export class TaskRunner {
 
   /** Run one tool call. Returns false when the task has to stop or wait. */
   private async execute(taskId: string, call: ToolCall): Promise<boolean> {
-    // A write outside witden names who will see it; asked before the transaction, as it may call the platform.
-    const writing = TOOLS.get(call.name);
-    let destination: Readers | null = null;
-    if (writing?.destination && !("__invalid_json__" in call.arguments)) {
-      const ctx = { taskId, roleId: "", topicId: "", toolCallId: call.id, gateway: this.gateway, db: getDb };
-      destination = await writing
-        .destination({ ...ctx, mode: "task" }, call.arguments)
-        // A call that is not allowed or malformed says so itself; otherwise unknown means everyone (fail closed).
-        .catch((err) => (err instanceof BadRequest ? null : readers([PUBLIC])));
-    }
     const pre = await transaction(async (tx) => {
       const task = await getTask(tx, taskId);
       if (task?.status !== "running") return null;
@@ -487,12 +474,6 @@ export class TaskRunner {
         return { skip: true as const };
       }
       const approved = (task.envelope.approved_calls ?? []).includes(call.id);
-      // The task's material may not all go where the write sends it: its owners decide.
-      const blocked = destination && !approved ? await blockedForWrite(tx, task, destination) : [];
-      if (blocked.length) {
-        await this.requestApproval(tx, task, call, blocked);
-        return null;
-      }
       if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
         await this.requestApproval(tx, task, call);
         return null;
@@ -539,15 +520,8 @@ export class TaskRunner {
       }
     }
     return transaction(async (tx) => {
-      const fresh = await getTask(tx, taskId);
-      if (!fresh) return false;
-      let current = fresh;
-      if (result.labels?.length) {
-        const labels = [...new Set([...fresh.labels, ...result.labels])];
-        [current] = await tx.update(tasks).set({ labels }).where(eq(tasks.id, taskId)).returning();
-        // What a conversation read stays in its context, so later runs carry the labels too.
-        if (isConversation(current)) await addSessionLabels(tx, current, labels);
-      }
+      const current = await getTask(tx, taskId);
+      if (!current) return false;
       const content = typeof result.content === "string" ? redact(result.content) : result.content;
       await audit(tx, `tool.${call.name}`, {
         actorType: "role",
@@ -637,13 +611,7 @@ export class TaskRunner {
         return this.complete(tx, task, role, topic, result);
       }
       const text = said || "(no answer)";
-      const delivery = await deliver(tx, task, role, topic, text, { final: true });
-      if (delivery.approval) {
-        await setStatus(tx, task, "waiting_approval", "final answer waiting for disclosure approval", {
-          wait: { type: "approval", approval_id: delivery.approval.id },
-        });
-        return false;
-      }
+      await deliver(tx, task, role, topic, text, { final: true });
       return this.complete(tx, task, role, topic, text);
     });
   }
@@ -653,7 +621,7 @@ export class TaskRunner {
     if (isConversation(task) && (await settle(db, task))) return true;
     const done = await setStatus(db, task, "completed", null, { result });
     if (isConversation(done)) await noteRunEnd(db, done);
-    else if (!(await textRestricted(db, done))) await recordSessionNote(db, done, result);
+    else await recordSessionNote(db, done, result);
     await audit(db, "task.complete", {
       actorType: "role",
       actorId: role.id,
@@ -740,17 +708,9 @@ export class TaskRunner {
     });
   }
 
-  /**
-   * Hold a call for a person's approval: anyone who decides approvals for the role, or — when the call would write
-   * material where not everyone may see it (``blocked`` labels) — only the owners of that material.
-   */
-  private async requestApproval(db: Db, task: Task, call: ToolCall, blocked: string[] = []): Promise<void> {
-    const owners = new Set<string>();
-    for (const label of blocked) for (const o of await labelOwners(db, label)) owners.add(o);
-    const sources = blocked.length ? (await Promise.all(blocked.map((l) => describeLabel(db, l)))).join(", ") : null;
-    const approvers = blocked.length
-      ? [...owners].sort()
-      : [...(await usersWithPermission(db, Perm.APPROVAL_DECIDE, task.ownerRoleId))].sort();
+  /** Hold a call for the approval of a person who decides approvals for the role. */
+  private async requestApproval(db: Db, task: Task, call: ToolCall): Promise<void> {
+    const approvers = [...(await usersWithPermission(db, Perm.APPROVAL_DECIDE, task.ownerRoleId))].sort();
     const [approval] = await db
       .insert(approvals)
       .values({
@@ -759,10 +719,7 @@ export class TaskRunner {
         topicId: task.topicId,
         roleId: task.ownerRoleId,
         action: call.name,
-        detail: {
-          tool_call: { id: call.id, name: call.name, arguments: call.arguments },
-          ...(blocked.length ? { flow: { labels: blocked, sources } } : {}),
-        },
+        detail: { tool_call: { id: call.id, name: call.name, arguments: call.arguments } },
         approverUserIds: approvers,
       })
       .returning();
@@ -773,17 +730,11 @@ export class TaskRunner {
     });
     if (topic) {
       // Notices also reach external conversations. Keep arguments in the permission-checked approval API.
-      const why = sources ? "，此操作涉及向外部发送受限资料" : "";
-      await systemMessage(
-        db,
-        topic,
-        `@${role?.handle ?? "?"} 申请使用 ${call.name}${why}。请在控制台查看详情并审批。`,
-        {
-          taskId: task.id,
-          approvalId: approval.id,
-          mentions: approvers.slice(0, 5).map((id) => ({ type: "user" as const, id })),
-        },
-      );
+      await systemMessage(db, topic, `@${role?.handle ?? "?"} 申请使用 ${call.name}。请在控制台查看详情并审批。`, {
+        taskId: task.id,
+        approvalId: approval.id,
+        mentions: approvers.slice(0, 5).map((id) => ({ type: "user" as const, id })),
+      });
     }
     await approvalChanged(db, approval);
     await audit(db, "approval.request", {
@@ -864,24 +815,17 @@ export async function collectChildren(db: Db, parent: Task): Promise<void> {
   const children = ids.length ? await db.select().from(tasks).where(inArray(tasks.id, ids)) : [];
   if (children.length !== ids.length || children.some((c) => !TERMINAL.has(c.status))) return;
   const parts: string[] = [];
-  const labels = new Set(parent.labels);
   for (const c of children) {
     const [role] = await db.select().from(roles).where(eq(roles.id, c.ownerRoleId)).limit(1);
     const outcome = c.status === "completed" ? c.result : `${c.status}: ${c.statusReason ?? c.error ?? ""}`;
     parts.push(`Result from @${role?.handle ?? "?"} (task ${c.id}): ${outcome}`);
-    for (const l of c.labels) labels.add(l); // whatever the delegate read flows back with its answer
   }
-  const [updated] = await db
-    .update(tasks)
-    .set({ labels: [...labels] })
-    .where(eq(tasks.id, parent.id))
-    .returning();
-  await appendStep(db, updated, "tool", {
+  await appendStep(db, parent, "tool", {
     tool_call_id: wait.tool_call_id,
     name: "delegate_task",
     content: parts.join("\n\n"),
   });
-  await setStatus(db, updated, "pending", "delegated work finished", { wait: null });
+  await setStatus(db, parent, "pending", "delegated work finished", { wait: null });
 }
 
 /** Atomically move pending -> running for this worker (several workers may compete). */
@@ -900,16 +844,3 @@ export async function claimNext(db: Db, workerId: string, limit: number, leaseMs
 }
 
 export { and };
-
-/**
- * The labels of a task's material that may not go to ``audience``. What was said in the task's own topic counts as
- * given when a console account asked there; anything else (other topics, DMs, a company's Feishu…) needs its owners.
- */
-async function blockedForWrite(db: Db, task: Task, audience: Readers): Promise<string[]> {
-  const [requester] = task.requesterUserId
-    ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
-    : [];
-  const own = topicLabel(task.topicId);
-  const labels = isConsoleUser(requester) ? task.labels.filter((l) => l !== own) : task.labels;
-  return (await checkFlow(db, labels, audience)).blockedLabels;
-}

@@ -18,8 +18,6 @@ import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../integrations/platform-tools.js";
 import { findCredential } from "../security/crypto.js";
-import { type Readers, spaceLabel, topicLabel } from "../security/labels.js";
-import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
@@ -27,7 +25,7 @@ import { releaseTask } from "../services/leases.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import { topicPlace } from "./context.js";
-import { publishTaskStatus, textRestricted } from "./control.js";
+import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
@@ -58,7 +56,7 @@ export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
  * into the topic, is always allowed; reaching other roles or platform memory asks a person first; reading
- * other topics is off. (Shared files still pass the information-flow check like any other output.)
+ * other topics is off.
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter(
   (g) => !ADMIN_TOOL_GROUPS.has(g) && !DEFAULT_OFF_GROUPS.has(g),
@@ -69,7 +67,6 @@ export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "pr
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
-  labels?: string[];
   /** "wait": the task must pause (status / wait describe for what). "silent": it ends without a reply. */
   control?: "wait" | "silent";
   wait?: Record<string, any>;
@@ -100,11 +97,6 @@ export interface ToolSpec {
   modes?: WorkMode[];
   /** What the tool does in a conversation, when that differs from a task. */
   conversation?: string;
-  /**
-   * Who will see what the call writes outside witden (a GitHub repository, a company's Feishu): the runner checks
-   * the task's material may go there before running it, and asks the owners of what may not.
-   */
-  destination?: (ctx: ToolContext, args: Record<string, any>) => Promise<Readers | null>;
 }
 
 /** The mode of the work an envelope belongs to. */
@@ -136,19 +128,6 @@ async function load(ctx: ToolContext, db: Db) {
   if (!task || !role || !topic) throw new BadRequest("task context missing");
   return { task, role, topic };
 }
-
-const holdForApproval = (
-  approvalId: string,
-  ctx: ToolContext,
-  reason: string,
-  then?: Record<string, any>,
-): ToolResult => ({
-  content: "held until the owners of the material approve sharing it here",
-  control: "wait",
-  status: "waiting_approval",
-  statusReason: reason,
-  wait: { type: "approval", approval_id: approvalId, tool_call_id: ctx.toolCallId, ...(then ? { then } : {}) },
-});
 
 // --- computer: shell, terminals, files ------------------------------------------------------------------
 
@@ -276,22 +255,14 @@ async function shareFile(ctx: ToolContext, args: Record<string, any>): Promise<T
     const art = await saveArtifact(db, data, {
       name: path,
       kind: "generated",
-      labels: [...task.labels],
-      topicId: null, // not listed or downloadable in the topic until the output check passes
+      topicId: topic.id,
       taskId: task.id,
       instanceId: task.instanceId,
       createdByType: "role",
       createdById: role.id,
     });
     const note = String(args.message || `Shared file ${art.name}`);
-    const result = await deliver(db, task, role, topic, note, {
-      final: false,
-      attachments: [art.id],
-      toolCallId: ctx.toolCallId,
-    });
-    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to share a file");
-    const { artifacts } = await import("../db/schema.js");
-    await db.update(artifacts).set({ topicId: topic.id }).where(eq(artifacts.id, art.id));
+    await deliver(db, task, role, topic, note, { final: false, attachments: [art.id] });
     return { content: `shared ${art.name} (${art.size} bytes) in the topic` };
   });
 }
@@ -421,12 +392,10 @@ async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise
     if (!(await topicSvc.participant(db, topic.id, "role", targetRole.id))) {
       await topicSvc.inviteRole(db, null, topic, targetRole.id, { byRole: role });
     }
-    const result = await deliver(db, task, role, topic, `@${targetRole.handle} ${args.message ?? ""}`, {
+    await deliver(db, task, role, topic, `@${targetRole.handle} ${args.message ?? ""}`, {
       final: false,
       mentions: [{ type: "role", id: targetRole.id }],
-      toolCallId: ctx.toolCallId,
     });
-    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a message");
     return { content: `message posted; @${handle} will respond in the topic` };
   });
 }
@@ -448,12 +417,7 @@ async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise
       if (!m) throw new BadRequest(`no message ${args.thread} in this topic`);
       replyToId = m.replyToId ?? m.id;
     }
-    const result = await deliver(db, task, role, topic, text.slice(0, 20_000), {
-      final: false,
-      toolCallId: ctx.toolCallId,
-      ...(replyToId ? { replyToId } : {}),
-    });
-    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a message");
+    await deliver(db, task, role, topic, text.slice(0, 20_000), { final: false, ...(replyToId ? { replyToId } : {}) });
     return { content: "sent" };
   });
 }
@@ -508,7 +472,6 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
   )[0].n;
   return {
     content: `${Number(total)} matching message(s) in this topic, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`,
-    labels: [topicLabel(topic.id)],
   };
 }
 
@@ -565,13 +528,10 @@ async function askHuman(ctx: ToolContext, args: Record<string, any>): Promise<To
     );
     const names = people.map((u) => `@${u.name}`).join(" ");
     const wait = { type: "human", user_ids: people.map((u) => u.id), tool_call_id: ctx.toolCallId };
-    const result = await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
+    await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
       final: false,
       mentions: people.map((u) => ({ type: "user" as const, id: u.id })),
-      toolCallId: ctx.toolCallId,
     });
-    if (result.approval)
-      return holdForApproval(result.approval.id, ctx, "waiting for approval to post a question", wait);
     return {
       content: "question posted",
       control: "wait",
@@ -610,12 +570,10 @@ async function askInConversation(ctx: ToolContext, args: Record<string, any>): P
       people.map((u) => u.id),
     );
     const names = people.map((u) => `@${u.name}`).join(" ");
-    const result = await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
+    await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
       final: false,
       mentions: people.map((u) => ({ type: "user" as const, id: u.id })),
-      toolCallId: ctx.toolCallId,
     });
-    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a question");
     await awaitAnswer(
       db,
       task,
@@ -644,18 +602,10 @@ async function rateLimitMentions(db: Db, topicId: string, userIds: string[], per
 async function postProgress(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   return transaction(async (db) => {
     const { task } = await load(ctx, db);
-    // Progress notes are visible to the whole topic, so they get the same check as messages.
-    const restricted = await textRestricted(db, task);
-    const progress = restricted
-      ? "(progress details withheld: they draw on restricted material)"
-      : String(args.progress ?? "").slice(0, 2000);
+    const progress = String(args.progress ?? "").slice(0, 2000);
     const [row] = await db.update(tasks).set({ progress }).where(eq(tasks.id, task.id)).returning();
     await publishTaskStatus(db, row);
-    return {
-      content: restricted
-        ? "progress recorded, but its text is not shown because it draws on restricted material"
-        : "progress updated",
-    };
+    return { content: "progress updated" };
   });
 }
 
@@ -742,19 +692,13 @@ async function remember(ctx: ToolContext, args: Record<string, any>): Promise<To
       createdById: ctx.roleId,
     };
     if (scope === "topic") {
-      if (await textRestricted(db, task)) {
-        throw new Forbidden(
-          "this note draws on material not everyone in the topic may see; ask its owner to share it first",
-        );
-      }
-      await db.insert(memories).values({ ...base, scope: "topic", topicId: topic.id, labels: [...task.labels] });
+      await db.insert(memories).values({ ...base, scope: "topic", topicId: topic.id });
     } else if (scope === "role") {
       if (content.length > ROLE_MEMORY_MAX_CHARS)
         throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
       const refusal = await roleMemoryRefusal(db, task);
       if (refusal) throw new Forbidden(refusal);
-      // No source labels: it is shown wherever the role works, which is what the refusal above checked.
-      await db.insert(memories).values({ ...base, scope: "role", labels: [] });
+      await db.insert(memories).values({ ...base, scope: "role" });
     } else throw new BadRequest("scope must be topic or role");
     return { content: `remembered (${scope})` };
   });
@@ -770,9 +714,6 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
     .split(/\s+/)
     .filter((w) => w.length > 1);
   const { task, topic } = await load(ctx, db);
-  const [requester] = task.requesterUserId
-    ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
-    : [];
   const rows: [string, typeof memories.$inferSelect][] = [];
   const live = isNull(memories.deletedAt);
   // The latest of these are in the system prompt already; older ones are found here.
@@ -782,14 +723,13 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
     .from(memories)
     .where(and(live, eq(memories.scope, "topic"), eq(memories.topicId, topic.id))))
     rows.push(["this topic", m]);
+  // The knowledge spaces the role may read, whoever it works for: the permission is the role's.
   for (const spaceId of task.envelope.spaces ?? []) {
-    if (requester && (await hasPermission(db, requester, Perm.KNOWLEDGE_READ, spaceId))) {
-      for (const m of await db
-        .select()
-        .from(memories)
-        .where(and(live, eq(memories.scope, "team"), eq(memories.spaceId, spaceId)))) {
-        rows.push([`team space ${spaceId}`, m]);
-      }
+    for (const m of await db
+      .select()
+      .from(memories)
+      .where(and(live, eq(memories.scope, "team"), eq(memories.spaceId, spaceId)))) {
+      rows.push([`team space ${spaceId}`, m]);
     }
   }
   const hits = (
@@ -799,15 +739,7 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
           .sort((a, b) => score(b[1].content, words) - score(a[1].content, words))
       : rows
   ).slice(0, 8);
-  const labels: string[] = [];
-  for (const [, m] of hits) {
-    labels.push(...m.labels);
-    if (m.scope === "team" && m.spaceId) labels.push(spaceLabel(m.spaceId));
-  }
-  return {
-    content: hits.map(([src, m]) => `- (${src}) ${m.content}`).join("\n") || "nothing relevant remembered",
-    labels,
-  };
+  return { content: hits.map(([src, m]) => `- (${src}) ${m.content}`).join("\n") || "nothing relevant remembered" };
 }
 
 /**
@@ -881,10 +813,6 @@ async function updateMyDescription(ctx: ToolContext, args: Record<string, any>):
     if ((await externalContext(db, topic.id)).conversationKind)
       throw new Forbidden(
         "your description can be changed only in console conversations, not from Slack, Feishu or GitHub",
-      );
-    if (await textRestricted(db, task))
-      throw new Forbidden(
-        "this task drew on material not everyone here may see, and your description is shown to everyone",
       );
     await db.update(roles).set({ description }).where(eq(roles.id, role.id));
     await audit(db, "role.update", {

@@ -103,7 +103,7 @@ export default function TaskDetailPage() {
             <TaskStatusBanner task={t} />
             {t.content_restricted ? (
               <div className="callout callout-wait">
-                该任务读取了你无权查看的资料：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以暂停或取消它。
+                你无权查看这个任务所在的话题：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以暂停或取消它。
               </div>
             ) : null}
             <TaskSummary task={t} />
@@ -116,10 +116,7 @@ export default function TaskDetailPage() {
               ]}
             />
             {tab === "log" && restricted ? (
-              <Empty
-                title="该任务读取了你无权查看的资料，执行日志已隐藏"
-                hint="只有能查看任务全部资料来源的人可以看到执行记录。"
-              />
+              <Empty title="你无权查看这个任务所在的话题，执行日志已隐藏" hint="能查看这个话题的人可以看到执行记录。" />
             ) : tab === "log" ? (
               <Loaded res={log}>
                 {(steps) =>
@@ -147,7 +144,7 @@ function TaskStatusBanner({ task }: { task: Task }) {
       <div className="status-banner-text">
         {task.status_reason ? (
           <div>
-            <Guarded text={task.status_reason} label="原因已隐藏（涉及受限资料）" />
+            <Guarded text={task.status_reason} label="原因已隐藏" />
           </div>
         ) : null}
         {task.progress && !isRestricted(task.progress) ? <div className="small">进度：{task.progress}</div> : null}
@@ -359,7 +356,7 @@ function TaskSummary({ task: t }: { task: Task }) {
               {t.approvals.map((a) => (
                 <li key={a.id}>
                   <StatusChip meta={genericStatus(a.status)} compact />{" "}
-                  {a.action === "disclose" ? "发送受限资料" : `工具 ${a.action}`}
+                  {a.action === "disclose" ? "发送暂扣的消息" : `工具 ${a.action}`}
                   <span className="small muted">
                     {" "}
                     {fmtTime(a.created_at)}
@@ -568,7 +565,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
     ),
     body:
       typeof a.detail === "string" ? (
-        <span className="small muted">{isRestricted(a.detail) ? "详情已隐藏（涉及受限资料）" : a.detail}</span>
+        <span className="small muted">{isRestricted(a.detail) ? "详情已隐藏" : a.detail}</span>
       ) : Object.keys(a.detail ?? {}).length ? (
         <code className="audit-detail">{JSON.stringify(a.detail)}</code>
       ) : undefined,
@@ -708,20 +705,6 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
               ["继承自", env.inherited_from ? <Link to={`/tasks/${env.inherited_from}`}>上级任务</Link> : null],
             ]}
           />
-        </Section>
-        <Section title="信息标签">
-          <p className="small muted">任务读过的资料带有来源标签；结果只能发给有权查看这些来源的人，否则需要审批。</p>
-          {trace.labels?.length ? (
-            <div className="inline-list">
-              {trace.labels.map((l) => (
-                <code key={l} className="id">
-                  {l}
-                </code>
-              ))}
-            </div>
-          ) : (
-            <span className="muted small">无</span>
-          )}
         </Section>
       </div>
       <Section title="审计链" className="trace-audit">

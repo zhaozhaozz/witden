@@ -1,6 +1,6 @@
 /**
- * People outside the console: a Slack workspace whose (private) channel mirrors a topic. Its members are the
- * audience the information-flow checks protect; console accounts read everything anyway.
+ * People outside the console: a Slack workspace whose (private) channel mirrors a topic, and a knowledge space
+ * a role may consult.
  */
 import { db } from "../../src/db/client.js";
 import { newId } from "../../src/db/ids.js";
@@ -46,11 +46,8 @@ export async function linkChannel(w: World, topicId: string, members: string[], 
   return { connectionId, conversationId: conv.id };
 }
 
-/**
- * Material only console accounts may read: a note in a knowledge space @dev may consult (recall). Reading it
- * marks the work with the space's label, so it may not reach people outside the console without approval.
- */
-export async function restrictedNote(w: World, content: string): Promise<string> {
+/** A note in a knowledge space @dev may consult (recall): it may use it wherever it works. */
+export async function teamNote(w: World, content: string): Promise<string> {
   const space = (await w.api("POST", "/api/knowledge-spaces", { token: w.adminToken, json: { name: "hr" } })).body;
   const note = await w.api("POST", "/api/memories", {
     token: w.adminToken,

@@ -709,11 +709,11 @@ export function Capability({
   );
 }
 
-/** Shows task text, or a neutral marker when the backend withheld it ("[restricted]"). */
+/** Shows task text, or a neutral marker when the backend withheld it ("[restricted]": the viewer may not see its topic). */
 export function Guarded({ text, label = "受限内容" }: { text: string | null | undefined; label?: string }) {
   if (text === "[restricted]")
     return (
-      <span className="restricted" title="这部分内容来自你无权查看的资料，已隐藏">
+      <span className="restricted" title="你无权查看这个话题，内容已隐藏">
         {label}
       </span>
     );

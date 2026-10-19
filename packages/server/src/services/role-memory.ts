@@ -1,14 +1,11 @@
 /**
  * Role memory (memories.scope = "role"): what a role keeps as itself, not tied to one topic or person. Its
  * system prompt lists it wherever the role works — every topic, DM, Slack channel, Feishu chat and GitHub
- * thread — so it may surface in front of anyone the role talks to. That is why it carries no source labels
- * and why what goes in is checked on the way in instead: only work an administrator asked for, and only from
- * material that is not restricted to some people.
+ * thread — so it changes how the role works for everyone: only work an administrator asked for may add to it.
  */
 import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { type Memory, memories, type Task, users } from "../db/schema.js";
-import { PUBLIC, topicLabel } from "../security/labels.js";
 import { isConsoleUser } from "../security/permissions.js";
 
 /** Every prompt of the role carries its memory: keep each note short. */
@@ -33,9 +30,5 @@ export async function roleMemoryRefusal(db: Db, task: Task): Promise<string | nu
   // Someone outside the console must not be able to change how the role works for everyone else.
   if (!isConsoleUser(requester))
     return "role memory changes how you work everywhere, so it can be added only while you work for a witden administrator (a console account); use scope 'topic'";
-  // The topic's own messages are fine (the role judges what holds everywhere); any other tracked source —
-  // a knowledge space, a company's Feishu, a private repository — is not.
-  if (task.labels.some((l) => l !== PUBLIC && l !== topicLabel(task.topicId)))
-    return "you have read material restricted to some people here (a knowledge space, Feishu or a private repository), and role memory is shown wherever you work; use scope 'topic', or ask an administrator to add it to your role memory in the console";
   return null;
 }

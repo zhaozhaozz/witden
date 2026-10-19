@@ -708,3 +708,30 @@ describe("0030_drop_private_notes", () => {
     await db.close();
   });
 });
+
+describe("0032_drop_flow_labels", () => {
+  it("drops the information-flow labels and keeps the rows", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0032")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into topics (id, title) values ('top_a', 'A');
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into tasks (id, topic_id, title, owner_role_id, labels) values ('task_1', 'top_a', 't', 'role_dev', '["space:s1"]');
+      insert into memories (id, scope, topic_id, content, labels) values ('mem_1', 'topic', 'top_a', 'x', '["topic:top_a"]');
+    `);
+    await apply(db, "0032_drop_flow_labels");
+    const columns = (
+      await db.query(
+        "select table_name from information_schema.columns where column_name = 'labels' and table_schema = 'public'",
+      )
+    ).rows;
+    expect(columns).toEqual([]);
+    expect((await db.query("select id from tasks")).rows).toEqual([{ id: "task_1" }]);
+    expect((await db.query("select id from memories")).rows).toEqual([{ id: "mem_1" }]);
+    await db.close();
+  });
+});

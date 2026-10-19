@@ -124,7 +124,7 @@ describe("github tools", () => {
     expect(tools.products.map((p: any) => p.key)).toEqual(["repo", "issues", "pulls", "actions"]);
   });
 
-  it("reads are labelled by repository; a write is asked for, and its owners decide when it would carry private material out", async () => {
+  it("reads, then a write that the role's settings ask for; what it read may go wherever it writes", async () => {
     await w.api("POST", `/api/connections/${account}/test`, { token: w.adminToken });
     expect(
       (
@@ -156,13 +156,11 @@ describe("github tools", () => {
     expect(all).toContain("Broken link");
     expect(all).not.toContain("A PR"); // pull requests are not issues
     expect(all).toContain("Q4 launch");
-    // the private repository's content is labelled; the public listing is not
+    // issues:write asks first (the role's settings); reading the private repository changes nothing about it
     const id = posted.tasks[0].id;
-    expect((await w.task(id)).labels).toContain(`github:${account}`);
-    // the comment would put the private repository's material in public: held, for its owners
     expect((await w.task(id)).status).toBe("waiting_approval");
     const [held] = await db().select().from(approvals).where(eq(approvals.taskId, id));
-    expect(held.detail.flow.labels).toEqual([`github:${account}`]);
+    expect(held.action).toBe("github_issue_comment");
     expect(github.writes()).toEqual([]);
     await w.api("POST", `/api/approvals/${held.id}/decide`, { token: w.alice, json: { approve: true } });
     await w.drain();
@@ -197,7 +195,7 @@ describe("github tools", () => {
     expect(role.allowedTools.filter((g) => g.startsWith("github:"))).toEqual([]);
   });
 
-  it("a Feishu write carrying another company's Feishu material is held for approval", async () => {
+  it("a Feishu write may carry another company's Feishu material the role read", async () => {
     const feishuCalls: string[] = [];
     setFeishuFetch(async (input, init) => {
       const url = new URL(String(input));
@@ -235,9 +233,8 @@ describe("github tools", () => {
     const posted = await w.post(w.alice, w.ids.topic, "@dev 把报价放进甲公司的日程");
     await w.drain();
     const id = posted.tasks[0].id;
-    expect((await w.task(id)).status).toBe("waiting_approval");
-    const [held] = await db().select().from(approvals).where(eq(approvals.taskId, id));
-    expect(held.detail.flow.labels).toEqual([`feishu:${b}`]);
-    expect(feishuCalls).not.toContain("POST calendar/v4/calendars/cal_a/events");
+    expect((await w.task(id)).status).toBe("completed");
+    expect(await db().select().from(approvals).where(eq(approvals.taskId, id))).toEqual([]);
+    expect(feishuCalls).toContain("POST calendar/v4/calendars/cal_a/events");
   });
 });

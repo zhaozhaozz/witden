@@ -1,7 +1,7 @@
 /** Templates and computer instances (the management channel, plus human observation / takeover). */
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { interruptInstanceTasks, pauseInstanceTasks, resumeInstanceTasks, textRestricted } from "../agent/control.js";
+import { interruptInstanceTasks, pauseInstanceTasks, resumeInstanceTasks } from "../agent/control.js";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -18,7 +18,6 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { userCanRead } from "../security/labels.js";
 import { Perm, requirePerm } from "../security/permissions.js";
 import { parseColor } from "../services/appearance.js";
 import * as svc from "../services/instances.js";
@@ -32,11 +31,11 @@ import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
 const canSee = (db: Db, user: User, inst: ComputerInstance) => svc.canObserveInstance(db, user, inst.id);
 
-/** Task text from many topics: only shown to people who may read everything the task read. */
+/** Task text from many topics: only shown to people who may see the task's topic. */
 async function taskTitle(db: Db, user: User, task: Task): Promise<string> {
   const { topics } = await import("../db/schema.js");
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
-  const visible = !!topic && (await canView(db, user, topic)) && (await userCanRead(db, user.id, task.labels));
+  const visible = !!topic && (await canView(db, user, topic));
   return visible ? task.title : "[restricted]";
 }
 
@@ -486,7 +485,7 @@ export async function computerRoutes(app: FastifyInstance) {
           status: t.status,
           owner_role_id: t.ownerRoleId,
           topic_id: t.topicId,
-          progress: title === "[restricted]" || (await textRestricted(db, t)) ? null : t.progress,
+          progress: title === "[restricted]" ? null : t.progress,
           updated_at: t.updatedAt.toISOString(),
         });
       }

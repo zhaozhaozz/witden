@@ -1,6 +1,6 @@
 /**
- * Role memory: what a role keeps as itself, listed in its system prompt wherever it works. It may surface in
- * front of anyone there, so only work an administrator asked for may add to it, never from restricted material.
+ * Role memory: what a role keeps as itself, listed in its system prompt wherever it works. It changes how the
+ * role works for everyone, so only work an administrator asked for may add to it.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,7 +9,7 @@ import { newId } from "../src/db/ids.js";
 import { type Task, users } from "../src/db/schema.js";
 import { roleMemoryRefusal } from "../src/services/role-memory.js";
 import { call, lastToolResult, reply } from "./support/harness.js";
-import { restrictedNote } from "./support/outside.js";
+import { teamNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -34,7 +34,7 @@ describe("role memory", () => {
     const asked = await w.post(w.alice, dm.id, "from now on, always run make check before a release");
     await w.drain();
     const [note] = await roleNotes(w.ids.dev);
-    expect(note).toMatchObject({ content: "Run make check before every release", created_by_type: "role", labels: [] });
+    expect(note).toMatchObject({ content: "Run make check before every release", created_by_type: "role" });
 
     // In another topic it is in the system prompt, with the rules for choosing where a note belongs.
     let system = "";
@@ -58,19 +58,19 @@ describe("role memory", () => {
     expect(await roleNotes(w.ids.dev)).toEqual([]);
   });
 
-  it("is refused after reading restricted material, and for anyone outside the console", async () => {
-    await restrictedNote(w, "salary band B starts at 40k");
-    let refused = "";
+  it("may draw on what the role read, e.g. a knowledge space; is refused for anyone outside the console", async () => {
+    await teamNote(w, "salary band B starts at 40k");
+    let answer = "";
     w.scripts.dev = (m, turn) => {
       if (turn === 0) return reply("", [call("recall", { query: "salary" })]);
       if (turn === 1) return reply("", [call("remember", { content: "Band B starts at 40k", scope: "role" })]);
-      refused = lastToolResult(m);
-      return reply("kept it out of my role memory");
+      answer = lastToolResult(m);
+      return reply("kept it in my role memory");
     };
     await w.post(w.alice, w.ids.topic, "@dev look up band B and remember it for good");
     await w.drain();
-    expect(refused).toContain("restricted to some people");
-    expect(await roleNotes(w.ids.dev)).toEqual([]);
+    expect(answer).toBe("remembered (role)");
+    expect((await roleNotes(w.ids.dev)).map((m) => m.content)).toEqual(["Band B starts at 40k"]);
 
     // An external member (no console account) may not change how the role works for everyone else.
     const external = newId("usr");

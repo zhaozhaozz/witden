@@ -20,7 +20,7 @@ export default function ApprovalsPage() {
     <div className="page">
       <PageHeader
         title="审批"
-        sub="角色执行需要人工确认的操作，或要把受限资料发给更多人时，会在这里等待决定。角色不能批准自己的请求。"
+        sub="角色执行需要人工确认的操作时，会在这里等待决定。角色不能批准自己的请求。"
         actions={
           <button type="button" className="btn btn-sm" onClick={() => void res.reload()}>
             刷新

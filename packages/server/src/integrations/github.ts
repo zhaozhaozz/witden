@@ -5,8 +5,7 @@
  *
  * A repository is a conversation (public or private) and an issue or pull request is a thread: one topic per
  * issue / PR. Comments that @-mention the bot account ask the roles for work; replies are posted as comments.
- * Public repositories are readable by anyone, so material from inside witden needs approval before it is
- * posted there (security/labels.ts).
+ * Public repositories are readable by anyone: what a role may read, it may answer there (its permissions decide).
  */
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";

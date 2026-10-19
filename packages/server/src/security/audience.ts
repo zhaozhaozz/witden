@@ -1,16 +1,10 @@
 /**
- * Information-flow labels.
+ * Audiences: who can see a topic or an external conversation.
  *
- * Every piece of data an AI task reads carries a label naming where it came from (`topic:<id>`,
- * `user:<id>`, `space:<id>`, `feishu:<connection_id>`, `github:<connection_id>` or `public`). Each label has a
- * *reader set*: the people allowed to see that data. Before a task sends anything to a destination (a topic, an
- * external channel, a GitHub repository or a company's Feishu written through a tool), the destination's
- * audience must be a subset of the readers of every label the task has read. This stops one person's DM
- * from leaking into a channel and stops delegation from widening access: permissions are checked on the
- * data flow itself, not on which role happens to hold the data.
- *
- * The console accounts (all administrators) read every conversation, so every reader set includes them
- * (`internal`); what is protected is the people outside: Slack / Feishu members and channels.
+ * Publishing a topic to a Slack channel, a Feishu group or a GitHub repository makes it visible to that
+ * conversation's members; when they are more than the people who can see the topic now, the person publishing
+ * confirms it (api/integrations.ts). What roles may read and use is decided by their permissions alone
+ * (security/permissions.ts and the role's tool groups): material is not tracked by source.
  *
  * Principals are `u:<user_id>` (console account or external member) or `x:<connection_id>:<external_user_id>`
  * (external account without a user). Universes stand for whole populations: `public`, `internal` (the
@@ -28,7 +22,6 @@ import {
   topics,
   users,
 } from "../db/schema.js";
-import { consoleUsers, Perm, usersWithPermission } from "./permissions.js";
 
 export const PUBLIC = "public";
 /** The console accounts. */
@@ -53,17 +46,6 @@ export function describeReaders(r: Readers): string {
   const parts = [...[...r.universes].sort(), ...[...r.principals].sort()];
   return parts.length ? parts.join(", ") : "(nobody)";
 }
-
-export const topicLabel = (topicId: string) => `topic:${topicId}`;
-/** A person's private notes, which are gone (migration 0030); older tasks and conversations may still carry it. */
-export const userLabel = (userId: string) => `user:${userId}`;
-export const spaceLabel = (spaceId: string) => `space:${spaceId}`;
-/**
- * Data read from a company's Feishu through its app (calendars, documents, bases, sheets…): visible inside that
- * company's Feishu. It may go back to that company's Feishu conversations and the console; anywhere else (another
- * company, Slack, GitHub) needs its release approved.
- */
-export const feishuLabel = (connectionId: string) => `feishu:${connectionId}`;
 
 export async function externalPrincipal(db: Db, connectionId: string, externalUserId: string): Promise<string> {
   const [ident] = await db
@@ -118,25 +100,6 @@ export async function topicReaders(db: Db, topicId: string): Promise<Readers> {
   return out;
 }
 
-export async function labelReaders(db: Db, label: string): Promise<Readers> {
-  if (label === PUBLIC) return readers([PUBLIC]);
-  const idx = label.indexOf(":");
-  const kind = label.slice(0, idx);
-  const ident = label.slice(idx + 1);
-  if (kind === "topic") return topicReaders(db, ident);
-  if (kind === "user") return readers([CONSOLE], [`u:${ident}`]);
-  // Read through a connection's own credentials: a company's Feishu, a private GitHub repository.
-  if (kind === "feishu" || kind === "github") return readers([CONSOLE, `ws:${ident}`]);
-  if (kind === "space") {
-    const ids = await usersWithPermission(db, Perm.KNOWLEDGE_READ, ident);
-    return readers(
-      [CONSOLE],
-      [...ids].map((u) => `u:${u}`),
-    );
-  }
-  return readers(); // unknown labels fail closed
-}
-
 async function memberOf(db: Db, principal: string, universe: string): Promise<boolean> {
   if (universe === PUBLIC) return true;
   if (universe === CONSOLE) {
@@ -181,65 +144,4 @@ export async function isSubset(db: Db, audience: Readers, allowed: Readers): Pro
     if (!ok) return false;
   }
   return true;
-}
-
-export interface FlowDecision {
-  allowed: boolean;
-  blockedLabels: string[];
-  audience: Readers;
-  explain(): string;
-}
-
-export async function checkFlow(db: Db, labels: string[], audience: Readers): Promise<FlowDecision> {
-  const blocked: string[] = [];
-  for (const label of new Set(labels)) {
-    if (!(await isSubset(db, audience, await labelReaders(db, label)))) blocked.push(label);
-  }
-  return {
-    allowed: blocked.length === 0,
-    blockedLabels: blocked,
-    audience,
-    explain: () =>
-      blocked.length === 0
-        ? "all sources are visible to the destination audience"
-        : `destination audience (${describeReaders(audience)}) is wider than the readers of: ${blocked.join(", ")}`,
-  };
-}
-
-/** Whether one person may see data carrying all of ``labels`` (e.g. a task's full transcript). */
-export async function userCanRead(db: Db, userId: string, labels: string[]): Promise<boolean> {
-  const me = readers([], [`u:${userId}`]);
-  for (const label of new Set(labels)) {
-    if (!(await isSubset(db, me, await labelReaders(db, label)))) return false;
-  }
-  return true;
-}
-
-/**
- * Users who may approve releasing data under ``label`` to a wider audience: the console accounts among the
- * people it came from (the person whose DM or notes it is, the people in the topic), otherwise any console
- * account — an external member cannot approve anything, they have no console.
- */
-export async function labelOwners(db: Db, label: string): Promise<Set<string>> {
-  const admins = await consoleUsers(db);
-  const idx = label.indexOf(":");
-  const kind = label.slice(0, idx);
-  const ident = label.slice(idx + 1);
-  let from: string[] = [];
-  if (kind === "user") from = [ident];
-  else if (kind === "topic") {
-    const rows = await db
-      .select()
-      .from(topicParticipants)
-      .where(
-        and(
-          eq(topicParticipants.topicId, ident),
-          eq(topicParticipants.participantType, "user"),
-          isNull(topicParticipants.removedAt),
-        ),
-      );
-    from = rows.map((r) => r.participantId);
-  }
-  const owners = from.filter((id) => admins.has(id));
-  return new Set(owners.length ? owners : admins);
 }

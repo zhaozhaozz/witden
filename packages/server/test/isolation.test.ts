@@ -1,16 +1,15 @@
 /**
- * Indirect leak paths and control-flow bypasses (from a security review of the first version).
+ * Files, notes and control-flow bypasses (from a security review of the first version).
  * Setup: the group topic is mirrored into a Slack channel with carol, an outside person; alice asks @dev there
- * and it consults a knowledge-space note holding SECRET, which only console accounts may read. Nothing derived
- * from it may reach the channel unless a console account approves. Console accounts (all administrators) may
- * read everything, alice's DM with @dev included.
+ * and it consults a knowledge-space note holding SECRET. The role may read that space, so it may use what it
+ * read there. Console accounts (all administrators) may read everything, alice's DM with @dev included.
  */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db, db as getDb } from "../src/db/client.js";
-import { outboundMessages, tasks, users } from "../src/db/schema.js";
+import { tasks, users } from "../src/db/schema.js";
 import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
-import { linkChannel, restrictedNote } from "./support/outside.js";
+import { linkChannel, teamNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "salary-12345";
@@ -24,7 +23,7 @@ beforeEach(async () => {
   await w.post(w.alice, dm.id, `my ${SECRET} is private`);
   await w.drain();
   await linkChannel(w, w.ids.topic, ["UCAROL"]);
-  await restrictedNote(w, `alice ${SECRET}`);
+  await teamNote(w, `alice ${SECRET}`);
 });
 afterEach(async () => {
   await w.close();
@@ -40,25 +39,14 @@ async function runDev(...steps: ReturnType<typeof call>[]) {
   return posted.tasks[0].id as string;
 }
 
-describe("indirect channels", () => {
-  it("a held file is not shared with the channel, and is deleted on reject", async () => {
-    w.manager.computer(w.ids.instance).files.set("/home/witden/leak.txt", Buffer.from(SECRET));
-    const id = await runDev(call("share_file", { path: "leak.txt" }));
-    expect((await w.task(id)).status).toBe("waiting_approval");
-    expect((await w.api("GET", `/api/topics/${w.ids.topic}/files`, { token: w.alice })).body).toEqual([]);
-    // nothing carrying the file went to the channel
-    const mirrored = await getDb().select().from(outboundMessages);
-    const topicMessages = await w.messages(w.ids.topic);
-    for (const out of mirrored) {
-      const m = topicMessages.find((x: any) => x.id === out.messageId);
-      expect(JSON.stringify(m ?? {})).not.toContain(SECRET);
-      expect(m?.attachments ?? []).toEqual([]);
-    }
-    const approval = (await w.api("GET", "/api/approvals", { token: w.alice })).body.find((a: any) => a.task_id === id);
-    const fileId = approval.detail.attachments[0];
-    expect((await w.api("GET", `/api/files/${fileId}`, { token: w.alice })).status).toBe(200);
-    await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.alice, json: { approve: false } });
-    expect((await w.api("GET", `/api/files/${fileId}`, { token: w.alice })).status).toBe(404);
+describe("what a role may read, it may use where it works", () => {
+  it("a file is shared with the topic and its channel right away, after reading a knowledge space", async () => {
+    w.manager.computer(w.ids.instance).files.set("/home/witden/report.txt", Buffer.from(SECRET));
+    const id = await runDev(call("share_file", { path: "report.txt" }));
+    expect((await w.task(id)).status).toBe("completed");
+    const files = (await w.api("GET", `/api/topics/${w.ids.topic}/files`, { token: w.alice })).body;
+    expect(files.map((f: any) => f.name)).toEqual(["report.txt"]);
+    expect((await w.api("GET", `/api/files/${files[0].id}`, { token: w.alice })).status).toBe(200);
   });
 
   it("system interfaces and files holding credentials are never shared, wherever they are", async () => {
@@ -93,10 +81,10 @@ describe("indirect channels", () => {
     expect(JSON.stringify(refused)).not.toContain("abcdefghijklmnop");
   });
 
-  it("topic notes cannot carry material the channel may not see", async () => {
+  it("topic notes may keep what the role read", async () => {
     await runDev(call("remember", { content: `alice ${SECRET}`, scope: "topic" }));
     const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;
-    expect(JSON.stringify(mems)).not.toContain(SECRET);
+    expect(JSON.stringify(mems)).toContain(SECRET);
   });
 
   it("console accounts read every conversation, including another person's DM", async () => {

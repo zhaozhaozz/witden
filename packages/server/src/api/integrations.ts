@@ -43,8 +43,8 @@ import {
 } from "../integrations/slack-install.js";
 import { slackSockets } from "../integrations/slack-socket.js";
 import { webhookStatus } from "../integrations/webhook-status.js";
+import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/audience.js";
 import { secretBox } from "../security/crypto.js";
-import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";

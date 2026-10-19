@@ -1,8 +1,7 @@
 /**
- * The GitHub tools roles call (permissions: integrations/platform-tools.ts; client, labels, audiences:
- * integrations/github-tools.ts). Each belongs to ``github:<product>:<mode>``; ``app`` picks the connection (an
- * account token or an App) when several are open. Writes name their destination so the information-flow check
- * runs before them (runner.ts).
+ * The GitHub tools roles call (permissions: integrations/platform-tools.ts; client: integrations/github-tools.ts).
+ * Each belongs to ``github:<product>:<mode>``; ``app`` picks the connection (an account token or an App) when
+ * several are open.
  */
 import { eq } from "drizzle-orm";
 import { settings } from "../config.js";
@@ -10,15 +9,7 @@ import type { Db } from "../db/client.js";
 import { type Connection, connections, tasks } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { GithubAdapter } from "../integrations/github.js";
-import {
-  explainGithubError,
-  GITHUB_PRODUCTS,
-  githubClient,
-  githubLabel,
-  repoAudience,
-  repoLabels,
-  repoName,
-} from "../integrations/github-tools.js";
+import { explainGithubError, GITHUB_PRODUCTS, githubClient, repoName } from "../integrations/github-tools.js";
 import { connectionFor, grantedApps, parseGrant, type ToolMode } from "../integrations/platform-tools.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
@@ -52,7 +43,7 @@ async function call(conn: Connection, repo: string, method: string, path: string
 
 /**
  * A GitHub tool on one repository: the connection is checked against the task's grants, GitHub's refusals are
- * explained, what is read from a private repository is labelled, and a write names its audience.
+ * explained.
  */
 function githubTool(
   name: string,
@@ -68,12 +59,6 @@ function githubTool(
     group: `github:${product}:${mode}`,
     description,
     parameters: obj({ repo: repoArg, ...properties, app: appArg }, ["repo", ...required]),
-    ...(mode === "write"
-      ? {
-          destination: async (ctx: ToolContext, args: Record<string, any>) =>
-            repoAudience(await connOf(ctx, product, mode, args.app), repoName(args.repo)),
-        }
-      : {}),
     handler: async (ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> => {
       const conn = await connOf(ctx, product, mode, args.app);
       let repo: string;
@@ -84,15 +69,10 @@ function githubTool(
       }
       try {
         const out = await run(conn, repo, args);
-        return {
-          content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)),
-          labels: await repoLabels(conn, repo),
-        };
+        return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
       } catch (err) {
         if (err instanceof BadRequest) throw err;
-        // A failure says nothing of the repository's content, but its name may be private: label it all the same.
-        const labels = await repoLabels(conn, repo).catch(() => [githubLabel(conn.id)]);
-        return { content: `error: ${explainGithubError(err as Error)}`, labels };
+        return { content: `error: ${explainGithubError(err as Error)}` };
       }
     },
   };
@@ -156,12 +136,9 @@ export const GITHUB_TOOLS: ToolSpec[] = [
       const conn = await connOf(ctx, "repo", "read", args.app);
       try {
         const repos = await new GithubAdapter().repositories(conn);
-        return {
-          content: clip(JSON.stringify(repos, null, 1)),
-          labels: repos.some((r) => r.private) ? [githubLabel(conn.id)] : [],
-        };
+        return { content: clip(JSON.stringify(repos, null, 1)) };
       } catch (err) {
-        return { content: `error: ${explainGithubError(err as Error)}`, labels: [githubLabel(conn.id)] };
+        return { content: `error: ${explainGithubError(err as Error)}` };
       }
     },
   },

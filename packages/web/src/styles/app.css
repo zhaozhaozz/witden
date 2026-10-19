@@ -3041,12 +3041,6 @@ img.avatar-role.avatar-colored {
 .approval-body p {
   color: var(--ink-2);
 }
-.approval-sources {
-  display: flex;
-  gap: 8px;
-  font-size: 13px;
-  margin-bottom: 6px;
-}
 .held {
   border: 1px dashed #d9b98a;
   background: #fffaf1;
