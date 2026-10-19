@@ -152,7 +152,12 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
         path: "/api/memories",
         note: "?scope=team&space_id= (team knowledge) or ?scope=role&role_id= (a role's memory, shown to it wherever it works)",
       },
-      { method: "POST", path: "/api/memories", note: "scope team + space_id, or scope role + role_id; content" },
+      {
+        method: "POST",
+        path: "/api/memories",
+        note: "scope team + space_id, or scope role + role_id; title, keywords (list), content",
+      },
+      { method: "PATCH", path: "/api/memories/:id", note: "title, keywords, content (only those to change)" },
       { method: "DELETE", path: "/api/memories/:id", note: "team knowledge or role memory" },
     ],
   },

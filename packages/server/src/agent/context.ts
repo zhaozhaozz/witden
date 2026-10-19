@@ -25,6 +25,7 @@ import {
   users,
 } from "../db/schema.js";
 import { channelsOf } from "../integrations/links.js";
+import { memoryLine } from "../services/memories.js";
 import { ROLE_MEMORY_SHOWN, roleMemories } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import type { ChatMessage } from "./llm.js";
@@ -63,10 +64,10 @@ export const TASK_RULES = `## This task
 
 /** For a role with the memory tools: which of the two kinds of notes a thing belongs in. */
 export const MEMORY_RULES = `## Memory
-Your context stays in this topic and is summarised when it grows long. To keep something for later, save a note with remember and choose its scope by where it will matter again and who may see it there:
+Your context stays in this topic and is summarised when it grows long. To keep something for later, save a note with remember: a short title, a few keywords people would search by (in the language they use, e.g. both "发布" and "release" when both are used), and the content. Choose its scope by where it will matter again and who may see it there:
 - "topic" (the default): this topic only, or this DM when you are in one — decisions, agreements, who does what, open items, and what someone asked you to keep in mind here, including their preferences. People and roles in this topic can see it; it is never used anywhere else.
-- "role": your own memory as this role. It is listed under "Your role memory" in every topic, DM, Slack channel, Feishu chat and GitHub thread where you work, so it may come up in front of anyone you talk to there. Use it only for what holds wherever you work: how you should work, team-wide conventions, lessons you learned. Never anything personal, confidential, about one person only, or that matters in one place only. It can be added only while you work for a witden administrator.
-When in doubt, choose the narrower scope. Write each note so it makes sense on its own later. recall searches the notes you may use here: this topic's, your role memory and the knowledge spaces you may read.`;
+- "role": your own memory as this role. It is listed under "Your role memory" in every topic, DM, Slack channel, Feishu chat and GitHub thread where you work, so it may come up in front of anyone you talk to there. Use it only for what holds wherever you work: how you should work, team-wide conventions, lessons you learned. Never anything personal, confidential, about one person only, or that matters in one place only. It can be added to, changed or deleted only while you work for a witden administrator.
+When in doubt, choose the narrower scope. Write each note so it makes sense on its own later. recall searches the notes you may use here — this topic's, your role memory and the knowledge spaces you may read — by title, keywords and content, and shows each note's id. When a note no longer holds, change it with update_memory or delete it with forget (by its id) rather than adding one that contradicts it. You may change this topic's notes and your role memory; knowledge spaces are kept by people.`;
 
 /** Its latest role memory notes (oldest first), for every prompt of the role; nothing when there are none. */
 async function roleMemorySection(db: Db, role: Role, canRecall: boolean): Promise<string> {
@@ -74,9 +75,7 @@ async function roleMemorySection(db: Db, role: Role, canRecall: boolean): Promis
   if (!notes.length) return "";
   const shown = notes.slice(-ROLE_MEMORY_SHOWN);
   const older = notes.length - shown.length;
-  const lines = shown.map(
-    (m) => `- [${m.createdAt.toISOString().slice(0, 10)}] ${m.content.trim().replace(/\n/g, "\n  ")}`,
-  );
+  const lines = shown.map((m) => memoryLine(m, (m.updatedAt ?? m.createdAt).toISOString().slice(0, 10)));
   return [
     "## Your role memory",
     "What you keep as this role (some notes may come from administrators). It holds wherever you work.",

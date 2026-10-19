@@ -5,7 +5,6 @@ import type {
   AgentSession,
   Instance,
   KnowledgeSpace,
-  Memory,
   ModelConfig,
   PlatformTools,
   Role,
@@ -14,7 +13,7 @@ import type {
 } from "../../api/types";
 import { useConfigChanged } from "../../lib/configEvents";
 import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
-import { fmtNumber, fmtRelative, genericStatus, instanceStatus } from "../../lib/format";
+import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useUnsavedChanges } from "../../lib/unsaved";
@@ -24,7 +23,6 @@ import {
   Capability,
   ColorPicker,
   ComputerBadge,
-  Empty,
   ErrorNote,
   Field,
   FieldGroup,
@@ -40,6 +38,7 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
+import { MemoryList } from "../memoryParts";
 import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
 import { ConnectionToolPermissions, type FeishuGranted } from "./ConnectionToolPermissions";
@@ -905,11 +904,6 @@ const ROLE_MEMORY_MAX_CHARS = 1000;
 
 /** The role's own memory: listed in its system prompt wherever it works (server: services/role-memory.ts). */
 function RoleMemories({ role }: { role: Role }) {
-  const dir = useDirectory();
-  const { run, busy } = useAction();
-  const { confirm } = useFeedback();
-  const [text, setText] = useState("");
-  const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "role", role_id: role.id }), [role.id]);
   return (
     <Section title="角色记忆">
       <p className="small muted">
@@ -917,62 +911,14 @@ function RoleMemories({ role }: { role: Role }) {
         Slack、飞书、GitHub
         中都会看到，更早的可以检索。角色可以在管理员请求的工作中自己记下（需要「记忆」权限），你也可以在这里添加。它可能出现在与角色对话的任何人面前，不要写入个人信息、机密，或只与某个话题、某个人有关的内容。
       </p>
-      <form
-        className="note-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (!text.trim()) return;
-          const m = await run(
-            () => api.post<Memory>("/api/memories", { scope: "role", role_id: role.id, content: text.trim() }),
-            "已添加",
-          );
-          if (m) {
-            setText("");
-            res.setData((prev) => [m, ...(prev ?? [])]);
-          }
-        }}
-      >
-        <textarea
-          rows={2}
-          maxLength={ROLE_MEMORY_MAX_CHARS}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="例如：发布前必须跑完 make check"
-        />
-        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
-          添加
-        </button>
-      </form>
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <ul className="memory-list">
-              {rows.map((m) => (
-                <li key={m.id}>
-                  <div className="memory-text">{m.content}</div>
-                  <div className="small muted">
-                    {m.created_by_type === "role" ? "角色自己记下" : `${dir.userName(m.created_by_id)} 添加`} ·{" "}
-                    {fmtRelative(m.created_at)}
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={async () => {
-                        if (!(await confirm({ title: "删除这条角色记忆", danger: true, confirmLabel: "删除" }))) return;
-                        const ok = await run(() => api.del(`/api/memories/${m.id}`));
-                        if (ok) res.setData((prev) => prev?.filter((x) => x.id !== m.id));
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty title="还没有角色记忆" />
-          )
-        }
-      </Loaded>
+      <MemoryList
+        query={{ scope: "role", role_id: role.id }}
+        create={{ scope: "role", role_id: role.id }}
+        placeholder="例如：发布前必须跑完 make check"
+        emptyTitle="还没有角色记忆"
+        itemName="角色记忆"
+        maxChars={ROLE_MEMORY_MAX_CHARS}
+      />
     </Section>
   );
 }

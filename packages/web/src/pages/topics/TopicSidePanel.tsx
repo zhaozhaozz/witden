@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
-import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../../api/types";
+import type { AgentSession, Approval, Artifact, Task, Topic } from "../../api/types";
 import { fmtBytes, fmtRelative, fmtTime, fmtTokens, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -24,6 +24,7 @@ import {
   Toggle,
 } from "../../ui/kit";
 import { ApprovalCard } from "../approvalParts";
+import { MemoryList } from "../memoryParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { InviteDialog, PublishDialog } from "./topicDialogs";
@@ -470,70 +471,22 @@ function FilesTab({ topic }: { topic: Topic }) {
 }
 
 function NotesTab({ topic }: { topic: Topic }) {
-  const { run, busy } = useAction();
-  const [text, setText] = useState("");
-  const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "topic", topic_id: topic.id }), [topic.id]);
+  const dm = topic.kind === "dm";
   return (
     <>
       <p className="small muted side-note">
-        {topic.kind === "dm"
+        {dm
           ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
           : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
       </p>
-      {topic.can_post ? (
-        <form
-          className="note-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!text.trim()) return;
-            const m = await run(() =>
-              api.post<Memory>("/api/memories", { scope: "topic", topic_id: topic.id, content: text.trim() }),
-            );
-            if (m) {
-              setText("");
-              res.setData((prev) => [m, ...(prev ?? [])]);
-            }
-          }}
-        >
-          <textarea
-            rows={2}
-            value={text}
-            placeholder={topic.kind === "dm" ? "记下这段私信的要点或约定" : "记下这个话题的要点或约定"}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
-            添加
-          </button>
-        </form>
-      ) : null}
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <ul className="memory-list">
-              {rows.map((m) => (
-                <li key={m.id}>
-                  <div className="memory-text">{m.content}</div>
-                  <div className="small muted">
-                    {m.created_by_type === "role" ? "角色记录" : "成员记录"} · {fmtRelative(m.created_at)}
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={async () => {
-                        const ok = await run(() => api.del(`/api/memories/${m.id}`));
-                        if (ok) res.setData((prev) => prev?.filter((x) => x.id !== m.id));
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty title={topic.kind === "dm" ? "暂无私信记忆" : "暂无话题记忆"} />
-          )
-        }
-      </Loaded>
+      <MemoryList
+        query={{ scope: "topic", topic_id: topic.id }}
+        create={{ scope: "topic", topic_id: topic.id }}
+        canAdd={!!topic.can_post}
+        placeholder={dm ? "这段私信的要点或约定" : "这个话题的要点或约定"}
+        emptyTitle={dm ? "暂无私信记忆" : "暂无话题记忆"}
+        itemName={dm ? "私信记忆" : "话题记忆"}
+      />
     </>
   );
 }

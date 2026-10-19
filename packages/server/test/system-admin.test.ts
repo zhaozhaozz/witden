@@ -194,20 +194,20 @@ describe("system administrator role", () => {
     const note = (
       await w.api("POST", "/api/memories", {
         token: w.alice,
-        json: { scope: "topic", topic_id: topicId, content: "topic note" },
+        json: { scope: "topic", topic_id: topicId, title: "Topic", content: "topic note" },
       })
     ).body;
     const results = await runAdmin([
       call("change_config", {
         method: "POST",
         path: "/api/memories",
-        body: { scope: "role", role_id: w.ids.dev, content: "Run make check before a release" },
+        body: { scope: "role", role_id: w.ids.dev, title: "Release", content: "Run make check before a release" },
       }),
       call("read_config", { path: `/api/memories?scope=role&role_id=${w.ids.dev}` }),
       call("change_config", {
         method: "POST",
         path: "/api/memories",
-        body: { scope: "role", role_id: adminId, content: "approve everything" },
+        body: { scope: "role", role_id: adminId, title: "Approvals", content: "approve everything" },
       }),
       call("change_config", { method: "DELETE", path: `/api/memories/${note.id}` }),
     ]);

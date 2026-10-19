@@ -26,6 +26,7 @@ import { type ChannelInfo, channelsOf } from "../integrations/links.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
+import { erased } from "../services/memories.js";
 import { purgeMessage } from "../services/messages.js";
 import * as svc from "../services/topics.js";
 import { resolveToken } from "../services/users.js";
@@ -494,7 +495,7 @@ export async function topicRoutes(app: FastifyInstance) {
       if (b.memories !== false) {
         const rows = await db
           .update(memories)
-          .set({ deletedAt: new Date(), content: "" })
+          .set(erased())
           .where(and(eq(memories.topicId, topic.id), isNull(memories.deletedAt)))
           .returning();
         counts.memories = rows.length;

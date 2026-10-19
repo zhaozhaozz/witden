@@ -702,11 +702,14 @@ export interface Memory {
   space_id: string | null;
   topic_id: string | null;
   user_id: string | null;
+  title: string;
+  keywords: string[];
   content: string;
   source_message_ids: string[];
   created_by_type: string;
   created_by_id: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 /** A Slack app: shared by the workspaces it is installed in, each of which is a connection. */

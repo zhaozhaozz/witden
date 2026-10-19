@@ -51,7 +51,7 @@ export async function teamNote(w: World, content: string): Promise<string> {
   const space = (await w.api("POST", "/api/knowledge-spaces", { token: w.adminToken, json: { name: "hr" } })).body;
   const note = await w.api("POST", "/api/memories", {
     token: w.adminToken,
-    json: { scope: "team", space_id: space.id, content },
+    json: { scope: "team", space_id: space.id, title: content.slice(0, 40), content },
   });
   if (note.status >= 300) throw new Error(`note failed: ${note.raw}`);
   await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { knowledge_space_ids: [space.id] } });

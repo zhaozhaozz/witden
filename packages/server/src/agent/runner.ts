@@ -783,6 +783,8 @@ const AUDITED_ARGS = new Set([
   "mode",
   "from",
   "to",
+  // which note update_memory / forget touched (not its text)
+  "id",
 ]);
 
 /** Operationally relevant arguments only (redacted); free text such as messages or notes is left out. */

@@ -735,3 +735,27 @@ describe("0032_drop_flow_labels", () => {
     await db.close();
   });
 });
+
+describe("0033_memory_format", () => {
+  it("titles existing notes by their first line; keywords start empty", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0033")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into memories (id, scope, topic_id, content) values
+        ('mem_1', 'topic', 'top_a', E'  Release on Mondays\nrun make check first'),
+        ('mem_2', 'topic', 'top_a', '${"x".repeat(80)}');
+      insert into memories (id, scope, topic_id, content, deleted_at) values ('mem_3', 'topic', 'top_a', '', now());
+    `);
+    await apply(db, "0033_memory_format");
+    expect((await db.query("select id, title, keywords from memories order by id")).rows).toEqual([
+      { id: "mem_1", title: "Release on Mondays", keywords: [] },
+      { id: "mem_2", title: "x".repeat(60), keywords: [] },
+      { id: "mem_3", title: "", keywords: [] },
+    ]);
+    await db.close();
+  });
+});

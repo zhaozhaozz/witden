@@ -13,7 +13,17 @@ import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { memories, messages, modelConfigs, roles, type Task, tasks, topics, users } from "../db/schema.js";
+import {
+  knowledgeSpaces,
+  memories,
+  messages,
+  modelConfigs,
+  roles,
+  type Task,
+  tasks,
+  topics,
+  users,
+} from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../integrations/platform-tools.js";
@@ -22,6 +32,7 @@ import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
+import { erased, memoryFields, memoryLine, memoryScore } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import { topicPlace } from "./context.js";
@@ -675,44 +686,83 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
 
 /**
  * Save a note where it belongs: this topic (or DM), or the role itself (wherever it works; see
- * services/role-memory.ts). The system prompt explains the choice (MEMORY_RULES).
+ * services/role-memory.ts). The system prompt explains the choice and the format (MEMORY_RULES).
  */
 async function remember(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const scope = args.scope ?? "topic";
-  const content = String(args.content ?? "").trim();
-  if (!content) throw new BadRequest("content is required");
+  if (scope !== "topic" && scope !== "role") throw new BadRequest("scope must be topic or role");
+  const fields = memoryFields(args, { contentLimit: scope === "role" ? ROLE_MEMORY_MAX_CHARS : undefined });
   return transaction(async (db) => {
     const { task, topic } = await load(ctx, db);
     const base = {
       id: newId("mem"),
       roleId: ctx.roleId,
-      content,
+      title: fields.title!,
+      keywords: fields.keywords!,
+      content: fields.content!,
       sourceMessageIds: task.sourceMessageId ? [task.sourceMessageId] : [],
       createdByType: "role",
       createdById: ctx.roleId,
     };
-    if (scope === "topic") {
-      await db.insert(memories).values({ ...base, scope: "topic", topicId: topic.id });
-    } else if (scope === "role") {
-      if (content.length > ROLE_MEMORY_MAX_CHARS)
-        throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
+    if (scope === "role") {
       const refusal = await roleMemoryRefusal(db, task);
       if (refusal) throw new Forbidden(refusal);
       await db.insert(memories).values({ ...base, scope: "role" });
-    } else throw new BadRequest("scope must be topic or role");
-    return { content: `remembered (${scope})` };
+    } else await db.insert(memories).values({ ...base, scope: "topic", topicId: topic.id });
+    return { content: `remembered (${scope}) as ${base.id}` };
   });
 }
 
-const score = (text: string, words: string[]) =>
-  words.reduce((n, w) => n + (text.toLowerCase().split(w).length - 1), 0);
+/**
+ * A note the role may change or delete: one of this topic, or its own role memory (then only while working for
+ * an administrator, as when adding to it). Knowledge spaces are kept by people.
+ */
+async function ownNote(ctx: ToolContext, db: Db, id: string) {
+  const { task } = await load(ctx, db);
+  const [m] = await db
+    .select()
+    .from(memories)
+    .where(and(eq(memories.id, id), isNull(memories.deletedAt)))
+    .limit(1);
+  const mine =
+    m && ((m.scope === "topic" && m.topicId === ctx.topicId) || (m.scope === "role" && m.roleId === ctx.roleId));
+  if (!m || !mine)
+    throw new BadRequest(
+      `no note ${id} you may change here: you may change this topic's notes and your role memory (knowledge spaces are kept by people)`,
+    );
+  if (m.scope === "role") {
+    const refusal = await roleMemoryRefusal(db, task);
+    if (refusal) throw new Forbidden(refusal);
+  }
+  return m;
+}
+
+async function updateMemory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return transaction(async (db) => {
+    const m = await ownNote(ctx, db, String(args.id ?? ""));
+    const fields = memoryFields(args, {
+      partial: true,
+      contentLimit: m.scope === "role" ? ROLE_MEMORY_MAX_CHARS : undefined,
+    });
+    await db
+      .update(memories)
+      .set({ ...fields, updatedAt: new Date() })
+      .where(eq(memories.id, m.id));
+    return { content: `updated ${m.id}` };
+  });
+}
+
+async function forget(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return transaction(async (db) => {
+    const m = await ownNote(ctx, db, String(args.id ?? ""));
+    await db.update(memories).set(erased()).where(eq(memories.id, m.id));
+    return { content: `deleted ${m.id}` };
+  });
+}
 
 async function recall(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
-  const words = String(args.query ?? "")
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length > 1);
+  const query = String(args.query ?? "");
   const { task, topic } = await load(ctx, db);
   const rows: [string, typeof memories.$inferSelect][] = [];
   const live = isNull(memories.deletedAt);
@@ -725,21 +775,24 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
     rows.push(["this topic", m]);
   // The knowledge spaces the role may read, whoever it works for: the permission is the role's.
   for (const spaceId of task.envelope.spaces ?? []) {
+    const [space] = await db.select().from(knowledgeSpaces).where(eq(knowledgeSpaces.id, spaceId)).limit(1);
     for (const m of await db
       .select()
       .from(memories)
       .where(and(live, eq(memories.scope, "team"), eq(memories.spaceId, spaceId)))) {
-      rows.push([`team space ${spaceId}`, m]);
+      rows.push([`knowledge space «${space?.name ?? spaceId}»`, m]);
     }
   }
-  const hits = (
-    words.length
-      ? rows
-          .filter(([, m]) => score(m.content, words) > 0)
-          .sort((a, b) => score(b[1].content, words) - score(a[1].content, words))
-      : rows
-  ).slice(0, 8);
-  return { content: hits.map(([src, m]) => `- (${src}) ${m.content}`).join("\n") || "nothing relevant remembered" };
+  // Without a query: the latest notes.
+  const ranked = query.trim()
+    ? rows
+        .map((r) => [r, memoryScore(r[1], query)] as const)
+        .filter(([, n]) => n > 0)
+        .sort((a, b) => b[1] - a[1])
+        .map(([r]) => r)
+    : rows.sort((a, b) => b[1].createdAt.getTime() - a[1].createdAt.getTime());
+  const hits = ranked.slice(0, 8);
+  return { content: hits.map(([src, m]) => memoryLine(m, src)).join("\n") || "nothing relevant remembered" };
 }
 
 /**
@@ -1050,16 +1103,38 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "remember",
       "memory",
-      "Save a note. scope 'topic' (default): this topic or DM only. 'role': your own memory as this role, shown to you wherever you work and possibly to anyone there — only lasting, non-confidential things that hold everywhere. See \"Memory\" in your instructions.",
-      obj({ content: str, scope: { type: "string", enum: ["topic", "role"] } }, ["content"]),
+      "Save a note: a short title, a few keywords people would search by (in their language), and the content. scope 'topic' (default): this topic or DM only. 'role': your own memory as this role, shown to you wherever you work and possibly to anyone there — only lasting, non-confidential things that hold everywhere. See \"Memory\" in your instructions.",
+      obj(
+        {
+          title: str,
+          keywords: { type: "array", items: str },
+          content: str,
+          scope: { type: "string", enum: ["topic", "role"] },
+        },
+        ["title", "content"],
+      ),
       remember,
     ),
     spec(
       "recall",
       "memory",
-      "Search notes and knowledge you are allowed to use here.",
-      obj({ query: str }, ["query"]),
+      "Search the notes and knowledge you may use here by title, keywords and content (no query: the latest). Each note comes with its id.",
+      obj({ query: str }),
       recall,
+    ),
+    spec(
+      "update_memory",
+      "memory",
+      "Change a note by its id (from recall or your role memory): give only the fields to replace. You may change this topic's notes and your role memory.",
+      obj({ id: str, title: str, keywords: { type: "array", items: str }, content: str }, ["id"]),
+      updateMemory,
+    ),
+    spec(
+      "forget",
+      "memory",
+      "Delete a note by its id when it is wrong or no longer holds. You may delete this topic's notes and your role memory.",
+      obj({ id: str }, ["id"]),
+      forget,
     ),
     spec(
       "read_topic",

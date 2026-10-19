@@ -2973,6 +2973,18 @@ img.avatar-role.avatar-colored {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.memory-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 2px;
+  font-size: 13.5px;
+}
+.memory-form input,
+.memory-form textarea {
+  width: 100%;
+}
 .note-form {
   display: flex;
   flex-direction: column;

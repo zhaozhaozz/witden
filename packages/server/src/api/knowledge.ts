@@ -7,6 +7,7 @@ import { knowledgeSpaces, type Memory, memories, roles, topics, type User } from
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { erased, memoryFields } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS } from "../services/role-memory.js";
 import * as topicSvc from "../services/topics.js";
 import { authed, body, params, query, row } from "./http.js";
@@ -81,7 +82,16 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     "/api/memories",
     authed(async ({ db, user, req }) => {
       const b = body(req);
-      const base = { id: newId("mem"), content: String(b.content ?? ""), createdByType: "user", createdById: user.id };
+      // Role memory is in every prompt of its role: its content is kept short.
+      const fields = memoryFields(b, { contentLimit: b.scope === "role" ? ROLE_MEMORY_MAX_CHARS : undefined });
+      const base = {
+        id: newId("mem"),
+        title: fields.title!,
+        keywords: fields.keywords!,
+        content: fields.content!,
+        createdByType: "user",
+        createdById: user.id,
+      };
       let values: typeof memories.$inferInsert;
       if (b.scope === "team") {
         if (
@@ -96,11 +106,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         await requirePerm(db, user, Perm.ROLE_MANAGE);
         if (!b.roleId || !(await db.select().from(roles).where(eq(roles.id, b.roleId)).limit(1)).length)
           throw new NotFound("role not found");
-        const content = base.content.trim();
-        if (!content) throw new BadRequest("content is required");
-        if (content.length > ROLE_MEMORY_MAX_CHARS)
-          throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
-        values = { ...base, content, scope: "role", roleId: b.roleId };
+        values = { ...base, scope: "role", roleId: b.roleId };
       } else if (b.scope === "topic") {
         const topic = await topicSvc.getTopic(db, String(b.topicId ?? ""));
         if (!(await topicSvc.canPost(db, user, topic))) throw new Forbidden("you are not a participant of this topic");
@@ -118,27 +124,55 @@ export async function knowledgeRoutes(app: FastifyInstance) {
     }),
   );
 
+  /** Who may change or delete a note: the keepers of its space, role managers, or who administers its topic. */
+  async function editable(db: Db, user: User, id: string): Promise<Memory> {
+    const [m] = await db.select().from(memories).where(eq(memories.id, id)).limit(1);
+    if (!m || m.deletedAt) throw new NotFound("memory not found");
+    let allowed = false;
+    if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
+    else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
+    else if (m.scope === "topic" && m.topicId)
+      allowed =
+        (await canReadMemory(db, user, m)) &&
+        (await topicSvc.canAdminister(db, user, await topicSvc.getTopic(db, m.topicId)));
+    if (!allowed) throw new Forbidden("you cannot change this memory");
+    return m;
+  }
+
+  app.patch(
+    "/api/memories/:id",
+    authed(async ({ db, user, req }) => {
+      const m = await editable(db, user, params(req).id);
+      const fields = memoryFields(body(req), {
+        partial: true,
+        contentLimit: m.scope === "role" ? ROLE_MEMORY_MAX_CHARS : undefined,
+      });
+      const [updated] = await db
+        .update(memories)
+        .set({ ...fields, updatedAt: new Date() })
+        .where(eq(memories.id, m.id))
+        .returning();
+      await audit(db, "memory.update", {
+        actorType: "user",
+        actorId: user.id,
+        topicId: m.topicId,
+        roleId: m.roleId,
+        detail: { memory: m.id, scope: m.scope, fields: Object.keys(fields) },
+      });
+      return row(updated);
+    }),
+  );
+
   app.delete(
     "/api/memories/:id",
     authed(async ({ db, user, req }) => {
-      const [m] = await db
-        .select()
-        .from(memories)
-        .where(eq(memories.id, params(req).id))
-        .limit(1);
-      if (!m || m.deletedAt) throw new NotFound("memory not found");
-      let allowed = false;
-      if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
-      else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
-      else if (m.scope === "topic" && m.topicId)
-        allowed =
-          (await canReadMemory(db, user, m)) &&
-          (await topicSvc.canAdminister(db, user, await topicSvc.getTopic(db, m.topicId)));
-      if (!allowed) throw new Forbidden("you cannot delete this memory");
-      await db.update(memories).set({ deletedAt: new Date(), content: "" }).where(eq(memories.id, m.id));
+      const m = await editable(db, user, params(req).id);
+      await db.update(memories).set(erased()).where(eq(memories.id, m.id));
       await audit(db, "memory.delete", {
         actorType: "user",
         actorId: user.id,
+        topicId: m.topicId,
+        roleId: m.roleId,
         detail: { memory: m.id, scope: m.scope },
       });
       return { ok: true };

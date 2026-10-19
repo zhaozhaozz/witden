@@ -585,11 +585,16 @@ export const memories = pgTable("memories", {
   spaceId: text("space_id"),
   topicId: text("topic_id"),
   userId: text("user_id"),
+  /** A note's format: a short title, keywords people would search by, the content (services/memories.ts). */
+  title: text("title").notNull().default(""),
+  keywords: json<string[]>("keywords").notNull().default([]),
   content: text("content").notNull(),
   sourceMessageIds: json<string[]>("source_message_ids").notNull().default([]),
   createdByType: text("created_by_type").notNull().default("user"),
   createdById: text("created_by_id"),
   createdAt: created(),
+  /** Last changed, by a role (update_memory) or a person (console). */
+  updatedAt: ts("updated_at"),
   deletedAt: ts("deleted_at"),
 });
 

@@ -90,7 +90,7 @@ describe("permissions and isolation", () => {
       if (turn === 0) return reply("", [call("remember", { content: "alice salary is 12345", scope: "private" })]);
       if (turn === 1) {
         refusedScope = lastToolResult(m);
-        return reply("", [call("remember", { content: "alice salary is 12345" })]);
+        return reply("", [call("remember", { title: "alice's salary", content: "alice salary is 12345" })]);
       }
       return reply("Noted, kept in this DM.");
     };
@@ -256,7 +256,7 @@ describe("permissions and isolation", () => {
         : turn === 1
           ? reply("", [call("share_file", { path: "report.txt" })])
           : turn === 2
-            ? reply("", [call("remember", { content: "alice wants weekly reports", scope: "topic" })])
+            ? reply("", [call("remember", { title: "Reports", content: "alice wants weekly reports", scope: "topic" })])
             : reply("shared");
     await w.post(w.alice, dm.id, "make the report and send it to me");
     await w.drain();
@@ -446,7 +446,7 @@ describe("sessions and data lifecycle", () => {
   it("deleting a message removes derived memory and the work it started", async () => {
     w.scripts.dev = (_m, turn) =>
       turn === 0
-        ? reply("", [call("remember", { content: "the launch code is 4242", scope: "topic" })])
+        ? reply("", [call("remember", { title: "Launch code", content: "the launch code is 4242", scope: "topic" })])
         : reply("noted");
     const posted = await w.post(w.alice, w.ids.topic, "@dev the launch code is 4242, remember it");
     await w.drain();

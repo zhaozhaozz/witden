@@ -82,7 +82,7 @@ describe("what a role may read, it may use where it works", () => {
   });
 
   it("topic notes may keep what the role read", async () => {
-    await runDev(call("remember", { content: `alice ${SECRET}`, scope: "topic" }));
+    await runDev(call("remember", { title: "alice", content: `alice ${SECRET}`, scope: "topic" }));
     const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;
     expect(JSON.stringify(mems)).toContain(SECRET);
   });

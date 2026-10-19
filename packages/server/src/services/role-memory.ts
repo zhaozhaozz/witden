@@ -22,13 +22,13 @@ export async function roleMemories(db: Db, roleId: string): Promise<Memory[]> {
     .orderBy(asc(memories.createdAt));
 }
 
-/** Why this task may not add to its role's memory, or null when it may. */
+/** Why this task may not add to, change or delete its role's memory, or null when it may. */
 export async function roleMemoryRefusal(db: Db, task: Task): Promise<string | null> {
   const [requester] = task.requesterUserId
     ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
     : [];
   // Someone outside the console must not be able to change how the role works for everyone else.
   if (!isConsoleUser(requester))
-    return "role memory changes how you work everywhere, so it can be added only while you work for a witden administrator (a console account); use scope 'topic'";
+    return "role memory changes how you work everywhere, so it can be added to, changed or deleted only while you work for a witden administrator (a console account); use scope 'topic' for a new note";
   return null;
 }

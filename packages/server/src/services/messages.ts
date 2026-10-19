@@ -3,6 +3,7 @@ import { cancelTree, getTask, TERMINAL } from "../agent/control.js";
 import { appendStep } from "../agent/transcript.js";
 import type { Db } from "../db/client.js";
 import { agentSessions, type Message, memories, messages, taskSteps, tasks } from "../db/schema.js";
+import { erased } from "./memories.js";
 
 /**
  * Deleting a message removes its text everywhere we keep it: the message is blanked, memories derived from
@@ -17,7 +18,7 @@ export async function purgeMessage(db: Db, msg: Message) {
   let memoriesDeleted = 0;
   for (const m of await db.select().from(memories).where(isNull(memories.deletedAt))) {
     if (m.sourceMessageIds.includes(msg.id)) {
-      await db.update(memories).set({ deletedAt: new Date(), content: "" }).where(eq(memories.id, m.id));
+      await db.update(memories).set(erased()).where(eq(memories.id, m.id));
       memoriesDeleted++;
     }
   }

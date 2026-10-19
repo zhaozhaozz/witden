@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
-import type { KnowledgeSpace, Memory } from "../../api/types";
+import type { KnowledgeSpace } from "../../api/types";
 import { useConfigChanged } from "../../lib/configEvents";
-import { fmtRelative } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
-import { useDirectory } from "../../lib/session";
-import { useAction, useFeedback } from "../../ui/feedback";
+import { useAction } from "../../ui/feedback";
 import { Empty, Field, FormModal, Loaded, Section } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
+import { MemoryList } from "../memoryParts";
 
 export function KnowledgeTab() {
   const { run, busy } = useAction();
@@ -93,63 +92,16 @@ export function KnowledgeTab() {
 }
 
 function SpaceMemories({ space }: { space: KnowledgeSpace }) {
-  const dir = useDirectory();
-  const { run, busy } = useAction();
-  const { confirm } = useFeedback();
-  const [text, setText] = useState("");
-  const res = useResource(() => api.get<Memory[]>("/api/memories", { scope: "team", space_id: space.id }), [space.id]);
   return (
     <Section title={space.name}>
       {space.description ? <p className="small muted">{space.description}</p> : null}
-      <form
-        className="note-form"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const m = await run(
-            () => api.post<Memory>("/api/memories", { scope: "team", space_id: space.id, content: text.trim() }),
-            "已添加",
-          );
-          if (m) {
-            setText("");
-            res.setData((p) => [m, ...(p ?? [])]);
-          }
-        }}
-      >
-        <textarea rows={3} value={text} onChange={(e) => setText(e.target.value)} placeholder="添加一条共享资料" />
-        <button type="submit" className="btn btn-xs btn-primary" disabled={busy || !text.trim()}>
-          添加
-        </button>
-      </form>
-      <Loaded res={res}>
-        {(rows) =>
-          rows.length ? (
-            <ul className="memory-list">
-              {rows.map((m) => (
-                <li key={m.id}>
-                  <div className="memory-text">{m.content}</div>
-                  <div className="small muted">
-                    {m.created_by_type === "role" ? dir.roleLabel(m.created_by_id) : dir.userName(m.created_by_id)} ·{" "}
-                    {fmtRelative(m.created_at)}
-                    <button
-                      type="button"
-                      className="link-btn"
-                      onClick={async () => {
-                        if (!(await confirm({ title: "删除这条资料", danger: true, confirmLabel: "删除" }))) return;
-                        const ok = await run(() => api.del(`/api/memories/${m.id}`));
-                        if (ok) res.setData((p) => p?.filter((x) => x.id !== m.id));
-                      }}
-                    >
-                      删除
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <Empty title="空间里还没有内容" />
-          )
-        }
-      </Loaded>
+      <MemoryList
+        query={{ scope: "team", space_id: space.id }}
+        create={{ scope: "team", space_id: space.id }}
+        placeholder="一条共享资料"
+        emptyTitle="空间里还没有内容"
+        itemName="资料"
+      />
     </Section>
   );
 }
