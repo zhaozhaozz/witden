@@ -1,4 +1,5 @@
 import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { copyToClipboard } from "../lib/clipboard";
 import { genericStatus, hueOf, initials, type StatusMeta, shortId, type Tone } from "../lib/format";
 
 // --- status ----------------------------------------------------------------------------------------
@@ -666,24 +667,27 @@ export function JsonBlock({ value, maxHeight }: { value: unknown; maxHeight?: nu
 
 export function CopyText({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
+  const [manualCopy, setManualCopy] = useState(false);
   return (
     <span className="copy">
-      <code className="id">{label ?? text}</code>
+      <code className="id">{manualCopy ? text : (label ?? text)}</code>
       <button
         type="button"
         className="btn btn-xs"
         onClick={async () => {
-          try {
-            await navigator.clipboard.writeText(text);
+          if (await copyToClipboard(text)) {
             setDone(true);
+            setManualCopy(false);
             window.setTimeout(() => setDone(false), 1500);
-          } catch {
-            // clipboard unavailable (non-secure context); the text stays selectable
+          } else {
+            setDone(false);
+            setManualCopy(true);
           }
         }}
       >
         {done ? "已复制" : "复制"}
       </button>
+      {manualCopy ? <span role="status">浏览器未允许自动复制，请手动复制上方内容。</span> : null}
     </span>
   );
 }

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Topic } from "../../api/types";
+import { copyToClipboard } from "../../lib/clipboard";
 import { fmtTime } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
@@ -294,6 +295,8 @@ function TriggerEditor({
   const [instructions, setInstructions] = useState(trigger?.instructions ?? "");
   const [secret, setSecret] = useState(trigger ? "" : makeSecret);
   const [copiedSecret, setCopiedSecret] = useState(false);
+  const [manualCopy, setManualCopy] = useState(false);
+  const secretInput = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState(trigger?.filter_code ?? "");
   const [cron, setCron] = useState(trigger?.cron ?? "0 9 * * 1-5");
   const [timezone, setTimezone] = useState(
@@ -389,7 +392,8 @@ function TriggerEditor({
             hint="发送时用 Authorization: Bearer <密钥>，或 X-Webhook-Token 请求头。密钥保存后无法读回。"
           >
             <input
-              type="password"
+              ref={secretInput}
+              type={manualCopy ? "text" : "password"}
               autoComplete="new-password"
               value={secret}
               onChange={(e) => {
@@ -406,6 +410,7 @@ function TriggerEditor({
                 onClick={() => {
                   setSecret(makeSecret());
                   setCopiedSecret(false);
+                  setManualCopy(false);
                 }}
               >
                 生成新密钥
@@ -415,13 +420,17 @@ function TriggerEditor({
                 className="btn btn-xs"
                 disabled={!secret}
                 onClick={async () => {
-                  const result = await run(async () => {
-                    await navigator.clipboard.writeText(secret);
-                    return true;
-                  });
-                  if (result) {
+                  if (await copyToClipboard(secret)) {
                     setCopiedSecret(true);
+                    setManualCopy(false);
                     toast("密钥已复制，请保存到发送方", "ok");
+                  } else {
+                    setCopiedSecret(false);
+                    setManualCopy(true);
+                    requestAnimationFrame(() => {
+                      secretInput.current?.focus();
+                      secretInput.current?.select();
+                    });
                   }
                 }}
               >
@@ -429,6 +438,11 @@ function TriggerEditor({
               </button>
             </div>
           </Field>
+          {manualCopy ? (
+            <p className="notice" role="status">
+              浏览器未允许自动复制，已显示密钥。请手动复制上方密钥，保存后勾选「已妥善保存此密钥」。
+            </p>
+          ) : null}
           {secret ? (
             <label className="check">
               <input type="checkbox" checked={copiedSecret} onChange={(e) => setCopiedSecret(e.target.checked)} />
