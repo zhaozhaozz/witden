@@ -304,6 +304,9 @@ describe("computers", () => {
     const task = await w.task(posted.tasks[0].id);
     expect(task.status).toBe("failed");
     expect(task.status_reason).toContain("unavailable");
+    const notices = (await w.messages(w.ids.topic)).filter((m: any) => m.author_type === "system");
+    expect(notices.some((m: any) => m.content.includes("本次处理未能完成"))).toBe(true);
+    expect(JSON.stringify(notices)).not.toContain(task.error);
     expect(w.manager.computer(w.ids.instance).commands).toEqual([]);
   });
 

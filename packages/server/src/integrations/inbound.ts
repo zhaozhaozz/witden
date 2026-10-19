@@ -33,6 +33,7 @@ import { saveArtifact } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
 import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
+import { integrationError } from "./diagnostics.js";
 
 export interface InboundMessage {
   connectionId: string;
@@ -560,15 +561,11 @@ async function ingestFiles(
     try {
       data = await adapter.fetchFile(conn, f);
     } catch (err) {
-      await saveMessage(db, topic, "system", null, `Could not import file ${f.name}: ${(err as Error).message}`, {
-        mentions: [],
-      });
+      await integrationError(db, conn, stored, "download", err, f);
       continue;
     }
     if (!data) {
-      await saveMessage(db, topic, "system", null, `File ${f.name} was not imported (too large or unsupported).`, {
-        mentions: [],
-      });
+      await integrationError(db, conn, stored, "download", "文件超过大小限制或不支持导入。", f);
       continue;
     }
     const art = await saveArtifact(db, data, {

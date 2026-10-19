@@ -404,6 +404,8 @@ const AUDIT_LABEL: Record<string, string> = {
   "task.denied": "拒绝分配",
   "task.complete": "完成任务",
   "task.failed": "任务失败",
+  "routing.failed": "话题自动调度失败",
+  "integration.error": "通讯接入诊断",
   "task.reassign": "转交任务",
   "task.pause": "暂停",
   "task.resume": "继续",

@@ -17,6 +17,8 @@ import { and, eq, gt, sql } from "drizzle-orm";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { type Message, messageRoutes, messages, type Role, type Topic, topics, usageRecords } from "../db/schema.js";
+import { redact } from "../security/crypto.js";
+import { audit } from "../services/audit.js";
 import * as models from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting } from "../services/platform-settings.js";
 import { enqueue } from "./conversation.js";
@@ -55,7 +57,7 @@ interface Prepared {
   request: { state: unknown; questions: Record<string, Question> } | null;
 }
 
-/** Route one claimed message. Never throws: failures end up on the route row (and, if useful, in the topic). */
+/** Route one claimed message. Technical failures stay in the route row and console audit. */
 export async function routeMessage(messageId: string): Promise<void> {
   try {
     const p = await transaction((tx) => prepare(tx, messageId));
@@ -83,17 +85,21 @@ export async function routeMessage(messageId: string): Promise<void> {
       const failed = route.attempts >= MAX_ATTEMPTS;
       await tx
         .update(messageRoutes)
-        .set({ status: failed ? "failed" : "pending", result: { error: (err as Error).message.slice(0, 500) } })
+        .set({ status: failed ? "failed" : "pending", result: { error: redact((err as Error).message).slice(0, 500) } })
         .where(eq(messageRoutes.messageId, messageId));
       if (failed) {
+        await audit(tx, "routing.failed", {
+          outcome: "error",
+          topicId: route.topicId,
+          resourceType: "message",
+          resourceId: messageId,
+          detail: { error: redact((err as Error).message).slice(0, 2000) },
+        });
         const [topic] = await tx.select().from(topics).where(eq(topics.id, route.topicId)).limit(1);
         if (topic)
-          await systemMessage(
-            tx,
-            topic,
-            `The dispatcher could not decide who should answer (${(err as Error).message.slice(0, 200)}); @-mention a role to ask it directly.`,
-            { mentions: [{ type: "user", id: route.userId }] },
-          );
+          await systemMessage(tx, topic, "暂时无法自动选择回答的角色，请直接 @ 需要的角色。", {
+            mentions: [{ type: "user", id: route.userId }],
+          });
       }
     });
   }

@@ -34,6 +34,9 @@ class FakeFeishu {
   refusePosts = false;
   /** Answer uploads as an app without im:resource. */
   refuseUploads = false;
+  resourceErrors = new Map<string, string>();
+  oversizedResources = new Set<string>();
+  refuseAttachments = false;
   uploads: { path: string; fields: Record<string, string> }[] = [];
 
   fetch: typeof fetch = async (input, init) => {
@@ -82,6 +85,12 @@ class FakeFeishu {
     const resource = /^im\/v1\/messages\/([^/]+)\/resources\/([^/]+)$/.exec(path);
     if (resource) {
       this.asked.push(`${path}?type=${url.searchParams.get("type")}`);
+      if (this.resourceErrors.has(resource[2]))
+        return json({ code: 99991672, msg: this.resourceErrors.get(resource[2]) });
+      if (this.oversizedResources.has(resource[2]))
+        return new Response("", {
+          headers: { "content-type": "image/png", "content-length": String(21 * 1024 * 1024) },
+        });
       const image = url.searchParams.get("type") === "image";
       return new Response(Buffer.from(image ? "jpeg-bytes" : "pdf-bytes"), {
         status: 200,
@@ -89,6 +98,8 @@ class FakeFeishu {
       });
     }
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
+      if (this.refuseAttachments && ["file", "image"].includes(body.msg_type))
+        return json({ code: 230001, msg: "attachment delivery refused" });
       if (this.refusePosts && body.msg_type === "post") return json({ code: 230001, msg: "invalid message content" });
       this.sent.push({ path, body });
       return json({ code: 0, data: { message_id: `om_out_${this.sent.length}` } });
@@ -635,7 +646,83 @@ describe("feishu: other bots and rich messages", () => {
     ).toBe("标题\n正文");
   });
 
-  it("a role's images go into the message and its files after it; what Feishu refuses is linked with the reason", async () => {
+  it("download failures stay in console diagnostics; other attachments and text still reach the role", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    feishu.resourceErrors.set("img_denied", "Access denied: [im:message:readonly], app-secret");
+    feishu.oversizedResources.add("img_large");
+    let context = "";
+    w.scripts.dev = (messages) => {
+      context = JSON.stringify(messages);
+      return reply("收到文字和可用的图片");
+    };
+    const event = raw(
+      "om_mixed",
+      "post",
+      {
+        content: [
+          [{ tag: "text", text: "请查看图片" }],
+          [
+            { tag: "img", image_key: "img_denied" },
+            { tag: "img", image_key: "img_large" },
+            { tag: "img", image_key: "img_ok" },
+          ],
+        ],
+      },
+      { atBot: true },
+    );
+    await link.push(event);
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+    const [stored] = await db().select().from(messages).where(sql`${messages.externalRef}->>'ts' = 'om_mixed'`);
+    expect(stored.attachments).toHaveLength(1);
+    const diagnostics = await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken });
+    expect(diagnostics.status).toBe(200);
+    expect(diagnostics.body).toHaveLength(2);
+    const denied = diagnostics.body.find((r: any) => r.detail.error.includes("99991672"));
+    expect(denied).toMatchObject({
+      topic_id: stored.topicId,
+      resource_id: stored.id,
+      detail: {
+        stage: "download",
+        error: expect.stringContaining("[REDACTED]"),
+        hint: expect.stringContaining("发布新版本"),
+      },
+    });
+    expect(JSON.stringify(diagnostics.body)).not.toContain("app-secret");
+    expect((await w.api("GET", `/api/connections/${conn.id}/diagnostics`)).status).toBe(401);
+    expect(feishu.sent.map(words)).toEqual(["收到文字和可用的图片"]);
+    expect(context).not.toMatch(/99991672|Access denied|Could not import|app-secret/);
+    expect(JSON.stringify(await w.messages(stored.topicId))).not.toMatch(/99991672|Access denied|Could not import/);
+    // A repeated event neither duplicates the message nor its diagnostic records.
+    await link.push(event);
+    await w.drain();
+    expect((await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken })).body).toHaveLength(
+      2,
+    );
+    // Once the app has permission, a newly sent image is imported normally.
+    feishu.resourceErrors.clear();
+    await link.push(raw("om_retry", "image", { image_key: "img_denied" }));
+    await w.drain();
+    const [retry] = await db().select().from(messages).where(sql`${messages.externalRef}->>'ts' = 'om_retry'`);
+    expect(retry.attachments).toHaveLength(1);
+    const other = await w.api("POST", "/api/connections", {
+      token: w.adminToken,
+      json: {
+        name: "other",
+        platform: "feishu",
+        credentials: { app_id: "cli_other", app_secret: "other-secret", verification_token: "vt" },
+      },
+    });
+    expect(other.status).toBe(200);
+    expect((await w.api("GET", `/api/connections/${other.body.id}/diagnostics`, { token: w.adminToken })).body).toEqual(
+      [],
+    );
+  });
+
+  it("a role's images and files are sent; refused attachments are linked with diagnostics only in the console", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
     await w.waitFor(async () => link.open().length === 1);
     await ready(conn);
@@ -674,7 +761,7 @@ describe("feishu: other bots and rich messages", () => {
     expect(JSON.parse(feishu.sent.at(-1)!.body.content).zh_cn.content).toEqual([
       [{ tag: "img", image_key: "img_v3_3" }],
     ]);
-    // an app without im:resource: the words, and the files as links with the reason
+    // An app without im:resource: links outside, the reason and remediation inside the console.
     feishu.refuseUploads = true;
     await send("截图如下", [shot.id]);
     const base = settings().publicUrl.replace(/\/+$/, "");
@@ -682,10 +769,30 @@ describe("feishu: other bots and rich messages", () => {
       [
         {
           tag: "md",
-          text: `截图如下\n\n🖼 [desktop-103355.png](${base}/api/files/${shot.id})\n\n*附件没能发到飞书：飞书应用没有开通“获取与上传图片或文件资源”（im:resource）权限*`,
+          text: `截图如下\n\n🖼 [desktop-103355.png](${base}/api/files/${shot.id})`,
         },
       ],
     ]);
+    const diagnostic = (await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken })).body[0];
+    expect(diagnostic.detail).toMatchObject({
+      stage: "upload",
+      file_id: shot.id,
+      error: expect.stringContaining("99991672"),
+      hint: expect.stringContaining("im:resource"),
+    });
+    // Rich-text fallback preserves the attachment link, without leaking the upload or format error.
+    feishu.refusePosts = true;
+    await send("截图如下", [shot.id]);
+    expect(words(feishu.sent.at(-1)!)).toContain(`/api/files/${shot.id}`);
+    expect(words(feishu.sent.at(-1)!)).not.toMatch(/99991672|im:resource|invalid message/);
+    // Errors after the text was sent are recorded, and do not retry already delivered words.
+    feishu.refuseUploads = false;
+    feishu.refuseAttachments = true;
+    const before = feishu.sent.length;
+    await send("只发送一次", [shot.id, report.id]);
+    expect(feishu.sent.slice(before).map(words)).toEqual(["只发送一次"]);
+    const records = (await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken })).body;
+    expect(records.filter((r: any) => r.detail.stage === "send")).toHaveLength(2);
   });
 
   it("Markdown goes out as rich text; another role's name is the title; notices and refused posts as text", async () => {

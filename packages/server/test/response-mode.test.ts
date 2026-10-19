@@ -172,6 +172,21 @@ describe("auto mode", () => {
     expect(usage.map((u) => u.promptTokens)).toEqual([40, 40, 40]);
   });
 
+  it("dispatcher exceptions stay in console audit, not in the mirrored notice", async () => {
+    const laya = await decisionService();
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: laya.id } });
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    setFetch(async () => new Response("private upstream failure", { status: 503 }));
+    await say(w.alice, w.ids.topic, "请处理这个问题");
+    await w.drain();
+    const notices = (await w.messages(w.ids.topic)).filter((m: any) => m.author_type === "system");
+    expect(notices).toHaveLength(1);
+    expect(notices[0].content).toBe("暂时无法自动选择回答的角色，请直接 @ 需要的角色。");
+    const logs = (await w.api("GET", "/api/audit?action=routing.failed", { token: w.adminToken })).body;
+    expect(logs).toHaveLength(1);
+    expect(logs[0].detail.error).toContain("private upstream failure");
+  });
+
   it("without a dispatcher model nobody answers, and people are told once", async () => {
     await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
     await say(w.alice, w.ids.topic, "有人在吗");

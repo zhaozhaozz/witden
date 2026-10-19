@@ -124,6 +124,13 @@ export async function grantedScopes(conn: Connection): Promise<Set<string>> {
   return new Set((data.scopes ?? []).filter((s: any) => s.grant_status === 1).map((s: any) => s.scope_name));
 }
 
+/** Resource downloads accept any of these scopes; older apps need not request the new name again. */
+export function baseScopeGranted(scope: string, granted: Set<string>): boolean {
+  if (scope === "im:message:readonly")
+    return [scope, "im:message", "im:message.history:readonly"].some((s) => granted.has(s));
+  return granted.has(scope);
+}
+
 /** What an app can offer of each product, from its granted scopes; a write scope also reads. */
 export function productStatus(granted: Set<string>) {
   return FEISHU_PRODUCTS.map((p) => {

@@ -673,7 +673,7 @@ export class TaskRunner {
       const what = isConversation(task)
         ? `@${role?.handle ?? "?"} stopped working`
         : `Task by @${role?.handle ?? "?"} failed`;
-      await systemMessage(db, topic, `${what}: ${reason}`, {
+      await systemMessage(db, topic, `${what}。本次处理未能完成，请稍后重试。`, {
         taskId: task.id,
         mentions: task.requesterUserId ? [{ type: "user", id: task.requesterUserId }] : [],
       });

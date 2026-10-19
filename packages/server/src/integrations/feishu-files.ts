@@ -3,7 +3,7 @@
  *
  * Out (``im:resource``): a role's attachments are uploaded first. Images (up to 10 MB, the formats Feishu shows)
  * go into the rich-text post with the words; other files (up to 30 MB) follow as file messages in the same place.
- * What Feishu will not take is linked to witden instead, with the reason, as for Slack.
+ * What Feishu will not take is linked to witden instead; diagnostics stay in the console.
  *
  * In (``im:message:readonly``): images and files people send, alone or inside a rich-text post, are listed with the
  * message and downloaded into the topic's files (up to 20 MB), so roles can look at them.
@@ -38,21 +38,12 @@ export function uploadKind(f: Artifact): { image: true } | { image: false; fileT
   return { image: false, fileType };
 }
 
-/** Feishu's refusal of an upload, said so a person knows what to do. */
-export function uploadProblem(err: unknown): string {
-  const m = (err as Error).message ?? String(err);
-  if ((err as NodeJS.ErrnoException).code === "ENOENT") return "witden 中的文件已不存在";
-  if (/99991672/.test(m)) return "飞书应用没有开通“获取与上传图片或文件资源”（im:resource）权限";
-  if (/234010/.test(m)) return "文件是空的";
-  return m;
-}
-
-/** Files as links into witden; they open only where the console is reachable, so the reason goes with them. */
-export function fileLinks(files: Artifact[], why: string): string {
+/** Files as links into witden; technical failures are only recorded in console diagnostics. */
+export function fileLinks(files: Artifact[]): string {
   const lines = files.map(
     (f) => `${f.mime.startsWith("image/") ? "🖼" : "📎"} [${f.name}](${consoleBase()}/api/files/${f.id})`,
   );
-  return `${lines.join("\n\n")}\n\n*附件没能发到飞书：${why}*`;
+  return lines.join("\n\n");
 }
 
 /** An image or file in a received message, to download with ``fetchFile``. */

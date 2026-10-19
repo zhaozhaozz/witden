@@ -24,6 +24,7 @@ import { safeEqual, secretBox } from "../security/crypto.js";
 import { artifactPath } from "../services/files.js";
 import { consoleBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, type InboundAction, register } from "./base.js";
+import { integrationError } from "./diagnostics.js";
 import {
   type FeishuInFile,
   fileLinks,
@@ -31,7 +32,6 @@ import {
   MAX_IN_BYTES,
   messageFiles,
   uploadKind,
-  uploadProblem,
 } from "./feishu-files.js";
 import { fromFeishuPost, toFeishu } from "./feishu-format.js";
 import { noteWebhook } from "./webhook-status.js";
@@ -372,10 +372,10 @@ export class FeishuAdapter implements Adapter {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       who = `${user?.name ?? "member"} (witden)`;
     }
-    const plain = { msg_type: "text", content: JSON.stringify({ text: who ? `${who}: ${msg.content}` : msg.content }) };
+    let plain = { msg_type: "text", content: JSON.stringify({ text: who ? `${who}: ${msg.content}` : msg.content }) };
     if (msg.authorType === "system") return this.post(conn, out, plain);
     // Attachments are uploaded first: images go into the post, other files follow it; what Feishu will not take
-    // is linked instead, with the reason.
+    // is linked instead. Failure details stay in the console.
     const { images, files, refused } = await this.uploadAll(db, conn, msg);
     const base = consoleBase();
     let md = toFeishu(msg.content, {
@@ -383,7 +383,14 @@ export class FeishuAdapter implements Adapter {
       viewUrl: `${base}/topics/${msg.topicId}`,
       mentions: await this.mentioned(db, conn, msg),
     });
-    if (refused) md = [md, fileLinks(refused.files, refused.why)].filter(Boolean).join("\n\n");
+    if (refused.length) {
+      const links = fileLinks(refused);
+      md = [md, links].filter(Boolean).join("\n\n");
+      plain = {
+        msg_type: "text",
+        content: JSON.stringify({ text: [JSON.parse(plain.content).text, links].filter(Boolean).join("\n\n") }),
+      };
+    }
     const paragraphs = [
       ...(md ? [[{ tag: "md", text: md }]] : []),
       ...images.map((key) => [{ tag: "img", image_key: key }]),
@@ -395,14 +402,15 @@ export class FeishuAdapter implements Adapter {
     let id: string | null;
     if (!paragraphs.length) id = null;
     else if (Buffer.byteLength(rich.content) > POST_MAX_BYTES)
-      id = await this.plainWithImages(conn, out, plain, images);
+      id = await this.plainWithImages(db, conn, out, msg, plain, images);
     else
       try {
         id = await this.post(conn, out, rich);
       } catch (err) {
         // Feishu answered and refused the post, so nothing was sent: the same words as plain text instead.
         if (!/failed \(\d+\)/.test((err as Error).message)) throw err;
-        id = await this.plainWithImages(conn, out, plain, images);
+        await integrationError(db, conn, msg, "format", err);
+        id = await this.plainWithImages(db, conn, out, msg, plain, images);
       }
     // Files follow the message, where it went; the message is out, so a file that fails is dropped, not retried.
     for (const key of files) {
@@ -410,7 +418,7 @@ export class FeishuAdapter implements Adapter {
         const sent = await this.post(conn, out, { msg_type: "file", content: JSON.stringify({ file_key: key }) });
         id ??= sent;
       } catch (err) {
-        console.warn("[witden] Feishu file message failed", (err as Error).message);
+        await integrationError(db, conn, msg, "send", err);
       }
     }
     return id;
@@ -418,14 +426,23 @@ export class FeishuAdapter implements Adapter {
 
   /** The words as plain text, each image as its own message after them. */
   private async plainWithImages(
+    db: Db,
     conn: Connection,
     out: OutboundMessage,
+    msg: Message,
     plain: { msg_type: string; content: string },
     images: string[],
   ): Promise<string | null> {
-    const id = await this.post(conn, out, plain);
-    for (const key of images)
-      await this.post(conn, out, { msg_type: "image", content: JSON.stringify({ image_key: key }) });
+    let id = JSON.parse(plain.content).text.trim() ? await this.post(conn, out, plain) : null;
+    for (const key of images) {
+      try {
+        const sent = await this.post(conn, out, { msg_type: "image", content: JSON.stringify({ image_key: key }) });
+        id ??= sent;
+      } catch (err) {
+        // The text may already be delivered; do not retry it because a following image failed.
+        await integrationError(db, conn, msg, "send", err);
+      }
+    }
     return id;
   }
 
@@ -434,7 +451,6 @@ export class FeishuAdapter implements Adapter {
     const images: string[] = [];
     const files: string[] = [];
     const refusedFiles: Artifact[] = [];
-    let why: string | null = null;
     const attached = msg.attachments?.length
       ? await db
           .select()
@@ -451,7 +467,7 @@ export class FeishuAdapter implements Adapter {
       const kind = uploadKind(f);
       if ("refused" in kind) {
         refusedFiles.push(f);
-        why ??= kind.refused;
+        await integrationError(db, conn, msg, "upload", kind.refused, f);
         continue;
       }
       try {
@@ -469,10 +485,10 @@ export class FeishuAdapter implements Adapter {
         }
       } catch (err) {
         refusedFiles.push(f);
-        why ??= uploadProblem(err);
+        await integrationError(db, conn, msg, "upload", err, f);
       }
     }
-    return { images, files, refused: refusedFiles.length ? { files: refusedFiles, why: why ?? "" } : null };
+    return { images, files, refused: refusedFiles };
   }
 
   /** A multipart upload with the app's tenant token (images and files for messages, im:resource). */

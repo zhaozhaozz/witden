@@ -131,6 +131,13 @@ export function FeishuScopeCheck({ conn }: { conn: Connection }) {
                 )}
               </span>
             </div>
+            {check.base!.some((s) => s.scope === "im:message:readonly" && !s.granted) ? (
+              <div className="callout callout-bad">
+                目前无法接收飞书中的图片和文件。请申请 im:message:readonly
+                并发布新版本，等待审批生效后重新检测，再重新发送附件。 已开通 im:message 或 im:message.history:readonly
+                也满足下载要求。
+              </div>
+            ) : null}
             {check.products!.map((p) => (
               <div key={p.key} className="feishu-check-row">
                 <span className="feishu-check-name">{p.label}</span>

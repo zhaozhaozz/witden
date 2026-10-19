@@ -28,6 +28,7 @@ import { absoluteAvatarUrl } from "../services/appearance.js";
 import { artifactPath } from "../services/files.js";
 import { consoleBase, webhookBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, getAdapter, type InboundAction, register } from "./base.js";
+import { integrationError } from "./diagnostics.js";
 import { appCredentials, appOf } from "./slack-apps.js";
 import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 import { noteWebhook } from "./webhook-status.js";
@@ -187,12 +188,12 @@ const uploadProblem = (err: unknown) =>
       ? "witden 中的文件已不存在"
       : (err as Error).message;
 
-/** Files as links into witden; they open only where the console is reachable, so the reason goes with them. */
-function fileLinks(files: Artifact[], why: string): string {
+/** Files as links into witden; diagnostics stay in the console. */
+function fileLinks(files: Artifact[]): string {
   const lines = files.map(
     (f) => `${f.mime.startsWith("image/") ? "🖼" : "📎"} <${consoleBase()}/api/files/${f.id}|${escapeSlack(f.name)}>`,
   );
-  return `${lines.join("\n")}\n_附件没能发到 Slack：${escapeSlack(why)}_`;
+  return lines.join("\n");
 }
 
 /** Scopes the setup guide's manifest asks for that older apps may lack. */
@@ -235,7 +236,7 @@ export class SlackAdapter implements Adapter {
     db: Db,
     conn: Connection,
     msg: Message,
-    refused: { files: Artifact[]; why: string } | null = null,
+    refused: Artifact[] = [],
   ): Promise<[string, Record<string, string>]> {
     const base = consoleBase();
     // System notices are plain text; everything else is Markdown written for the console.
@@ -257,8 +258,8 @@ export class SlackAdapter implements Adapter {
       const [user] = await db.select().from(users).where(eq(users.id, m.id)).limit(1);
       if (ident && user) text = text.split(`@${user.name}`).join(`<@${ident.externalUserId}>`);
     }
-    // Attachments are uploaded (send); only files Slack refused appear here, as links with the reason.
-    if (refused?.files.length) text += `${text ? "\n" : ""}${fileLinks(refused.files, refused.why)}`;
+    // Attachments are uploaded (send); only files Slack refused appear here, as links.
+    if (refused.length) text += `${text ? "\n" : ""}${fileLinks(refused)}`;
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
       const name = role ? `${role.name} (@${role.handle})` : "role";
@@ -292,25 +293,26 @@ export class SlackAdapter implements Adapter {
             ),
           )
       : [];
-    // Upload the files first: if Slack will not take them, the message carries links and the reason instead.
+    // Upload the files first: if Slack will not take them, the message carries links instead.
     const uploaded: { id: string; title: string }[] = [];
-    let why: string | null = null;
+    let refused = false;
     for (const f of files) {
       try {
         uploaded.push({ id: await client.upload(f.name, fs.readFileSync(artifactPath(f))), title: f.name });
       } catch (err) {
-        why = uploadProblem(err);
+        refused = true;
+        await integrationError(db, conn, msg, "upload", uploadProblem(err), f);
         break;
       }
     }
-    const [text, extra] = await this.render(db, conn, msg, why ? { files, why } : null);
+    const [text, extra] = await this.render(db, conn, msg, refused ? files : []);
     const where: Record<string, unknown> = { channel: out.conversationExternalId };
     if (out.threadKey) where.thread_ts = out.threadKey;
     // No previews: Slack would fetch whatever address the text links to, images included.
     const ts = text.trim()
       ? await this.post(client, { ...where, text, unfurl_links: false, unfurl_media: false }, extra)
       : null;
-    if (uploaded.length && !why) {
+    if (uploaded.length && !refused) {
       try {
         // Shared where the message went: in the same thread, or right below it in the channel.
         await client.call("files.completeUploadExternal", {
@@ -319,16 +321,17 @@ export class SlackAdapter implements Adapter {
           ...(out.threadKey ? { thread_ts: out.threadKey } : {}),
         });
       } catch (err) {
+        await integrationError(db, conn, msg, "send", uploadProblem(err));
         // The message is already out: say what became of its files rather than sending it again (a failed
         // notice is dropped for the same reason).
         await client
           .call("chat.postMessage", {
             ...where,
-            text: fileLinks(files, uploadProblem(err)),
+            text: fileLinks(files),
             unfurl_links: false,
             unfurl_media: false,
           })
-          .catch(() => undefined);
+          .catch((err) => integrationError(db, conn, msg, "send", err));
       }
     }
     return ts;

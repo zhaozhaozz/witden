@@ -6,6 +6,7 @@ import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
+  auditLogs,
   type Connection,
   connections,
   externalConversations,
@@ -22,7 +23,13 @@ import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
 import { checkCredentials as checkFeishu, type FeishuMode, feishuMode } from "../integrations/feishu.js";
 import { feishuSockets } from "../integrations/feishu-socket.js";
-import { FEISHU_BASE_SCOPES, FEISHU_PRODUCTS, grantedScopes, productStatus } from "../integrations/feishu-tools.js";
+import {
+  baseScopeGranted,
+  FEISHU_BASE_SCOPES,
+  FEISHU_PRODUCTS,
+  grantedScopes,
+  productStatus,
+} from "../integrations/feishu-tools.js";
 import { parseGrant } from "../integrations/platform-tools.js";
 import {
   appCredentials,
@@ -433,7 +440,11 @@ export async function integrationRoutes(app: FastifyInstance) {
       return {
         ok: true,
         granted: [...granted].sort(),
-        base: FEISHU_BASE_SCOPES.map((s) => ({ scope: s.scope, name: s.name, granted: granted.has(s.scope) })),
+        base: FEISHU_BASE_SCOPES.map((s) => ({
+          scope: s.scope,
+          name: s.name,
+          granted: baseScopeGranted(s.scope, granted),
+        })),
         products: productStatus(granted),
       };
     }),
@@ -669,6 +680,22 @@ export async function integrationRoutes(app: FastifyInstance) {
         out.push({ ...row(c), threads: Number(n) });
       }
       return out;
+    }),
+  );
+
+  app.get(
+    "/api/connections/:id/diagnostics",
+    authed(async ({ db, user, req }) => {
+      await requirePerm(db, user, Perm.CONNECTION_MANAGE);
+      const conn = await getConn(db, params(req).id);
+      return (
+        await db
+          .select()
+          .from(auditLogs)
+          .where(and(eq(auditLogs.connectionId, conn.id), eq(auditLogs.action, "integration.error")))
+          .orderBy(desc(auditLogs.createdAt))
+          .limit(200)
+      ).map((r) => row(r));
     }),
   );
 

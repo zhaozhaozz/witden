@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { Connection, ExternalConversation, OutboundMessage, SlackApp } from "../api/types";
+import type { AuditEntry, Connection, ExternalConversation, OutboundMessage, SlackApp } from "../api/types";
 import { useConfigChanged } from "../lib/configEvents";
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
 import { useResource } from "../lib/hooks";
@@ -777,13 +777,76 @@ function ConnectionDetail({
           { key: "identities", label: "身份关联", hidden: !can("user.manage") },
           { key: "outbound", label: "投递记录" },
           { key: "inbound", label: "收到的事件" },
+          { key: "diagnostics", label: "诊断记录" },
         ]}
       />
       {tab === "conversations" ? <Conversations conn={conn} /> : null}
       {tab === "identities" ? <Identities conn={conn} /> : null}
       {tab === "outbound" ? <Outbound conn={conn} /> : null}
       {tab === "inbound" ? <Inbound conn={conn} /> : null}
+      {tab === "diagnostics" ? <Diagnostics conn={conn} /> : null}
     </div>
+  );
+}
+
+function Diagnostics({ conn }: { conn: Connection }) {
+  const res = useResource(() => api.get<AuditEntry[]>(`/api/connections/${conn.id}/diagnostics`), [conn.id]);
+  const stages: Record<string, string> = {
+    download: "接收附件",
+    upload: "上传附件",
+    send: "发送附件",
+    format: "消息格式回退",
+  };
+  return (
+    <>
+      <div className="toolbar">
+        <span className="small muted">
+          最近 200 条诊断，仅在控制台显示，不发送到外部聊天。消息整体发送失败请查看“投递记录”。
+        </span>
+        <button type="button" className="btn btn-xs" onClick={() => void res.reload()}>
+          刷新
+        </button>
+      </div>
+      <Loaded res={res}>
+        {(rows) =>
+          rows.length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>环节</th>
+                    <th>原因与处理方法</th>
+                    <th>话题</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((entry) => {
+                    const detail = typeof entry.detail === "string" ? {} : entry.detail;
+                    return (
+                      <tr key={entry.id}>
+                        <td className="nowrap">{fmtDateTime(entry.created_at)}</td>
+                        <td>
+                          {stages[String(detail.stage)] ?? String(detail.stage ?? "")}
+                          <div className="small muted">{String(detail.file_name ?? "")}</div>
+                        </td>
+                        <td className="small">
+                          <div>{String(detail.error ?? "")}</div>
+                          {typeof detail.hint === "string" ? <p>{detail.hint}</p> : null}
+                        </td>
+                        <td>{entry.topic_id ? <a href={`/topics/${entry.topic_id}`}>查看话题</a> : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty title="暂无诊断记录" hint="附件收发失败和消息格式回退会在这里记录。" />
+          )
+        }
+      </Loaded>
+    </>
   );
 }
 

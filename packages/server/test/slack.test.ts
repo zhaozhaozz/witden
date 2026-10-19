@@ -697,7 +697,7 @@ describe("slack", () => {
     expect(slack.posts.at(-1)?.text).toBe("see attached");
   });
 
-  it("without files:write, shared files arrive as console links with the reason", async () => {
+  it("without files:write, shared files arrive as links and the reason stays in console diagnostics", async () => {
     slack.scopes = SCOPES.replace(",files:write", "");
     // The connection test names the scope the app lacks.
     const tested = await w.api("POST", `/api/connections/${conn.id}/test`, { token: w.adminToken });
@@ -713,10 +713,13 @@ describe("slack", () => {
 
     expect(slack.shares).toEqual([]);
     const [post] = slack.posts.filter((p) => p.channel === "C1");
-    expect(post.text).toMatch(
-      /^桌面截图\n🖼 <http:\/\/localhost:8320\/api\/files\/file_\w+\|desktop\.png>\n_附件没能发到 Slack：/,
-    );
-    expect(post.text).toContain("缺少 files:write 权限");
+    expect(post.text).toMatch(/^桌面截图\n🖼 <http:\/\/localhost:8320\/api\/files\/file_\w+\|desktop\.png>$/);
+    expect(post.text).not.toContain("files:write");
+    const records = (await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken })).body;
+    expect(records[0].detail).toMatchObject({
+      stage: "upload",
+      error: expect.stringContaining("缺少 files:write 权限"),
+    });
   });
 
   it("unlinked people and bots cannot trigger work", async () => {

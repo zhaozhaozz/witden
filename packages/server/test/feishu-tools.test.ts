@@ -583,4 +583,17 @@ describe("feishu tools", () => {
       write: ["feishu_meeting_reserve"],
     });
   });
+
+  it.each(["im:message:readonly", "im:message", "im:message.history:readonly"])(
+    "accepts %s as a resource download permission without treating event subscriptions as one",
+    async (scope) => {
+      const check = async () =>
+        (await w.api("GET", `/api/connections/${appA}/feishu-scopes`, { token: w.adminToken })).body.base.find(
+          (s: any) => s.scope === "im:message:readonly",
+        ).granted;
+      expect(await check()).toBe(false);
+      feishu.granted.add(scope);
+      expect(await check()).toBe(true);
+    },
+  );
 });
