@@ -59,7 +59,8 @@ export const FEISHU_PRODUCTS: FeishuProduct[] = [
   {
     key: "calendar",
     label: "日历",
-    description: "查看日历、日程和忙闲；创建日程并邀请参与人",
+    description:
+      "查看日历、日程、日历成员和忙闲，搜索公共日历；新建共享日历（例如公开的组织日历）、管理成员、订阅日历，创建、修改、删除日程并邀请参与人",
     read: [{ scope: "calendar:calendar:readonly", name: "获取日历、日程及忙闲信息" }],
     write: [{ scope: "calendar:calendar", name: "更新日历及日程信息" }],
   },

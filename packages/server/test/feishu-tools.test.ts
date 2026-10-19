@@ -41,11 +41,61 @@ class FakeFeishu {
           })),
         },
       });
+    if (path === "calendar/v4/calendars" && method === "POST")
+      return json({ code: 0, data: { calendar: { calendar_id: "cal_org", type: "shared", role: "owner", ...body } } });
     if (path === "calendar/v4/calendars")
       return json({
         code: 0,
         data: { calendar_list: [{ calendar_id: "cal_team", summary: "团队日历", type: "shared" }] },
       });
+    // the organization's calendar the app made, a public one it finds, and an event it organized
+    if (path === "calendar/v4/calendars/cal_org" && method === "PATCH")
+      return json({ code: 0, data: { calendar: { calendar_id: "cal_org", summary: "公司日历", ...body } } });
+    if (path === "calendar/v4/calendars/cal_org/acls" && method === "POST")
+      return json({ code: 0, data: { acl_id: "acl_new", role: body.role, scope: body.scope } });
+    if (path === "calendar/v4/calendars/cal_org/acls")
+      return json({
+        code: 0,
+        data: {
+          acls: [
+            { acl_id: "acl_1", role: "writer", scope: { type: "user", user_id: "ou_alice_a" } },
+            { acl_id: "acl_2", role: "owner", scope: { type: "user", user_id: "ou_admin_a" } },
+          ],
+          has_more: false,
+        },
+      });
+    if (path === "calendar/v4/calendars/cal_org/acls/acl_1") return json({ code: 0, data: {} });
+    if (path === "calendar/v4/calendars/search")
+      return json({
+        code: 0,
+        data: { items: [{ calendar_id: "cal_hol", summary: "公司假期", permissions: "public", type: "shared" }] },
+      });
+    if (path === "calendar/v4/calendars/cal_hol/subscribe")
+      return json({ code: 0, data: { calendar: { calendar_id: "cal_hol", summary: "公司假期", role: "reader" } } });
+    if (path === "calendar/v4/calendars/cal_team/events/ev1" && method === "GET")
+      return json({
+        code: 0,
+        data: { event: { event_id: "ev1", summary: "周会", event_organizer: { display_name: "witden" } } },
+      });
+    if (path === "calendar/v4/calendars/cal_team/events/ev1" && method === "PATCH")
+      return json({ code: 0, data: { event: { event_id: "ev1", summary: body.summary } } });
+    if (path === "calendar/v4/calendars/cal_team/events/ev1/attendees" && method === "GET")
+      return json({
+        code: 0,
+        data: {
+          items: [
+            {
+              attendee_id: "user_1",
+              type: "user",
+              user_id: "ou_alice_a",
+              display_name: "alice",
+              rsvp_status: "accept",
+            },
+            { attendee_id: "user_2", type: "user", user_id: "ou_bob_a", display_name: "bob", rsvp_status: "tentative" },
+          ],
+        },
+      });
+    if (path.startsWith("calendar/v4/calendars/cal_team/events/ev1")) return json({ code: 0, data: {} });
     if (path === "calendar/v4/calendars/cal_team/events" && method === "GET")
       return json({
         code: 0,
@@ -189,6 +239,92 @@ describe("feishu tools", () => {
     expect(feishu.last("calendar/v4/calendars/cal_team/events/ev_new/attendees")?.body.attendees).toEqual([
       { type: "user", user_id: "ou_alice_a" },
     ]);
+  });
+
+  it("an organization calendar: the app creates and shares it, finds and subscribes to others, changes its events", async () => {
+    await grant([`feishu:${appA}:calendar:read`, `feishu:${appA}:calendar:write`]);
+    let results: Record<string, string> = {};
+    w.scripts.dev = (m, turn) => {
+      if (turn === 0)
+        return reply("", [
+          call("feishu_calendar_create", { summary: "公司日历", permissions: "public" }),
+          call("feishu_calendar_share", { calendar_id: "cal_org", user: "ou_admin_a", role: "owner" }),
+          call("feishu_calendar_share", { calendar_id: "cal_org", user: "ou_x", role: "boss" }),
+          call("feishu_calendar_update", { calendar_id: "cal_org", description: "全员可订阅" }),
+          call("feishu_calendar_members", { calendar_id: "cal_org" }),
+          call("feishu_calendar_unshare", { calendar_id: "cal_org", user: "ou_alice_a" }),
+          call("feishu_calendar_search", { query: "假期" }),
+          call("feishu_calendar_subscribe", { calendar_id: "cal_hol" }),
+        ]);
+      if (turn === 1) {
+        results = resultsOf(m);
+        return reply("", [
+          call("feishu_calendar_event", { calendar_id: "cal_team", event_id: "ev1" }),
+          call("feishu_calendar_update_event", {
+            calendar_id: "cal_team",
+            event_id: "ev1",
+            start: "2026-10-20T10:00:00+08:00",
+          }),
+          call("feishu_calendar_update_event", {
+            calendar_id: "cal_team",
+            event_id: "ev1",
+            summary: "周会（改到周三）",
+            start: "2026-10-21T10:00:00+08:00",
+            end: "2026-10-21T11:00:00+08:00",
+            invite: ["ou_carol_a"],
+            uninvite: ["ou_bob_a"],
+          }),
+          call("feishu_calendar_delete_event", { calendar_id: "cal_team", event_id: "ev1" }),
+        ]);
+      }
+      results = { ...results, ...resultsOf(m) };
+      return reply("done");
+    };
+    await w.post(w.alice, w.ids.topic, "@dev 建一个公司公共日历");
+    await w.drain();
+    const all = Object.values(results).join("\n");
+    // the new calendar is the app's, public; an administrator becomes its owner too
+    expect(feishu.last("calendar/v4/calendars")?.body).toEqual({ summary: "公司日历", permissions: "public" });
+    expect(feishu.last("calendar/v4/calendars/cal_org/acls")?.query.user_id_type).toBe("open_id");
+    expect(
+      feishu.calls.find((c) => c.method === "POST" && c.path === "calendar/v4/calendars/cal_org/acls")?.body,
+    ).toEqual({
+      role: "owner",
+      scope: { type: "user", user_id: "ou_admin_a" },
+    });
+    expect(all).toContain("role must be one of owner, writer, reader, free_busy_reader");
+    expect(feishu.last("calendar/v4/calendars/cal_org")?.body).toEqual({ description: "全员可订阅" });
+    expect(all).toContain('"acl_id": "acl_2"');
+    // removing a member deletes their entry only
+    expect(feishu.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toContain(
+      "calendar/v4/calendars/cal_org/acls/acl_1",
+    );
+    expect(feishu.last("calendar/v4/calendars/search")?.body).toEqual({ query: "假期" });
+    expect(all).toContain('"role": "reader"');
+    // the event: its attendees read; a time needs start and end; changes, invites and removals; then cancelled
+    expect(all).toContain('"reply": "tentative"');
+    expect(all).toContain("give start and end together");
+    expect(feishu.last("calendar/v4/calendars/cal_team/events/ev1")).toMatchObject({
+      method: "DELETE",
+      query: { need_notification: "true" },
+    });
+    const patch = feishu.calls.find(
+      (c) => c.method === "PATCH" && c.path === "calendar/v4/calendars/cal_team/events/ev1",
+    );
+    expect(patch?.body).toEqual({
+      summary: "周会（改到周三）",
+      start_time: { timestamp: "1792548000" },
+      end_time: { timestamp: "1792551600" },
+      need_notification: true,
+    });
+    expect(feishu.last("calendar/v4/calendars/cal_team/events/ev1/attendees/batch_delete")?.body).toEqual({
+      attendee_ids: ["user_2"],
+      need_notification: true,
+    });
+    expect(
+      feishu.calls.find((c) => c.method === "POST" && c.path === "calendar/v4/calendars/cal_team/events/ev1/attendees")
+        ?.body.attendees,
+    ).toEqual([{ type: "user", user_id: "ou_carol_a" }]);
   });
 
   it("documents, bases, sheets, meetings and tasks; refusals are explained", async () => {

@@ -117,6 +117,41 @@ async function requesterOpenId(db: Db, taskId: string, conn: any): Promise<strin
   return ident?.id ?? null;
 }
 
+/** A calendar as tools show it. */
+const calendarOut = (c: any) => ({
+  calendar_id: c?.calendar_id,
+  summary: c?.summary,
+  description: c?.description || undefined,
+  type: c?.type,
+  permissions: c?.permissions,
+  role: c?.role,
+});
+
+const PERMISSIONS = ["public", "show_only_free_busy", "private"];
+const ACL_ROLES = ["owner", "writer", "reader", "free_busy_reader"];
+
+function oneOf(value: unknown, allowed: string[], what: string): string {
+  const s = String(value ?? "");
+  if (!allowed.includes(s)) throw new BadRequest(`${what} must be one of ${allowed.join(", ")}`);
+  return s;
+}
+
+const openIds = (value: unknown): string[] => (Array.isArray(value) ? value.map(String).filter(Boolean) : []);
+
+/** A calendar's members (its access list); only its owner may see them. */
+async function calendarMembers(conn: any, calendarId: string) {
+  const out: { acl_id: string; role: string; user: string }[] = [];
+  let page: string | undefined;
+  do {
+    const data = await feishuApi(conn, "GET", `calendar/v4/calendars/${calendarId}/acls`, {
+      params: { user_id_type: "open_id", page_size: "50", ...(page ? { page_token: page } : {}) },
+    });
+    for (const a of data.acls ?? []) out.push({ acl_id: a.acl_id, role: a.role, user: a.scope?.user_id });
+    page = data.has_more ? data.page_token : undefined;
+  } while (page);
+  return out;
+}
+
 const appsTool: ToolSpec = {
   name: "feishu_apps",
   group: "feishu:apps",
@@ -164,18 +199,37 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_list",
     "calendar",
     "read",
-    "List the Feishu calendars the app can see (its own and those shared with it).",
+    "List the Feishu calendars the app has: its own, the shared calendars it created or subscribed to, and those it was made a member of; with your role in each (owner, writer, reader, free_busy_reader).",
     {},
     [],
     async (conn) => {
       const data = await feishuApi(conn, "GET", "calendar/v4/calendars", { params: { page_size: "50" } });
-      return (data.calendar_list ?? []).map((c: any) => ({
-        calendar_id: c.calendar_id,
-        summary: c.summary,
-        type: c.type,
-        role: c.role,
-      }));
+      return (data.calendar_list ?? []).map(calendarOut);
     },
+  ),
+  feishuTool(
+    "feishu_calendar_search",
+    "calendar",
+    "read",
+    "Find the company's public (shared) calendars whose title or description contains a keyword; people's own calendars are not found. Subscribe to one (feishu_calendar_subscribe) to read its events.",
+    { query: str },
+    ["query"],
+    async (conn, a) => {
+      const data = await feishuApi(conn, "POST", "calendar/v4/calendars/search", {
+        params: { page_size: "50" },
+        body: { query: String(a.query ?? "").slice(0, 200) },
+      });
+      return (data.items ?? []).map(calendarOut);
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_members",
+    "calendar",
+    "read",
+    "Who may use a calendar the app owns, and how: owner (manages it and its members), writer (creates and changes events), reader (sees events), free_busy_reader (sees only busy times).",
+    { calendar_id: str },
+    ["calendar_id"],
+    async (conn, a) => calendarMembers(conn, String(a.calendar_id)),
   ),
   feishuTool(
     "feishu_calendar_events",
@@ -199,6 +253,39 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     },
   ),
   feishuTool(
+    "feishu_calendar_event",
+    "calendar",
+    "read",
+    "One event of a Feishu calendar: its details and who is invited (with their replies).",
+    { calendar_id: str, event_id: str },
+    ["calendar_id", "event_id"],
+    async (conn, a) => {
+      const path = `calendar/v4/calendars/${a.calendar_id}/events/${a.event_id}`;
+      const { event: e } = await feishuApi(conn, "GET", path);
+      const people = await feishuApi(conn, "GET", `${path}/attendees`, {
+        params: { user_id_type: "open_id", page_size: "100" },
+      });
+      return {
+        event_id: e?.event_id,
+        summary: e?.summary,
+        description: e?.description,
+        start: e?.start_time,
+        end: e?.end_time,
+        location: e?.location?.name,
+        status: e?.status,
+        organizer: e?.event_organizer?.display_name,
+        link: e?.app_link,
+        attendees: (people.items ?? []).map((p: any) => ({
+          name: p.display_name,
+          user: p.user_id,
+          type: p.type,
+          reply: p.rsvp_status,
+          organizer: p.is_organizer || undefined,
+        })),
+      };
+    },
+  ),
+  feishuTool(
     "feishu_calendar_freebusy",
     "calendar",
     "read",
@@ -215,16 +302,112 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     },
   ),
   feishuTool(
+    "feishu_calendar_create",
+    "calendar",
+    "write",
+    "Create a shared Feishu calendar owned by the app, e.g. the organization's public calendar; add its members with feishu_calendar_share (an administrator as owner too, so people can manage it in Feishu).",
+    {
+      summary: str,
+      description: str,
+      permissions: {
+        type: "string",
+        enum: PERMISSIONS,
+        description:
+          "public: anyone in the company may subscribe and see the events; show_only_free_busy (default): only busy times; private: members only",
+      },
+    },
+    ["summary"],
+    async (conn, a) => {
+      const { calendar } = await feishuApi(conn, "POST", "calendar/v4/calendars", {
+        body: {
+          summary: String(a.summary),
+          description: a.description ? String(a.description) : undefined,
+          permissions: a.permissions ? oneOf(a.permissions, PERMISSIONS, "permissions") : undefined,
+        },
+      });
+      return calendarOut(calendar);
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_update",
+    "calendar",
+    "write",
+    "Change the title, description or visibility (public, show_only_free_busy, private) of a calendar the app owns.",
+    { calendar_id: str, summary: str, description: str, permissions: { type: "string", enum: PERMISSIONS } },
+    ["calendar_id"],
+    async (conn, a) => {
+      const change: Record<string, string> = {};
+      if (a.summary !== undefined) change.summary = String(a.summary);
+      if (a.description !== undefined) change.description = String(a.description);
+      if (a.permissions !== undefined) change.permissions = oneOf(a.permissions, PERMISSIONS, "permissions");
+      if (!Object.keys(change).length)
+        throw new BadRequest("nothing to change: give summary, description or permissions");
+      const { calendar } = await feishuApi(conn, "PATCH", `calendar/v4/calendars/${a.calendar_id}`, { body: change });
+      return calendarOut(calendar);
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_share",
+    "calendar",
+    "write",
+    "Make a person (open_id, see feishu_apps) a member of a calendar the app owns, or change their role: owner, writer, reader or free_busy_reader.",
+    { calendar_id: str, user: str, role: { type: "string", enum: ACL_ROLES } },
+    ["calendar_id", "user", "role"],
+    async (conn, a) => {
+      const calendarId = String(a.calendar_id);
+      const role = oneOf(a.role, ACL_ROLES, "role");
+      const acl = await feishuApi(conn, "POST", `calendar/v4/calendars/${calendarId}/acls`, {
+        params: { user_id_type: "open_id" },
+        body: { role, scope: { type: "user", user_id: String(a.user) } },
+      });
+      return { acl_id: acl.acl_id, user: acl.scope?.user_id ?? String(a.user), role: acl.role ?? role };
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_unshare",
+    "calendar",
+    "write",
+    "Remove a person (open_id) from the members of a calendar the app owns.",
+    { calendar_id: str, user: str },
+    ["calendar_id", "user"],
+    async (conn, a) => {
+      const calendarId = String(a.calendar_id);
+      const mine = (await calendarMembers(conn, calendarId)).filter((m) => m.user === String(a.user));
+      if (!mine.length) return `${a.user} is not a member of this calendar`;
+      for (const m of mine) await feishuApi(conn, "DELETE", `calendar/v4/calendars/${calendarId}/acls/${m.acl_id}`);
+      return { removed: String(a.user) };
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_subscribe",
+    "calendar",
+    "write",
+    "Subscribe the app to a shared calendar that is public or shows busy times (see feishu_calendar_search), so its events can be read; or stop (unsubscribe: true).",
+    { calendar_id: str, unsubscribe: { type: "boolean" } },
+    ["calendar_id"],
+    async (conn, a) => {
+      if (a.unsubscribe === true) {
+        await feishuApi(conn, "POST", `calendar/v4/calendars/${a.calendar_id}/unsubscribe`, { body: {} });
+        return { unsubscribed: String(a.calendar_id) };
+      }
+      const { calendar } = await feishuApi(conn, "POST", `calendar/v4/calendars/${a.calendar_id}/subscribe`, {
+        body: {},
+      });
+      return calendarOut(calendar);
+    },
+  ),
+  feishuTool(
     "feishu_calendar_create_event",
     "calendar",
     "write",
-    "Create an event in a Feishu calendar, optionally inviting people (their open_id, see feishu_apps).",
+    "Create an event in a Feishu calendar the app may write to (its own, or one where it is owner or writer), optionally inviting people (their open_id, see feishu_apps); the event then shows in their calendars.",
     {
       calendar_id: str,
       summary: str,
       start: timeArg("start"),
       end: timeArg("end"),
       description: str,
+      location: str,
       attendees: { type: "array", items: str, description: "open_ids of the people to invite" },
     },
     ["calendar_id", "summary", "start", "end"],
@@ -235,15 +418,87 @@ export const FEISHU_TOOLS: ToolSpec[] = [
           description: a.description ? String(a.description) : undefined,
           start_time: { timestamp: unix(a.start, "start") },
           end_time: { timestamp: unix(a.end, "end") },
+          location: a.location ? { name: String(a.location) } : undefined,
         },
       });
-      const invited: string[] = Array.isArray(a.attendees) ? a.attendees.map(String) : [];
+      const invited = openIds(a.attendees);
       if (invited.length)
         await feishuApi(conn, "POST", `calendar/v4/calendars/${a.calendar_id}/events/${event.event_id}/attendees`, {
           params: { user_id_type: "open_id" },
           body: { attendees: invited.map((id) => ({ type: "user", user_id: id })), need_notification: true },
         });
       return { event_id: event?.event_id, summary: event?.summary, invited: invited.length, link: event?.app_link };
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_update_event",
+    "calendar",
+    "write",
+    "Change an event the app organized (created): title, description, time (start and end together), place, and who is invited. Feishu lets only the organizer change an event.",
+    {
+      calendar_id: str,
+      event_id: str,
+      summary: str,
+      description: str,
+      start: timeArg("new start"),
+      end: timeArg("new end"),
+      location: str,
+      invite: { type: "array", items: str, description: "open_ids of people to add" },
+      uninvite: { type: "array", items: str, description: "open_ids of people to remove" },
+    },
+    ["calendar_id", "event_id"],
+    async (conn, a) => {
+      const path = `calendar/v4/calendars/${a.calendar_id}/events/${a.event_id}`;
+      if ((a.start === undefined) !== (a.end === undefined)) throw new BadRequest("give start and end together");
+      const change: Record<string, unknown> = {};
+      if (a.summary !== undefined) change.summary = String(a.summary);
+      if (a.description !== undefined) change.description = String(a.description);
+      if (a.start !== undefined) {
+        change.start_time = { timestamp: unix(a.start, "start") };
+        change.end_time = { timestamp: unix(a.end, "end") };
+      }
+      if (a.location !== undefined) change.location = { name: String(a.location) };
+      const invite = openIds(a.invite);
+      const uninvite = openIds(a.uninvite);
+      if (!Object.keys(change).length && !invite.length && !uninvite.length) throw new BadRequest("nothing to change");
+      let event: any = null;
+      if (Object.keys(change).length)
+        ({ event } = await feishuApi(conn, "PATCH", path, { body: { ...change, need_notification: true } }));
+      if (invite.length)
+        await feishuApi(conn, "POST", `${path}/attendees`, {
+          params: { user_id_type: "open_id" },
+          body: { attendees: invite.map((id) => ({ type: "user", user_id: id })), need_notification: true },
+        });
+      let removed = 0;
+      if (uninvite.length) {
+        // attendees are removed by their attendee id, found from their open_id
+        const people = await feishuApi(conn, "GET", `${path}/attendees`, {
+          params: { user_id_type: "open_id", page_size: "100" },
+        });
+        const ids = (people.items ?? [])
+          .filter((p: any) => uninvite.includes(p.user_id))
+          .map((p: any) => p.attendee_id);
+        if (ids.length)
+          await feishuApi(conn, "POST", `${path}/attendees/batch_delete`, {
+            body: { attendee_ids: ids, need_notification: true },
+          });
+        removed = ids.length;
+      }
+      return { event_id: String(a.event_id), summary: event?.summary, invited: invite.length, removed };
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_delete_event",
+    "calendar",
+    "write",
+    "Cancel (delete) an event the app organized (created); invited people are told.",
+    { calendar_id: str, event_id: str },
+    ["calendar_id", "event_id"],
+    async (conn, a) => {
+      await feishuApi(conn, "DELETE", `calendar/v4/calendars/${a.calendar_id}/events/${a.event_id}`, {
+        params: { need_notification: "true" },
+      });
+      return { deleted: String(a.event_id) };
     },
   ),
   // --- documents, drive and wiki
