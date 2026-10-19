@@ -7,9 +7,9 @@
  * stops, human takeover and desktop control, journals the call, and relays it to that computer's runner.
  * There is no fallback: an unavailable computer means the work waits or fails.
  */
-import { READ_ONLY_OPS, type RunnerOp } from "@witden/shared";
+import { type PackagesResult, READ_ONLY_OPS, type RunnerOp } from "@witden/shared";
 import { and, desc, eq } from "drizzle-orm";
-import { db as getDb, transaction } from "../db/client.js";
+import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { computerInstances, execSessions, roles, tasks, toolCalls } from "../db/schema.js";
 import {
@@ -37,6 +37,14 @@ export interface GatewayRequest {
   timeoutMs: number;
 }
 
+/** System packages for the task's computer, installed or removed by the Docker Manager (services/software.ts). */
+export interface PackagesGatewayRequest {
+  taskId: string;
+  toolCallId: string;
+  action: "install" | "remove";
+  packages: string[];
+}
+
 export interface RecoverResult {
   state: "completed" | "failed" | "running" | "uncertain";
   result?: unknown;
@@ -49,7 +57,12 @@ export interface GatewayClient {
   recover(taskId: string, toolCallId: string): Promise<RecoverResult>;
   /** A system administrator role's configuration call, run by the API process (services/config-access.ts). */
   config(req: ConfigRequest): Promise<ConfigResponse>;
+  /** Install or remove system packages in the task's computer (the API process asks the Docker Manager). */
+  packages(req: PackagesGatewayRequest): Promise<PackagesResult>;
 }
+
+/** Tool group of the platform's package installs (not a runner operation). */
+export const PACKAGES_GROUP = "system_software";
 
 /** Tool group (permission unit in the task envelope) that each runner operation belongs to. */
 export function opGroup(op: RunnerOp): string {
@@ -68,32 +81,7 @@ export class ExecutionGateway implements GatewayClient {
   async execute(req: GatewayRequest): Promise<unknown> {
     const callId = newId("call");
     const target = await transaction(async (tx) => {
-      const [task] = await tx.select().from(tasks).where(eq(tasks.id, req.taskId)).limit(1);
-      if (!task) throw new NotFound("task not found");
-      if (task.status !== "running") throw new Forbidden(`task is ${task.status}, not running`);
-      if (!task.instanceId) throw new InstanceUnavailable("this task has no computer assigned");
-      const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
-      if (!role) throw new NotFound("role not found");
-      if (role.instanceId !== task.instanceId) {
-        // Never follow the role silently to its new computer: files and credentials differ.
-        throw new InstanceUnavailable(
-          "the role was moved to another computer after this task started; a person must reassign or restart the task",
-        );
-      }
-      const [inst] = await tx
-        .select()
-        .from(computerInstances)
-        .where(eq(computerInstances.id, task.instanceId))
-        .limit(1);
-      if (!inst || inst.status === "deleted") throw new InstanceUnavailable("the task's computer no longer exists");
-      if (inst.pausedAi) throw new InstanceBusy(`a person has taken over computer ${inst.name}; AI work is paused`);
-      const group = opGroup(req.op);
-      const tools: string[] = task.envelope.tools ?? [];
-      const allowed = group === "system" || tools.includes(group);
-      if (!allowed) throw new Forbidden(`operation ${req.op} is outside this task's permissions`);
-      const { activeKillSwitch } = await import("../agent/revocation.js");
-      const ks = await activeKillSwitch(tx, task);
-      if (ks) throw new Forbidden(`emergency stop in effect: ${ks.reason || ks.scope}`);
+      const { task, role, inst } = await bindTask(tx, req.taskId, opGroup(req.op), `operation ${req.op}`);
       if (await needsDesktop(tx, req)) {
         const got = await acquire(tx, inst.id, "role", role.id, { taskId: task.id, reason: "desktop work" });
         if (!got.ok) {
@@ -147,6 +135,39 @@ export class ExecutionGateway implements GatewayClient {
     return configRequest(req);
   }
 
+  /** Packages through the Docker Manager (apt as root); the computer itself never gets root. */
+  async packages(req: PackagesGatewayRequest): Promise<PackagesResult> {
+    const callId = newId("call");
+    const inst = await transaction(async (tx) => {
+      const what = req.action === "install" ? "installing system packages" : "removing system packages";
+      const { task, inst } = await bindTask(tx, req.taskId, PACKAGES_GROUP, what);
+      await tx.insert(toolCalls).values({
+        id: callId,
+        taskId: task.id,
+        toolCallId: req.toolCallId,
+        instanceId: inst.id,
+        op: `packages.${req.action}`,
+        readOnly: false,
+      });
+      return inst;
+    });
+    try {
+      await ensureUsable(inst);
+      const result = await runtime().manager.packages(inst.containerId!, {
+        action: req.action,
+        packages: req.packages,
+      });
+      await finishCall(callId, "completed");
+      return result;
+    } catch (err) {
+      await finishCall(callId, "failed");
+      const code = (err as { code?: string }).code;
+      if (code === "invalid") throw new BadRequest((err as Error).message);
+      if (code === "not_running" || code === "not_found") throw new InstanceUnavailable((err as Error).message);
+      throw err;
+    }
+  }
+
   async recover(taskId: string, toolCallId: string): Promise<RecoverResult> {
     const [call] = await getDb()
       .select()
@@ -190,6 +211,35 @@ export class ExecutionGateway implements GatewayClient {
     await finishCall(call.id, call.readOnly ? "failed" : "uncertain");
     return { state: call.readOnly ? "failed" : "uncertain" };
   }
+}
+
+/**
+ * The computer a task may act on, checked again for every call: the task is running, its role still works on
+ * the computer it was pinned to, the tool group is in the task's envelope, no emergency stop, no takeover.
+ */
+async function bindTask(tx: Db, taskId: string, group: string, what: string) {
+  const [task] = await tx.select().from(tasks).where(eq(tasks.id, taskId)).limit(1);
+  if (!task) throw new NotFound("task not found");
+  if (task.status !== "running") throw new Forbidden(`task is ${task.status}, not running`);
+  if (!task.instanceId) throw new InstanceUnavailable("this task has no computer assigned");
+  const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
+  if (!role) throw new NotFound("role not found");
+  if (role.instanceId !== task.instanceId) {
+    // Never follow the role silently to its new computer: files and credentials differ.
+    throw new InstanceUnavailable(
+      "the role was moved to another computer after this task started; a person must reassign or restart the task",
+    );
+  }
+  const [inst] = await tx.select().from(computerInstances).where(eq(computerInstances.id, task.instanceId)).limit(1);
+  if (!inst || inst.status === "deleted") throw new InstanceUnavailable("the task's computer no longer exists");
+  if (inst.pausedAi) throw new InstanceBusy(`a person has taken over computer ${inst.name}; AI work is paused`);
+  const tools: string[] = task.envelope.tools ?? [];
+  const allowed = group === "system" || tools.includes(group);
+  if (!allowed) throw new Forbidden(`${what} is outside this task's permissions`);
+  const { activeKillSwitch } = await import("../agent/revocation.js");
+  const ks = await activeKillSwitch(tx, task);
+  if (ks) throw new Forbidden(`emergency stop in effect: ${ks.reason || ks.scope}`);
+  return { task, role, inst };
 }
 
 async function finishCall(callId: string, state: string): Promise<void> {
@@ -304,6 +354,10 @@ export class HttpGatewayClient implements GatewayClient {
 
   config(req: ConfigRequest): Promise<ConfigResponse> {
     return this.call("config", req);
+  }
+
+  packages(req: PackagesGatewayRequest): Promise<PackagesResult> {
+    return this.call("packages", req);
   }
 
   recover(taskId: string, toolCallId: string): Promise<RecoverResult> {

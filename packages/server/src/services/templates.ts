@@ -1,4 +1,4 @@
-import { FORBIDDEN_MOUNTS, SAFE_CAPS } from "@witden/shared";
+import { FORBIDDEN_MOUNTS, MAX_PACKAGES, PACKAGE_NAME, SAFE_CAPS } from "@witden/shared";
 import { and, eq, ne } from "drizzle-orm";
 import type { Settings } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -47,6 +47,24 @@ export function validateResources(res: Record<string, any>): Record<string, any>
   return out;
 }
 
+/**
+ * A software list: Debian package names the platform installs (when missing) whenever a computer starts. Only
+ * plain names: they become arguments of apt, run as root.
+ */
+export function validateSoftwareList(value: unknown): string[] {
+  const raw = typeof value === "string" ? value.split(/[\s,]+/) : value;
+  if (!Array.isArray(raw)) throw new BadRequest("software must be a list of Debian package names");
+  const names = [...new Set(raw.map((p) => String(p).trim()).filter(Boolean))];
+  const bad = names.filter((p) => !PACKAGE_NAME.test(p));
+  if (bad.length) {
+    throw new BadRequest(
+      `not Debian package names: ${bad.join(", ")} (lower-case letters, digits, + - . only, as in apt-get install)`,
+    );
+  }
+  if (names.length > MAX_PACKAGES) throw new BadRequest(`at most ${MAX_PACKAGES} packages in a software list`);
+  return names;
+}
+
 export type TemplateInput = Partial<Omit<ComputerTemplate, "id" | "createdAt" | "updatedAt" | "version">>;
 
 /** Templates are user input that ends up in container config; reject anything that weakens isolation. */
@@ -87,8 +105,6 @@ export function validateTemplate(data: Record<string, any>, settings: Settings):
   if (command !== null && (!Array.isArray(command) || !command.every((c: unknown) => typeof c === "string"))) {
     throw new BadRequest("command must be a list of strings");
   }
-  const sudoApt = data.sudoApt ?? data.sudo_apt ?? true;
-  if (typeof sudoApt !== "boolean") throw new BadRequest("sudo_apt must be true or false");
   const workdir = data.workdir || "/home/witden";
   if (!workdir.startsWith("/")) throw new BadRequest("workdir must be absolute");
   const user = data.user || "witden";
@@ -109,10 +125,9 @@ export function validateTemplate(data: Record<string, any>, settings: Settings):
     env: Object.fromEntries(Object.entries(env).map(([k, v]) => [k, String(v)])),
     persistentPaths: [...new Set(paths)],
     credentialPaths: [...new Set(credentialPaths)],
-    software: [...(data.software ?? [])],
+    software: validateSoftwareList(data.software ?? []),
     defaultResources: validateResources(data.defaultResources ?? data.default_resources ?? {}),
     capAdd: caps,
-    sudoApt,
     runtime,
     desktop: kind === "desktop" ? (data.desktop ?? { display: ":1", width: 1280, height: 800 }) : null,
   };
@@ -183,19 +198,20 @@ export async function deleteTemplate(db: Db, tpl: ComputerTemplate): Promise<voi
   await db.delete(computerTemplates).where(eq(computerTemplates.id, tpl.id));
 }
 
+/** Same descriptions as migration 0034 gives the built-in templates of earlier versions. */
 export const BUILTIN_TEMPLATES: Record<string, any>[] = [
   {
     name: "dev-shell",
     description:
-      "Development computer: Debian with git, Python, Node.js, build tools and tmux. The runner and every AI " +
-      "action run as the unprivileged user 'witden'; system packages install with `sudo apt-get` (no " +
-      "password), other tools user-locally under ~/.local.",
+      "Development computer: Debian with git, Python (pip, venv), Node.js (npm), build tools, ripgrep and tmux. " +
+      "The runner and every AI action run as the unprivileged user 'witden'. System packages are installed by " +
+      "the platform: roles ask for them, and the software list is installed whenever the computer starts. " +
+      "Other tools go under ~/.local.",
     image: "witden/computer-shell:latest",
     kind: "shell",
     workdir: "/home/witden",
     user: "witden",
     persistentPaths: ["/home/witden"],
-    software: ["bash", "git", "python3", "nodejs", "npm", "build-essential", "tmux", "curl", "ripgrep"],
     defaultResources: { cpus: 2, memory_mb: 4096, pids_limit: 2048, network: "bridge" },
   },
   {
@@ -203,27 +219,12 @@ export const BUILTIN_TEMPLATES: Record<string, any>[] = [
     description:
       "Linux desktop (Xvfb + Fluxbox) with Chromium and the same development tools as dev-shell. AI actions and " +
       "people watching over noVNC use the same desktop; background browser sessions are shown separately. " +
-      "System packages install with `sudo apt-get` (no password).",
+      "System packages are installed by the platform.",
     image: "witden/computer-desktop:latest",
     kind: "desktop",
     workdir: "/home/witden",
     user: "witden",
     persistentPaths: ["/home/witden"],
-    software: [
-      "chromium",
-      "fluxbox",
-      "xdotool",
-      "imagemagick",
-      "x11vnc",
-      "git",
-      "python3",
-      "nodejs",
-      "npm",
-      "build-essential",
-      "tmux",
-      "curl",
-      "ripgrep",
-    ],
     defaultResources: { cpus: 2, memory_mb: 4096, pids_limit: 4096, network: "bridge" },
     desktop: { display: ":1", width: 1280, height: 800, vnc_port: 5900, vnc_view_port: 5901 },
   },

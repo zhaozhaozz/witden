@@ -236,6 +236,8 @@ export async function computerRoutes(app: FastifyInstance) {
       const b = body(req);
       const update: Partial<ComputerInstance> = {};
       if ("color" in b) update.color = parseColor(b.color);
+      // The software list is installed whenever the computer starts (or now, with software/install).
+      if ("software" in b) update.software = tpl.validateSoftwareList(b.software);
       if (!Object.keys(update).length) return instanceOut(db, inst, { detail: true, user });
       const [updated] = await db
         .update(computerInstances)
@@ -244,6 +246,19 @@ export async function computerRoutes(app: FastifyInstance) {
         .returning();
       await svc.recordAudit(db, user.id, "instance.update", updated, { fields: Object.keys(update) });
       return instanceOut(db, updated, { detail: true, user });
+    }),
+  );
+  app.post(
+    "/api/instances/:id/software/install",
+    authed(async ({ db, user, req, after }) => {
+      await requirePerm(db, user, Perm.INSTANCE_MANAGE, params(req).id);
+      const inst = await svc.getInstance(db, params(req).id);
+      if (inst.status !== "running") throw new Conflict(`computer ${inst.name} is ${inst.status}; start it first`);
+      if (!inst.software.length) throw new BadRequest("the software list is empty");
+      await svc.recordAudit(db, user.id, "instance.software_install", inst, { software: inst.software });
+      const { installSoftwareList } = await import("../services/software.js");
+      after(() => runtime().background("software", () => installSoftwareList(inst.id)));
+      return { started: true, software: inst.software };
     }),
   );
   app.patch(

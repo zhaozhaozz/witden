@@ -239,6 +239,13 @@
       "when": 1792401983750,
       "tag": "0033_memory_format",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792402821387,
+      "tag": "0034_software_lists",
+      "breakpoints": true
     }
   ]
 }

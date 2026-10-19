@@ -88,9 +88,9 @@ export async function createInstance(
         cap_add: template.capAdd,
         runtime: template.runtime,
         desktop: template.desktop,
-        software: template.software,
-        sudo_apt: template.sudoApt,
       },
+      // Copied once: the computer's own list from now on (people and its roles change it).
+      software: template.software,
       resources: validateResources({ ...template.defaultResources, ...(resources ?? {}) }),
       volumes: Object.fromEntries(template.persistentPaths.map((p) => [p, `witden-${name}-${slug(p)}`])),
       status: "creating",
@@ -122,8 +122,6 @@ function buildSpec(inst: ComputerInstance, runnerToken: string): ComputerSpec {
     },
     network,
     capAdd: spec.cap_add ?? [],
-    // Snapshots from before the setting existed follow the template default (on).
-    allowPrivilegeEscalation: spec.sudo_apt ?? true,
     runtime: spec.runtime ?? null,
     runner: { token: runnerToken, hubUrl: network === "bridge" ? runtime().settings.hubUrlForComputers : null },
   };
@@ -159,6 +157,9 @@ async function verifyRunning(id: string, containerId: string, warnings: string[]
   const state = await runtime().manager.state(containerId);
   if (state.running) {
     await setStatus(id, "running", warnings.join("; ") || null);
+    // Every start, the software list comes back (a new container, after a reset or restore, has none of it).
+    const { installSoftwareList } = await import("./software.js");
+    runtime().background("software", () => installSoftwareList(id));
     return;
   }
   let reason = `container exited (status=${state.status}, exit=${state.exitCode ?? "?"})`;
@@ -250,7 +251,7 @@ export function resetPreview(inst: ComputerInstance, keepVolumes: boolean) {
   const paths = Object.keys(inst.volumes);
   return {
     will_clear: [
-      "software installed or files changed outside persistent paths (container layer)",
+      "software installed or files changed outside persistent paths (container layer); the software list is installed again",
       "running processes, terminal and browser sessions, desktop state",
       ...(keepVolumes ? [] : paths.map((p) => `all data in persistent path ${p}`)),
     ],

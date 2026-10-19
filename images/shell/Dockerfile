@@ -6,8 +6,8 @@
 # the platform's container settings (dropped capabilities, no-new-privileges, no host mounts). The runner token
 # is kept from the rest of the computer by witden-init (packages/runner/src/init.ts): only the runner gets it,
 # and every process holding it runs from an execute-only binary, which other processes cannot inspect.
-# `witden` may run `sudo apt-get` without a password when the template allows it (sudo_apt): the platform then
-# starts the container without no-new-privileges, and that user is root in the computer.
+# There is no sudo: system packages are installed and removed by the platform (the Docker Manager runs apt as
+# root), never by anything inside the computer.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -33,12 +33,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl wget git tmux procps less vim-tiny nano \
       python3 python3-pip python3-venv build-essential pkg-config \
-      ripgrep jq unzip zip xz-utils openssh-client file tini sudo \
+      ripgrep jq unzip zip xz-utils openssh-client file tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash -u 1000 witden \
  && mkdir -p /workspace && chown witden:witden /workspace
-COPY images/common/sudoers-apt /etc/sudoers.d/witden-apt
-RUN chmod 0440 /etc/sudoers.d/witden-apt
 
 # Node.js 22 with npm for roles; the runner uses the same binary.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
@@ -62,6 +60,11 @@ RUN echo '. /etc/profile.d/witden-model-proxy.sh' >> /etc/bash.bashrc
 ENV NPM_CONFIG_PREFIX=/home/witden/.local \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PATH=/home/witden/.local/bin:$PATH
+
+# The image's own packages: the platform never removes them (see the Docker Manager's packages), and they are
+# marked manually installed, so removing a later package with --auto-remove cannot take one of them along.
+RUN dpkg-query -W -f='${Package}\n' | sort > /opt/witden/image-packages \
+ && apt-mark manual $(cat /opt/witden/image-packages) >/dev/null
 
 USER witden
 WORKDIR /home/witden

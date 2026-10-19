@@ -123,6 +123,21 @@ export async function rosterLine(db: Db, topic: Topic, role: Role): Promise<stri
   return `People here: ${people.join(", ") || "none"}. Other roles here: ${others.join(", ") || "none"}.`;
 }
 
+/** How software gets into the computer: nobody in it is root; the platform installs system packages. */
+function softwareNote(tools: string[]): string {
+  const install = tools.includes("system_software");
+  const list = tools.includes("software_list");
+  let note = " You have no root or sudo; other tools go under ~/.local.";
+  if (install)
+    note +=
+      " System packages: install_packages / uninstall_packages (the platform runs apt). Packages outside the" +
+      " computer's software list are gone after a reset";
+  if (install && list) note += "; keep the ones it needs with edit_software_list (installed whenever it starts).";
+  else if (install) note += ".";
+  else if (list) note += " Its software list (edit_software_list) is installed whenever it starts.";
+  return note;
+}
+
 export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic): Promise<string> {
   const [inst] = task.instanceId
     ? await db.select().from(computerInstances).where(eq(computerInstances.id, task.instanceId)).limit(1)
@@ -138,10 +153,7 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
     inst
       ? `- Computer: ${inst.name} (${inst.spec.kind}), user ${inst.spec.user}, working directory ${inst.spec.workdir}.` +
         (desktop ? ` Desktop ${desktop.width ?? 1280}x${desktop.height ?? 800}.` : " No desktop.") +
-        // Same default as the container setting (instances.ts buildSpec).
-        (inst.spec.sudo_apt !== false
-          ? " Install system packages with `sudo apt-get` (no password; `sudo apt-get update` first); other tools go under ~/.local."
-          : " No root or sudo: install tools under ~/.local.")
+        softwareNote(task.envelope.tools ?? [])
       : "- You have no computer for this task.",
     `- Topic: «${topic.title}»${topic.goal ? ` — goal: ${topic.goal}` : ""}${topic.kind === "dm" ? " (a private DM)" : ""}, in ${await topicPlace(db, topic)}`,
   ];

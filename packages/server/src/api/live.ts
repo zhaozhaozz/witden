@@ -9,7 +9,12 @@ import "@fastify/websocket";
  */
 import { eq } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
-import { checkInternalToken, type GatewayRequest, serializeError } from "../compute/gateway.js";
+import {
+  checkInternalToken,
+  type GatewayRequest,
+  type PackagesGatewayRequest,
+  serializeError,
+} from "../compute/gateway.js";
 import { db as getDb, transaction } from "../db/client.js";
 import { computerInstances } from "../db/schema.js";
 import { runtime } from "../runtime.js";
@@ -105,7 +110,9 @@ export async function liveRoutes(app: FastifyInstance) {
           ? await gateway.execute(b as GatewayRequest)
           : op === "config"
             ? await gateway.config(b as ConfigRequest)
-            : await gateway.recover(String(b.taskId), String(b.toolCallId));
+            : op === "packages"
+              ? await gateway.packages(b as PackagesGatewayRequest)
+              : await gateway.recover(String(b.taskId), String(b.toolCallId));
       return { ok: true, result };
     } catch (err) {
       return { ok: false, error: serializeError(err) };

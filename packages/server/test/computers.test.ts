@@ -48,7 +48,7 @@ describe("templates", () => {
     [{ default_resources: { memory_mb: 1 } }, "memory_mb"],
     [{ user: "root" }, "unprivileged"],
     [{ env: { WITDEN_RUNNER_TOKEN: "x" } }, "reserved"],
-    [{ sudo_apt: "yes" }, "sudo_apt"],
+    [{ software: ["-o", "APT::Update::Pre-Invoke::=sh"] }, "not Debian package names"],
   ])("rejects unsafe config %o", async (overrides, message) => {
     const res = await h.api("POST", "/api/templates", {
       token: h.adminToken,
@@ -73,20 +73,45 @@ describe("templates", () => {
     expect((await h.api("DELETE", `/api/templates/${tpl.id}`, { token: h.adminToken })).status).toBe(409);
   });
 
-  it("sudo apt is on by default and decides whether the computer may escalate privileges", async () => {
-    const open = await template();
-    expect(open.sudo_apt).toBe(true);
-    const strict = await template({ name: "strict", sudo_apt: false });
-    expect(strict.sudo_apt).toBe(false);
-    const a = await instance(open.id, "box-open");
-    const b = await instance(strict.id, "box-strict");
-    expect(h.manager.computer(a.id).spec.allowPrivilegeEscalation).toBe(true);
-    expect(h.manager.computer(b.id).spec.allowPrivilegeEscalation).toBe(false);
-    // Turning it off later leaves existing computers as they were created.
-    await h.api("PATCH", `/api/templates/${open.id}`, { token: h.adminToken, json: { sudo_apt: false } });
-    const { eq } = await import("drizzle-orm");
-    const [row] = await db().select().from(computerInstances).where(eq(computerInstances.id, a.id));
-    expect(row.spec.sudo_apt).toBe(true);
+  it("a computer's software list starts as its template's and is installed whenever the computer starts", async () => {
+    const tpl = await template({ software: "ffmpeg, jq" });
+    expect(tpl.software).toEqual(["ffmpeg", "jq"]);
+    const inst = await instance(tpl.id, "box-1");
+    expect(inst.software).toEqual(["ffmpeg", "jq"]);
+    const get = async () => (await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body;
+    await h.waitFor(async () => (await get()).software_status?.state === "ok");
+    expect([...h.manager.computer(inst.id).packages].sort()).toEqual(["ffmpeg", "jq"]);
+
+    // The computer's own list changes; the template's does not.
+    const patched = await h.api("PATCH", `/api/instances/${inst.id}`, {
+      token: h.adminToken,
+      json: { software: ["ffmpeg", "no-such-tool"] },
+    });
+    expect(patched.body.software).toEqual(["ffmpeg", "no-such-tool"]);
+    expect((await h.api("GET", `/api/templates/${tpl.id}`, { token: h.adminToken })).body.software).toEqual([
+      "ffmpeg",
+      "jq",
+    ]);
+    const bad = await h.api("PATCH", `/api/instances/${inst.id}`, { token: h.adminToken, json: { software: ["A B"] } });
+    expect(bad.status).toBe(400);
+
+    // A reset recreates the container without any of it: the list comes back, and what fails is reported.
+    await h.api("POST", `/api/instances/${inst.id}/actions`, {
+      token: h.adminToken,
+      json: { action: "reset", confirm: true },
+    });
+    await h.drain();
+    await h.waitFor(async () => (await get()).software_status?.state === "failed");
+    expect((await get()).software_status).toMatchObject({ missing: ["no-such-tool"] });
+    expect([...h.manager.computer(inst.id).packages]).toEqual(["ffmpeg"]);
+
+    // Installing the list on request.
+    await h.api("PATCH", `/api/instances/${inst.id}`, { token: h.adminToken, json: { software: ["ffmpeg", "jq"] } });
+    const now = await h.api("POST", `/api/instances/${inst.id}/software/install`, { token: h.adminToken });
+    expect(now.status, now.raw).toBe(200);
+    await h.drain();
+    await h.waitFor(async () => (await get()).software_status?.state === "ok");
+    expect([...h.manager.computer(inst.id).packages].sort()).toEqual(["ffmpeg", "jq"]);
   });
 });
 

@@ -6,7 +6,7 @@
 #
 # Everything, supervisord included, runs as the unprivileged user `witden` (uid 1000). witden-init starts
 # supervisord without the runner token and the runner with it; see images/shell/Dockerfile and
-# packages/runner/src/init.ts for how the token is kept from the rest of the computer, and for `sudo apt-get`.
+# packages/runner/src/init.ts for how the token is kept from the rest of the computer, and for system packages.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -34,13 +34,11 @@ RUN apt-get update \
       chromium fonts-noto-cjk fonts-dejavu-core supervisor socat \
       bash ca-certificates curl wget git tmux procps less vim-tiny nano \
       python3 python3-pip python3-venv build-essential pkg-config \
-      ripgrep jq unzip zip xz-utils openssh-client file tini sudo \
+      ripgrep jq unzip zip xz-utils openssh-client file tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash -u 1000 witden \
  && echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage --no-first-run"' \
       > /etc/chromium.d/witden-container
-COPY images/common/sudoers-apt /etc/sudoers.d/witden-apt
-RUN chmod 0440 /etc/sudoers.d/witden-apt
 
 # Node.js 22 with npm, as in the shell image; the runner uses the same binary.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
@@ -68,10 +66,15 @@ COPY images/desktop/fluxbox-overlay /home/witden/.fluxbox/overlay
 RUN chown -R witden:witden /home/witden/.fluxbox && chmod +x /home/witden/.fluxbox/startup \
  && printf '#!/bin/sh\nexec fbsetroot -solid "#2f3b45"\n' > /usr/bin/fbsetbg
 
-# Global npm / pip installs without sudo go to ~/.local, as in the shell image.
+# Global npm / pip installs go to ~/.local, as in the shell image.
 ENV NPM_CONFIG_PREFIX=/home/witden/.local \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
     PATH=/home/witden/.local/bin:$PATH
+
+# The image's own packages: the platform never removes them (see the Docker Manager's packages), and they are
+# marked manually installed, so removing a later package with --auto-remove cannot take one of them along.
+RUN dpkg-query -W -f='${Package}\n' | sort > /opt/witden/image-packages \
+ && apt-mark manual $(cat /opt/witden/image-packages) >/dev/null
 
 USER witden
 WORKDIR /home/witden

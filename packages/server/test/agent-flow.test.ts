@@ -235,6 +235,8 @@ describe("permissions and isolation", () => {
       "memory",
       "profile",
       "shell",
+      "software_list",
+      "system_software",
       "terminal",
     ]);
     expect(created.body.approval_required).toEqual(["collaborate", "memory", "profile"]);

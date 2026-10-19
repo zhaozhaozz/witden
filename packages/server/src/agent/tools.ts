@@ -6,7 +6,7 @@
  * translated into runner operations and sent through the execution gateway, which binds them to the task's
  * computer; the worker never executes anything itself.
  */
-import type { RunnerOp } from "@witden/shared";
+import type { PackagesResult, RunnerOp } from "@witden/shared";
 import { and, desc, eq, gte, ilike, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
@@ -14,6 +14,7 @@ import { settings } from "../config.js";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
+  computerInstances,
   knowledgeSpaces,
   memories,
   messages,
@@ -34,6 +35,7 @@ import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
 import { erased, memoryFields, memoryLine, memoryScore } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
+import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
 import * as topicSvc from "../services/topics.js";
 import { topicPlace } from "./context.js";
 import { publishTaskStatus } from "./control.js";
@@ -49,6 +51,8 @@ export const TOOL_GROUPS: Record<string, string> = {
   files: "Read, write and organise files in the virtual computer, and share them with the topic",
   desktop: "See the virtual computer's screen and use its mouse and keyboard",
   browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
+  system_software: "Have the platform install or remove system (Debian) packages in the virtual computer, as root",
+  software_list: "Change the virtual computer's software list: packages installed whenever it starts",
   collaborate: "Message and delegate to other roles (limited by contacts)",
   memory: "Remember and recall scoped notes on the platform",
   topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
@@ -390,6 +394,110 @@ async function browserScreenshot(ctx: ToolContext, args: Record<string, any>): P
 async function browserClose(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   await op(ctx, "browser.close", { sessionId: String(args.session ?? "") }, 30_000);
   return { content: "browser session closed" };
+}
+
+// --- computer: system software ---------------------------------------------------------------------------
+
+/** Package names from the model: a list, or one string separated by spaces or commas. */
+function packageNames(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  const raw = Array.isArray(value) ? value : String(value).split(/[\s,]+/);
+  return [...new Set(raw.map((p) => String(p).trim()).filter(Boolean))];
+}
+
+/** The role's computer for this work, as the gateway binds it (no computer: nothing to change). */
+async function workComputer(db: Db, ctx: ToolContext) {
+  const { task, role } = await load(ctx, db);
+  if (!task.instanceId || role.instanceId !== task.instanceId)
+    throw new BadRequest("you have no computer for this work");
+  const [inst] = await db.select().from(computerInstances).where(eq(computerInstances.id, task.instanceId)).limit(1);
+  if (!inst || inst.status === "deleted") throw new BadRequest("the computer of this work no longer exists");
+  return inst;
+}
+
+function packageLines(r: PackagesResult): string[] {
+  const lines = Object.entries(r.installed).map(([p, on]) =>
+    r.refused[p] ? `${p}: not removed (${r.refused[p]})` : `${p}: ${on ? "installed" : "not installed"}`,
+  );
+  if (!r.ok) lines.push(`apt failed:\n${clip(r.output, 4000)}`);
+  return lines;
+}
+
+async function installPackages(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const packages = packageNames(args.packages);
+  if (!packages.length) throw new BadRequest('give packages: Debian package names, e.g. ["ffmpeg"]');
+  const r = await ctx.gateway.packages({ taskId: ctx.taskId, toolCallId: ctx.toolCallId, action: "install", packages });
+  const inst = await workComputer(ctx.db(), ctx);
+  const lines = packageLines(r);
+  const outside = packages.filter((p) => r.installed[p] && !inst.software.includes(p));
+  if (outside.length) {
+    lines.push(
+      "",
+      `Not in this computer's software list: ${outside.join(", ")}. They stay while the computer runs and across ` +
+        "restarts, but are gone once the computer is reset or restored from a backup. If the computer should keep " +
+        "them, add them with edit_software_list (the list is installed whenever the computer starts); if they were " +
+        "only for this job, leave the list as it is.",
+    );
+  }
+  return { content: lines.join("\n") };
+}
+
+async function uninstallPackages(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const packages = packageNames(args.packages);
+  if (!packages.length) throw new BadRequest('give packages: Debian package names, e.g. ["ffmpeg"]');
+  const r = await ctx.gateway.packages({ taskId: ctx.taskId, toolCallId: ctx.toolCallId, action: "remove", packages });
+  const inst = await workComputer(ctx.db(), ctx);
+  const lines = packageLines(r);
+  const listed = packages.filter((p) => !r.installed[p] && inst.software.includes(p));
+  if (listed.length) {
+    lines.push(
+      "",
+      `Still in this computer's software list: ${listed.join(", ")}. They are installed again the next time the ` +
+        "computer starts; remove them with edit_software_list if they should not come back.",
+    );
+  }
+  return { content: lines.join("\n") };
+}
+
+async function showSoftwareList(ctx: ToolContext): Promise<ToolResult> {
+  const inst = await workComputer(ctx.db(), ctx);
+  const lines = [
+    `Software list of ${inst.name} (installed, when missing, whenever it starts): ${inst.software.join(", ") || "(empty)"}`,
+    "The computer's image brings its own tools; they need not be listed.",
+  ];
+  const st = inst.softwareStatus as SoftwareStatus | null;
+  if (st) {
+    const detail =
+      st.state === "failed" ? ` — missing: ${(st.missing ?? []).join(", ")}${st.error ? `\n${st.error}` : ""}` : "";
+    lines.push(`Last automatic install (${st.at}): ${st.state}${detail}`);
+  }
+  return { content: lines.join("\n") };
+}
+
+async function editList(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const add = packageNames(args.add);
+  const remove = packageNames(args.remove);
+  if (!add.length && !remove.length) throw new BadRequest("give add and/or remove: Debian package names");
+  return transaction(async (db) => {
+    const inst = await workComputer(db, ctx);
+    const list = await editSoftwareList(db, inst, { add, remove });
+    await audit(db, "instance.software_list", {
+      actorType: "role",
+      actorId: ctx.roleId,
+      resourceType: "instance",
+      resourceId: inst.id,
+      instanceId: inst.id,
+      taskId: ctx.taskId,
+      roleId: ctx.roleId,
+      detail: { add, remove, list },
+    });
+    return {
+      content:
+        `Software list of ${inst.name}: ${list.join(", ") || "(empty)"}.\n` +
+        "It is installed whenever the computer starts. Nothing was installed or removed now: use install_packages " +
+        "or uninstall_packages for that.",
+    };
+  });
 }
 
 // --- collaboration ---------------------------------------------------------------------------------------
@@ -1082,6 +1190,36 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       browserScreenshot,
     ),
     spec("browser_close", "browser", "Close a browser session.", obj(session, ["session"]), browserClose),
+    spec(
+      "install_packages",
+      "system_software",
+      "Install system (Debian) packages in your computer, as with apt-get install: the platform runs apt as root for you (you have no root or sudo). They stay until the computer is reset; to keep them, also add them to the software list.",
+      obj({ packages: { type: "array", items: str, description: 'Debian package names, e.g. ["ffmpeg"]' } }, [
+        "packages",
+      ]),
+      installPackages,
+    ),
+    spec(
+      "uninstall_packages",
+      "system_software",
+      "Remove system packages from your computer, with what only they needed. Packages that came with the computer's image cannot be removed.",
+      obj({ packages: { type: "array", items: str } }, ["packages"]),
+      uninstallPackages,
+    ),
+    spec(
+      "software_list",
+      "software_list",
+      "Show your computer's software list (packages installed whenever it starts) and how its last automatic install went.",
+      obj({}),
+      (ctx) => showSoftwareList(ctx),
+    ),
+    spec(
+      "edit_software_list",
+      "software_list",
+      "Add or remove packages in your computer's software list. Listed packages are installed whenever the computer starts, also after a reset; this only changes the list.",
+      obj({ add: { type: "array", items: str }, remove: { type: "array", items: str } }),
+      editList,
+    ),
     spec(
       "message_role",
       "collaborate",

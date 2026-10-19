@@ -759,3 +759,41 @@ describe("0033_memory_format", () => {
     await db.close();
   });
 });
+
+describe("0034_software_lists", () => {
+  it("empties the descriptive software lists, updates untouched built-in descriptions, grants computer roles", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0034")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into computer_templates (id, name, description, image, software) values
+        ('tpl_shell', 'dev-shell', 'Development computer: Debian with git, Python, Node.js, build tools and tmux. The runner and every AI action run as the unprivileged user ''witden''; install tools user-locally or bake them into a template.', 'witden/computer-shell:latest', '["git", "nodejs"]'),
+        ('tpl_desk', 'desktop-browser', 'My own words', 'witden/computer-desktop:latest', '["chromium"]');
+      insert into roles (id, name, handle, allowed_tools) values
+        ('role_dev', 'Dev', 'dev', '["shell", "files"]'),
+        ('role_chat', 'Chat', 'chat', '["memory"]'),
+        ('role_done', 'Done', 'done', '["shell", "system_software"]');
+    `);
+    await apply(db, "0034_software_lists");
+    const tpls = (await db.query("select id, description, software from computer_templates order by id")).rows as any[];
+    expect(tpls.map((t) => t.software)).toEqual([[], []]);
+    expect(tpls[0].description).toBe("My own words");
+    expect(tpls[1].description).toMatch(/installed by the platform/);
+    const roles = (await db.query("select id, allowed_tools from roles order by id")).rows as any[];
+    expect(roles.map((r) => [r.id, r.allowed_tools])).toEqual([
+      ["role_chat", ["memory"]],
+      ["role_dev", ["shell", "files", "system_software", "software_list"]],
+      ["role_done", ["shell", "system_software"]],
+    ]);
+    const cols = (
+      await db.query(
+        "select column_name from information_schema.columns where table_name = 'computer_instances' and column_name like 'software%' order by 1",
+      )
+    ).rows;
+    expect(cols).toEqual([{ column_name: "software" }, { column_name: "software_status" }]);
+    await db.close();
+  });
+});

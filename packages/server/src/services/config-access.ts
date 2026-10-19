@@ -87,12 +87,12 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
         method: "POST",
         path: "/api/templates",
         note:
-          "name, description, image, kind (shell | desktop), workdir, persistent_paths, software, default_resources, " +
-          "sudo_apt. What a computer contains comes only from its image: software is a description of the image " +
-          "and installs nothing, so list only what the image has (witden/computer-shell: git, Python with pip and " +
-          "venv, Node.js with npm, build-essential, ripgrep, no desktop; witden/computer-desktop: the same plus a " +
-          "desktop and Chromium). sudo_apt (default true) lets everyone on the computer run `sudo apt-get` without a " +
-          "password, which is root inside it; false keeps the computer without any privilege escalation",
+          "name, description, image, kind (shell | desktop), workdir, persistent_paths, software, default_resources. " +
+          "What a computer has comes from its image (witden/computer-shell: git, Python with pip and venv, " +
+          "Node.js with npm, build-essential, ripgrep, no desktop; witden/computer-desktop: the same plus a desktop " +
+          "and Chromium) and from its software list. software: Debian package names (as for apt-get install) a new " +
+          "computer of the template starts its own list with; the platform installs what is missing whenever the " +
+          "computer starts. Do not list what the image already has",
       },
       { method: "PATCH", path: "/api/templates/:id" },
       { method: "POST", path: "/api/templates/:id/copy" },
@@ -101,7 +101,12 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       { method: "GET", path: "/api/instances", note: "computers" },
       { method: "GET", path: "/api/instances/:id" },
       { method: "POST", path: "/api/instances", note: "template_id, name, resources, color" },
-      { method: "PATCH", path: "/api/instances/:id", note: "color" },
+      {
+        method: "PATCH",
+        path: "/api/instances/:id",
+        note: "color, software (the computer's own software list: Debian package names installed whenever it starts)",
+      },
+      { method: "POST", path: "/api/instances/:id/software/install", note: "install the software list now" },
       { method: "PATCH", path: "/api/instances/:id/resources", note: "cpus, memory_mb, ..." },
       { method: "GET", path: "/api/instances/:id/preview/:action", note: "what reset or delete would remove" },
       {

@@ -12,6 +12,8 @@ import type {
   CreateComputerResult,
   ManagerApi,
   ModelProxyConfig,
+  PackagesRequest,
+  PackagesResult,
   RemoveComputerRequest,
   RequestMessage,
   RestoreRequest,
@@ -31,6 +33,8 @@ export type ExecHandler = (
 
 export class FakeComputer {
   files = new Map<string, Buffer>();
+  /** System packages installed by the platform (FakeManager.packages); a new container has none. */
+  packages = new Set<string>();
   commands: string[] = [];
   inputs: Record<string, unknown>[] = [];
   browserActions: Record<string, unknown>[] = [];
@@ -369,6 +373,24 @@ export class FakeManager implements ManagerApi {
   }
   async deleteBackup(backupId: string) {
     this.backups.delete(backupId);
+  }
+  /** apt, simulated: names starting with "no-such" do not exist; bash is part of the image. */
+  packageCalls: { instanceId: string; request: PackagesRequest }[] = [];
+  async packages(id: string, request: PackagesRequest): Promise<PackagesResult> {
+    const c = this.get(id);
+    if (!c.running) throw Object.assign(new Error("the computer is not running"), { code: "not_running" });
+    this.packageCalls.push({ instanceId: c.spec.instanceId, request });
+    const refused: Record<string, string> = {};
+    let ok = true;
+    for (const p of request.packages) {
+      if (request.action === "install") {
+        if (p.startsWith("no-such")) ok = false;
+        else c.computer.packages.add(p);
+      } else if (p === "bash") refused[p] = "part of the computer's image";
+      else c.computer.packages.delete(p);
+    }
+    const installed = Object.fromEntries(request.packages.map((p) => [p, c.computer.packages.has(p)]));
+    return { ok, installed, refused, output: ok ? "done" : "E: Unable to locate package" };
   }
   async openRunnerChannel(): Promise<RunnerChannel> {
     throw new Error("the fake manager has no stdio channel");
