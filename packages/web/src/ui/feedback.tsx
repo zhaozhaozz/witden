@@ -18,16 +18,33 @@ export interface ConfirmOptions {
   danger?: boolean;
 }
 
+/** A question with more than two answers; the first choice is the default. */
+export interface ChoiceOptions {
+  title: string;
+  body?: ReactNode;
+  choices: { key: string; label: string; tone?: "primary" | "danger" }[];
+}
+
 interface FeedbackState {
   toast: (text: string, tone?: ToastTone) => void;
   confirm: (opts: ConfirmOptions) => Promise<boolean>;
+  /** The key of the choice taken, or null when the dialog was closed. */
+  choose: (opts: ChoiceOptions) => Promise<string | null>;
+}
+
+/** The dialog showing: its buttons, from right (default) to left. */
+interface Pending {
+  title: string;
+  body?: ReactNode;
+  buttons: { key: string; label: string; className: string }[];
+  resolve: (key: string | null) => void;
 }
 
 const FeedbackContext = createContext<FeedbackState | null>(null);
 
 export function FeedbackProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [pending, setPending] = useState<(ConfirmOptions & { resolve: (ok: boolean) => void }) | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
   const nextId = useRef(1);
 
   const toast = useCallback((text: string, tone: ToastTone = "info") => {
@@ -37,16 +54,48 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const confirm = useCallback(
-    (opts: ConfirmOptions) => new Promise<boolean>((resolve) => setPending({ ...opts, resolve })),
+    (opts: ConfirmOptions) =>
+      new Promise<boolean>((resolve) =>
+        setPending({
+          title: opts.title,
+          body: opts.body,
+          buttons: [
+            {
+              key: "ok",
+              label: opts.confirmLabel ?? "确认",
+              className: opts.danger ? "btn btn-danger" : "btn btn-primary",
+            },
+            { key: "cancel", label: opts.cancelLabel ?? "取消", className: "btn" },
+          ],
+          resolve: (key) => resolve(key === "ok"),
+        }),
+      ),
     [],
   );
 
-  const close = (ok: boolean) => {
-    pending?.resolve(ok);
+  const choose = useCallback(
+    (opts: ChoiceOptions) =>
+      new Promise<string | null>((resolve) =>
+        setPending({
+          title: opts.title,
+          body: opts.body,
+          buttons: opts.choices.map((c) => ({
+            key: c.key,
+            label: c.label,
+            className: c.tone === "primary" ? "btn btn-primary" : c.tone === "danger" ? "btn btn-danger" : "btn",
+          })),
+          resolve,
+        }),
+      ),
+    [],
+  );
+
+  const close = (key: string | null) => {
+    pending?.resolve(key);
     setPending(null);
   };
 
-  const value = useMemo(() => ({ toast, confirm }), [toast, confirm]);
+  const value = useMemo(() => ({ toast, confirm, choose }), [toast, confirm, choose]);
 
   return (
     <FeedbackContext.Provider value={value}>
@@ -69,22 +118,18 @@ export function FeedbackProvider({ children }: { children: ReactNode }) {
       {pending && (
         <Modal
           title={pending.title}
-          onClose={() => close(false)}
-          footer={
-            <>
-              <button type="button" className="btn" onClick={() => close(false)}>
-                {pending.cancelLabel ?? "取消"}
-              </button>
-              <button
-                type="button"
-                className={pending.danger ? "btn btn-danger" : "btn btn-primary"}
-                autoFocus
-                onClick={() => close(true)}
-              >
-                {pending.confirmLabel ?? "确认"}
-              </button>
-            </>
-          }
+          onClose={() => close(null)}
+          footer={[...pending.buttons].reverse().map((b, i, all) => (
+            <button
+              key={b.key}
+              type="button"
+              className={b.className}
+              autoFocus={i === all.length - 1}
+              onClick={() => close(b.key)}
+            >
+              {b.label}
+            </button>
+          ))}
         >
           {pending.body}
         </Modal>

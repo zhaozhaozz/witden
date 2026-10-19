@@ -4,6 +4,7 @@ import type { ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
 import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
+import { useChanged, useUnsavedChanges } from "../lib/unsaved";
 import { useAction, useFeedback } from "../ui/feedback";
 import {
   Capability,
@@ -392,10 +393,13 @@ function ProviderEditor({
 }) {
   const { run, busy } = useAction();
   const [value, setValue] = useState<ServiceDraft>(() => serviceDraft(provider));
-  const submit = async () => {
+  const [changed] = useChanged(value);
+  const submit = async (): Promise<boolean> => {
     const out = await run(() => saveService(value, provider), provider ? "已保存" : "已添加服务商");
     if (out) onSaved(out, !provider);
+    return !!out;
   };
+  useUnsavedChanges(changed, submit);
   return (
     <FormModal
       title={provider ? `编辑服务商 ${provider.name}` : "添加模型服务商"}
@@ -466,15 +470,16 @@ function ModelEditor({
   const [limit, setLimit] = useState(model.daily_token_limit?.toString() ?? "");
   const [enabled, setEnabled] = useState(model.enabled);
   const [error, setError] = useState<string | null>(null);
+  const [changed] = useChanged({ name, params, limit, enabled });
 
-  const submit = async () => {
+  const submit = async (): Promise<boolean> => {
     let parsed: unknown = {};
     if (params.trim()) {
       try {
         parsed = JSON.parse(params);
       } catch {
         setError("参数不是有效的 JSON");
-        return;
+        return false;
       }
     }
     const out = await run(
@@ -488,7 +493,9 @@ function ModelEditor({
       "已保存",
     );
     if (out) onSaved();
+    return !!out;
   };
+  useUnsavedChanges(changed, submit);
 
   return (
     <FormModal

@@ -4,6 +4,7 @@ import type { Instance, ModelConfig, ModelProxyInfo } from "../../api/types";
 import { fmtRelative } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
+import { useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { CopyText, Empty, KV, Loaded, MultiPick, Section, Tag, Toggle } from "../../ui/kit";
 
@@ -25,10 +26,14 @@ export function ModelAccessTab({ inst }: { inst: Instance }) {
     setPicked(res.data?.model_ids ?? []);
   }, [res.data]);
 
-  const save = async (body: Record<string, unknown>, done: string) => {
+  const save = async (body: Record<string, unknown>, done: string): Promise<boolean> => {
     const out = await run(() => api.put<ModelProxyInfo>(`/api/instances/${inst.id}/model-proxy`, body), done);
     if (out) res.setData(out);
+    return !!out;
   };
+  // Models ticked but not saved.
+  const unsaved = !!res.data && JSON.stringify([...picked].sort()) !== JSON.stringify([...res.data.model_ids].sort());
+  useUnsavedChanges(manage && unsaved, () => save({ model_ids: picked }, "已保存"));
 
   return (
     <Loaded res={res}>

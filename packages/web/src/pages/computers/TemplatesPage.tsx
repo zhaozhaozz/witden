@@ -4,6 +4,7 @@ import type { Template } from "../../api/types";
 import { fmtRelative, linesToList, listToLines } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth } from "../../lib/session";
+import { useChanged, useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, Field, FormModal, Loaded, PageHeader, Tag } from "../../ui/kit";
 import { ComputersNav, fromDraft, type ResourceDraft, ResourceFields, resourceSummary, toDraft } from "./computerParts";
@@ -270,15 +271,16 @@ function TemplateEditor({
   });
   const [resources, setResources] = useState<ResourceDraft>(toDraft(t?.default_resources));
   const [error, setError] = useState<string | null>(null);
+  const [changed] = useChanged({ form, resources });
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm({ ...form, [k]: e.target.value });
 
   const userError = userProblem(form.user.trim() || "witden");
 
-  const submit = async () => {
+  const submit = async (): Promise<boolean> => {
     setError(null);
     if (userError) {
       setError(userError);
-      return;
+      return false;
     }
     let desktop: unknown = null;
     if (form.kind === "desktop") {
@@ -286,7 +288,7 @@ function TemplateEditor({
         desktop = JSON.parse(form.desktop);
       } catch {
         setError("桌面配置不是有效的 JSON");
-        return;
+        return false;
       }
     }
     const env: Record<string, string> = {};
@@ -294,7 +296,7 @@ function TemplateEditor({
       const i = line.indexOf("=");
       if (i <= 0) {
         setError(`环境变量格式应为 KEY=VALUE：${line}`);
-        return;
+        return false;
       }
       env[line.slice(0, i).trim()] = line.slice(i + 1);
     }
@@ -321,7 +323,9 @@ function TemplateEditor({
       t ? "模板已保存，版本号已增加；已有虚拟电脑不受影响" : "模板已创建",
     );
     if (out) onSaved();
+    return !!out;
   };
+  useUnsavedChanges(changed, submit);
 
   return (
     <FormModal

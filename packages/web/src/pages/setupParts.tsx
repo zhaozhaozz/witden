@@ -8,6 +8,7 @@ import { api } from "../api/client";
 import type { Connection, Role } from "../api/types";
 import { fmtRelative } from "../lib/format";
 import { useDirectory } from "../lib/session";
+import { useUnsavedChanges } from "../lib/unsaved";
 import { useAction } from "../ui/feedback";
 import { Tag } from "../ui/kit";
 import {
@@ -171,10 +172,13 @@ export function AccessStep({
   // A system administrator works only in the console, never as a bot.
   const roles = dir.roles.filter((r) => !r.system_admin && (r.status === "active" || r.id === settings.role_id));
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
+    if (!settings.role_id) return false;
     const out = await run(() => api.patch<Connection>(`/api/connections/${conn.id}`, { settings }), "已保存");
     if (out) onSaved(out);
+    return !!out;
   };
+  useUnsavedChanges(JSON.stringify(settings) !== JSON.stringify(settingsOf(conn)), save);
 
   return (
     <>

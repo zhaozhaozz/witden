@@ -6,6 +6,7 @@ import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted, RESPONSE_MO
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useTopics } from "../../lib/topics";
+import { useLeaveGuard, useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
   Avatar,
@@ -47,6 +48,7 @@ export function TopicSidePanel({
   // A DM is always you and one role: its tab shows the role instead of a participant list.
   const dm = topic.kind === "dm";
   const [tab, setTab] = useState("tasks");
+  const guard = useLeaveGuard();
   const hasComputers = topicComputers(topic).length > 0;
   // Maximised, the panel shows only the computer (the tab row is hidden).
   const shown = computerMax ? "computer" : tab;
@@ -73,7 +75,7 @@ export function TopicSidePanel({
     <aside className={`side-panel${computerMax ? " side-panel-max" : ""}`}>
       <Tabs
         value={tab}
-        onChange={setTab}
+        onChange={(k) => guard(() => setTab(k))}
         tabs={[
           { key: "tasks", label: "任务", badge: activeCount },
           { key: "approvals", label: "审批", badge: approvals.data?.length },
@@ -460,10 +462,30 @@ function SettingsTab({
     setRounds(topic.max_auto_rounds?.toString() ?? "");
   }, [topic]);
 
-  const patch = async (body: Record<string, unknown>, success: string) => {
+  const patch = async (body: Record<string, unknown>, success: string): Promise<boolean> => {
     const t = await run(() => api.patch<Topic>(`/api/topics/${topic.id}`, body), success);
     if (t) onTopicChange(t);
+    return !!t;
   };
+  const saveSettings = () =>
+    title.trim()
+      ? patch(
+          {
+            title: title.trim(),
+            goal,
+            ...(topic.kind === "group" ? { response_mode: responseMode } : {}),
+            max_auto_rounds: rounds ? Number(rounds) : null,
+          },
+          "设置已保存",
+        )
+      : Promise.resolve(false);
+  useUnsavedChanges(
+    title !== topic.title ||
+      goal !== topic.goal ||
+      responseMode !== topic.response_mode ||
+      rounds !== (topic.max_auto_rounds?.toString() ?? ""),
+    saveSettings,
+  );
 
   return (
     <div className="settings">
@@ -471,15 +493,7 @@ function SettingsTab({
         className="form"
         onSubmit={(e) => {
           e.preventDefault();
-          void patch(
-            {
-              title: title.trim(),
-              goal,
-              ...(topic.kind === "group" ? { response_mode: responseMode } : {}),
-              max_auto_rounds: rounds ? Number(rounds) : null,
-            },
-            "设置已保存",
-          );
+          void saveSettings();
         }}
       >
         <Field label="标题">

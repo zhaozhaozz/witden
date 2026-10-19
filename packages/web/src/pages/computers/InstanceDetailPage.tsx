@@ -6,6 +6,7 @@ import type { ActionPreview, Backup, ExecSession, Instance, InstanceStats, Task,
 import { EXEC_SESSION_KIND, fmtBytes, fmtDateTime, fmtRelative, fmtTime } from "../../lib/format";
 import { useDebounced, useInterval, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
+import { useLeaveGuard, useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
   badgeColor,
@@ -55,6 +56,7 @@ export default function InstanceDetailPage() {
   const { instanceId = "" } = useParams();
   const { can } = useAuth();
   const [tab, setTab] = useState("overview");
+  const guard = useLeaveGuard();
   const res = useResource(() => api.get<Instance>(`/api/instances/${instanceId}`), [instanceId]);
   // A takeover made on this page ends when the person leaves it or stops working (any tab of the page counts).
   useTakeoverSession(res.data, true, () => void res.reload());
@@ -110,7 +112,7 @@ export default function InstanceDetailPage() {
               </div>
               <Tabs
                 value={tab}
-                onChange={setTab}
+                onChange={(k) => guard(() => setTab(k))}
                 tabs={[
                   { key: "overview", label: "概览" },
                   { key: "screen", label: "屏幕", hidden: !desktop },
@@ -390,6 +392,19 @@ function Overview({
   const op = inst.operator;
   const heldByMe = op?.holder_type === "user" && op.holder_id === me?.id;
 
+  const saveResources = async (): Promise<boolean> => {
+    const out = await run(
+      () => api.patch<Instance>(`/api/instances/${inst.id}/resources`, { resources: fromDraft(draft) }),
+      "已保存。新的限制在下次重置虚拟电脑后生效",
+    );
+    if (out) {
+      setEditing(false);
+      reload();
+    }
+    return !!out;
+  };
+  useUnsavedChanges(editing && JSON.stringify(draft) !== JSON.stringify(toDraft(inst.resources)), saveResources);
+
   return (
     <div className="grid-2">
       <div>
@@ -511,16 +526,7 @@ function Overview({
               title="修改资源限制"
               busy={busy}
               onClose={() => setEditing(false)}
-              onSubmit={async () => {
-                const out = await run(
-                  () => api.patch<Instance>(`/api/instances/${inst.id}/resources`, { resources: fromDraft(draft) }),
-                  "已保存。新的限制在下次重置虚拟电脑后生效",
-                );
-                if (out) {
-                  setEditing(false);
-                  reload();
-                }
-              }}
+              onSubmit={() => void saveResources()}
             >
               <ResourceFields value={draft} onChange={setDraft} />
               <p className="small muted">

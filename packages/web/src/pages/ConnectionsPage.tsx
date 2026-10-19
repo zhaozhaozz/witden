@@ -5,6 +5,7 @@ import type { Connection, ExternalConversation, OutboundMessage, SlackApp } from
 import { CONVERSATION_KIND, fmtDateTime, fmtRelative, genericStatus, PLATFORM_LABEL } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
+import { useChanged, useLeaveGuard, useUnsavedChanges } from "../lib/unsaved";
 import { useAction, useFeedback } from "../ui/feedback";
 import { CopyText, Empty, Field, JsonBlock, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag } from "../ui/kit";
 import { ResizeHandle } from "../ui/resize";
@@ -148,6 +149,8 @@ export default function ConnectionsPage() {
   const [setup, setSetup] = useState<Setup | null>(null);
   const [showCaps, setShowCaps] = useState(false);
   const [params, setParams] = useSearchParams();
+  // Another item or a guide takes the open form (editing a connection or an app) away.
+  const guard = useLeaveGuard();
 
   useEffect(() => {
     if (!selected && !selectedApp && res.data?.length) setSelected(res.data[0].id);
@@ -170,17 +173,20 @@ export default function ConnectionsPage() {
     void res.reload();
     void apps.reload();
   };
-  const openConnection = (id: string) => {
+  const showConnection = (id: string) => {
     setSelectedApp(null);
     setSelected(id);
   };
-  const openApp = (id: string) => {
-    setSelected(null);
-    setSelectedApp(id);
-  };
+  const openConnection = (id: string) => guard(() => showConnection(id));
+  const openApp = (id: string) =>
+    guard(() => {
+      setSelected(null);
+      setSelectedApp(id);
+    });
+  const startSetup = (s: Setup) => guard(() => setSetup(s));
   const closeSetup = (c: Connection | null) => {
     setSetup(null);
-    if (c) openConnection(c.id);
+    if (c) showConnection(c.id);
     reload();
   };
   // Slack workspaces are listed under their app; other connections on their own.
@@ -222,7 +228,7 @@ export default function ConnectionsPage() {
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
-                onClick={() => setSetup({ platform: null, conn: null })}
+                onClick={() => startSetup({ platform: null, conn: null })}
               >
                 新建接入
               </button>
@@ -243,7 +249,7 @@ export default function ConnectionsPage() {
           setup={setup}
           apps={apps.data ?? []}
           onCreated={(c) => {
-            openConnection(c.id);
+            showConnection(c.id);
             reload();
           }}
           onClose={closeSetup}
@@ -327,7 +333,7 @@ export default function ConnectionsPage() {
                       setSelectedApp(null);
                       reload();
                     }}
-                    onInstall={() => setSetup({ platform: "slack", conn: null, installApp: currentApp })}
+                    onInstall={() => startSetup({ platform: "slack", conn: null, installApp: currentApp })}
                     onOpenWorkspace={openConnection}
                   />
                 ) : null}
@@ -343,7 +349,7 @@ export default function ConnectionsPage() {
                       setSelected(null);
                       reload();
                     }}
-                    onGuide={(mode) => setSetup({ platform: current.platform, conn: current, mode })}
+                    onGuide={(mode) => startSetup({ platform: current.platform, conn: current, mode })}
                     onOpenApp={openApp}
                   />
                 ) : null}
@@ -947,8 +953,10 @@ function ConnectionForm({
   const required = fields.filter(([k]) => !conn || (switching && !shared.includes(k)));
   const missing = required.some(([k]) => !creds[k]?.trim());
   const disabled = busy || !name.trim() || missing || !settings.role_id;
+  const [changed] = useChanged({ name, creds, settings, githubAuth, slackMode, feishuMode });
 
-  const submit = async () => {
+  const submit = async (): Promise<boolean> => {
+    if (disabled) return false;
     const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
     // Feishu: the way is a setting; switching to the long connection drops the verification token.
     const saved = platform === "feishu" ? { ...settings, feishu_mode: feishuMode } : settings;
@@ -969,14 +977,16 @@ function ConnectionForm({
       conn ? "已保存" : "接入已创建，请把事件地址配置到平台后台，然后测试连接",
     );
     if (out) onSaved(out);
+    return !!out;
   };
+  useUnsavedChanges(changed, submit);
 
   return (
     <form
       className="form form-narrow"
       onSubmit={(e) => {
         e.preventDefault();
-        if (!disabled) void submit();
+        void submit();
       }}
     >
       <Field label="名称" hint="在 witden 中区分不同的接入。">

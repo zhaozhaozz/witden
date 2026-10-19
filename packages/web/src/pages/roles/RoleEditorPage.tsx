@@ -15,6 +15,7 @@ import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
 import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
+import { useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
   Avatar,
@@ -204,6 +205,8 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const changed =
     body && original ? Object.keys(body).filter((k) => JSON.stringify(body![k]) !== JSON.stringify(original[k])) : [];
   const dirty = !role || changed.length > 0;
+  // What would be lost: changes to a role, or anything typed into a new one.
+  const unsaved = role ? changed.length > 0 : JSON.stringify(draft) !== JSON.stringify(fresh());
   const selectedModel =
     models.data?.find((m) => m.id === draft.model_config_id) ??
     (role?.model && role.model.id === draft.model_config_id ? role.model : null);
@@ -221,15 +224,18 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
       reasoning_effort: effortFor(id).levels.includes(d.reasoning_effort) ? d.reasoning_effort : "",
     }));
 
-  const save = async () => {
-    if (!body) return;
+  /** Saves; true once saved. ``stay``: a new role does not open its own page (leaving for another one). */
+  const save = async (opts: { stay?: boolean } = {}): Promise<boolean> => {
+    if (!body) return false;
     if (!role) {
       const out = await run(() => api.post<Role>("/api/roles", body), "角色已创建");
-      if (out) {
-        void dir.reload();
+      if (!out) return false;
+      void dir.reload();
+      if (!opts.stay) {
+        leaving.allow();
         nav(`/roles/${out.id}`, { replace: true });
       }
-      return;
+      return true;
     }
     const patch: Record<string, unknown> = Object.fromEntries(changed.map((k) => [k, body![k]]));
     // Behaviour changes on a role with active work need explicit confirmation; moving computers with
@@ -279,7 +285,9 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
       void dir.reload();
       reload();
     }
+    return !!out;
   };
+  const leaving = useUnsavedChanges(unsaved, () => save({ stay: true }));
 
   // The built-in system administrator (services/system-admin.ts) alone has the configuration tools.
   const isAdmin = !!role?.system_admin;

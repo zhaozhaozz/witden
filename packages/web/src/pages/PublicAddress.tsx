@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { useUnsavedChanges } from "../lib/unsaved";
 import { CopyText, Field, Tag } from "../ui/kit";
 
 interface PublicUrl {
@@ -355,6 +356,11 @@ function ProxySetup({
   onSave: (url: string, force?: boolean) => Promise<SaveResult>;
 }) {
   const [url, setUrl] = useState("");
+  // An address typed but not checked and saved yet.
+  useUnsavedChanges(
+    !!url.trim() && !(tried?.saved && tried.url === url.trim()),
+    async () => (await onSave(url.trim())).saved,
+  );
   return (
     <>
       <ol className="setup-list">
@@ -470,6 +476,20 @@ function TunnelSetup({
     setWaitingSince((since) => (notRunning ? (since ?? Date.now()) : null));
   }, [notRunning]);
 
+  const saveToken = async (): Promise<boolean> => {
+    setError(null);
+    try {
+      onStatus(await api.put<TunnelStatus>("/api/settings/tunnel", { token }));
+      setToken("");
+      return true;
+    } catch (err) {
+      setError((err as Error).message);
+      return false;
+    }
+  };
+  // A token pasted but not saved yet.
+  useUnsavedChanges(!!token.trim(), saveToken);
+
   if (!status) return null;
   if (!status.available)
     return (
@@ -479,15 +499,6 @@ function TunnelSetup({
       </div>
     );
 
-  const saveToken = async () => {
-    setError(null);
-    try {
-      onStatus(await api.put<TunnelStatus>("/api/settings/tunnel", { token }));
-      setToken("");
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
   const removeToken = async () => {
     setError(null);
     try {

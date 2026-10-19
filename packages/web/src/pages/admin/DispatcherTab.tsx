@@ -4,6 +4,7 @@ import { api } from "../../api/client";
 import type { ModelConfig } from "../../api/types";
 import { fmtLatency, SYSTEM_ONE_HINT } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
+import { useUnsavedChanges } from "../../lib/unsaved";
 import { useAction } from "../../ui/feedback";
 import { Empty, Field, Loaded, Section, Tag } from "../../ui/kit";
 import { ModelSelect } from "../modelParts";
@@ -23,6 +24,15 @@ export function DispatcherTab() {
   useEffect(() => {
     setPicked(setting.data?.model_config_id ?? "");
   }, [setting.data]);
+  const save = async (): Promise<boolean> => {
+    const out = await run(
+      () => api.put("/api/settings/dispatcher", { model_config_id: picked || null }),
+      picked ? "调度模型已保存" : "已清除调度模型",
+    );
+    if (out) void setting.reload();
+    return !!out;
+  };
+  useUnsavedChanges(!!setting.data && picked !== (setting.data.model_config_id ?? ""), save);
   // Only System One decision models (TypeSafe Jev, Laya) can route messages.
   const fast = useMemo(() => (models.data ?? []).filter((m) => m.provider?.protocol === "systemone"), [models.data]);
 
@@ -52,13 +62,9 @@ export function DispatcherTab() {
           ) : (
             <form
               className="form form-narrow"
-              onSubmit={async (e) => {
+              onSubmit={(e) => {
                 e.preventDefault();
-                const out = await run(
-                  () => api.put("/api/settings/dispatcher", { model_config_id: picked || null }),
-                  picked ? "调度模型已保存" : "已清除调度模型",
-                );
-                if (out) void setting.reload();
+                void save();
               }}
             >
               <Field

@@ -4,6 +4,7 @@ import type { User } from "../../api/types";
 import { fmtRelative } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
+import { useChanged, useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Avatar, Field, FormModal, Loaded, Tag } from "../../ui/kit";
 
@@ -126,22 +127,28 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [password, setPassword] = useState("");
+  const [changed] = useChanged({ name, email, password });
+  const disabled = !name.trim() || (!user && !email.trim());
+  const submit = async (): Promise<boolean> => {
+    if (disabled) return false;
+    const body: Record<string, unknown> = { name: name.trim() };
+    if (password) body.password = password;
+    if (!user) body.email = email.trim();
+    const out = await run(
+      () => (user ? api.patch(`/api/users/${user.id}`, body) : api.post("/api/users", body)),
+      user ? "已保存" : "管理员已添加",
+    );
+    if (out) onSaved();
+    return !!out;
+  };
+  useUnsavedChanges(changed, submit);
   return (
     <FormModal
       title={user ? `编辑 ${user.name}` : "添加管理员"}
       busy={busy}
-      disabled={!name.trim() || (!user && !email.trim())}
+      disabled={disabled}
       onClose={onClose}
-      onSubmit={async () => {
-        const body: Record<string, unknown> = { name: name.trim() };
-        if (password) body.password = password;
-        if (!user) body.email = email.trim();
-        const out = await run(
-          () => (user ? api.patch(`/api/users/${user.id}`, body) : api.post("/api/users", body)),
-          user ? "已保存" : "管理员已添加",
-        );
-        if (out) onSaved();
-      }}
+      onSubmit={() => void submit()}
     >
       <Field label="姓名" hint="在话题中用 @姓名 提及（不含空格）">
         <input value={name} onChange={(e) => setName(e.target.value)} />

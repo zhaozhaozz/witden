@@ -4,6 +4,7 @@ import Layout, { RequirePerm } from "./Layout";
 import { ADMIN_PERMS, COMPUTER_PERMS } from "./lib/perms";
 import { AuthProvider, DirectoryProvider, useAuth } from "./lib/session";
 import { TopicsProvider } from "./lib/topics";
+import { UnsavedProvider } from "./lib/unsaved";
 import ApprovalsPage from "./pages/ApprovalsPage";
 import InstanceDetailPage from "./pages/computers/InstanceDetailPage";
 import InstancesPage from "./pages/computers/InstancesPage";
@@ -85,9 +86,11 @@ function Gate() {
 export default function App() {
   return (
     <FeedbackProvider>
-      <AuthProvider>
-        <Gate />
-      </AuthProvider>
+      <UnsavedProvider>
+        <AuthProvider>
+          <Gate />
+        </AuthProvider>
+      </UnsavedProvider>
     </FeedbackProvider>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { SlackApp } from "../api/types";
 import { fmtRelative } from "../lib/format";
+import { useChanged, useUnsavedChanges } from "../lib/unsaved";
 import { useAction, useFeedback } from "../ui/feedback";
 import { CopyText, Field, KV, Section, Tag } from "../ui/kit";
 import { lastRejected, SLACK_FIELD_HELP, socketText } from "./connectionParts";
@@ -167,8 +168,10 @@ function SlackAppForm({
   const switching = mode !== app.slack_mode;
   const key = mode === "socket" ? "app_token" : "signing_secret";
   const ready = !!name.trim() && (!switching || !!secret.trim());
+  const [changed] = useChanged({ name, mode, secret, clientId, clientSecret });
 
-  const save = async () => {
+  const save = async (): Promise<boolean> => {
+    if (!ready) return false;
     const credentials = Object.fromEntries(
       Object.entries({ [key]: secret.trim(), client_id: clientId.trim(), client_secret: clientSecret.trim() }).filter(
         ([, v]) => v,
@@ -183,7 +186,9 @@ function SlackAppForm({
       "已保存",
     );
     if (out) onSaved(out);
+    return !!out;
   };
+  useUnsavedChanges(changed, save);
 
   return (
     <form
