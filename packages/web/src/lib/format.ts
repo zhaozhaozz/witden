@@ -278,6 +278,7 @@ export const TOOL_LABEL: Record<string, string> = {
   feishu_calendar_list: "查看飞书日历",
   feishu_calendar_search: "搜索飞书公共日历",
   feishu_calendar_members: "查看飞书日历的成员",
+  feishu_calendar_share_link: "获取飞书日历的分享链接",
   feishu_calendar_events: "查看飞书日程",
   feishu_calendar_event: "查看飞书日程详情",
   feishu_calendar_freebusy: "查看飞书忙闲",

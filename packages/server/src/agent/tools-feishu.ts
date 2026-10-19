@@ -249,7 +249,40 @@ export const FEISHU_TOOLS: ToolSpec[] = [
         end: e.end_time,
         location: e.location?.name,
         status: e.status,
+        link: e.app_link,
       }));
+    },
+  ),
+  feishuTool(
+    "feishu_calendar_share_link",
+    "calendar",
+    "read",
+    "The link that opens a calendar's page in Feishu, where people can view and subscribe to it: the same link Feishu's own calendar share card opens. To share a calendar in a chat, put it in your reply, e.g. [name](link). Who can open it depends on the calendar's visibility (public: anyone in the company; otherwise its members).",
+    { calendar_id: str },
+    ["calendar_id"],
+    async (conn, a) => {
+      const id = String(a.calendar_id);
+      const cal = await feishuApi(conn, "GET", `calendar/v4/calendars/${id}`);
+      // Feishu's links name a calendar by an internal number the API gives only in its events' links
+      const events = await feishuApi(conn, "GET", `calendar/v4/calendars/${id}/events`, {
+        params: { page_size: "50" },
+      });
+      const number = (events.items ?? [])
+        .map((e: any) => /[?&]calendarId=(\d+)/.exec(String(e.app_link ?? ""))?.[1])
+        .find(Boolean);
+      if (!number)
+        return `no link yet: Feishu gives a calendar's link only through its events, and ${cal.summary ?? id} has none. Create an event in it first.`;
+      return {
+        summary: cal.summary,
+        permissions: cal.permissions,
+        who_can_open:
+          cal.permissions === "public"
+            ? "anyone in the company (they can subscribe)"
+            : cal.permissions === "show_only_free_busy"
+              ? "anyone in the company, seeing busy times only; members see events"
+              : "only its members",
+        link: `https://applink.feishu.cn/client/calendar/detail?calendarId=${number}&source=calendar_share_by_owner`,
+      };
     },
   ),
   feishuTool(
@@ -305,7 +338,7 @@ export const FEISHU_TOOLS: ToolSpec[] = [
     "feishu_calendar_create",
     "calendar",
     "write",
-    "Create a shared Feishu calendar owned by the app, e.g. the organization's public calendar; add its members with feishu_calendar_share (an administrator as owner too, so people can manage it in Feishu).",
+    "Create a shared Feishu calendar owned by the app, e.g. the organization's public calendar; add its members with feishu_calendar_share (an administrator as owner too, so people can manage it in Feishu), and share its link in a chat with feishu_calendar_share_link once it has an event.",
     {
       summary: str,
       description: str,

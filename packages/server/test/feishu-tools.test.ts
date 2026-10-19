@@ -49,6 +49,24 @@ class FakeFeishu {
         data: { calendar_list: [{ calendar_id: "cal_team", summary: "团队日历", type: "shared" }] },
       });
     // the organization's calendar the app made, a public one it finds, and an event it organized
+    if (path === "calendar/v4/calendars/cal_org" && method === "GET")
+      return json({ code: 0, data: { calendar_id: "cal_org", summary: "公司日历", permissions: "public" } });
+    if (path === "calendar/v4/calendars/cal_org/events" && method === "GET")
+      return json({
+        code: 0,
+        data: {
+          items: [
+            {
+              event_id: "ev_launch",
+              summary: "发布会",
+              app_link:
+                "https://applink.feishu.cn/client/calendar/event/detail?calendarId=7698317119771184158&key=k1&originalTime=0&startTime=1792400000",
+            },
+          ],
+        },
+      });
+    if (path === "calendar/v4/calendars/cal_team" && method === "GET")
+      return json({ code: 0, data: { calendar_id: "cal_team", summary: "团队日历", permissions: "private" } });
     if (path === "calendar/v4/calendars/cal_org" && method === "PATCH")
       return json({ code: 0, data: { calendar: { calendar_id: "cal_org", summary: "公司日历", ...body } } });
     if (path === "calendar/v4/calendars/cal_org/acls" && method === "POST")
@@ -260,6 +278,8 @@ describe("feishu tools", () => {
         results = resultsOf(m);
         return reply("", [
           call("feishu_calendar_event", { calendar_id: "cal_team", event_id: "ev1" }),
+          call("feishu_calendar_share_link", { calendar_id: "cal_org" }),
+          call("feishu_calendar_share_link", { calendar_id: "cal_team" }),
           call("feishu_calendar_update_event", {
             calendar_id: "cal_team",
             event_id: "ev1",
@@ -293,7 +313,9 @@ describe("feishu tools", () => {
       scope: { type: "user", user_id: "ou_admin_a" },
     });
     expect(all).toContain("role must be one of owner, writer, reader, free_busy_reader");
-    expect(feishu.last("calendar/v4/calendars/cal_org")?.body).toEqual({ description: "全员可订阅" });
+    expect(feishu.calls.find((c) => c.method === "PATCH" && c.path === "calendar/v4/calendars/cal_org")?.body).toEqual({
+      description: "全员可订阅",
+    });
     expect(all).toContain('"acl_id": "acl_2"');
     // removing a member deletes their entry only
     expect(feishu.calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toContain(
@@ -301,6 +323,12 @@ describe("feishu tools", () => {
     );
     expect(feishu.last("calendar/v4/calendars/search")?.body).toEqual({ query: "假期" });
     expect(all).toContain('"role": "reader"');
+    // sharing a calendar: the link Feishu's own share card opens, its number taken from an event's link
+    expect(all).toContain(
+      '"link": "https://applink.feishu.cn/client/calendar/detail?calendarId=7698317119771184158&source=calendar_share_by_owner"',
+    );
+    expect(all).toContain('"who_can_open": "anyone in the company (they can subscribe)"');
+    expect(all).toContain("no link yet: Feishu gives a calendar's link only through its events, and 团队日历 has none");
     // the event: its attendees read; a time needs start and end; changes, invites and removals; then cancelled
     expect(all).toContain('"reply": "tentative"');
     expect(all).toContain("give start and end together");
