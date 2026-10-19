@@ -635,6 +635,10 @@ textarea.prompt {
 }
 .side-title {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0 4px;
   border: 0;
   background: none;
@@ -704,6 +708,29 @@ textarea.prompt {
   height: 7px;
   border-radius: 50%;
   background: var(--harbor);
+}
+/* A connection's roles and computers beside its section title */
+.side-cast {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  margin-right: 2px;
+  color: var(--ink-3);
+}
+.side-cast-computer {
+  position: relative;
+  display: inline-flex;
+  margin-left: 2px;
+}
+.side-cast-computer .side-presence {
+  width: 6px;
+  height: 6px;
+  right: -1px;
+  bottom: 1px;
+}
+.side-cast-more {
+  font-size: 11px;
 }
 .side-avatar {
   position: relative;

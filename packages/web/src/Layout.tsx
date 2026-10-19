@@ -201,12 +201,15 @@ function SideSection({
   title,
   to,
   action,
+  extra,
   children,
 }: {
   id: string;
   title: string;
   /** The title also links to a page listing everything (e.g. all topics). */
   to?: string;
+  /** Shown after the title (e.g. the roles and computers a connection involves). */
+  extra?: ReactNode;
   action?: { label: string; title: string; onClick: () => void };
   children: ReactNode;
 }) {
@@ -251,6 +254,7 @@ function SideSection({
             {title}
           </button>
         )}
+        {extra}
         {action ? (
           <button
             type="button"
@@ -316,6 +320,7 @@ const MAX_PER_CONNECTION = 20;
  */
 function ConnectionLists() {
   const t = useTopics();
+  const dir = useDirectory();
   const groups = new Map<string, Topic[]>();
   for (const x of t.topics) {
     if (x.status !== "active" || sourceOf(x) === "console" || !x.channel) continue;
@@ -334,6 +339,13 @@ function ConnectionLists() {
             id={`conn-${c.connection_id}`}
             title={connectionLabel(c)}
             to={`/topics?source=${c.connection_id}`}
+            extra={
+              <ConnectionCast
+                bound={c.role_id ?? null}
+                roleIds={list.flatMap((x) => x.role_ids ?? [])}
+                roles={dir.roles}
+              />
+            }
           >
             {list.slice(0, MAX_PER_CONNECTION).map((x) => (
               <NavLink
@@ -363,6 +375,48 @@ function ConnectionLists() {
         );
       })}
     </>
+  );
+}
+
+type DirRole = ReturnType<typeof useDirectory>["roles"][number];
+
+/**
+ * Who works in a connection's conversations, at a glance: the role its bot stands for first, then other roles
+ * brought in, and the virtual computers they work on (a dot when running).
+ */
+function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleIds: string[]; roles: DirRole[] }) {
+  const ids = [...new Set([...(bound ? [bound] : []), ...roleIds])];
+  const cast = ids.map((id) => roles.find((r) => r.id === id)).filter((r): r is DirRole => !!r);
+  if (!cast.length) return null;
+  const computers = [...new Map(cast.filter((r) => r.instance).map((r) => [r.instance!.id, r.instance!])).values()];
+  const title = [
+    ...cast.map((r) => `${r.id === bound ? "机器人代表" : "参与"}的角色：${r.name} @${r.handle}`),
+    ...computers.map((m) => `虚拟电脑：${m.name}${m.status === "running" ? "（运行中）" : "（未运行）"}`),
+  ].join("\n");
+  const MAX = 3;
+  return (
+    <span className="side-cast" title={title} role="img" aria-label={title}>
+      {cast.slice(0, MAX).map((r) => (
+        <Avatar key={r.id} id={r.id} name={r.name} kind="role" size={16} src={r.avatar_url} color={r.color} />
+      ))}
+      {cast.length > MAX ? <span className="side-cast-more">+{cast.length - MAX}</span> : null}
+      {computers.slice(0, 2).map((m) => (
+        <span key={m.id} className="side-cast-computer">
+          <ComputerIcon />
+          <span className={`side-presence${m.status === "running" ? " side-online" : ""}`} />
+        </span>
+      ))}
+      {computers.length > 2 ? <span className="side-cast-more">+{computers.length - 2}</span> : null}
+    </span>
+  );
+}
+
+function ComputerIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+      <rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
   );
 }
 

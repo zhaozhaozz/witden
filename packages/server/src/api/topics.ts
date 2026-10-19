@@ -68,8 +68,17 @@ async function participantsOut(db: Db, topic: Topic) {
   return out;
 }
 
-async function topicOut(db: Db, topic: Topic, user: User, detail = false, channels?: Map<string, ChannelInfo>) {
+async function topicOut(
+  db: Db,
+  topic: Topic,
+  user: User,
+  detail = false,
+  channels?: Map<string, ChannelInfo>,
+  roleIds?: Map<string, string[]>,
+) {
   const data: Record<string, any> = row(topic);
+  // The roles taking part, for lists (e.g. which roles a connection's conversations involve).
+  if (roleIds) data.role_ids = roleIds.get(topic.id) ?? [];
   // Where it lives outside the console (Slack channel, GitHub issue ...), or null.
   data.channel = (channels ?? (await channelsOf(db, [topic.id]))).get(topic.id) ?? null;
   data.can_post = await svc.canPost(db, user, topic);
@@ -111,7 +120,23 @@ export async function topicRoutes(app: FastifyInstance) {
         db,
         rows.map((t) => t.id),
       );
-      for (const t of rows) out.push(await topicOut(db, t, user, false, channels));
+      const roleIds = new Map<string, string[]>();
+      if (rows.length)
+        for (const p of await db
+          .select({ topicId: topicParticipants.topicId, roleId: topicParticipants.participantId })
+          .from(topicParticipants)
+          .where(
+            and(
+              inArray(
+                topicParticipants.topicId,
+                rows.map((t) => t.id),
+              ),
+              eq(topicParticipants.participantType, "role"),
+              isNull(topicParticipants.removedAt),
+            ),
+          ))
+          roleIds.set(p.topicId, [...(roleIds.get(p.topicId) ?? []), p.roleId]);
+      for (const t of rows) out.push(await topicOut(db, t, user, false, channels, roleIds));
       return out;
     }),
   );

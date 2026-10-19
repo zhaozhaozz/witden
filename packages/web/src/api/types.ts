@@ -56,6 +56,8 @@ export interface Topic {
   /** You take part (a DM: only its own person; a DM with a disabled role: nobody). */
   can_post: boolean;
   participants?: Participant[];
+  /** In lists: the roles taking part. */
+  role_ids?: string[];
   /** Where it lives outside the console (a Slack thread or DM, a GitHub issue or PR), or null. */
   channel?: ChannelInfo | null;
 }
@@ -72,6 +74,8 @@ export interface ChannelInfo {
   thread_key: string;
   /** GitHub: issue | pull_request. */
   thread_kind: string | null;
+  /** The role the connection's bot stands for, if chosen. */
+  role_id?: string | null;
   url: string | null;
 }
 

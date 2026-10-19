@@ -41,6 +41,8 @@ export interface ChannelInfo {
   /** GitHub: issue | pull_request. */
   thread_kind: string | null;
   url: string | null;
+  /** The role the connection's bot stands for, if chosen. */
+  role_id: string | null;
 }
 
 /** The (first) external conversation of each topic, for many topics at once. */
@@ -79,6 +81,7 @@ export async function channelsOf(db: Db, topicIds: string[]): Promise<Map<string
       thread_key: link.threadKey,
       thread_kind: typeof meta.kind === "string" ? meta.kind : null,
       url: typeof meta.url === "string" ? meta.url : null,
+      role_id: typeof conn.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null,
     });
   }
   return out;

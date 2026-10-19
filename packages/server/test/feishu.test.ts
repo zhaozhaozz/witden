@@ -360,6 +360,12 @@ describe("feishu groups and names", () => {
     const topicId = tasksNow[0].topicId;
     const topic = (await w.api("GET", `/api/topics/${topicId}`, { token: w.alice })).body;
     expect(topic.title).toBe("#产品群");
+    // lists say which role the connection's bot stands for and which roles take part (the sidebar shows them)
+    const listed = ((await w.api("GET", "/api/topics", { token: w.alice })).body as any[]).find(
+      (x) => x.id === topicId,
+    );
+    expect(listed.channel.role_id).toBe(w.ids.dev);
+    expect(listed.role_ids).toContain(w.ids.dev);
     await w.drain();
     await deliverPending();
     // asked in the group itself, answered in the group itself
