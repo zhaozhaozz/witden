@@ -1894,6 +1894,20 @@ img.avatar-role.avatar-colored {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  max-width: 100%;
+}
+.copy-expanded {
+  display: flex;
+}
+.copy-manual {
+  display: grid;
+  gap: 6px;
+  flex-basis: 100%;
+  min-width: 0;
+}
+.copy-manual textarea {
+  width: 100%;
+  resize: vertical;
 }
 .role-cell {
   display: flex;

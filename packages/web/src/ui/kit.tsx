@@ -666,28 +666,55 @@ export function JsonBlock({ value, maxHeight }: { value: unknown; maxHeight?: nu
 }
 
 export function CopyText({ text, label }: { text: string; label?: string }) {
+  // Feedback and pending writes belong to this exact value, including when an address is regenerated.
+  return <CopyTextValue key={text} text={text} label={label} />;
+}
+
+function CopyTextValue({ text, label }: { text: string; label?: string }) {
   const [done, setDone] = useState(false);
   const [manualCopy, setManualCopy] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
   return (
-    <span className="copy">
-      <code className="id">{manualCopy ? text : (label ?? text)}</code>
+    <span className={`copy${manualCopy ? " copy-expanded" : ""}`}>
+      <code className="id">{label ?? text}</code>
       <button
         type="button"
         className="btn btn-xs"
+        disabled={!text || copying}
         onClick={async () => {
-          if (await copyToClipboard(text)) {
+          setCopying(true);
+          const copied = await copyToClipboard(text);
+          setCopying(false);
+          window.clearTimeout(timer.current);
+          if (copied) {
             setDone(true);
             setManualCopy(false);
-            window.setTimeout(() => setDone(false), 1500);
+            timer.current = window.setTimeout(() => setDone(false), 1500);
           } else {
             setDone(false);
             setManualCopy(true);
           }
         }}
       >
-        {done ? "已复制" : "复制"}
+        {copying ? "复制中…" : done ? "已复制" : "复制"}
       </button>
-      {manualCopy ? <span role="status">浏览器未允许自动复制，请手动复制上方内容。</span> : null}
+      {manualCopy ? (
+        <span className="copy-manual">
+          <span role="status">浏览器未允许自动复制，请手动复制下方内容。</span>
+          <textarea
+            className="mono"
+            aria-label={label ? `${label}：手动复制` : "手动复制内容"}
+            readOnly
+            autoFocus
+            onFocus={(e) => e.currentTarget.select()}
+            value={text}
+            rows={Math.min(8, Math.max(2, text.split("\n").length))}
+            wrap="off"
+          />
+        </span>
+      ) : null}
     </span>
   );
 }

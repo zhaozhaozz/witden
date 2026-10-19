@@ -295,6 +295,7 @@ function TriggerEditor({
   const [instructions, setInstructions] = useState(trigger?.instructions ?? "");
   const [secret, setSecret] = useState(trigger ? "" : makeSecret);
   const [copiedSecret, setCopiedSecret] = useState(false);
+  const [copyingSecret, setCopyingSecret] = useState(false);
   const [manualCopy, setManualCopy] = useState(false);
   const secretInput = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState(trigger?.filter_code ?? "");
@@ -418,9 +419,14 @@ function TriggerEditor({
               <button
                 type="button"
                 className="btn btn-xs"
-                disabled={!secret}
+                disabled={!secret || copyingSecret}
                 onClick={async () => {
-                  if (await copyToClipboard(secret)) {
+                  setCopyingSecret(true);
+                  const copied = await copyToClipboard(secret);
+                  setCopyingSecret(false);
+                  // The input may have changed while the browser was waiting for clipboard permission.
+                  if (secretInput.current?.value !== secret) return;
+                  if (copied) {
                     setCopiedSecret(true);
                     setManualCopy(false);
                     toast("密钥已复制，请保存到发送方", "ok");
@@ -428,13 +434,15 @@ function TriggerEditor({
                     setCopiedSecret(false);
                     setManualCopy(true);
                     requestAnimationFrame(() => {
-                      secretInput.current?.focus();
-                      secretInput.current?.select();
+                      if (secretInput.current?.value === secret) {
+                        secretInput.current.focus();
+                        secretInput.current.select();
+                      }
                     });
                   }
                 }}
               >
-                复制密钥
+                {copyingSecret ? "复制中…" : "复制密钥"}
               </button>
             </div>
           </Field>
