@@ -2,17 +2,18 @@
  * Feishu end to end: events over the long connection (the SDK's client replaced by a stand-in, as the SDK
  * itself is not under test here) or at the verified events URL, Open API calls out.
  */
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { settings } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { connections, externalIdentities, tasks, topics, users } from "../src/db/schema.js";
+import { artifacts, connections, externalIdentities, messages, tasks, topics, users } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { FeishuAdapter, messageText, setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
 import { resolveIdentity } from "../src/integrations/inbound.js";
 import { secretBox } from "../src/security/crypto.js";
+import { saveArtifact } from "../src/services/files.js";
 import { reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -31,11 +32,16 @@ class FakeFeishu {
   asked: string[] = [];
   /** Refuse rich-text posts, as Feishu does with content it cannot render. */
   refusePosts = false;
+  /** Answer uploads as an app without im:resource. */
+  refuseUploads = false;
+  uploads: { path: string; fields: Record<string, string> }[] = [];
 
   fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     const path = url.pathname.replace("/open-apis/", "");
-    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    // uploads are multipart: their fields are recorded, files by name and size
+    const form = init?.body instanceof FormData ? init.body : null;
+    const body = init?.body && !form ? JSON.parse(String(init.body)) : {};
     if (path === "auth/v3/tenant_access_token/internal")
       return json({ code: 0, msg: "ok", tenant_access_token: "t-123", expire: 7200 });
     if ((init?.headers as Record<string, string>)?.authorization !== "Bearer t-123")
@@ -60,6 +66,28 @@ class FakeFeishu {
       return json({ code: 0, data: { items: [{ member_id: "ou_alice", name: "Alice 张" }], has_more: false } });
     if (path === "contact/v3/users/ou_carol") return json({ code: 0, data: { user: { name: "Carol 王" } } });
     if (path.startsWith("contact/v3/users/")) return json({ code: 41050, msg: "no user authority error" });
+    if (form && (path === "im/v1/images" || path === "im/v1/files")) {
+      if (this.refuseUploads)
+        return json({ code: 99991672, msg: "Access denied. One of the following scopes is required: [im:resource]" });
+      const fields: Record<string, string> = {};
+      for (const [k, v] of form.entries()) fields[k] = typeof v === "string" ? v : `${v.name} (${v.size} bytes)`;
+      this.uploads.push({ path, fields });
+      const n = this.uploads.length;
+      return json({
+        code: 0,
+        data: path === "im/v1/images" ? { image_key: `img_v3_${n}` } : { file_key: `file_v3_${n}` },
+      });
+    }
+    // what people sent: an image comes back as a JPEG
+    const resource = /^im\/v1\/messages\/([^/]+)\/resources\/([^/]+)$/.exec(path);
+    if (resource) {
+      this.asked.push(`${path}?type=${url.searchParams.get("type")}`);
+      const image = url.searchParams.get("type") === "image";
+      return new Response(Buffer.from(image ? "jpeg-bytes" : "pdf-bytes"), {
+        status: 200,
+        headers: { "content-type": image ? "image/jpeg" : "application/octet-stream" },
+      });
+    }
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
       if (this.refusePosts && body.msg_type === "post") return json({ code: 230001, msg: "invalid message content" });
       this.sent.push({ path, body });
@@ -590,9 +618,14 @@ describe("feishu: other bots and rich messages", () => {
     );
     await w.waitFor(async () => (await allTasks()).length === 1);
     expect((await allTasks())[0].instruction).toBe("周报\n 帮我整理 [这份文档](https://example.com)\n[图片]");
-    // an image alone has no words: not recorded
+    // the post's image and an image sent alone are downloaded into the topic's files, with the message
     await link.push(raw("om_img", "image", { image_key: "img_2" }));
     await w.drain();
+    expect(feishu.asked).toContain("im/v1/messages/om_p1/resources/img_1?type=image");
+    expect(feishu.asked).toContain("im/v1/messages/om_img/resources/img_2?type=image");
+    const [alone] = await db().select().from(messages).where(sql`${messages.externalRef}->>'ts' = 'om_img'`);
+    const [image] = await db().select().from(artifacts).where(eq(artifacts.id, alone.attachments[0]));
+    expect(image).toMatchObject({ name: "飞书图片-om_img.jpg", mime: "image/jpeg", size: 10 });
     expect(messageText("image", JSON.stringify({ image_key: "x" }))).toBeNull();
     expect(
       messageText(
@@ -600,6 +633,59 @@ describe("feishu: other bots and rich messages", () => {
         JSON.stringify({ header: { title: { content: "标题" } }, elements: [{ text: { content: "正文" } }] }),
       ),
     ).toBe("标题\n正文");
+  });
+
+  it("a role's images go into the message and its files after it; what Feishu refuses is linked with the reason", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    const file = (name: string, mime: string, data = "bytes") =>
+      saveArtifact(db(), Buffer.from(data), { name, kind: "share", topicId: w.ids.topic, mime });
+    const shot = await file("desktop-103355.png", "image/png", "png-bytes");
+    const report = await file("报告.pdf", "application/pdf", "pdf");
+    const [row] = await db().select().from(connections).where(eq(connections.id, conn.id));
+    const out = { threadKey: "om_q", conversationExternalId: "oc_group" } as any;
+    const send = (content: string, attachments: string[]) =>
+      new FeishuAdapter().send(db(), row, out, {
+        authorType: "role",
+        authorId: w.ids.dev,
+        content,
+        attachments,
+        mentions: [],
+        topicId: w.ids.topic,
+      } as any);
+    await send("截图如下", [shot.id, report.id]);
+    expect(feishu.uploads).toEqual([
+      { path: "im/v1/images", fields: { image_type: "message", image: "desktop-103355.png (9 bytes)" } },
+      { path: "im/v1/files", fields: { file_type: "pdf", file_name: "报告.pdf", file: "报告.pdf (3 bytes)" } },
+    ]);
+    // the image is in the post with the words; the file follows in the same thread
+    const [post, attached] = feishu.sent.slice(-2);
+    expect(post).toMatchObject({ path: "im/v1/messages/om_q/reply", body: { msg_type: "post" } });
+    expect(JSON.parse(post.body.content)).toEqual({
+      zh_cn: { content: [[{ tag: "md", text: "截图如下" }], [{ tag: "img", image_key: "img_v3_1" }]] },
+    });
+    expect(attached).toMatchObject({
+      path: "im/v1/messages/om_q/reply",
+      body: { msg_type: "file", content: JSON.stringify({ file_key: "file_v3_2" }) },
+    });
+    // an image alone is a post with just the image
+    await send("", [shot.id]);
+    expect(JSON.parse(feishu.sent.at(-1)!.body.content).zh_cn.content).toEqual([
+      [{ tag: "img", image_key: "img_v3_3" }],
+    ]);
+    // an app without im:resource: the words, and the files as links with the reason
+    feishu.refuseUploads = true;
+    await send("截图如下", [shot.id]);
+    const base = settings().publicUrl.replace(/\/+$/, "");
+    expect(JSON.parse(feishu.sent.at(-1)!.body.content).zh_cn.content).toEqual([
+      [
+        {
+          tag: "md",
+          text: `截图如下\n\n🖼 [desktop-103355.png](${base}/api/files/${shot.id})\n\n*附件没能发到飞书：飞书应用没有开通“获取与上传图片或文件资源”（im:resource）权限*`,
+        },
+      ],
+    ]);
   });
 
   it("Markdown goes out as rich text; another role's name is the title; notices and refused posts as text", async () => {

@@ -26,6 +26,12 @@ export const FEISHU_BASE_SCOPES: (FeishuScope & { purpose: string })[] = [
   { scope: "im:message.group_at_msg:readonly", name: "接收群聊中@机器人消息事件", purpose: "收到群里 @ 机器人的消息" },
   { scope: "im:message.p2p_msg:readonly", name: "读取用户发给机器人的单聊消息", purpose: "收到发给机器人的私聊消息" },
   { scope: "im:message:send_as_bot", name: "以应用的身份发消息", purpose: "发送角色的回复" },
+  { scope: "im:resource", name: "获取与上传图片或文件资源", purpose: "把角色发的图片和文件发到飞书" },
+  {
+    scope: "im:message:readonly",
+    name: "获取单聊、群组消息",
+    purpose: "下载飞书中发给机器人的图片和文件，交给角色查看",
+  },
   {
     scope: "im:chat:readonly",
     name: "获取群组信息",

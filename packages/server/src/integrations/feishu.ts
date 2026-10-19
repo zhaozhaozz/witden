@@ -1,11 +1,14 @@
 /**
- * Feishu adapter (experimental): messages in groups and bot DMs, Markdown sent as rich text (feishu-format.ts).
- * Files and edits are not synchronised. Events arrive over the long connection witden keeps open
- * (feishu-socket.ts) or at the events URL.
+ * Feishu adapter (experimental): messages in groups and bot DMs, Markdown sent as rich text (feishu-format.ts),
+ * images and files both ways (feishu-files.ts). Edits are not synchronised. Events arrive over the long
+ * connection witden keeps open (feishu-socket.ts) or at the events URL.
  */
-import { and, eq, inArray } from "drizzle-orm";
+import fs from "node:fs";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { type Db, db as getDb } from "../db/client.js";
 import {
+  type Artifact,
+  artifacts,
   type Connection,
   type ExternalConversation,
   externalConversations,
@@ -18,8 +21,18 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
+import { artifactPath } from "../services/files.js";
 import { consoleBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, type InboundAction, register } from "./base.js";
+import {
+  type FeishuInFile,
+  fileLinks,
+  imageExtension,
+  MAX_IN_BYTES,
+  messageFiles,
+  uploadKind,
+  uploadProblem,
+} from "./feishu-files.js";
 import { fromFeishuPost, toFeishu } from "./feishu-format.js";
 import { noteWebhook } from "./webhook-status.js";
 
@@ -302,7 +315,9 @@ export class FeishuAdapter implements Adapter {
       if (ids.app_id && ids.app_id === credentials(conn).app_id) return [];
       if (await this.sentByUs(db, conn, id)) return [];
     }
-    let text = messageText(msg.message_type, msg.content);
+    // images and files come with the message and are downloaded into the topic (fetchFile)
+    const files = messageFiles(msg.message_type, msg.content, id);
+    let text = messageText(msg.message_type, msg.content) ?? (files.length ? "" : null);
     if (text === null) return [];
     let addressed = p2p;
     for (const m of msg.mentions ?? []) {
@@ -312,7 +327,7 @@ export class FeishuAdapter implements Adapter {
       // a mention names the person mentioned, at no cost
       if (!isBot && m.id?.open_id && m.name) names.set(`${conn.id}:${m.id.open_id}`, { name: m.name, at: Date.now() });
     }
-    if (fromBot && !text.trim()) return [];
+    if (fromBot && !text.trim() && !files.length) return [];
     return [
       {
         kind: "message",
@@ -335,6 +350,7 @@ export class FeishuAdapter implements Adapter {
               ? await this.userName(conn, sender, p2p ? null : chatId)
               : null,
           text: text.trim(),
+          ...(files.length ? { files } : {}),
           // whether another bot's request goes to the role is the connection's choice (inbound.ts)
           addressed,
           ...(fromBot ? { fromBot: true } : {}),
@@ -358,24 +374,144 @@ export class FeishuAdapter implements Adapter {
     }
     const plain = { msg_type: "text", content: JSON.stringify({ text: who ? `${who}: ${msg.content}` : msg.content }) };
     if (msg.authorType === "system") return this.post(conn, out, plain);
+    // Attachments are uploaded first: images go into the post, other files follow it; what Feishu will not take
+    // is linked instead, with the reason.
+    const { images, files, refused } = await this.uploadAll(db, conn, msg);
     const base = consoleBase();
-    const md = toFeishu(msg.content, {
+    let md = toFeishu(msg.content, {
       baseUrl: base,
       viewUrl: `${base}/topics/${msg.topicId}`,
       mentions: await this.mentioned(db, conn, msg),
     });
+    if (refused) md = [md, fileLinks(refused.files, refused.why)].filter(Boolean).join("\n\n");
+    const paragraphs = [
+      ...(md ? [[{ tag: "md", text: md }]] : []),
+      ...images.map((key) => [{ tag: "img", image_key: key }]),
+    ];
     const rich = {
       msg_type: "post",
-      content: JSON.stringify({ zh_cn: { ...(who ? { title: who } : {}), content: [[{ tag: "md", text: md }]] } }),
+      content: JSON.stringify({ zh_cn: { ...(who ? { title: who } : {}), content: paragraphs } }),
     };
-    if (!md || Buffer.byteLength(rich.content) > POST_MAX_BYTES) return this.post(conn, out, plain);
-    try {
-      return await this.post(conn, out, rich);
-    } catch (err) {
-      // Feishu answered and refused the post, so nothing was sent: the same words as plain text instead.
-      if (!/failed \(\d+\)/.test((err as Error).message)) throw err;
-      return this.post(conn, out, plain);
+    let id: string | null;
+    if (!paragraphs.length) id = null;
+    else if (Buffer.byteLength(rich.content) > POST_MAX_BYTES)
+      id = await this.plainWithImages(conn, out, plain, images);
+    else
+      try {
+        id = await this.post(conn, out, rich);
+      } catch (err) {
+        // Feishu answered and refused the post, so nothing was sent: the same words as plain text instead.
+        if (!/failed \(\d+\)/.test((err as Error).message)) throw err;
+        id = await this.plainWithImages(conn, out, plain, images);
+      }
+    // Files follow the message, where it went; the message is out, so a file that fails is dropped, not retried.
+    for (const key of files) {
+      try {
+        const sent = await this.post(conn, out, { msg_type: "file", content: JSON.stringify({ file_key: key }) });
+        id ??= sent;
+      } catch (err) {
+        console.warn("[witden] Feishu file message failed", (err as Error).message);
+      }
     }
+    return id;
+  }
+
+  /** The words as plain text, each image as its own message after them. */
+  private async plainWithImages(
+    conn: Connection,
+    out: OutboundMessage,
+    plain: { msg_type: string; content: string },
+    images: string[],
+  ): Promise<string | null> {
+    const id = await this.post(conn, out, plain);
+    for (const key of images)
+      await this.post(conn, out, { msg_type: "image", content: JSON.stringify({ image_key: key }) });
+    return id;
+  }
+
+  /** Upload a message's attachments (files of its topic only): image keys, file keys, and what was refused. */
+  private async uploadAll(db: Db, conn: Connection, msg: Message) {
+    const images: string[] = [];
+    const files: string[] = [];
+    const refusedFiles: Artifact[] = [];
+    let why: string | null = null;
+    const attached = msg.attachments?.length
+      ? await db
+          .select()
+          .from(artifacts)
+          .where(
+            and(
+              inArray(artifacts.id, msg.attachments),
+              eq(artifacts.topicId, msg.topicId),
+              isNull(artifacts.deletedAt),
+            ),
+          )
+      : [];
+    for (const f of attached) {
+      const kind = uploadKind(f);
+      if ("refused" in kind) {
+        refusedFiles.push(f);
+        why ??= kind.refused;
+        continue;
+      }
+      try {
+        const form = new FormData();
+        const blob = new Blob([fs.readFileSync(artifactPath(f))], { type: f.mime });
+        if (kind.image) {
+          form.append("image_type", "message");
+          form.append("image", blob, f.name);
+          images.push((await this.upload(conn, "im/v1/images", form)).image_key);
+        } else {
+          form.append("file_type", kind.fileType);
+          form.append("file_name", f.name);
+          form.append("file", blob, f.name);
+          files.push((await this.upload(conn, "im/v1/files", form)).file_key);
+        }
+      } catch (err) {
+        refusedFiles.push(f);
+        why ??= uploadProblem(err);
+      }
+    }
+    return { images, files, refused: refusedFiles.length ? { files: refusedFiles, why: why ?? "" } : null };
+  }
+
+  /** A multipart upload with the app's tenant token (images and files for messages, im:resource). */
+  private async upload(conn: Connection, path: string, form: FormData): Promise<any> {
+    const res: any = await (
+      await feishuFetch(`${API}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${await this.token(conn)}` },
+        body: form,
+        signal: AbortSignal.timeout(60_000),
+      })
+    ).json();
+    if (res.code !== 0) throw new Error(`Feishu ${path} failed (${res.code}): ${res.msg}`);
+    return res.data ?? {};
+  }
+
+  /**
+   * An image or file of a received message (im:message:readonly), at most MAX_IN_BYTES. An image's name and type
+   * come from what Feishu sends back.
+   */
+  async fetchFile(conn: Connection, f: Record<string, any>): Promise<Buffer | null> {
+    const file = f as FeishuInFile;
+    const res = await feishuFetch(`${API}im/v1/messages/${file.message_id}/resources/${file.key}?type=${file.type}`, {
+      headers: { authorization: `Bearer ${await this.token(conn)}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    const mime = res.headers.get("content-type") ?? "";
+    if (!res.ok || mime.includes("application/json")) {
+      const err: any = await res.json().catch(() => ({}));
+      throw new Error(`Feishu resource failed (${err.code ?? res.status}): ${err.msg ?? res.statusText}`);
+    }
+    if (Number(res.headers.get("content-length") ?? 0) > MAX_IN_BYTES) return null;
+    const data = Buffer.from(await res.arrayBuffer());
+    if (data.length > MAX_IN_BYTES) return null;
+    if (file.type === "image" && mime.startsWith("image/")) {
+      f.mimetype = mime.split(";")[0];
+      f.name = file.name.replace(/\.png$/, `.${imageExtension(f.mimetype)}`);
+    }
+    return data;
   }
 
   /** People @-mentioned in a message who are linked on this connection: their name → open_id. */

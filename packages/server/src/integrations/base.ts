@@ -62,8 +62,9 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     conversations: ["group chat", "p2p chat with the bot"],
     threads: "reply threads (root_id) map to topics; p2p chats map to one topic",
     mentions: "@bot plus @role-handle in text",
-    files: "not synchronised yet (shown as a notice)",
-    role_identity: "name prefix in message text",
+    files:
+      "images and files both ways: roles' attachments uploaded (im:resource; images in the message, up to 10 MB, files up to 30 MB, others as links), incoming ones downloaded (im:message:readonly, up to 20 MB)",
+    role_identity: "another role's name as the message title",
     edits_deletes: "not synchronised",
     limits: [
       "events URL: event encryption must be disabled",
