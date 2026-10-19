@@ -306,6 +306,7 @@ describe.skipIf(!enabled)("DockerManager with a real Docker daemon", () => {
       // The image lists its packages: those stay, what was installed later can go.
       await sh(
         containerId,
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a dpkg-query format, not a JavaScript template
         "mkdir -p /opt/witden && /usr/bin/dpkg-query -W -f='${Package}\\n' | grep -vx hello > /opt/witden/image-packages",
       );
       const removed = await manager.packages(containerId, { action: "remove", packages: ["bash", "hello"] });

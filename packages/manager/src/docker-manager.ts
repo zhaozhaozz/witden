@@ -489,6 +489,7 @@ export class DockerManager implements ManagerApi {
   /** Whether each package is installed (dpkg's own record). */
   private async packageStates(container: Docker.Container, packages: string[]): Promise<Record<string, boolean>> {
     const script =
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: a dpkg-query format, not a JavaScript template
       'for p in "$@"; do printf \'%s\\t%s\\n\' "$p" "$(dpkg-query -W -f=\'${db:Status-Status}\' "$p" 2>/dev/null)"; done';
     const r = await this.rootExec(container, ["sh", "-c", script, "sh", ...packages]);
     const states = new Map(r.output.split("\n").map((line) => line.split("\t") as [string, string]));
