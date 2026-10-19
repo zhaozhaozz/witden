@@ -528,10 +528,10 @@ function Overview({
               onClose={() => setEditing(false)}
               onSubmit={() => void saveResources()}
             >
-              <ResourceFields value={draft} onChange={setDraft} />
               <p className="small muted">
                 新限制在重置虚拟电脑（重新创建容器）后才会生效，保存不会中断正在进行的工作。
               </p>
+              <ResourceFields value={draft} onChange={setDraft} />
             </FormModal>
           ) : null}
         </Section>
@@ -671,12 +671,12 @@ function Overview({
                         {p}
                       </code>
                     ))}
+                    <span className="small muted">复制虚拟电脑时默认不带到新虚拟电脑</span>
                   </span>
                 ) : null,
               ],
             ]}
           />
-          <p className="small muted">凭据目录在复制虚拟电脑时默认不会带到新虚拟电脑。</p>
         </Section>
       </div>
     </div>

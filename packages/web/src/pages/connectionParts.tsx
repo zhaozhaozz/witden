@@ -246,25 +246,19 @@ export function ConnectionSettingsFields({
         checked={value.auto_provision_users}
         onChange={(v) => set({ auto_provision_users: v })}
         label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
+        hint={
+          value.auto_provision_users
+            ? `外部成员可以使用这个机器人代表的角色${value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。`
+            : undefined
+        }
       />
-      {value.auto_provision_users ? (
-        <span className="field-hint">
-          外部成员可以使用这个机器人代表的角色{value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。
-        </span>
-      ) : null}
       {platform === "feishu" ? (
-        <>
-          <Toggle
-            checked={!!value.bot_requests}
-            onChange={(v) => set({ bot_requests: v })}
-            label="其他机器人 @ 这个机器人时，也交给角色处理"
-          />
-          <span className="field-hint">
-            关闭时（默认），群里其他机器人发的消息只记入话题、作为角色的上下文。开启后，其他机器人 @
-            这个机器人的消息也交给角色；为防止机器人之间来回触发，连续 {botLimit}{" "}
-            次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。
-          </span>
-        </>
+        <Toggle
+          checked={!!value.bot_requests}
+          onChange={(v) => set({ bot_requests: v })}
+          label="其他机器人 @ 这个机器人时，也交给角色处理"
+          hint={`关闭时（默认），群里其他机器人发的消息只记入话题、作为角色的上下文。开启后，其他机器人 @ 这个机器人的消息也交给角色；为防止机器人之间来回触发，连续 ${botLimit} 次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。`}
+        />
       ) : null}
       {platform === "slack" ? (
         <Toggle

@@ -1069,17 +1069,12 @@ function ConnectionForm({
         </Field>
       ) : null}
       {platform === "github" && githubAuth === "token" ? (
-        <>
-          <Toggle
-            checked={authOnly}
-            onChange={(v) => setSettings({ ...settings, auth_only: v })}
-            label="只作为认证（不当机器人使用）"
-          />
-          <span className="field-hint">
-            开启后不接收 GitHub 的消息，也不需要 Webhook；这个账号只给获得授权的角色使用 GitHub
-            工具（在角色的权限中按接入设置），例如代替本人提 issue、开 pull request。Token 不交给角色或电脑。
-          </span>
-        </>
+        <Toggle
+          checked={authOnly}
+          onChange={(v) => setSettings({ ...settings, auth_only: v })}
+          label="只作为认证（不当机器人使用）"
+          hint="开启后不接收 GitHub 的消息，也不需要 Webhook；这个账号只给获得授权的角色使用 GitHub 工具（在角色的权限中按接入设置），例如代替本人提 issue、开 pull request。Token 不交给角色或电脑。"
+        />
       ) : null}
       {workspace ? (
         <p className="small muted">

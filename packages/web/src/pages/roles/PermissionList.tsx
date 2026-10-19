@@ -87,12 +87,13 @@ function Choice({
 }
 
 /**
- * A section of the list besides the tool groups (e.g. Feishu tools), shown after the built-in section ``after``;
- * several after the same one keep their order.
+ * A section of the list besides the tool groups (e.g. a connected app's tools), shown after the built-in section
+ * ``after``, or at the end — after every built-in section — without one (apps come and go, so they go last);
+ * several in the same place keep their order.
  */
 export interface ExtraSection {
   key: string;
-  after: string;
+  after?: string;
   label: string;
   hint?: string;
   content: ReactNode;
@@ -271,6 +272,14 @@ export function PermissionList({
             ))}
         </Fragment>
       ))}
+      {extra
+        .filter((x) => !x.after || !sections.some((sec) => sec.key === x.after))
+        .map((x) => (
+          <section key={x.key} className="perm-section">
+            {head(x.label, x.hint)}
+            {x.content}
+          </section>
+        ))}
       <div className="perm-always">
         <span>
           {alwaysTools.length

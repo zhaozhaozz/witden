@@ -187,7 +187,7 @@ function CreateInstanceDialog({
         if (i) onCreated(i);
       }}
     >
-      <Field label="模板">
+      <Field label="模板" hint="虚拟电脑按创建时的模板固定配置；之后修改模板不会静默改变已有的虚拟电脑">
         <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
           {templates.map((t) => (
             <option key={t.id} value={t.id}>
@@ -215,7 +215,6 @@ function CreateInstanceDialog({
         </div>
       </FieldGroup>
       <ResourceFields value={draft} onChange={setDraft} />
-      <p className="small muted">虚拟电脑创建后按模板快照固定配置；之后修改模板不会静默改变已有虚拟电脑。</p>
     </FormModal>
   );
 }

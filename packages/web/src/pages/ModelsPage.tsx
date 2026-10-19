@@ -423,8 +423,8 @@ function ProviderEditor({
       onClose={onClose}
       onSubmit={() => void submit()}
     >
-      <ServiceFields value={value} onChange={setValue} existing={provider} decision />
       {provider ? <p className="small muted">更换地址或密钥后，这个服务商下的模型需要重新检测能力。</p> : null}
+      <ServiceFields value={value} onChange={setValue} existing={provider} decision />
     </FormModal>
   );
 }

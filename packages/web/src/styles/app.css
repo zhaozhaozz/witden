@@ -346,6 +346,16 @@ textarea.prompt {
   color: var(--ink-2);
   cursor: pointer;
 }
+.toggle-with-hint {
+  align-items: flex-start;
+}
+.toggle-with-hint .toggle-track {
+  margin-top: 1px;
+}
+.toggle-text {
+  display: grid;
+  gap: 2px;
+}
 .toggle input {
   position: absolute;
   opacity: 0;
@@ -434,6 +444,13 @@ textarea.prompt {
   min-width: 0;
   flex: 1;
 }
+/* A field's name and its short explanation side by side; a long explanation wraps under the name. */
+.field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
 .field-label {
   font-size: 12.5px;
   font-weight: 600;
@@ -441,6 +458,7 @@ textarea.prompt {
 }
 .field-hint {
   font-size: 12px;
+  font-weight: 400;
   color: var(--ink-3);
 }
 .field-desc {
@@ -451,6 +469,10 @@ textarea.prompt {
 .form-row {
   display: flex;
   gap: 12px;
+}
+/* Fields side by side keep their inputs on one line even when one explanation wraps to two. */
+.form-row > .field {
+  justify-content: flex-end;
 }
 .form-row > .field {
   flex: 1;

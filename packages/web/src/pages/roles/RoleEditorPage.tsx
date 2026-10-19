@@ -618,7 +618,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                       ? [
                           {
                             key: "feishu",
-                            after: "knowledge",
                             label: "飞书",
                             hint: "按飞书应用（公司）分别设置",
                             content: (
@@ -644,7 +643,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                       ? [
                           {
                             key: "github",
-                            after: "knowledge",
                             label: "GitHub",
                             hint: "按 GitHub 接入（账号或 App）分别设置",
                             content: (
@@ -674,7 +672,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
           <Section title="限额">
             <div className="form-row">
-              <Field label="单个任务最多步数" hint="留空使用系统上限">
+              <Field label="每轮最多步数" hint="对话的每一轮、每个任务各算各的；留空用系统上限">
                 <input
                   type="number"
                   min={1}
@@ -682,7 +680,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   onChange={(e) => set("max_steps", e.target.value)}
                 />
               </Field>
-              <Field label="单个任务 token 上限">
+              <Field label="每轮 token 上限" hint="同上；留空不限">
                 <input
                   type="number"
                   min={1}
@@ -690,7 +688,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   onChange={(e) => set("max_tokens_per_task", e.target.value)}
                 />
               </Field>
-              <Field label="每日 token 上限">
+              <Field label="每日 token 上限" hint="这个角色一天的总用量；留空不限">
                 <input
                   type="number"
                   min={1}
@@ -768,7 +766,7 @@ const ALL_FIELD_ZH: Record<string, string> = {
   knowledge_space_ids: "知识空间",
   approval_required: "询问设置",
   max_steps: "步数上限",
-  max_tokens_per_task: "任务 token 上限",
+  max_tokens_per_task: "每轮 token 上限",
   daily_token_limit: "每日 token 上限",
 };
 

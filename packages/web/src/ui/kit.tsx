@@ -313,6 +313,18 @@ export function Tabs({ tabs, value, onChange }: { tabs: TabDef[]; value: string;
 
 // --- forms -----------------------------------------------------------------------------------------
 
+/** A field's name with its short explanation right next to it (wrapping below it when long). */
+function FieldHead({ label, hint, id }: { label: ReactNode; hint?: ReactNode; id?: string }) {
+  return (
+    <span className="field-head">
+      <span className="field-label" id={id}>
+        {label}
+      </span>
+      {hint ? <span className="field-hint">{hint}</span> : null}
+    </span>
+  );
+}
+
 export function Field({
   label,
   description,
@@ -323,16 +335,16 @@ export function Field({
   label: ReactNode;
   /** What to enter and where to find it, shown right above the input. */
   description?: ReactNode;
+  /** A short explanation, shown next to the label. */
   hint?: ReactNode;
   children: ReactNode;
   wide?: boolean;
 }) {
   return (
     <label className={`field${wide ? " field-wide" : ""}`}>
-      <span className="field-label">{label}</span>
+      <FieldHead label={label} hint={hint} />
       {description ? <span className="field-desc">{description}</span> : null}
       {children}
-      {hint ? <span className="field-hint">{hint}</span> : null}
     </label>
   );
 }
@@ -352,11 +364,8 @@ export function FieldGroup({
   const id = useId();
   return (
     <div className={`field${wide ? " field-wide" : ""}`} role="group" aria-labelledby={id}>
-      <span className="field-label" id={id}>
-        {label}
-      </span>
+      <FieldHead label={label} hint={hint} id={id} />
       {children}
-      {hint ? <span className="field-hint">{hint}</span> : null}
     </div>
   );
 }
@@ -413,18 +422,28 @@ export function Toggle({
   checked,
   onChange,
   label,
+  hint,
   disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
+  /** What the switch does, shown right under its label. */
+  hint?: ReactNode;
   disabled?: boolean;
 }) {
   return (
-    <label className="toggle">
+    <label className={`toggle${hint ? " toggle-with-hint" : ""}`}>
       <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span className="toggle-track" aria-hidden />
-      <span>{label}</span>
+      {hint ? (
+        <span className="toggle-text">
+          <span>{label}</span>
+          <span className="field-hint">{hint}</span>
+        </span>
+      ) : (
+        <span>{label}</span>
+      )}
     </label>
   );
 }
