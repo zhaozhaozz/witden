@@ -138,6 +138,20 @@ describe.skipIf(!enabled)("end to end with Docker", () => {
     expect(ready.runner.info.tokenExposed).toBe(false);
   }, 120_000);
 
+  it("installs the computer's software list through the Docker Manager; nobody inside is root", async () => {
+    await api("PATCH", `/api/instances/${instanceId}`, { software: ["hello"] });
+    await api("POST", `/api/instances/${instanceId}/software/install`);
+    const done = await waitFor(async () => {
+      const st = (await api("GET", `/api/instances/${instanceId}`)).software_status;
+      return st && st.state !== "installing" && st;
+    }, 180_000);
+    expect(done, JSON.stringify(done)).toMatchObject({ state: "ok", packages: ["hello"] });
+    const run = async (command: string) =>
+      (await api("POST", `/api/instances/${instanceId}/exec`, { command })).output as string;
+    expect(await run("hello")).toContain("Hello, world!");
+    expect(await run("id -u; command -v sudo || echo no-sudo")).toMatch(/^1000\s+no-sudo/);
+  }, 240_000);
+
   it("a role runs a command on its computer and answers in the topic", async () => {
     const provider = await api("POST", "/api/model-providers", {
       name: `e2e-${suffix}`,
