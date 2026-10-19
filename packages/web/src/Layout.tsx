@@ -424,12 +424,16 @@ function RoleList() {
         const on = !!dm && dm.id === t.activeId;
         const unread = !!dm && t.unread(dm);
         const online = r.instance?.status === "running";
-        // The edit shortcut sits next to the item (a link cannot live inside a button) and shows on hover.
+        // The button covers the whole row (a link cannot live inside a button); the edit shortcut sits before
+        // the markers and only takes room while it shows, so the dot and the computer chip keep their place.
         return (
-          <div key={r.id} className={`side-row${canEdit ? " side-row-edit" : ""}`}>
+          <div
+            key={r.id}
+            className={`nav-item side-item side-row${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
+          >
             <button
               type="button"
-              className={`nav-item side-item${on ? " nav-on" : ""}${unread ? " side-unread" : ""}`}
+              className="side-main"
               title={`与 ${r.name} @${r.handle} 私信${r.instance ? `（虚拟电脑 ${r.instance.name}${online ? "" : "，未运行"}）` : ""}`}
               onClick={() => void run(() => t.openDm(r.id))}
             >
@@ -437,9 +441,6 @@ function RoleList() {
                 <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
               </span>
               <span className="side-label">{r.name}</span>
-              {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
-              {/* At the right edge: the computer it works on, faded when that computer is not running. */}
-              {r.instance ? <ComputerChip computer={r.instance} running={online} /> : null}
             </button>
             {canEdit ? (
               <Link
@@ -451,6 +452,9 @@ function RoleList() {
                 <PencilIcon />
               </Link>
             ) : null}
+            {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+            {/* At the right edge: the computer it works on, faded when that computer is not running. */}
+            {r.instance ? <ComputerChip computer={r.instance} running={online} /> : null}
           </div>
         );
       })}

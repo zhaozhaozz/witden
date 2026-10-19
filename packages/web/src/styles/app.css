@@ -754,13 +754,14 @@ textarea.prompt {
 .mark-chip-off {
   opacity: 0.45;
 }
-/* A connection's roles and computers beside its section title */
+/* A connection's roles and computers beside its section title. The margin ends them on the line where the
+   markers of the rows below end (list padding 12px + item padding 10px). */
 .side-cast {
   display: inline-flex;
   align-items: center;
   gap: 3px;
   flex: none;
-  margin-right: 2px;
+  margin-right: 22px;
   color: var(--ink-3);
 }
 .side-cast-more {
@@ -771,54 +772,75 @@ textarea.prompt {
   display: inline-flex;
   flex: none;
 }
-/* Shortcut buttons on a sidebar item (e.g. edit a role): hidden until the row is hovered or focused. */
-.side-row {
-  position: relative;
+/*
+ * A sidebar row with a shortcut (e.g. edit a role). The row's main button stretches over the whole row, so
+ * the row stays one click target with the shortcut on top of it.
+ */
+.side-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
-/* The edit shortcut takes room only while it shows, so the markers sit at the right edge otherwise. */
-.side-row-edit:hover .side-item,
-.side-row-edit:focus-within .side-item {
-  padding-right: 30px;
-}
-@media (hover: none) {
-  .side-row-edit .side-item {
-    padding-right: 30px;
-  }
-}
-.side-quick {
+.side-main::after {
+  content: "";
   position: absolute;
-  top: 50%;
-  right: 5px;
+  inset: 0;
+  border-radius: var(--radius);
+}
+.side-main:focus-visible {
+  outline: none;
+}
+.side-main:focus-visible::after {
+  outline: 2px solid var(--harbor-2);
+  outline-offset: -2px;
+}
+/*
+ * The shortcut sits before the markers and takes no room while hidden (the negative margin cancels the row's
+ * gap), so the markers never move. It shows on hover or keyboard focus; a mouse click that leaves the focus
+ * on the row does not keep it shown.
+ */
+.side-quick {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 0;
   height: 22px;
+  margin-left: -8px;
+  overflow: hidden;
   border-radius: 4px;
   color: var(--ink-3);
   opacity: 0;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: opacity 0.12s;
 }
 .side-row:hover .side-quick,
-.side-row:focus-within .side-quick {
+.side-quick:focus-visible {
+  width: 22px;
+  margin-left: 0;
   opacity: 1;
-  pointer-events: auto;
+}
+@media (hover: none) {
+  .side-quick {
+    width: 22px;
+    margin-left: 0;
+    opacity: 1;
+  }
 }
 .side-quick:hover {
   background: rgba(23, 33, 43, 0.1);
   color: var(--ink);
   text-decoration: none;
-}
-.side-quick:focus-visible {
-  opacity: 1;
-}
-@media (hover: none) {
-  .side-quick {
-    opacity: 1;
-    pointer-events: auto;
-  }
 }
 .side-empty {
   padding: 2px 10px 6px 30px;
