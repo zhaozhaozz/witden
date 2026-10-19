@@ -703,7 +703,7 @@ export interface KnowledgeSpace {
 
 export interface Memory {
   id: string;
-  scope: "role" | "team" | "topic" | "user";
+  scope: "role" | "team" | "topic";
   role_id: string | null;
   space_id: string | null;
   topic_id: string | null;

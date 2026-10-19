@@ -581,7 +581,7 @@ export const artifacts = pgTable(
 
 export const memories = pgTable("memories", {
   id: id(),
-  scope: text("scope").notNull(), // role | team | topic | user
+  scope: text("scope").notNull(), // role | team | topic (user: private notes, removed by migration 0030)
   roleId: text("role_id"),
   spaceId: text("space_id"),
   topicId: text("topic_id"),

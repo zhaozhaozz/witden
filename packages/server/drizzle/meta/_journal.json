@@ -211,6 +211,13 @@
       "when": 1792396633883,
       "tag": "0029_message_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792399516198,
+      "tag": "0030_drop_private_notes",
+      "breakpoints": true
     }
   ]
 }

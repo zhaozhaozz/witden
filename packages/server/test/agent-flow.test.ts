@@ -84,17 +84,29 @@ describe("permissions and isolation", () => {
   it("DM material stays out of a Slack channel unless its owner approves", async () => {
     await linkChannel(w, w.ids.topic, ["UCAROL"]);
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
-    w.scripts.dev = (_m, turn) =>
-      turn === 0
-        ? reply("", [call("remember", { content: "alice salary is 12345", scope: "private" })])
-        : reply("Noted, kept private.");
-    await w.post(w.alice, dm.id, "my salary is 12345, remember it privately");
+    let refusedScope = "";
+    w.scripts.dev = (m, turn) => {
+      // There are no private notes any more: what is said in a DM is kept as a note of that DM.
+      if (turn === 0) return reply("", [call("remember", { content: "alice salary is 12345", scope: "private" })]);
+      if (turn === 1) {
+        refusedScope = lastToolResult(m);
+        return reply("", [call("remember", { content: "alice salary is 12345" })]);
+      }
+      return reply("Noted, kept in this DM.");
+    };
+    await w.post(w.alice, dm.id, "my salary is 12345, remember it");
     await w.drain();
+    expect(refusedScope).toContain("scope must be topic or role");
 
-    w.scripts.dev = (m, turn) =>
-      turn === 0 ? reply("", [call("recall", { query: "salary" })]) : reply(`What I found: ${lastToolResult(m)}`);
+    let found = "";
+    w.scripts.dev = (m, turn) => {
+      if (turn === 0) return reply("", [call("recall", { query: "salary" })]);
+      found = lastToolResult(m);
+      return reply(`What I found: ${found}`);
+    };
     await w.post(w.alice, w.ids.topic, "@dev what is alice's salary?");
     await w.drain();
+    expect(found).toBe("nothing relevant remembered");
     expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
 
     // A DM stays between its person and its role: no other topic can read it, permission or not.

@@ -180,7 +180,7 @@ describe("system administrator role", () => {
     expect(results[3]).toContain("only a person in the console");
     expect(results[4]).toContain("not a configuration endpoint");
     expect(results[5]).toContain("not a configuration endpoint");
-    expect(results[6]).toContain("private notes are not");
+    expect(results[6]).toContain("topic notes are not");
     expect(results[7]).toContain("must be an /api/");
     const providers = (await w.api("GET", "/api/model-providers", { token: w.adminToken })).body;
     expect(providers.map((p: any) => p.name)).not.toContain("x");
@@ -213,7 +213,7 @@ describe("system administrator role", () => {
     ]);
     expect(results[1]).toContain("Run make check before a release");
     expect(results[2]).toContain("configured by people only");
-    expect(results[3]).toContain("private notes are not");
+    expect(results[3]).toContain("topic notes are not");
     const kept = (await w.api("GET", `/api/memories?scope=role&role_id=${w.ids.dev}`, { token: w.adminToken })).body;
     // written as the person who asked
     expect(kept.map((m: any) => [m.content, m.created_by_id])).toEqual([

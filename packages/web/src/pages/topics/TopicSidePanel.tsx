@@ -485,7 +485,7 @@ function NotesTab({ topic }: { topic: Topic }) {
     <>
       <p className="small muted side-note">
         {topic.kind === "dm"
-          ? "这里的记忆只在这段私信中使用，不会带入其他话题；角色在私信里还会参考你的私密记忆（在个人页查看）。"
+          ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
           : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
       </p>
       {topic.can_post ? (

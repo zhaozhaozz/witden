@@ -5,7 +5,7 @@ import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { knowledgeSpaces, type Memory, memories, roles, topics, type User } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
-import { PUBLIC, spaceLabel, topicLabel, userCanRead, userLabel } from "../security/labels.js";
+import { PUBLIC, spaceLabel, topicLabel, userCanRead } from "../security/labels.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { ROLE_MEMORY_MAX_CHARS } from "../services/role-memory.js";
@@ -19,7 +19,7 @@ async function canReadMemory(db: Db, user: User, m: Memory): Promise<boolean> {
   else if (m.scope === "topic") {
     const [topic] = m.topicId ? await db.select().from(topics).where(eq(topics.id, m.topicId)).limit(1) : [];
     allowed = !!topic && (await topicSvc.canView(db, user, topic));
-  } else if (m.scope === "user") allowed = m.userId === user.id; // private notes: the person themself only
+  }
   // A note is never more visible than the material it was written from.
   return (
     allowed &&
@@ -74,7 +74,6 @@ export async function knowledgeRoutes(app: FastifyInstance) {
       if (q.role_id) conds.push(eq(memories.roleId, q.role_id));
       if (q.space_id) conds.push(eq(memories.spaceId, q.space_id));
       if (q.topic_id) conds.push(eq(memories.topicId, q.topic_id));
-      if (q.scope === "user") conds.push(eq(memories.userId, user.id));
       const out = [];
       for (const m of await db
         .select()
@@ -116,9 +115,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         const topic = await topicSvc.getTopic(db, String(b.topicId ?? ""));
         if (!(await topicSvc.canPost(db, user, topic))) throw new Forbidden("you are not a participant of this topic");
         values = { ...base, scope: "topic", topicId: topic.id, labels: [topicLabel(topic.id)] };
-      } else if (b.scope === "user") {
-        values = { ...base, scope: "user", userId: user.id, labels: [userLabel(user.id)] };
-      } else throw new BadRequest("scope must be team, role, topic or user");
+      } else throw new BadRequest("scope must be team, role or topic");
       const [m] = await db.insert(memories).values(values).returning();
       await audit(db, "memory.create", {
         actorType: "user",
@@ -141,8 +138,7 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         .limit(1);
       if (!m || m.deletedAt) throw new NotFound("memory not found");
       let allowed = false;
-      if (m.scope === "user") allowed = m.userId === user.id;
-      else if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
+      if (m.scope === "team") allowed = await hasPermission(db, user, Perm.KNOWLEDGE_WRITE, m.spaceId);
       else if (m.scope === "role") allowed = await hasPermission(db, user, Perm.ROLE_MANAGE);
       else if (m.scope === "topic" && m.topicId)
         allowed =
@@ -156,20 +152,6 @@ export async function knowledgeRoutes(app: FastifyInstance) {
         detail: { memory: m.id, scope: m.scope },
       });
       return { ok: true };
-    }),
-  );
-
-  app.post(
-    "/api/me/forget",
-    authed(async ({ db, user }) => {
-      // Delete all of my private notes held by any role.
-      const rows = await db
-        .update(memories)
-        .set({ deletedAt: new Date(), content: "" })
-        .where(and(eq(memories.scope, "user"), eq(memories.userId, user.id), isNull(memories.deletedAt)))
-        .returning();
-      await audit(db, "memory.forget_me", { actorType: "user", actorId: user.id, detail: { count: rows.length } });
-      return { deleted: rows.length };
     }),
   );
 }

@@ -18,7 +18,7 @@ import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../integrations/platform-tools.js";
 import { findCredential } from "../security/crypto.js";
-import { type Readers, spaceLabel, topicLabel, userLabel } from "../security/labels.js";
+import { type Readers, spaceLabel, topicLabel } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
@@ -724,8 +724,8 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
 // --- memory and references -----------------------------------------------------------------------------
 
 /**
- * Save a note where it belongs: this topic (or DM), the person who asked (their DMs only), or the role itself
- * (wherever it works; see services/role-memory.ts). The system prompt explains the choice (MEMORY_RULES).
+ * Save a note where it belongs: this topic (or DM), or the role itself (wherever it works; see
+ * services/role-memory.ts). The system prompt explains the choice (MEMORY_RULES).
  */
 async function remember(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const scope = args.scope ?? "topic";
@@ -744,18 +744,10 @@ async function remember(ctx: ToolContext, args: Record<string, any>): Promise<To
     if (scope === "topic") {
       if (await textRestricted(db, task)) {
         throw new Forbidden(
-          "this note draws on material not everyone in the topic may see; use scope 'private' or ask its owner to share it",
+          "this note draws on material not everyone in the topic may see; ask its owner to share it first",
         );
       }
       await db.insert(memories).values({ ...base, scope: "topic", topicId: topic.id, labels: [...task.labels] });
-    } else if (scope === "private") {
-      if (!task.requesterUserId) throw new BadRequest("private memory needs a human requester");
-      await db.insert(memories).values({
-        ...base,
-        scope: "user",
-        userId: task.requesterUserId,
-        labels: [...new Set([...task.labels, userLabel(task.requesterUserId)])],
-      });
     } else if (scope === "role") {
       if (content.length > ROLE_MEMORY_MAX_CHARS)
         throw new BadRequest(`keep a role memory under ${ROLE_MEMORY_MAX_CHARS} characters`);
@@ -763,7 +755,7 @@ async function remember(ctx: ToolContext, args: Record<string, any>): Promise<To
       if (refusal) throw new Forbidden(refusal);
       // No source labels: it is shown wherever the role works, which is what the refusal above checked.
       await db.insert(memories).values({ ...base, scope: "role", labels: [] });
-    } else throw new BadRequest("scope must be topic, private or role");
+    } else throw new BadRequest("scope must be topic or role");
     return { content: `remembered (${scope})` };
   });
 }
@@ -798,15 +790,6 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
         .where(and(live, eq(memories.scope, "team"), eq(memories.spaceId, spaceId)))) {
         rows.push([`team space ${spaceId}`, m]);
       }
-    }
-  }
-  // A person's private notes are only consulted in their own DM.
-  if (requester && topic.kind === "dm" && (await topicSvc.participant(db, topic.id, "user", requester.id))) {
-    for (const m of await db
-      .select()
-      .from(memories)
-      .where(and(live, eq(memories.scope, "user"), eq(memories.userId, requester.id)))) {
-      rows.push([`private notes of ${requester.name}`, m]);
     }
   }
   const hits = (
@@ -1139,8 +1122,8 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "remember",
       "memory",
-      "Save a note. scope 'topic' (default): this topic or DM only. 'private': about the person who asked, used only in their DMs. 'role': your own memory as this role, shown to you wherever you work and possibly to anyone there — only lasting, non-confidential things that hold everywhere. See \"Memory\" in your instructions.",
-      obj({ content: str, scope: { type: "string", enum: ["topic", "private", "role"] } }, ["content"]),
+      "Save a note. scope 'topic' (default): this topic or DM only. 'role': your own memory as this role, shown to you wherever you work and possibly to anyone there — only lasting, non-confidential things that hold everywhere. See \"Memory\" in your instructions.",
+      obj({ content: str, scope: { type: "string", enum: ["topic", "role"] } }, ["content"]),
       remember,
     ),
     spec(

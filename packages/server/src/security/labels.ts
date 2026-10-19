@@ -55,6 +55,7 @@ export function describeReaders(r: Readers): string {
 }
 
 export const topicLabel = (topicId: string) => `topic:${topicId}`;
+/** A person's private notes, which are gone (migration 0030); older tasks and conversations may still carry it. */
 export const userLabel = (userId: string) => `user:${userId}`;
 export const spaceLabel = (spaceId: string) => `space:${spaceId}`;
 /**

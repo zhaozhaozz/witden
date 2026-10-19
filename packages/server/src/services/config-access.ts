@@ -165,7 +165,7 @@ const ENDPOINTS = AREAS.flatMap((a) => a.endpoints).map((e) => ({
   pattern: new RegExp(`^${e.path.replace(/:[a-z_]+/g, "[^/]+")}$`),
 }));
 
-/** Team knowledge and role memory are configuration; topic notes and private notes are conversation material. */
+/** Team knowledge and role memory are configuration; topic notes are conversation material. */
 const MEMORY_SCOPES = new Set(["team", "role"]);
 
 /** Fields that carry a secret. A person enters these in the console; they never pass through a role. */
@@ -294,7 +294,7 @@ async function guard(method: Method, pathname: string, query: URLSearchParams, b
     }
     if (!MEMORY_SCOPES.has(String(scope)))
       throw new Forbidden(
-        "only team knowledge (scope team) and role memory (scope role) are configuration; topic notes and private notes are not",
+        "only team knowledge (scope team) and role memory (scope role) are configuration; topic notes are not",
       );
     if (scope === "role" && method !== "GET" && memoryRoleId) {
       const [role] = await transaction((db) =>

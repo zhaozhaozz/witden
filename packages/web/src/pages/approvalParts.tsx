@@ -172,7 +172,6 @@ export function ApprovalCard({
 function memoryScopeHint(scope: string | undefined): string {
   if (scope === "role")
     return "角色记忆：角色在所有话题、私信以及 Slack、飞书、GitHub 中都会看到，可能出现在与它对话的任何人面前。";
-  if (scope === "private") return "私密记忆：只记给提问人，只在这个人的私信中使用。";
   return "话题记忆：只在这个话题（或这段私信）中使用。";
 }
 

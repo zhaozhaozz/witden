@@ -683,3 +683,28 @@ describe("0028_read_topic_permission", () => {
     await db.close();
   });
 });
+
+describe("0030_drop_private_notes", () => {
+  it("deletes a person's private notes and keeps every other note", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0030")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into memories (id, scope, topic_id, user_id, role_id, space_id, content) values
+        ('mem_topic', 'topic', 'top_a', null, null, null, 'x'),
+        ('mem_user', 'user', null, 'u1', null, null, 'y'),
+        ('mem_role', 'role', null, null, 'role_dev', null, 'z'),
+        ('mem_team', 'team', null, null, null, 'sp1', 'w');
+    `);
+    await apply(db, "0030_drop_private_notes");
+    expect((await db.query("select id from memories order by id")).rows).toEqual([
+      { id: "mem_role" },
+      { id: "mem_team" },
+      { id: "mem_topic" },
+    ]);
+    await db.close();
+  });
+});
