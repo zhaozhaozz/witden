@@ -6,7 +6,7 @@ import type { Task } from "../../api/types";
 import { ACTIVE_TASK_STATUSES, fmtRelative, fmtTime, isRestricted, taskStatus } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
-import { ComputerBadge, Empty, Guarded, Loaded, PageHeader, RoleBadge } from "../../ui/kit";
+import { ComputerBadge, Empty, Guarded, Loaded, PageHeader, RoleBadge, Tag } from "../../ui/kit";
 import { TaskStatusChip } from "./taskParts";
 
 const FILTERS: { key: string; label: string; statuses: string[] }[] = [
@@ -31,6 +31,8 @@ export default function TasksPage() {
   const [filter, setFilter] = useState("active");
   const [mine, setMine] = useState(false);
   const [roleId, setRoleId] = useState("");
+  // The roles' conversations are not tasks; their runs can be listed alongside when wanted.
+  const [conversations, setConversations] = useState(false);
   const statuses = FILTERS.find((f) => f.key === filter)?.statuses ?? [];
   const res = useResource(
     () =>
@@ -38,9 +40,10 @@ export default function TasksPage() {
         status: statuses.length ? statuses.join(",") : undefined,
         mine: mine || undefined,
         role_id: roleId || undefined,
+        kind: conversations ? undefined : "task",
         limit: 300,
       }),
-    [filter, mine, roleId],
+    [filter, mine, roleId, conversations],
   );
   const refresh = useDebounced(() => void res.reload(), 800);
   // Admin stream carries task events from every topic; only people with audit/instance rights may open it.
@@ -52,7 +55,7 @@ export default function TasksPage() {
     <div className="page">
       <PageHeader
         title="任务"
-        sub="每项任务都有请求人、来源话题、负责角色和执行任务的虚拟电脑。点开任务可以看到每一步执行记录和分配依据。"
+        sub="任务是角色单独开展的工作：从对话中拆出的较大工作，或委托给其他角色的工作，各有自己的上下文。角色在话题里的对话不算任务，勾选“包括对话”可一并查看它们的每一轮。点开可以看到每一步执行记录和分配依据。"
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
@@ -87,6 +90,10 @@ export default function TasksPage() {
           <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} />
           我发起的
         </label>
+        <label className="check">
+          <input type="checkbox" checked={conversations} onChange={(e) => setConversations(e.target.checked)} />
+          包括对话
+        </label>
       </div>
       <Loaded res={res}>
         {(rows) =>
@@ -111,7 +118,15 @@ export default function TasksPage() {
                         <Link to={`/tasks/${t.id}`} onClick={(e) => e.stopPropagation()} className="strong">
                           <Guarded text={t.title} label="受限任务" />
                         </Link>
-                        {t.parent_task_id ? <div className="small muted">委托的子任务 · 第 {t.depth} 层</div> : null}
+                        {t.kind === "conversation" ? (
+                          <div className="small muted">
+                            <Tag>对话</Tag> 角色在话题里的一轮工作
+                          </div>
+                        ) : t.parent_task_id ? (
+                          <div className="small muted">委托的子任务 · 第 {t.depth} 层</div>
+                        ) : t.report_session_id ? (
+                          <div className="small muted">结果回到发起它的对话</div>
+                        ) : null}
                         {t.progress && !isRestricted(t.progress) ? (
                           <div className="small task-progress">{t.progress}</div>
                         ) : null}
@@ -145,7 +160,10 @@ export default function TasksPage() {
               </table>
             </div>
           ) : (
-            <Empty title="没有符合条件的任务" hint="在话题中 @ 角色即可创建任务。" />
+            <Empty
+              title="没有符合条件的任务"
+              hint="角色在对话中把较大的工作拆出去、或委托给其他角色时，会出现在这里。"
+            />
           )
         }
       </Loaded>

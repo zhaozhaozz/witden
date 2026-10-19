@@ -2,6 +2,7 @@ import "@fastify/multipart";
 import fs from "node:fs";
 import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { ACTIVE, cancelTree } from "../agent/control.js";
 import { dispatchHumanMessage, messageOut, saveMessage, systemMessage } from "../agent/dispatch.js";
 import { recheckActiveTasks } from "../agent/revocation.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
@@ -30,6 +31,7 @@ import { purgeMessage } from "../services/messages.js";
 import * as svc from "../services/topics.js";
 import { resolveToken } from "../services/users.js";
 import { authed, body, extractToken, params, query, row } from "./http.js";
+import { sessionOut } from "./sessions.js";
 
 const MAX_UPLOAD = 50 * 1024 * 1024;
 
@@ -231,7 +233,10 @@ export async function topicRoutes(app: FastifyInstance) {
       const out = [];
       for (const s of await db.select().from(agentSessions).where(eq(agentSessions.topicId, topic.id))) {
         const [role] = await db.select().from(roles).where(eq(roles.id, s.roleId)).limit(1);
-        out.push({ ...row(s), role: role ? { id: role.id, handle: role.handle, name: role.name } : null });
+        out.push({
+          ...(await sessionOut(db, s)),
+          role: role ? { id: role.id, handle: role.handle, name: role.name } : null,
+        });
       }
       return out;
     }),
@@ -281,7 +286,14 @@ export async function topicRoutes(app: FastifyInstance) {
       const created = await dispatchHumanMessage(db, topic, msg, user);
       return {
         ...messageOut(msg),
-        tasks: created.map((t) => ({ id: t.id, owner_role_id: t.ownerRoleId, status: t.status })),
+        // joined: the role was already working in this conversation and takes the message at its next step.
+        tasks: created.map((t) => ({
+          id: t.id,
+          owner_role_id: t.ownerRoleId,
+          status: t.status,
+          kind: t.kind,
+          joined: t.createdAt < msg.createdAt,
+        })),
       };
     }),
   );
@@ -478,12 +490,31 @@ export async function topicRoutes(app: FastifyInstance) {
           counts.files++;
         }
       }
+      // The roles' conversations here start over: open runs stop, their contexts and inboxes are emptied.
+      for (const t of await db
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.topicId, topic.id), eq(tasks.kind, "conversation"), inArray(tasks.status, [...ACTIVE]))))
+        await cancelTree(db, t, "the topic was cleared");
       // Task transcripts and the roles' session notes contain the same content.
       for (const t of await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.topicId, topic.id))) {
         await db.delete(taskSteps).where(eq(taskSteps.taskId, t.id));
         if (b.messages !== false) await db.update(tasks).set({ result: null }).where(eq(tasks.id, t.id));
       }
-      await db.update(agentSessions).set({ notes: [] }).where(eq(agentSessions.topicId, topic.id));
+      await db
+        .update(agentSessions)
+        .set({
+          notes: [],
+          inbox: [],
+          labels: [],
+          contextFrom: 0,
+          contextTokens: 0,
+          cursorAt: null,
+          roster: null,
+          awaiting: null,
+          wakeAt: null,
+        })
+        .where(eq(agentSessions.topicId, topic.id));
       await audit(db, "topic.cleanup", { actorType: "user", actorId: user.id, topicId: topic.id, detail: counts });
       return counts;
     }),

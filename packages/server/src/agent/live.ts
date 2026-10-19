@@ -47,6 +47,12 @@ export class LiveFeed {
     this.timer ??= setTimeout(() => this.flush(), INTERVAL_MS);
   }
 
+  /** The conversation's context is being summarised (it got long): watchers see the role tidying up. */
+  compacting(): void {
+    this.flush();
+    this.emit({ phase: "compacting" });
+  }
+
   /** The role runs a tool. Only its name is shown, never the arguments. */
   async tool(name: string): Promise<void> {
     this.flush();

@@ -123,6 +123,8 @@ describe("auto mode", () => {
     const { toolsFor } = await import("../src/agent/tools.js");
     expect(toolsFor({ tools: [] }).map((t) => t.name)).not.toContain("stay_silent");
     expect(toolsFor({ tools: [], auto: true }).map((t) => t.name)).toContain("stay_silent");
+    // A conversation keeps one tool list for every turn; the tool itself refuses after an @ (conversation.test.ts).
+    expect(toolsFor({ tools: [], mode: "conversation" }).map((t) => t.name)).toContain("stay_silent");
   });
 
   it("with several roles, the dispatcher hands a message to none, one or several", async () => {

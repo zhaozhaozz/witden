@@ -19,7 +19,8 @@ import { newId } from "../db/ids.js";
 import { type Message, messageRoutes, messages, type Role, type Topic, topics, usageRecords } from "../db/schema.js";
 import * as models from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting } from "../services/platform-settings.js";
-import { activeRoleIds, authorize, createTask, systemMessage } from "./dispatch.js";
+import { enqueue } from "./conversation.js";
+import { activeRoleIds, authorize, systemMessage } from "./dispatch.js";
 import type { Decision, DecisionModel, Question } from "./systemone.js";
 import { authorName } from "./tools.js";
 
@@ -189,17 +190,17 @@ async function apply(db: Db, p: Prepared, chosen: Role[], reason: string): Promi
   const created: string[] = [];
   for (const [role, assignment] of allowed) {
     const trace = [...(assignment.trace ?? []), { step: "dispatcher", detail: reason || "only role in the topic" }];
-    const task = await createTask(db, {
+    // Into the role's conversation, marked as reaching it without an @-mention (it may stay silent).
+    const run = await enqueue(db, {
       topic: p.topic,
       role,
+      item: { kind: "message", message_id: p.msg.id, auto: true },
       requesterUserId: p.userId,
-      instruction: p.msg.content,
       sourceMessage: p.msg,
       assignment: { ...assignment, trace },
-      idempotencyKey: `route:${p.msg.id}:${role.id}`,
-      auto: true,
+      round: p.msg.round,
     });
-    created.push(task.id);
+    if (run) created.push(run.id);
   }
   await db
     .update(messageRoutes)

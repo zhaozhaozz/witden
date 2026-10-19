@@ -24,7 +24,10 @@ import { type HubTransport, memoryTransportPair, type RunnerHub } from "../../sr
 export const TINY_PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
-export type ExecHandler = (command: string) => { exitCode: number; output: string } | undefined;
+/** What a command prints; may take its time (a promise), as a long build would. */
+export type ExecHandler = (
+  command: string,
+) => { exitCode: number; output: string } | undefined | Promise<{ exitCode: number; output: string } | undefined>;
 
 export class FakeComputer {
   files = new Map<string, Buffer>();
@@ -197,7 +200,10 @@ export class FakeComputer {
     switch (req.op) {
       case "exec.run": {
         this.commands.push(p.command);
-        const r = this.execHandler?.(p.command) ?? { exitCode: 0, output: `[${this.spec.name}] ran: ${p.command}` };
+        const r = (await this.execHandler?.(p.command)) ?? {
+          exitCode: 0,
+          output: `[${this.spec.name}] ran: ${p.command}`,
+        };
         return { ...r, timedOut: false, truncated: false, killed: false };
       }
       case "terminal.create":

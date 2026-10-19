@@ -302,7 +302,10 @@ export async function disableRole(db: Db, user: User, role: Role, onTasks: strin
     const target = await getRole(db, reassignTo ?? "");
     if (target.status !== "active") throw new BadRequest("target role is disabled");
     const { reassign } = await import("../agent/tasks-admin.js");
-    for (const t of active) await reassign(db, user, t, target, { byRoleManager: true });
+    // Tasks move to the other role; the role's own conversations end (they are its context, not work items).
+    for (const t of active)
+      if (t.kind === "conversation") await cancelTree(db, t, `@${role.handle} was disabled`);
+      else await reassign(db, user, t, target, { byRoleManager: true });
   } else if (onTasks === "pause") for (const t of active) await pause(db, t, `@${role.handle} was disabled`);
   else throw new BadRequest("on_tasks must be cancel, reassign or pause");
   await db.update(roles).set({ status: "disabled" }).where(eq(roles.id, role.id));

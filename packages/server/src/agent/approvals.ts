@@ -18,10 +18,11 @@ import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { recordSessionNote } from "./context.js";
 import { deferWhilePaused, setStatus, TERMINAL, textRestricted } from "./control.js";
+import { noteRunEnd, settle } from "./conversation.js";
 import { systemMessage } from "./dispatch.js";
 import { discardHeld, releaseApproved } from "./output.js";
 import { notifyParent } from "./runner.js";
-import { appendStep } from "./transcript.js";
+import { appendStep, isConversation } from "./transcript.js";
 
 export async function canDecide(db: Db, user: User, approval: Approval): Promise<boolean> {
   if (!user.isActive) return false;
@@ -43,6 +44,21 @@ export async function canSeeMaterial(db: Db, user: User, approval: Approval): Pr
 async function advance(db: Db, task: Task, status: string, reason: string, wait: Record<string, any> | null) {
   if (task.status === "paused") await deferWhilePaused(db, task, status, reason, wait);
   else await setStatus(db, task, status, reason, { wait });
+}
+
+/**
+ * The final answer was released or withheld: the task ends. A conversation run that got something new while
+ * it waited goes on with it instead.
+ */
+async function endWithAnswer(db: Db, task: Task, result: string, reason: string | null, verdict: string) {
+  if (isConversation(task) && (await settle(db, task))) {
+    await advance(db, task, "pending", `${verdict}; new messages arrived`, null);
+    return;
+  }
+  const done = await setStatus(db, task, "completed", reason, { result });
+  if (isConversation(done)) await noteRunEnd(db, done);
+  else if (!reason && !(await textRestricted(db, done))) await recordSessionNote(db, done, result);
+  await notifyParent(db, done);
 }
 
 export async function decide(db: Db, approval: Approval, user: User, approve: boolean, note = ""): Promise<Approval> {
@@ -102,9 +118,7 @@ async function decideDisclosure(
   if (approve) {
     await releaseApproved(db, approval, task, role, topic);
     if (detail.final) {
-      const done = await setStatus(db, task, "completed", null, { result: detail.content });
-      if (!(await textRestricted(db, done))) await recordSessionNote(db, done, detail.content);
-      await notifyParent(db, done);
+      await endWithAnswer(db, task, detail.content, null, verdict);
       return;
     }
     if (task.wait?.then) {
@@ -125,10 +139,7 @@ async function decideDisclosure(
     taskId: task.id,
   });
   if (detail.final) {
-    const done = await setStatus(db, task, "completed", "answer withheld", {
-      result: "(answer withheld: disclosure rejected)",
-    });
-    await notifyParent(db, done);
+    await endWithAnswer(db, task, "(answer withheld: disclosure rejected)", "answer withheld", verdict);
     return;
   }
   await appendStep(db, task, "tool", {

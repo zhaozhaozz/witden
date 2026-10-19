@@ -85,6 +85,7 @@ export default function TaskDetailPage() {
                   <Link to="/tasks">任务</Link>
                   <span>/</span>
                   <IdText id={t.id} />
+                  {t.kind === "conversation" ? <Tag>对话的一轮</Tag> : null}
                   <span className={`live-dot${live ? " live-on" : ""}`}>{live ? "实时" : "离线"}</span>
                 </span>
               }
@@ -226,7 +227,8 @@ function WaitInfo({ task }: { task: Task }) {
 function TaskSummary({ task: t }: { task: Task }) {
   const dir = useDirectory();
   const { can } = useAuth();
-  const usage = (t.usage ?? {}) as { steps?: number; tokens?: number };
+  const usage = (t.usage ?? {}) as { steps?: number; tokens?: number; cached_tokens?: number };
+  const conversation = t.kind === "conversation";
   const budget = (t.budget ?? {}) as { max_steps?: number; max_tokens?: number };
   return (
     <div className="grid-2">
@@ -281,6 +283,8 @@ function TaskSummary({ task: t }: { task: Task }) {
               "上级任务",
               t.parent_task_id ? (
                 <Link to={`/tasks/${t.parent_task_id}`}>查看上级任务（第 {t.depth} 层委托）</Link>
+              ) : t.spawned_by_task_id && t.report_session_id ? (
+                <Link to={`/tasks/${t.spawned_by_task_id}`}>由对话发起，结果回到那段对话</Link>
               ) : t.spawned_by_task_id ? (
                 <Link to={`/tasks/${t.spawned_by_task_id}`}>由另一项任务发起（不等待本任务结果）</Link>
               ) : null,
@@ -289,7 +293,12 @@ function TaskSummary({ task: t }: { task: Task }) {
               "会话",
               t.session_id ? (
                 <span>
-                  <IdText id={t.session_id} /> <span className="small muted">该角色在这个话题里的会话</span>
+                  <IdText id={t.session_id} />{" "}
+                  <span className="small muted">
+                    {conversation
+                      ? "该角色在这个话题里的对话：上下文从一条消息延续到下一条"
+                      : "该角色在这个话题里的会话"}
+                  </span>
                 </span>
               ) : null,
             ],
@@ -299,21 +308,21 @@ function TaskSummary({ task: t }: { task: Task }) {
             ],
             [
               "用量",
-              `${fmtNumber(usage.steps ?? 0)} 步${budget.max_steps ? ` / 上限 ${budget.max_steps}` : ""}，${fmtNumber(usage.tokens ?? 0)} tokens${
-                budget.max_tokens ? ` / 上限 ${fmtNumber(budget.max_tokens)}` : ""
-              }`,
+              `${fmtNumber(usage.steps ?? 0)} 步${budget.max_steps ? ` / ${conversation ? "每轮" : ""}上限 ${budget.max_steps}` : ""}，${fmtNumber(usage.tokens ?? 0)} tokens${
+                budget.max_tokens ? ` / ${conversation ? "每轮" : ""}上限 ${fmtNumber(budget.max_tokens)}` : ""
+              }${usage.cached_tokens ? `，其中 ${fmtNumber(usage.cached_tokens)} 命中服务的提示缓存` : ""}`,
             ],
           ]}
         />
       </Section>
       <Section title="内容">
-        <div className="text-block-label">任务要求</div>
+        <div className="text-block-label">{t.kind === "conversation" ? "开始这一轮的消息" : "任务要求"}</div>
         <div className="text-block">
           {t.instruction ? <Guarded text={t.instruction} /> : <span className="muted">（无）</span>}
         </div>
         {t.result ? (
           <>
-            <div className="text-block-label">交付结果</div>
+            <div className="text-block-label">{t.kind === "conversation" ? "这一轮的回答" : "交付结果"}</div>
             <div className="text-block text-block-ok">
               <Guarded text={t.result} />
             </div>
@@ -410,6 +419,7 @@ const EVENT_LABEL: Record<string, string> = {
   wait: "等待",
   instance_wait: "等待虚拟电脑",
   transcript_removed: "记录已删除",
+  compaction_failed: "整理上下文失败",
   // events of older tasks
   external_agent_started: "启动外部智能体",
   external_agent_exited: "外部智能体退出",
@@ -437,7 +447,19 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
         let body: ReactNode = null;
         if (s.kind === "user" || s.kind === "system") {
           const c = contentText(p.content);
-          label = s.kind === "system" ? "系统" : c.text.startsWith("Additional instruction") ? "补充要求" : "输入";
+          // A conversation's turns: what was new in the topic, the summary that replaced its earlier part.
+          label =
+            s.kind === "system"
+              ? "系统"
+              : p.summary
+                ? "上下文摘要（之前的内容已压缩）"
+                : p.repeated
+                  ? "新内容（摘要后保留原文）"
+                  : p.inbox
+                    ? "话题里的新内容"
+                    : c.text.startsWith("Additional instruction")
+                      ? "补充要求"
+                      : "输入";
           body = (
             <>
               <Collapsible text={c.text} />

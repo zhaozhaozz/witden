@@ -2756,6 +2756,19 @@ img.avatar-role.avatar-colored {
   gap: 8px;
   margin-bottom: 10px;
 }
+/* The topic panel's work tab: the roles' conversations, then independent tasks. */
+.work-section + .work-section {
+  margin-top: 18px;
+}
+.work-section-title {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.work-section .side-toolbar .work-section-title {
+  margin: 0;
+}
 .side-note {
   margin-bottom: 10px;
 }

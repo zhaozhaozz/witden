@@ -253,13 +253,17 @@ describe("with a database", () => {
         urls.push(url.pathname + url.search);
         expect(new Headers(init?.headers).get("x-api-key")).toBe("sk-secret-value-123456");
         return url.searchParams.get("after_id")
-          ? Response.json({ data: [{ id: "model-b", display_name: "Model B" }], has_more: false })
+          ? Response.json({
+              data: [{ id: "model-b", display_name: "Model B", max_input_tokens: 1_000_000 }],
+              has_more: false,
+            })
           : Response.json({ data: [{ id: "model-a", display_name: "Model A" }], has_more: true, last_id: "model-a" });
       });
       const remote = (await admin("GET", `/api/model-providers/${p.id}/remote-models`)).body;
+      // The context window when the service reports it (Anthropic: max_input_tokens).
       expect(remote.models).toEqual([
-        { id: "model-a", name: "Model A", added: false },
-        { id: "model-b", name: "Model B", added: false },
+        { id: "model-a", name: "Model A", added: false, context_window: null },
+        { id: "model-b", name: "Model B", added: false, context_window: 1_000_000 },
       ]);
       expect(urls).toEqual(["/v1/models?limit=1000", "/v1/models?limit=1000&after_id=model-a"]);
       setFetch(async () => new Response("invalid x-api-key", { status: 401 }));
@@ -397,11 +401,14 @@ describe("model protocols", () => {
     const body = seen.body;
     expect(seen.url).toBe("https://api.anthropic.com/v1/messages");
     expect(seen.headers["x-api-key"]).toBe("sk-ant-test-123456789012");
-    expect(body.system).toBe("You are @dev");
+    // Cache breakpoints after the system prompt and on the last block: the next call reads both from the cache.
+    expect(body.system).toEqual([{ type: "text", text: "You are @dev", cache_control: { type: "ephemeral" } }]);
     expect(body.tools[0].input_schema).toEqual(TOOLS[0].parameters);
     expect(body.messages.map((m: any) => m.role)).toEqual(["user", "assistant", "user"]);
     const results = body.messages[2].content;
     expect(results.map((r: any) => r.tool_use_id)).toEqual(["a1", "a2"]);
+    expect(results[1].cache_control).toEqual({ type: "ephemeral" });
+    expect(results[0].cache_control).toBeUndefined();
     expect(results[0].content[1].type).toBe("image");
     expect(body.messages[1].content[1]).toEqual({
       type: "tool_use",
@@ -411,6 +418,45 @@ describe("model protocols", () => {
     });
     expect(res.content).toBe("looking");
     expect(res.toolCalls[0].arguments).toEqual({ command: "ls" });
+  });
+
+  it("Anthropic: prompt tokens include what the cache served; a gateway that rejects cache_control is asked again without", async () => {
+    const bodies: any[] = [];
+    setFetch(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (JSON.stringify(body).includes("cache_control"))
+        return new Response('{"error":"Extra inputs are not permitted: cache_control"}', { status: 400 });
+      return Response.json({
+        content: [{ type: "text", text: "ok" }],
+        usage: { input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 300, output_tokens: 4 },
+      });
+    });
+    const model = new AnthropicModel("https://gw.example", "claude-x", null, {});
+    const res = await model.complete([
+      { role: "system", content: "sys" },
+      { role: "user", content: "hi" },
+    ]);
+    expect([res.promptTokens, res.cachedTokens, res.completionTokens]).toEqual([330, 300, 4]);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1].system).toBe("sys");
+    expect(bodies[1].messages).toEqual([{ role: "user", content: "hi" }]);
+    // Not asked with cache_control again.
+    await model.complete([{ role: "user", content: "again" }]);
+    expect(bodies).toHaveLength(3);
+  });
+
+  it("OpenAI-compatible: cached prompt tokens from prompt_tokens_details or DeepSeek's field", async () => {
+    for (const usage of [
+      { prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 64 } },
+      { prompt_tokens: 100, completion_tokens: 5, prompt_cache_hit_tokens: 64, prompt_cache_miss_tokens: 36 },
+    ]) {
+      setFetch(async () => Response.json({ choices: [{ message: { content: "ok" } }], usage }));
+      const res = await new OpenAICompatibleModel("http://llm/v1", "m", null, {}).complete([
+        { role: "user", content: "x" },
+      ]);
+      expect([res.promptTokens, res.cachedTokens]).toEqual([100, 64]);
+    }
   });
 
   /** An event-stream response delivered in awkward pieces (split mid-line and mid-character). */

@@ -4,28 +4,55 @@
  * The loop runs in the worker, outside every computer. Each step is persisted so a task survives restarts;
  * computer operations go through the execution gateway. Database transactions stay short: model calls and
  * computer operations happen outside them.
+ *
+ * A conversation run (agent/conversation.ts) works on its session's context: before each model call it takes
+ * in what arrived meanwhile, it compacts the context when it reaches the model's threshold, and instead of
+ * ending it carries on while something new is waiting.
  */
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { GatewayClient, RecoverResult } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { approvals, messages, roles, type Task, tasks, topics, usageRecords } from "../db/schema.js";
+import {
+  agentSessions,
+  approvals,
+  messages,
+  type Role,
+  roles,
+  type Task,
+  type Topic,
+  taskSteps,
+  tasks,
+  topics,
+  usageRecords,
+} from "../db/schema.js";
 import { InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
 import { redact } from "../security/crypto.js";
 import { Perm, usersWithPermission } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { contextLimits } from "../services/context-window.js";
 import * as models from "../services/model-configs.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL, textRestricted } from "./control.js";
+import {
+  addSessionLabels,
+  COMPACT_PROMPT,
+  inject,
+  lastBatchExplicit,
+  needsCompaction,
+  noteRunEnd,
+  saveSummary,
+  settle,
+} from "./conversation.js";
 import { systemMessage } from "./dispatch.js";
 import { LiveFeed, type LiveTarget } from "./live.js";
 import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
 import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
-import { appendStep, loadTranscript } from "./transcript.js";
+import { appendStep, isConversation, loadTranscript } from "./transcript.js";
 
 interface Prepared {
   model: ChatModel;
@@ -35,7 +62,46 @@ interface Prepared {
   live: LiveTarget;
   /** Whether the answer may be streamed into the topic while it is written (see textRestricted). */
   showText: boolean;
+  conversation: boolean;
+  /** The conversation's context reached its threshold: summarise it before going on. */
+  compact?: boolean;
+  /** The conversation has nothing new and nothing left to do: the run ends without a model call. */
+  idle?: boolean;
 }
+
+/** Roughly four characters a token; an image counts as about a thousand. */
+function estimateTokens(messages: ChatMessage[], response: LLMResponse): number {
+  let chars = response.content.length + JSON.stringify(response.toolCalls).length;
+  let images = 0;
+  for (const m of messages) {
+    if (typeof m.content === "string") chars += m.content.length;
+    else
+      for (const part of m.content) {
+        if (part.type === "text") chars += part.text.length;
+        else images++;
+      }
+    if (m.tool_calls) chars += JSON.stringify(m.tool_calls).length;
+  }
+  return Math.ceil(chars / 4) + images * 1000;
+}
+
+/** The context could not be summarised at all (every part was too long for the model). */
+const TOO_LONG =
+  "(The earlier part of this conversation was too long for the model to summarise and has been cleared. Read the topic with topic_history if you need it.)";
+
+/** The whole context, then its later half and quarter — each starting at a user turn, as a context must. */
+function laterParts(context: ChatMessage[]): ChatMessage[][] {
+  const parts = [context];
+  for (const share of [0.5, 0.75]) {
+    const at = context.findIndex((m, i) => i >= Math.floor(context.length * share) && m.role === "user");
+    if (at > 0 && at < context.length) parts.push(context.slice(at));
+  }
+  return parts;
+}
+
+/** A model service refusing a request for being longer than its context window. */
+const OVERFLOW =
+  /context[^.]{0,40}(length|window|limit)|prompt is too long|too many tokens|maximum[^.]{0,40}tokens|exceeds?[^.]{0,40}(context|tokens)/i;
 
 export class TaskRunner {
   constructor(private readonly gateway: GatewayClient) {}
@@ -48,9 +114,21 @@ export class TaskRunner {
       if (!(await this.recoverInterrupted(taskId))) return;
       const retry = await this.takeRetry(taskId);
       if (retry && !(await this.execute(taskId, retry))) return;
+      // A failed compaction is not tried again in this pass, and a refused (too long) request is compacted and
+      // retried once: neither can loop.
+      let mayCompact = true;
+      let overflowRetried = false;
       for (;;) {
-        const prepared = await this.prepare(taskId);
+        const prepared = await this.prepare(taskId, mayCompact);
         if (!prepared) return;
+        if (prepared.idle) {
+          await this.finishIdle(taskId);
+          return;
+        }
+        if (prepared.compact) {
+          if (!(await this.compact(taskId, prepared))) mayCompact = false;
+          continue;
+        }
         const feed = new LiveFeed(prepared.live, prepared.showText);
         feed.thinking();
         let response: LLMResponse;
@@ -63,6 +141,11 @@ export class TaskRunner {
         } catch (err) {
           if (err instanceof WitdenError) {
             await feed.close();
+            // Longer than the window after all (the threshold was set too high): summarise and try again once.
+            if (prepared.conversation && !overflowRetried && OVERFLOW.test(err.message)) {
+              overflowRetried = true;
+              if (await this.compact(taskId, prepared, true)) continue;
+            }
             await this.fail(taskId, `model error: ${err.message}`);
             return;
           }
@@ -72,7 +155,8 @@ export class TaskRunner {
         const calls = await this.record(taskId, prepared, response);
         if (calls === null) return;
         if (!calls.length) {
-          await this.finish(taskId, response.content);
+          // A conversation that got new messages while answering goes on with them.
+          if (await this.finish(taskId, response.content)) continue;
           return;
         }
         for (const call of calls) {
@@ -173,20 +257,14 @@ export class TaskRunner {
 
   // --- steps --------------------------------------------------------------------------------------------
 
-  private prepare(taskId: string): Promise<Prepared | null> {
+  private prepare(taskId: string, mayCompact = true): Promise<Prepared | null> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      let task = await getTask(tx, taskId);
       if (task?.status !== "running") return null;
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
       if (!role || !topic || !(await this.gate(tx, task))) return null;
-      const budget = task.budget ?? {};
-      const usage = task.usage ?? {};
-      const s = settings();
-      if ((usage.steps ?? 0) >= (budget.max_steps ?? s.maxTaskSteps))
-        return this.failIn(tx, task, "step budget exhausted before the work was finished");
-      if (budget.max_tokens && (usage.tokens ?? 0) >= budget.max_tokens)
-        return this.failIn(tx, task, "token budget exhausted before the work was finished");
+      const conversation = isConversation(task);
       const found = await models.modelWithProvider(tx, task.roleSnapshot.model_config_id ?? role.modelConfigId);
       if (!found) return this.failIn(tx, task, "no model configured for this role");
       const cfg = found.model;
@@ -211,21 +289,121 @@ export class TaskRunner {
         return this.failIn(tx, task, (err as Error).message);
       }
       const initial = await initialMessages(tx, task, role, topic);
-      let transcript = await loadTranscript(tx, task);
-      if (!transcript.length) {
-        await appendStep(tx, task, "user", { content: initial[1].content });
-        transcript = await loadTranscript(tx, task);
-      }
       // A model that cannot call tools can still answer in text.
       const specs = cfg.capabilities?.tools === false ? [] : toolsFor(task.envelope);
-      return {
+      const tools = specs.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
+      const base = {
         model,
-        messages: [initial[0], ...transcript],
-        tools: specs.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
+        tools,
         modelConfigId: cfg.id,
         live: { task_id: task.id, role_id: task.ownerRoleId, topic_id: task.topicId },
-        showText: !(await textRestricted(tx, task)),
+        conversation,
       };
+      let transcript: ChatMessage[];
+      if (conversation) {
+        // The summary is written from the context as it is, before anything new is added to it.
+        if (mayCompact && (await needsCompaction(tx, task, contextLimits(cfg).compactAt))) {
+          transcript = await loadTranscript(tx, task);
+          return { ...base, messages: [initial[0], ...transcript], showText: false, compact: true };
+        }
+        const injected = await inject(tx, task, topic, role);
+        task = (await getTask(tx, taskId))!;
+        transcript = await loadTranscript(tx, task);
+        const last = transcript[transcript.length - 1];
+        if (!injected && (!last || (last.role === "assistant" && !last.tool_calls?.length)))
+          return { ...base, messages: [], showText: false, idle: true };
+      } else {
+        transcript = await loadTranscript(tx, task);
+        if (!transcript.length) {
+          await appendStep(tx, task, "user", { content: initial[1].content });
+          transcript = await loadTranscript(tx, task);
+        }
+      }
+      // A conversation's budget counts per turn (each batch of new messages starts a new count).
+      const budget = task.budget ?? {};
+      const usage = task.usage ?? {};
+      const s = settings();
+      const steps = conversation ? (usage.turn_steps ?? 0) : (usage.steps ?? 0);
+      const tokens = conversation ? (usage.turn_tokens ?? 0) : (usage.tokens ?? 0);
+      if (steps >= (budget.max_steps ?? s.maxTaskSteps))
+        return this.failIn(tx, task, "step budget exhausted before the work was finished");
+      if (budget.max_tokens && tokens >= budget.max_tokens)
+        return this.failIn(tx, task, "token budget exhausted before the work was finished");
+      return { ...base, messages: [initial[0], ...transcript], showText: !(await textRestricted(tx, task)) };
+    });
+  }
+
+  /**
+   * The conversation's context reached its threshold: the model summarises it (same prompt start, so the
+   * service can serve it from its cache) and the summary becomes the start of the context. The system
+   * prompt and the tools are not part of it: they are rebuilt for every call.
+   */
+  private async compact(taskId: string, prepared: Prepared, overflow = false): Promise<boolean> {
+    const feed = new LiveFeed(prepared.live, false);
+    feed.compacting();
+    const [system, ...context] = prepared.messages;
+    // After an overflow the latest messages were already added: they stay word for word after the summary,
+    // and only what came before them is summarised.
+    const last = context[context.length - 1];
+    const tail = overflow && last?.role === "user" && typeof last.content === "string" ? last.content : null;
+    const body = tail ? context.slice(0, -1) : context;
+    // Too long even to summarise: summarise the later part only, from a user turn on.
+    const attempts = overflow ? laterParts(body) : [body];
+    const calls: LLMResponse[] = [];
+    let summary = "";
+    for (const part of attempts) {
+      const request: ChatMessage[] = [system, ...part, { role: "user", content: COMPACT_PROMPT }];
+      try {
+        const first = await prepared.model.complete(request, prepared.tools.length ? prepared.tools : undefined);
+        calls.push(first);
+        summary = first.toolCalls.length ? "" : first.content.trim();
+        if (!summary) {
+          // It tried a tool anyway: ask once more without any.
+          const second = await prepared.model.complete(request);
+          calls.push(second);
+          summary = second.content.trim();
+        }
+        break;
+      } catch (err) {
+        if (overflow && err instanceof WitdenError && OVERFLOW.test(err.message)) continue;
+        console.warn(`[witden] compacting the context of ${taskId} failed: ${(err as Error).message}`);
+        break;
+      }
+    }
+    // Rather than stay stuck on a context no request fits into, start it over (the topic keeps everything).
+    if (!summary && overflow) summary = TOO_LONG;
+    await feed.close();
+    return transaction(async (tx) => {
+      const task = await getTask(tx, taskId);
+      if (task?.status !== "running") return false;
+      for (const r of calls) await this.recordUsage(tx, task, prepared.modelConfigId, r);
+      if (!summary) {
+        await appendStep(tx, task, "event", { type: "compaction_failed" });
+        return false;
+      }
+      await saveSummary(tx, task, redact(summary), tail);
+      await audit(tx, "conversation.compact", {
+        actorType: "role",
+        actorId: task.ownerRoleId,
+        taskId,
+        topicId: task.topicId,
+        roleId: task.ownerRoleId,
+        detail: { messages: prepared.messages.length, summary_chars: summary.length },
+      });
+      return true;
+    });
+  }
+
+  private async recordUsage(db: Db, task: Task, modelConfigId: string, response: LLMResponse): Promise<void> {
+    await db.insert(usageRecords).values({
+      id: newId("use"),
+      taskId: task.id,
+      roleId: task.ownerRoleId,
+      instanceId: task.instanceId,
+      modelConfigId,
+      promptTokens: response.promptTokens,
+      completionTokens: response.completionTokens,
+      cachedTokens: response.cachedTokens ?? 0,
     });
   }
 
@@ -233,18 +411,20 @@ export class TaskRunner {
     return transaction(async (tx) => {
       const task = await getTask(tx, taskId);
       if (task?.status !== "running") return null; // cancelled or paused while the model was thinking
-      await tx.insert(usageRecords).values({
-        id: newId("use"),
-        taskId,
-        roleId: task.ownerRoleId,
-        instanceId: task.instanceId,
-        modelConfigId: prepared.modelConfigId,
-        promptTokens: response.promptTokens,
-        completionTokens: response.completionTokens,
-      });
+      await this.recordUsage(tx, task, prepared.modelConfigId, response);
+      const spent = response.promptTokens + response.completionTokens;
       const usage = { ...(task.usage ?? {}) };
       usage.steps = (usage.steps ?? 0) + 1;
-      usage.tokens = (usage.tokens ?? 0) + response.promptTokens + response.completionTokens;
+      usage.tokens = (usage.tokens ?? 0) + spent;
+      usage.cached_tokens = (usage.cached_tokens ?? 0) + (response.cachedTokens ?? 0);
+      if (prepared.conversation) {
+        usage.turn_steps = (usage.turn_steps ?? 0) + 1;
+        usage.turn_tokens = (usage.turn_tokens ?? 0) + spent;
+        // How big the context is now: the next call decides on compaction by it. A service that reports no
+        // usage gets an estimate, or its conversations would never be compacted.
+        const size = response.promptTokens ? spent : estimateTokens(prepared.messages, response);
+        await tx.update(agentSessions).set({ contextTokens: size }).where(eq(agentSessions.id, task.sessionId!));
+      }
       await tx.update(tasks).set({ usage }).where(eq(tasks.id, taskId));
       const payload: Record<string, any> = { content: response.content };
       // Kept for the next request: DeepSeek asks for its reasoning back on later turns that use tools.
@@ -315,6 +495,7 @@ export class TaskRunner {
           toolCallId: call.id,
           gateway: this.gateway,
           db: getDb,
+          mode: isConversation(task) ? "conversation" : "task",
         },
         call.arguments,
       );
@@ -347,6 +528,8 @@ export class TaskRunner {
       if (result.labels?.length) {
         const labels = [...new Set([...fresh.labels, ...result.labels])];
         [current] = await tx.update(tasks).set({ labels }).where(eq(tasks.id, taskId)).returning();
+        // What a conversation read stays in its context, so later runs carry the labels too.
+        if (isConversation(current)) await addSessionLabels(tx, current, labels);
       }
       const content = typeof result.content === "string" ? redact(result.content) : result.content;
       await audit(tx, `tool.${call.name}`, {
@@ -361,7 +544,10 @@ export class TaskRunner {
       if (result.control === "silent") {
         // The role decided the message does not need it: the task ends, nothing is posted.
         await appendStep(tx, current, "tool", { tool_call_id: call.id, name: call.name, content });
+        // A conversation that meanwhile got something new goes on with it.
+        if (isConversation(current) && (await settle(tx, current))) return true;
         const done = await setStatus(tx, current, "completed", "chose not to reply", { result: "" });
+        if (isConversation(done)) await noteRunEnd(tx, done);
         await audit(tx, "task.silent", {
           actorType: "role",
           actorId: current.ownerRoleId,
@@ -396,36 +582,42 @@ export class TaskRunner {
     });
   }
 
-  private finish(taskId: string, content: string): Promise<void> {
+  /**
+   * The model gave its final answer. Returns true when a conversation run goes on instead of ending: something
+   * new arrived while it was answering.
+   */
+  private finish(taskId: string, content: string): Promise<boolean> {
     return transaction(async (tx) => {
       const task = await getTask(tx, taskId);
-      if (task?.status !== "running") return;
+      if (task?.status !== "running") return false;
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
+      const conversation = isConversation(task);
       const said = redact(content.trim());
       // Everything may already have been said with send_message: then the empty final answer posts nothing.
+      // A conversation looks only at what it posted since the latest messages reached it.
+      const since = conversation ? await this.lastInjection(tx, task) : null;
       const [sent] = said
         ? []
         : await tx
             .select({ content: messages.content })
             .from(messages)
-            .where(and(eq(messages.taskId, task.id), eq(messages.authorType, "role")))
+            .where(
+              and(
+                eq(messages.taskId, task.id),
+                eq(messages.authorType, "role"),
+                ...(since ? [gte(messages.createdAt, since)] : []),
+              ),
+            )
             .orderBy(desc(messages.createdAt))
             .limit(1);
-      if (sent) {
-        const done = await setStatus(tx, task, "completed", null, { result: sent.content });
-        if (!(await textRestricted(tx, done))) await recordSessionNote(tx, done, sent.content);
-        await audit(tx, "task.complete", {
-          actorType: "role",
-          actorId: role.id,
-          taskId,
-          topicId: topic.id,
-          roleId: role.id,
-          instanceId: task.instanceId,
-          detail: { steps: task.usage?.steps },
-        });
-        await notifyParent(tx, done);
-        return;
+      // A conversation may end a turn without a word when nobody @-mentioned it (like stay_silent).
+      const quiet = conversation && !said && !sent && !(await lastBatchExplicit(tx, task));
+      // A task started by a conversation reports back to it; nothing is posted for it.
+      const reportOnly = !!task.envelope?.report_only;
+      if (sent || quiet || reportOnly) {
+        const result = sent?.content ?? (reportOnly ? said || "(no answer)" : "");
+        return this.complete(tx, task, role, topic, result);
       }
       const text = said || "(no answer)";
       const delivery = await deliver(tx, task, role, topic, text, { final: true });
@@ -433,21 +625,50 @@ export class TaskRunner {
         await setStatus(tx, task, "waiting_approval", "final answer waiting for disclosure approval", {
           wait: { type: "approval", approval_id: delivery.approval.id },
         });
-        return;
+        return false;
       }
-      const done = await setStatus(tx, task, "completed", null, { result: text });
-      if (!(await textRestricted(tx, done))) await recordSessionNote(tx, done, text);
-      await audit(tx, "task.complete", {
-        actorType: "role",
-        actorId: role.id,
-        taskId,
-        topicId: topic.id,
-        roleId: role.id,
-        instanceId: task.instanceId,
-        detail: { steps: task.usage?.steps },
-      });
-      await notifyParent(tx, done);
+      return this.complete(tx, task, role, topic, text);
     });
+  }
+
+  /** End the run with its result — unless it is a conversation run and something new is waiting. */
+  private async complete(db: Db, task: Task, role: Role, topic: Topic, result: string): Promise<boolean> {
+    if (isConversation(task) && (await settle(db, task))) return true;
+    const done = await setStatus(db, task, "completed", null, { result });
+    if (isConversation(done)) await noteRunEnd(db, done);
+    else if (!(await textRestricted(db, done))) await recordSessionNote(db, done, result);
+    await audit(db, "task.complete", {
+      actorType: "role",
+      actorId: role.id,
+      taskId: task.id,
+      topicId: topic.id,
+      roleId: role.id,
+      instanceId: task.instanceId,
+      detail: { steps: task.usage?.steps },
+    });
+    await notifyParent(db, done);
+    return false;
+  }
+
+  /** Nothing new and nothing left to do (the inbox was taken by an earlier pass): end without a model call. */
+  private finishIdle(taskId: string): Promise<void> {
+    return transaction(async (tx) => {
+      const task = await getTask(tx, taskId);
+      if (task?.status !== "running") return;
+      const done = await setStatus(tx, task, "completed", "nothing new", { result: task.result ?? "" });
+      await noteRunEnd(tx, done);
+    });
+  }
+
+  /** When the latest batch of new messages reached this run. */
+  private async lastInjection(db: Db, task: Task): Promise<Date | null> {
+    const [step] = await db
+      .select({ at: taskSteps.createdAt })
+      .from(taskSteps)
+      .where(and(eq(taskSteps.taskId, task.id), eq(taskSteps.kind, "user")))
+      .orderBy(desc(taskSteps.seq))
+      .limit(1);
+    return step?.at ?? null;
   }
 
   // --- helpers ----------------------------------------------------------------------------------------
@@ -464,7 +685,10 @@ export class TaskRunner {
     const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
     const [role] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
     if (topic) {
-      await systemMessage(db, topic, `Task by @${role?.handle ?? "?"} failed: ${reason}`, {
+      const what = isConversation(task)
+        ? `@${role?.handle ?? "?"} stopped working`
+        : `Task by @${role?.handle ?? "?"} failed`;
+      await systemMessage(db, topic, `${what}: ${reason}`, {
         taskId: task.id,
         mentions: task.requesterUserId ? [{ type: "user", id: task.requesterUserId }] : [],
       });

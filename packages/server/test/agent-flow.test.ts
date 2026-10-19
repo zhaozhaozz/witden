@@ -1,6 +1,6 @@
 /** End-to-end behaviour of AI roles, mapped to the product's acceptance scenarios. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { call, lastToolResult, reply } from "./support/harness.js";
+import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -15,12 +15,14 @@ afterEach(async () => {
 describe("agent flow", () => {
   it("dev and test collaborate on one computer", async () => {
     w.scripts.dev = (messages, turn) => {
+      // The delegate's result comes back to dev's conversation as something new.
+      if (lastUser(messages).includes("@test's task")) return reply(`Built and tested: ${lastUser(messages)}`);
       if (turn === 0) return reply("", [call("run_command", { command: "make build" })]);
       if (turn === 1)
         return reply("", [
           call("delegate_task", { role: "test", task: "Run the test suite", expected_output: "pass or fail" }),
         ]);
-      return reply(`Built and tested. ${lastToolResult(messages)}`);
+      return reply("Built; @test is running the tests.");
     };
     w.scripts.test = (messages, turn) => {
       if (turn === 0) {
@@ -30,32 +32,40 @@ describe("agent flow", () => {
       return reply("All 42 tests passed");
     };
     const posted = await w.post(w.alice, w.ids.topic, "@dev please build the release and get it tested");
-    expect(posted.tasks.map((t: any) => t.owner_role_id)).toEqual([w.ids.dev]);
+    expect(posted.tasks.map((t: any) => [t.owner_role_id, t.kind])).toEqual([[w.ids.dev, "conversation"]]);
     await w.drain();
+    // dev did not wait for the delegate: its turn ended, and the delegated task ran on its own
     const task = await w.task(posted.tasks[0].id);
     expect(task.status).toBe("completed");
-    expect(task.result).toContain("All 42 tests passed");
-    expect(task.children[0].status).toBe("completed");
+    expect(task.result).toBe("Built; @test is running the tests.");
+    expect(task.children.map((c: any) => c.status)).toEqual(["completed"]);
+    const child = await w.task(task.children[0].id);
+    expect([child.kind, child.parent_task_id, child.spawned_by_task_id]).toEqual(["task", null, task.id]);
     expect(w.manager.computer(w.ids.instance).commands).toEqual(["make build", "make test"]);
     const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
     expect(texts).toContain("All 42 tests passed");
+    // ... and the result reached dev's conversation, which reported it
+    const report = texts.find((t: string) => t.startsWith("Built and tested"));
+    expect(report).toContain("All 42 tests passed");
     const trace = (await w.api("GET", `/api/tasks/${task.id}/trace`, { token: w.adminToken })).body;
     const actions = trace.audit.map((a: any) => a.action);
     expect(actions).toEqual(expect.arrayContaining(["task.create", "tool.run_command", "task.complete"]));
-    // each role has its own agent session in this topic
+    // dev has its conversation in this topic; the delegated work was a task of its own
     const sessions = (await w.api("GET", `/api/topics/${w.ids.topic}/sessions`, { token: w.alice })).body;
-    expect(sessions.map((s: any) => s.role.handle).sort()).toEqual(["dev", "test"]);
+    expect(sessions.map((s: any) => [s.role.handle, s.runs])).toEqual([["dev", 2]]);
   });
 });
 
 describe("permissions and isolation", () => {
   it("delegation cannot widen permissions", async () => {
     w.scripts.analyst = (m, turn) =>
-      turn === 0
-        ? reply("", [
-            call("delegate_task", { role: "dev", task: "Run rm -rf on the data directory", expected_output: "done" }),
-          ])
-        : reply(lastToolResult(m));
+      lastUser(m).includes("@dev's task")
+        ? reply("dev could not do it")
+        : turn === 0
+          ? reply("", [
+              call("delegate_task", { role: "dev", task: "Run rm -rf on the data directory", expected_output: "done" }),
+            ])
+          : reply(lastToolResult(m));
     w.scripts.dev = (m, turn) =>
       turn === 0
         ? reply("", [call("run_command", { command: "rm -rf /data" })])
@@ -123,22 +133,31 @@ describe("permissions and isolation", () => {
     expect((await w.messages(w.ids.topic, w.bob)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
   });
 
-  it("asks the right person and resumes on their answer", async () => {
-    w.scripts.dev = (m, turn) =>
-      turn === 0
-        ? reply("", [call("ask_human", { question: "Which branch?", people: ["bob"] })])
-        : reply(`Deploying: ${lastToolResult(m)}`);
+  it("asks the right person; their answer reaches the conversation without an @", async () => {
+    let context = "";
+    w.scripts.dev = (m, turn) => {
+      context = lastUser(m);
+      if (context.includes("main please")) return reply("Deploying main");
+      return turn === 0 ? reply("", [call("ask_human", { question: "Which branch?", people: ["bob"] })]) : reply("");
+    };
     const posted = await w.post(w.alice, w.ids.topic, "@dev deploy");
     await w.drain();
+    // A question does not block the conversation: it is posted, and the turn ends.
     const id = posted.tasks[0].id;
-    expect((await w.task(id)).status).toBe("waiting_human");
-    await w.post(w.alice, w.ids.topic, "not me, bob decides");
-    expect((await w.task(id)).status).toBe("waiting_human");
-    await w.post(w.bob, w.ids.topic, "main please");
+    expect((await w.task(id)).status).toBe("completed");
+    const asked = (await w.messages(w.ids.topic)).at(-1);
+    expect([asked.content, asked.mentions]).toEqual(["@bob Which branch?", [{ type: "user", id: w.ids.bob }]]);
+    // Someone else talking (no @) does not wake dev; bob's answer does.
+    expect((await w.post(w.alice, w.ids.topic, "not me, bob decides")).tasks).toEqual([]);
+    const answer = await w.post(w.bob, w.ids.topic, "main please");
+    expect(answer.tasks.map((t: any) => t.owner_role_id)).toEqual([w.ids.dev]);
     await w.drain();
-    const task = await w.task(id);
-    expect(task.status).toBe("completed");
-    expect(task.result).toContain("bob replied: main please");
+    expect((await w.messages(w.ids.topic)).at(-1).content).toBe("Deploying main");
+    // Both messages are in its context; only bob's is marked as one for dev.
+    expect(context).toContain("alice: not me, bob decides");
+    expect(context).toContain("bob → you: main please");
+    // Once answered, bob's next words are not taken as an answer again.
+    expect((await w.post(w.bob, w.ids.topic, "thanks")).tasks).toEqual([]);
   });
 
   it("role ping-pong is bounded", async () => {
@@ -367,27 +386,33 @@ describe("sessions and data lifecycle", () => {
     expect(brief).toContain("the launch date is March 3");
   });
 
-  it("each topic has its own agent session for a role", async () => {
+  it("each topic has its own conversation for a role, continued from one message to the next", async () => {
     const other = (
       await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Other project", role_ids: [w.ids.dev] } })
     ).body;
     w.scripts.dev = () => reply("the launch code is 4242");
     await w.post(w.alice, w.ids.topic, "@dev what is the launch code?");
     await w.drain();
-    let seen = "";
+    let seen: any[] = [];
     w.scripts.dev = (m) => {
-      seen = String(m[1].content);
+      seen = m;
       return reply("ok");
     };
     await w.post(w.alice, other.id, "@dev anything to report?");
     await w.drain();
-    expect(seen).not.toContain("4242");
+    expect(JSON.stringify(seen)).not.toContain("4242");
     await w.post(w.alice, w.ids.topic, "@dev and again?");
     await w.drain();
-    expect(seen).toContain("Your earlier work in this topic");
-    expect(seen).toContain("4242");
+    // The same context: the earlier question and dev's own answer, then what is new.
+    expect(seen.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
+    expect(seen[2].content).toBe("the launch code is 4242");
+    expect(seen[3].content).toContain("New in this topic since you last looked");
+    expect(seen[3].content).toContain("alice → you: @dev and again?");
+    // its own answer is in the context already, not repeated among the new messages
+    expect(seen[3].content).not.toContain("4242");
     const sessions = (await w.api("GET", `/api/roles/${w.ids.dev}/sessions`, { token: w.alice })).body;
     expect(sessions.length).toBe(2);
+    expect(sessions.find((s: any) => s.topic.id === w.ids.topic).runs).toBe(2);
   });
 
   it("deleting a message removes derived memory and the work it started", async () => {
@@ -416,27 +441,42 @@ describe("sessions and data lifecycle", () => {
     ).not.toContain("4242");
   });
 
-  it("follow_up_later resumes on time", async () => {
-    w.scripts.dev = (m, turn) =>
-      turn === 0
+  it("follow_up_later reminds the conversation on time; it is free meanwhile", async () => {
+    w.scripts.dev = (m, turn) => {
+      const last = lastUser(m);
+      if (last.includes("Follow-up you scheduled"))
+        return reply(`checked: ${last.split("\n\n").find((p) => p.startsWith("Follow-up"))}`);
+      if (last.includes("how is it going")) return reply("waiting for the build");
+      return turn === 0
         ? reply("", [call("follow_up_later", { minutes: 30, reason: "check the nightly build" })])
-        : reply(`checked: ${lastToolResult(m)}`);
+        : reply("I will check it tonight.");
+    };
     const posted = await w.post(w.alice, w.ids.topic, "@dev check the build tonight");
     await w.drain();
-    const id = posted.tasks[0].id;
-    expect((await w.task(id)).status).toBe("waiting_timer");
-    const { db } = await import("../src/db/client.js");
-    const { tasks } = await import("../src/db/schema.js");
-    const { eq } = await import("drizzle-orm");
-    const [t] = await db().select().from(tasks).where(eq(tasks.id, id));
-    await db()
-      .update(tasks)
-      .set({ wait: { ...t.wait, until: new Date(Date.now() - 1000).toISOString() } })
-      .where(eq(tasks.id, id));
+    expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
+    // Not waiting on a timer: a message meanwhile gets an answer right away.
+    await w.post(w.alice, w.ids.topic, "@dev how is it going?");
     await w.drain();
-    const task = await w.task(id);
-    expect(task.status).toBe("completed");
-    expect(task.result).toContain("check the nightly build");
+    expect((await w.messages(w.ids.topic)).at(-1).content).toBe("waiting for the build");
+    const { db } = await import("../src/db/client.js");
+    const { agentSessions } = await import("../src/db/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const [s] = await db().select().from(agentSessions).where(eq(agentSessions.topicId, w.ids.topic));
+    expect(s.wakeAt!.getTime()).toBeGreaterThan(Date.now() + 25 * 60_000);
+    const past = new Date(Date.now() - 1000).toISOString();
+    await db()
+      .update(agentSessions)
+      .set({ inbox: s.inbox.map((i) => (i.kind === "timer" ? { ...i, due: past } : i)), wakeAt: new Date(past) })
+      .where(eq(agentSessions.id, s.id));
+    await w.drain();
+    expect((await w.messages(w.ids.topic)).at(-1).content).toBe(
+      "checked: Follow-up you scheduled (" +
+        s.inbox
+          .find((i) => i.kind === "timer")!
+          .at.slice(5, 16)
+          .replace("T", " ") +
+        "): check the nightly build",
+    );
   });
 
   it("explains misconfiguration and unknown mentions", async () => {

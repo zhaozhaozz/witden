@@ -9,6 +9,7 @@ import { saveMessage } from "../src/agent/dispatch.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import {
+  agentSessions,
   connections,
   externalConversations,
   externalIdentities,
@@ -28,7 +29,7 @@ import { socketTiming } from "../src/integrations/slack-socket.js";
 import { secretBox } from "../src/security/crypto.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { saveArtifact } from "../src/services/files.js";
-import { call, reply } from "./support/harness.js";
+import { call, lastUser, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "slack-signing-secret";
@@ -433,7 +434,10 @@ describe("slack", () => {
       .returning();
     expect(stalled).toHaveLength(1);
     expect(await processInbound()).toBe(2);
-    expect(await allTasks()).toHaveLength(2);
+    // Both reach dev's conversation in the channel: the second joins the run the first started.
+    expect(await allTasks()).toHaveLength(1);
+    const [session] = await db().select().from(agentSessions).where(eq(agentSessions.roleId, w.ids.dev));
+    expect(session.inbox.map((i) => i.kind)).toEqual(["message", "message"]);
     expect(await processInbound()).toBe(0);
     const listed = await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken });
     expect(listed.body.map((e: any) => e.status).sort()).toEqual(["dispatched", "dispatched"]);
@@ -452,10 +456,12 @@ describe("slack", () => {
     await settle();
     expect(await allTasks()).toHaveLength(1);
     const topicId = (await allTasks())[0].topicId;
+    await w.drain();
 
     // Bob follows up inside the thread of that message: same topic, the role already working there answers.
     await send(event("<@UBOT> also run the linters", { user: "UBOB", ts: "100.5", thread_ts: "100.1" }));
     await w.waitFor(async () => (await allTasks()).length === 2);
+    await w.drain();
     // A new message straight in the channel: still the same topic, as Slack shows one channel.
     await send(event("<@UBOT> unrelated question", { ts: "200.1" }));
     await w.waitFor(async () => (await allTasks()).length === 3);
@@ -476,6 +482,37 @@ describe("slack", () => {
     const before = slack.posts.length;
     await deliverPending(); // nothing is sent twice
     expect(slack.posts.length).toBe(before);
+  });
+
+  it("messages arriving while the role works join its run; answers go to the latest request's place", async () => {
+    const seen: string[] = [];
+    const pc = w.manager.computer(w.ids.instance);
+    w.scripts.dev = (m, turn) => {
+      seen.push(lastUser(m));
+      // the first request takes a while: while its command runs, two more messages come in
+      if (turn === 0 && lastUser(m).includes("check the build"))
+        return reply("", [call("run_command", { command: "make" })]);
+      return reply(`answered ${seen.length}`);
+    };
+    pc.execHandler = async () => {
+      // Bob writes in the thread while the build runs; the inbound event is handled before the build ends.
+      await send(event("<@UBOT> @dev also the docs", { user: "UBOB", ts: "600.5", thread_ts: "600.1" }));
+      await settle();
+      return { exitCode: 0, output: "built" };
+    };
+    await send(event("<@UBOT> @dev check the build", { ts: "600.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await settle();
+    await w.drain();
+    await deliverPending();
+    // one run: the message from the thread reached it at its next step instead of a second run
+    expect(await allTasks()).toHaveLength(1);
+    expect(seen.at(-1)).toContain("bob → you (in the thread of msg_");
+    expect(seen.at(-1)).toContain("also the docs");
+    // its answer went into that thread
+    const answers = slack.posts.filter((p) => p.text.startsWith("answered"));
+    expect(answers.map((p) => p.thread_ts)).toEqual(["600.1"]);
   });
 
   it("a role can send several messages for one request, read further back, and knows what it answers", async () => {
@@ -513,11 +550,9 @@ describe("slack", () => {
       ["810.1", expect.stringContaining("found it: the deploy on Monday")],
     ]);
     // the role was told who asked, where and in which thread, and saw the thread so far
-    expect(firstPrompt).toContain("The message you are answering:");
-    expect(firstPrompt).toContain("- From: alice");
-    expect(firstPrompt).toMatch(/Slack #c1, as a reply in the thread of msg_/);
-    expect(firstPrompt).toContain("The thread so far:");
-    expect(firstPrompt).toContain("we deploy on Monday");
+    expect(firstPrompt).toMatch(/alice → you \(in the thread of msg_\w+\): @dev when do we deploy\?/);
+    expect(firstPrompt).toMatch(/was posted in Slack #c1, as a reply in the thread of msg_/);
+    expect(firstPrompt).toContain("bob: we deploy on Monday");
     // and it could search the topic
     expect(history).toContain("2 matching message(s)"); // the earlier message and the question itself
     expect(history).toContain("bob: we deploy on Monday");
@@ -586,6 +621,8 @@ describe("slack", () => {
   it("a bot that stands for one role: that role takes everything addressed to it, and speaks as the bot", async () => {
     w.scripts.dev = () => reply("on it");
     await send(event("<@UBOT> can you check the build", { ts: "970.1" }));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
     // naming another role changes nothing: this bot is dev
     await send(event("<@UBOT> role:test run the tests", { ts: "971.1" }));
     await w.waitFor(async () => (await allTasks()).length === 2);
@@ -714,7 +751,9 @@ describe("slack", () => {
   });
 
   it("external members: unlinked people get an account limited to the connection's role; DMs stay apart", async () => {
-    w.scripts.dev = () => reply("", [call("ask_human", { question: "which environment?" })]);
+    // dev's work waits for an approval, so it is still open when the bot's role changes
+    await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
+    w.scripts.dev = (_m, turn) => (turn === 0 ? reply("", [call("run_command", { command: "deploy" })]) : reply("ok"));
     const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
       json: { settings: { auto_provision_users: true, role_id: w.ids.dev } },
@@ -739,7 +778,7 @@ describe("slack", () => {
     expect(pw.status).toBe(400);
     // Giving the bot another role stops her waiting work with the old one at once.
     await w.drain();
-    expect((await allTasks())[0].status).toBe("waiting_human");
+    expect((await allTasks())[0].status).toBe("waiting_approval");
     await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
       json: { settings: { role_id: w.ids.test } },

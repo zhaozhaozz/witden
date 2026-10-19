@@ -7,6 +7,7 @@ import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
 import { ACTIVE, cancelTree, getTask, pause, resume, setStatus, TERMINAL } from "./control.js";
+import { enqueue, openRun } from "./conversation.js";
 import { authorize, buildEnvelope, createTask, systemMessage } from "./dispatch.js";
 import { activeKillSwitch } from "./revocation.js";
 import { appendStep } from "./transcript.js";
@@ -35,12 +36,28 @@ export async function control(db: Db, user: User, task: Task, action: string, no
   } else if (action === "instruct") {
     if (TERMINAL.has(task.status)) throw new BadRequest("task already finished; post a new message instead");
     if (!note.trim()) throw new BadRequest("instruction text is required");
-    // Extra requirements are delivered at the next step (as a user turn in the transcript).
-    await appendStep(db, task, "user", { content: `Additional instruction from ${user.name}: ${note}` });
-    if (task.status === "waiting_human") await setStatus(db, task, "pending", "new instruction", { wait: null });
+    if (task.kind === "conversation") {
+      // Into the conversation's inbox: shown at its next step, between tool calls, never inside one.
+      const topic = await topicSvc.getTopic(db, task.topicId);
+      const role = await topicSvc.getRole(db, task.ownerRoleId);
+      if (role)
+        await enqueue(db, {
+          topic,
+          role,
+          item: { kind: "instruction", note, by: user.name },
+          requesterUserId: user.id,
+        });
+    } else {
+      // Extra requirements are delivered at the next step (as a user turn in the transcript).
+      await appendStep(db, task, "user", { content: `Additional instruction from ${user.name}: ${note}` });
+      if (task.status === "waiting_human") await setStatus(db, task, "pending", "new instruction", { wait: null });
+    }
   } else if (action === "retry") {
     if (!["failed", "cancelled"].includes(task.status))
       throw new BadRequest("only failed or cancelled tasks can be retried");
+    // A conversation goes on with its next message; only one of its runs is open at a time.
+    if (task.kind === "conversation" && task.sessionId && (await openRun(db, task.sessionId)))
+      throw new BadRequest("this conversation is already working again");
     const [reset] = await db
       .update(tasks)
       .set({ status: "pending", finishedAt: null, error: null })
@@ -73,6 +90,8 @@ export async function reassign(
   // Disabling a role (role.manage) moves its work explicitly.
   if (!opts.byRoleManager) await requireControl(db, user, task, "reassign");
   if (!ACTIVE.has(task.status)) throw new BadRequest("only unfinished tasks can be reassigned");
+  // A conversation belongs to its role; @-mention another role in the topic instead.
+  if (task.kind === "conversation") throw new BadRequest("a role's conversation cannot be reassigned; only tasks can");
   const topic = await topicSvc.getTopic(db, task.topicId);
   if (!(await topicSvc.participant(db, topic.id, "role", target.id)))
     await topicSvc.inviteRole(db, user, topic, target.id);

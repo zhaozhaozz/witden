@@ -6,9 +6,10 @@ import { TOOL_LABEL } from "../../lib/format";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 import { type Author, MessageText } from "./MessageItem";
 
-type Phase = "queued" | "thinking" | "writing" | "tool";
+/** compacting: the role's conversation got long and it is summarising its earlier part. */
+type Phase = "queued" | "thinking" | "writing" | "tool" | "compacting";
 
-/** One role at work on one task. */
+/** One role at work: a run of its conversation here, or one of its tasks. */
 interface Activity {
   roleId: string;
   phase: Phase;
@@ -55,7 +56,7 @@ function apply(prev: Activities, type: string, data: Record<string, unknown>): A
       const note = base.phase === "writing" ? base.text : base.note;
       m.set(id, {
         ...base,
-        phase: data.phase === "tool" ? "tool" : "thinking",
+        phase: data.phase === "tool" ? "tool" : data.phase === "compacting" ? "compacting" : "thinking",
         tool: data.tool as string,
         text: "",
         end: 0,
@@ -169,7 +170,14 @@ export function RoleActivity({
 }
 
 function ActivityItem({ activity: a, author }: { activity: Activity; author: Author }) {
-  const status = a.phase === "queued" ? "准备开始" : a.phase === "tool" ? `正在${toolLabel(a.tool)}` : "正在思考";
+  const status =
+    a.phase === "queued"
+      ? "准备开始"
+      : a.phase === "tool"
+        ? `正在${toolLabel(a.tool)}`
+        : a.phase === "compacting"
+          ? "对话较长，正在整理前面的内容"
+          : "正在思考";
   return (
     <div className="msg msg-role msg-live" aria-live="polite" aria-busy="true">
       <div className="msg-gutter">

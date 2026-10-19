@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db, db as getDb } from "../src/db/client.js";
 import { outboundMessages, tasks, users } from "../src/db/schema.js";
-import { call, lastToolResult, reply } from "./support/harness.js";
+import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -126,17 +126,24 @@ describe("control flow", () => {
   });
 
   it("a task-scoped stop covers the whole delegation tree", async () => {
-    const delegateTo = (role: string) => (_m: any, turn: number) =>
-      turn === 0 ? reply("", [call("delegate_task", { role, task: "t", expected_output: "x" })]) : reply("ok");
-    w.scripts.dev = delegateTo("test");
-    w.scripts.test = delegateTo("analyst");
+    // dev's conversation hands work to test (it goes on); test's task waits for analyst's.
+    w.scripts.dev = (m: any, turn: number) =>
+      lastUser(m).includes("@test's task")
+        ? reply("noted")
+        : turn === 0
+          ? reply("", [call("delegate_task", { role: "test", task: "t", expected_output: "x" })])
+          : reply("ok");
+    w.scripts.test = (_m: any, turn: number) =>
+      turn === 0
+        ? reply("", [call("delegate_task", { role: "analyst", task: "t", expected_output: "x" })])
+        : reply("ok");
     w.scripts.analyst = () => reply("analyst ran");
     const root = (await w.post(w.alice, w.ids.topic, "@dev go")).tasks[0].id;
     // run step by step: root, then child, then stop before the grandchild runs
     await w.worker.tick();
-    await w.waitFor(async () => (await w.task(root)).status === "waiting_children");
-    await w.waitFor(async () => (await db().select().from(tasks).where(eq(tasks.parentTaskId, root)))[0]);
-    const [child] = await db().select().from(tasks).where(eq(tasks.parentTaskId, root));
+    await w.waitFor(async () => (await db().select().from(tasks).where(eq(tasks.spawnedByTaskId, root)))[0]);
+    const [child] = await db().select().from(tasks).where(eq(tasks.spawnedByTaskId, root));
+    await w.waitFor(async () => (await w.task(root)).status === "completed");
     await w.worker.tick();
     await w.waitFor(async () => (await db().select().from(tasks).where(eq(tasks.parentTaskId, child.id)))[0]);
     await w.api("POST", "/api/kill-switches", { token: w.adminToken, json: { scope: "task", target_id: root } });
@@ -145,13 +152,28 @@ describe("control flow", () => {
     expect(grandchild.status).toBe("paused");
   });
 
+  /** dev's conversation starts a task of its own; that task works like before: it waits for what it delegates or asks. */
+  const ownTask = (inTask: (m: any, turn: number) => any) => (m: any, turn: number) => {
+    const last = lastUser(m);
+    if (last.includes("Started by your conversation")) return inTask(m, turn);
+    if (last.includes("Your task")) return reply("reported");
+    return turn === 0 ? reply("", [call("start_task", { task: "deploy carefully" })]) : reply("started");
+  };
+  const firstOwnTask = async (run: string) => {
+    await w.waitFor(async () => (await db().select().from(tasks).where(eq(tasks.spawnedByTaskId, run)))[0]);
+    return (await db().select().from(tasks).where(eq(tasks.spawnedByTaskId, run)))[0].id;
+  };
+
   it("parents collect results after a pause", async () => {
-    w.scripts.dev = (_m, turn) =>
+    w.scripts.dev = ownTask((_m, turn) =>
       turn === 0
         ? reply("", [call("delegate_task", { role: "test", task: "t", expected_output: "x" })])
-        : reply("parent finished");
+        : reply("parent finished"),
+    );
     w.scripts.test = () => reply("child ok");
-    const root = (await w.post(w.alice, w.ids.topic, "@dev go")).tasks[0].id;
+    const run = (await w.post(w.alice, w.ids.topic, "@dev go")).tasks[0].id;
+    await w.worker.tick();
+    const root = await firstOwnTask(run);
     await w.worker.tick();
     await w.waitFor(async () => (await w.task(root)).status === "waiting_children");
     const ks = (
@@ -162,13 +184,18 @@ describe("control flow", () => {
     await w.api("POST", `/api/tasks/${root}/control`, { token: w.alice, json: { action: "resume" } });
     await w.drain();
     expect((await w.task(root)).status).toBe("completed");
+    // and its result went back to the conversation that started it
+    expect((await w.messages(w.ids.topic)).at(-1).content).toBe("reported");
   });
 
   it("pausing twice keeps the waiting state", async () => {
-    w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("ask_human", { question: "branch?" })]) : reply("went on");
-    const id = (await w.post(w.alice, w.ids.topic, "@dev deploy")).tasks[0].id;
+    w.scripts.dev = ownTask((_m, turn) =>
+      turn === 0 ? reply("", [call("ask_human", { question: "branch?" })]) : reply("went on"),
+    );
+    const run = (await w.post(w.alice, w.ids.topic, "@dev deploy")).tasks[0].id;
     await w.drain();
+    const id = await firstOwnTask(run);
+    expect((await w.task(id)).status).toBe("waiting_human");
     for (let i = 0; i < 2; i++)
       await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "pause" } });
     await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "resume" } });

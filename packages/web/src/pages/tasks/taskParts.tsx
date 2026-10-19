@@ -23,6 +23,8 @@ interface ControlTarget {
   status: TaskStatus | string;
   owner_role_id: string;
   title?: string;
+  /** A run of a role's conversation: it can be stopped, not handed to another role or retried. */
+  kind?: "conversation" | "task";
 }
 
 /**
@@ -45,6 +47,7 @@ export function TaskControls({
   const [note, setNote] = useState("");
   const [target, setTarget] = useState("");
   const active = isActiveTask(task.status);
+  const conversation = task.kind === "conversation";
   const cls = `btn btn-${size}`;
 
   const control = async (action: string, text = "", success?: string) => {
@@ -72,12 +75,12 @@ export function TaskControls({
           补充要求
         </button>
       ) : null}
-      {active ? (
+      {active && !conversation ? (
         <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
           转交
         </button>
       ) : null}
-      {task.status === "failed" || task.status === "cancelled" ? (
+      {!conversation && (task.status === "failed" || task.status === "cancelled") ? (
         <button type="button" className={cls} disabled={busy} onClick={() => control("retry", "", "已重新排队")}>
           重试
         </button>
@@ -88,17 +91,31 @@ export function TaskControls({
           className={`${cls} btn-danger-ghost`}
           disabled={busy}
           onClick={async () => {
-            const ok = await confirm({
-              title: "取消任务",
-              body: <p>取消后，该任务及其委托出去的子任务都会停止，已产生的结果保留。</p>,
-              confirmLabel: "取消任务",
-              cancelLabel: "返回",
-              danger: true,
-            });
-            if (ok) await control("cancel", "", "任务已取消");
+            const ok = await confirm(
+              conversation
+                ? {
+                    title: "停止这一轮",
+                    body: (
+                      <p>
+                        角色这一轮的工作会停止，还没读到的消息也不再处理；它拆出或委托出去的任务不受影响。之后有人再找它时，对话照常继续。
+                      </p>
+                    ),
+                    confirmLabel: "停止",
+                    cancelLabel: "返回",
+                    danger: true,
+                  }
+                : {
+                    title: "取消任务",
+                    body: <p>取消后，该任务及其委托出去的子任务都会停止，已产生的结果保留。</p>,
+                    confirmLabel: "取消任务",
+                    cancelLabel: "返回",
+                    danger: true,
+                  },
+            );
+            if (ok) await control("cancel", "", conversation ? "已停止" : "任务已取消");
           }}
         >
-          取消
+          {conversation ? "停止" : "取消"}
         </button>
       ) : null}
 
@@ -117,7 +134,14 @@ export function TaskControls({
             }
           }}
         >
-          <Field label="新的要求" hint="作为一条补充指令加入任务记录；如任务正在等待人工答复，会立即继续。">
+          <Field
+            label="新的要求"
+            hint={
+              conversation
+                ? "角色会在下一步读到它（不打断正在执行的操作），和话题里的新消息一样。"
+                : "作为一条补充指令加入任务记录；如任务正在等待人工答复，会立即继续。"
+            }
+          >
             <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} autoFocus />
           </Field>
         </FormModal>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
 import type { ModelConfig, ModelProtocol, ModelProvider } from "../api/types";
-import { fmtLatency, fmtNumber, fmtRelative, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
+import { fmtLatency, fmtNumber, fmtRelative, fmtTokens, genericStatus, SYSTEM_ONE_HINT } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
 import { useChanged, useUnsavedChanges } from "../lib/unsaved";
@@ -29,6 +29,14 @@ import {
   serviceDraft,
   serviceReady,
 } from "./modelParts";
+
+/** Where a model's context window came from (shown on hover, and as the default in the editor). */
+const CONTEXT_SOURCE: Record<string, string> = {
+  model: "在这里设置的值",
+  provider: "服务商报告的值",
+  family: "已知模型的推荐值",
+  default: "未知模型的保守默认值",
+};
 
 const PROTOCOL_LABEL: Record<ModelProtocol, string> = {
   openai: "OpenAI 兼容协议",
@@ -316,6 +324,11 @@ function ModelRow({
             {m.effort.levels.length ? `思考程度：${m.effort.levels.join(" · ")}` : "没有思考程度设置"}
           </div>
         ) : null}
+        {m.context ? (
+          <div className="small muted" title={CONTEXT_SOURCE[m.context.source]}>
+            上下文 {fmtTokens(m.context.window)} · {fmtTokens(m.context.compact_at)} 时整理对话
+          </div>
+        ) : null}
         <div className="small muted">{caps.checked_at ? `${fmtRelative(caps.checked_at)}检测` : "从未检测"}</div>
       </td>
       <td>{m.enabled ? <StatusChip meta={genericStatus(m.status)} compact /> : <Tag>已停用</Tag>}</td>
@@ -468,9 +481,14 @@ function ModelEditor({
     Object.keys(model.params ?? {}).length ? JSON.stringify(model.params, null, 2) : "",
   );
   const [limit, setLimit] = useState(model.daily_token_limit?.toString() ?? "");
+  const [ctxWindow, setCtxWindow] = useState(model.context_window?.toString() ?? "");
+  const [compact, setCompact] = useState(model.compact_tokens?.toString() ?? "");
   const [enabled, setEnabled] = useState(model.enabled);
   const [error, setError] = useState<string | null>(null);
-  const [changed] = useChanged({ name, params, limit, enabled });
+  const [changed] = useChanged({ name, params, limit, ctxWindow, compact, enabled });
+  // What applies when a field is left empty: the provider's report or the recommendation for the model.
+  const effective = model.context;
+  const shownWindow = ctxWindow.trim() ? Number(ctxWindow) : model.context_window ? null : effective?.window;
 
   const submit = async (): Promise<boolean> => {
     let parsed: unknown = {};
@@ -488,6 +506,12 @@ function ModelEditor({
           name: name.trim() || model.model,
           params: parsed,
           daily_token_limit: limit.trim() ? Number(limit) : null,
+          ...(systemOne
+            ? {}
+            : {
+                context_window: ctxWindow.trim() ? Number(ctxWindow) : null,
+                compact_tokens: compact.trim() ? Number(compact) : null,
+              }),
           enabled,
         }),
       "已保存",
@@ -527,6 +551,34 @@ function ModelEditor({
           <input type="number" min={1} value={limit} onChange={(e) => setLimit(e.target.value)} />
         </Field>
       </div>
+      {systemOne ? null : (
+        <div className="form-row">
+          <Field
+            label="上下文长度（tokens）"
+            hint={
+              effective && !model.context_window
+                ? `留空按${CONTEXT_SOURCE[effective.source]}：${fmtNumber(effective.window)}`
+                : "留空按服务商报告或已知模型的推荐值"
+            }
+          >
+            <input
+              type="number"
+              min={1024}
+              value={ctxWindow}
+              placeholder={effective && !model.context_window ? String(effective.window) : ""}
+              onChange={(e) => setCtxWindow(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="整理对话的阈值（tokens）"
+            hint={`角色在一个话题里的对话达到这个大小时，把前面的内容压缩成摘要；留空为上下文长度的 3/4${
+              shownWindow ? `（${fmtNumber(Math.floor(shownWindow * 0.75))}）` : ""
+            }`}
+          >
+            <input type="number" min={1024} value={compact} onChange={(e) => setCompact(e.target.value)} />
+          </Field>
+        </div>
+      )}
       <Toggle
         checked={enabled}
         onChange={setEnabled}

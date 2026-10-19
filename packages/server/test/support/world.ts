@@ -3,14 +3,14 @@
  * account), three roles, one shared computer, and a topic with all of them. People outside the console are
  * Slack / Feishu members (see test/support/outside.ts).
  */
-import type { ChatMessage, LLMResponse } from "../../src/agent/llm.js";
+import type { ChatMessage, LLMResponse, ToolSchema } from "../../src/agent/llm.js";
 import { type Harness, reply, type Script, startHarness, turnOf, useScripts } from "./harness.js";
 
 export interface World extends Harness {
   alice: string;
   bob: string;
   ids: Record<string, string>;
-  scripts: Record<string, (messages: ChatMessage[], turn: number) => LLMResponse>;
+  scripts: Record<string, (messages: ChatMessage[], turn: number, tools?: ToolSchema[]) => LLMResponse>;
   post(token: string, topicId: string, content: string): Promise<any>;
   messages(topicId: string, token?: string): Promise<any[]>;
   task(id: string, token?: string): Promise<any>;
@@ -20,7 +20,7 @@ export async function buildWorld(): Promise<World> {
   const h = await startHarness();
   const scripts: World["scripts"] = {};
   useScripts((handle): Script | undefined =>
-    scripts[handle] ? (messages) => scripts[handle](messages, turnOf(messages)) : undefined,
+    scripts[handle] ? (messages, tools) => scripts[handle](messages, turnOf(messages), tools) : undefined,
   );
   const admin = h.adminToken;
   const must = async (p: Promise<{ status: number; body: any; raw: string }>) => {

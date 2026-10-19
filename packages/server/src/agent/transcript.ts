@@ -1,8 +1,14 @@
-/** Persistent, resumable task transcript (also the execution log shown to observers). */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+/**
+ * Persistent, resumable transcripts (also the execution log shown to observers).
+ *
+ * A task's model context is its own steps. A conversation run's context is its session's: the steps of all
+ * its runs in order (session_seq), from where the session's context starts (the beginning, a compaction
+ * summary, or a reset).
+ */
+import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { type Task, taskSteps } from "../db/schema.js";
+import { agentSessions, type Task, taskSteps } from "../db/schema.js";
 import { redactDeep } from "../security/crypto.js";
 import { publish } from "../services/events.js";
 import type { ChatMessage } from "./llm.js";
@@ -17,13 +23,28 @@ function preview(payload: Record<string, any>): Record<string, any> {
   return out;
 }
 
+export const isConversation = (task: Pick<Task, "kind" | "sessionId">) =>
+  task.kind === "conversation" && !!task.sessionId;
+
+/** The next place in a session's context (only one run of a session appends at a time). */
+export async function nextSessionSeq(db: Db, sessionId: string): Promise<number> {
+  const [{ max }] = await db
+    .select({ max: sql<number>`coalesce(max(${taskSteps.sessionSeq}), 0)::int` })
+    .from(taskSteps)
+    .where(eq(taskSteps.sessionId, sessionId));
+  return Number(max) + 1;
+}
+
 export async function appendStep(db: Db, task: Task, kind: string, payload: Record<string, any>): Promise<number> {
   const [{ max }] = await db
     .select({ max: sql<number>`coalesce(max(${taskSteps.seq}), 0)::int` })
     .from(taskSteps)
     .where(eq(taskSteps.taskId, task.id));
   const seq = Number(max) + 1;
-  await db.insert(taskSteps).values({ id: newId("step"), taskId: task.id, seq, kind, payload });
+  const session = isConversation(task)
+    ? { sessionId: task.sessionId, sessionSeq: await nextSessionSeq(db, task.sessionId!) }
+    : {};
+  await db.insert(taskSteps).values({ id: newId("step"), taskId: task.id, seq, kind, payload, ...session });
   // Only subscribers allowed to read everything the task read receive step previews (checked per event).
   await publish(
     db,
@@ -34,13 +55,31 @@ export async function appendStep(db: Db, task: Task, kind: string, payload: Reco
   return seq;
 }
 
-/** Rebuild chat messages; screenshots older than the latest one are dropped to save tokens. */
-export async function loadTranscript(db: Db, task: Task): Promise<ChatMessage[]> {
-  const steps = await db
+/** The steps that make up the model context: the task's own, or its conversation's from the context start. */
+async function contextSteps(db: Db, task: Task) {
+  if (!isConversation(task))
+    return db
+      .select()
+      .from(taskSteps)
+      .where(and(eq(taskSteps.taskId, task.id), inArray(taskSteps.kind, TRANSCRIPT_KINDS)))
+      .orderBy(asc(taskSteps.seq));
+  const [session] = await db.select().from(agentSessions).where(eq(agentSessions.id, task.sessionId!)).limit(1);
+  return db
     .select()
     .from(taskSteps)
-    .where(and(eq(taskSteps.taskId, task.id), inArray(taskSteps.kind, TRANSCRIPT_KINDS)))
-    .orderBy(asc(taskSteps.seq));
+    .where(
+      and(
+        eq(taskSteps.sessionId, task.sessionId!),
+        gte(taskSteps.sessionSeq, session?.contextFrom ?? 0),
+        inArray(taskSteps.kind, TRANSCRIPT_KINDS),
+      ),
+    )
+    .orderBy(asc(taskSteps.sessionSeq));
+}
+
+/** Rebuild chat messages; screenshots older than the latest one are dropped to save tokens. */
+export async function loadTranscript(db: Db, task: Task): Promise<ChatMessage[]> {
+  const steps = await contextSteps(db, task);
   const messages: ChatMessage[] = steps.map((s) => {
     const p = s.payload;
     if (s.kind === "assistant") {

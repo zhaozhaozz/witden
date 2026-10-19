@@ -1,6 +1,12 @@
 /**
- * What a role sees when it works on a task: its job description, its agent session in *this* topic (notes
- * from earlier runs whose results were delivered here), recent topic messages it may read, and the brief.
+ * What a role sees when it works.
+ *
+ * - In its main conversation in a topic (a conversation run): a system prompt that stays the same from one
+ *   message to the next (who it is, where, how witden works), then the conversation's own context — what
+ *   was new in the topic each time (agent/conversation.ts), its answers and tool calls, or a summary of the
+ *   earlier part. Keeping the start identical lets model services reuse their prompt cache.
+ * - In an independent task: the same kind of system prompt plus who asked and when, then the brief with
+ *   recent topic messages.
  * Nothing from other topics is included unless the role explicitly references it (read_topic).
  */
 import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
@@ -17,25 +23,41 @@ import {
   type Topic,
   users,
 } from "../db/schema.js";
+import { channelsOf } from "../integrations/links.js";
 import * as topicSvc from "../services/topics.js";
 import type { ChatMessage } from "./llm.js";
 import { authorName } from "./tools.js";
+import { isConversation } from "./transcript.js";
 
-const HISTORY_MESSAGES = 30;
-const SESSION_NOTES = 8;
+export const HISTORY_MESSAGES = 30;
+export const SESSION_NOTES = 8;
 
 export const PLATFORM_RULES = `## How you work (enforced by the platform)
 - You are a member of a team, not a personal assistant. Several people may talk to you in the same topic; pay attention to who is asking.
 - You only see this topic. Never assume or invent information from other conversations.
 - Your tools act only inside your own virtual computer. If it is unavailable, say so; there is no other machine.
-- Distinguish chat from work. For plain questions just answer. If a request is unclear, risky or irreversible, use ask_human before acting.
+- Distinguish chat from work. For plain questions just answer. If a request is unclear, risky or irreversible, ask before acting.
 - The desktop is shared with people who may be watching. Hold it only while you need it (release_desktop when done) and prefer a background browser session for work nobody needs to watch.
 - If a tool result says an earlier action's outcome is uncertain, look (screenshot, read the file, check the page) before repeating it.
 - When you hand work to another role use delegate_task with a self-contained brief, the expected output and only the materials needed. Do not forward unrelated context.
-- Talk like a person in a chat: use send_message to answer right away ("looking into it", a partial result, a follow-up) and keep working; you can send several messages for one request. Use post_progress for long tasks so people can follow along.
-- You are given the latest messages of this topic; use topic_history to read further back, search it or read a whole thread.
 - Never claim something is done if it is not. Report errors and partial results plainly.
-- When you are finished, reply with your final answer (no tool call). If you already said everything with send_message, the final answer may be empty and nothing more is posted. Otherwise it is posted to the topic and rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message.`;
+- What you post is rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message.`;
+
+/** How a role's main conversation in a topic works (conversation runs). */
+export const CONVERSATION_RULES = `## Your conversation here
+- This is your ongoing conversation in this topic: it keeps its context from one message to the next. What is new in the topic reaches you as a user turn starting with "New in this topic" (messages for you are marked "→ you"), and so do results of tasks and your follow-ups. New messages arrive even while you are working: take them into account right away — a correction or a "stop" changes what you should do.
+- Talk like a person in a chat: use send_message to answer right away ("looking into it", a partial result) and keep working; you can send several messages. When you are done for now, end your turn with your final answer (no tool call): it is posted where the latest message for you was asked. If you already said everything with send_message, the final answer may be empty and nothing more is posted.
+- To get an answer from someone, ask (ask_human mentions them) and end your turn: their reply arrives here as a new message.
+- When messages did not @-mention you (the topic answers automatically) and do not need you, call stay_silent instead of answering.
+- For a bigger piece of work that can be done on its own (long research, a build, many files), use start_task: it runs in a separate context and its result comes back here, so this conversation stays focused. delegate_task hands work to another role; its result comes back here too. follow_up_later reminds you here later.
+- Use topic_history to read further back in the topic, search it or read a whole thread. When this conversation gets long, its earlier part is replaced by a summary you write; the topic itself keeps every message.`;
+
+/** How an independent task works (it has its own context and ends with its result). */
+export const TASK_RULES = `## This task
+- This task has its own context: the request and recent messages of the topic are below. Use topic_history to read further back, search the topic or read a whole thread.
+- If the request is unclear, risky or irreversible, use ask_human and wait for the answer.
+- Use send_message to tell people something right away and keep working; use post_progress for long tasks so people can follow along.
+- When you are finished, reply with your final answer (no tool call). If you already said everything with send_message, the final answer may be empty and nothing more is posted.`;
 
 /** For a system administrator role: what its configuration tools are for and where they stop. */
 export const ADMIN_RULES = `## You are witden's system administrator
@@ -46,10 +68,21 @@ export const ADMIN_RULES = `## You are witden's system administrator
 - Accounts are managed by people only: console accounts and passwords (系统管理 → 账号) and linking Slack / Feishu / GitHub accounts to them (通讯接入 → 身份关联).
 - System administrator roles, including you, are configured by people only. You work only in the witden console, never on Slack, Feishu or GitHub, and other roles cannot hand you work.`;
 
-export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic): Promise<string> {
-  const [inst] = task.instanceId
-    ? await db.select().from(computerInstances).where(eq(computerInstances.id, task.instanceId)).limit(1)
-    : [];
+const PLATFORM_NAMES: Record<string, string> = { slack: "Slack", github: "GitHub", feishu: "Feishu" };
+
+/** Where the topic's messages are read: the console, or the Slack / Feishu / GitHub conversation it is linked to. */
+async function topicPlace(db: Db, topic: Topic): Promise<string> {
+  const ch = (await channelsOf(db, [topic.id])).get(topic.id);
+  if (!ch) return topic.kind === "dm" ? "a private DM in the witden console" : "the witden console";
+  const platform = PLATFORM_NAMES[ch.platform] ?? ch.platform;
+  if (ch.conversation_kind === "im") return `a ${platform} direct message`;
+  if (ch.platform === "github") return `${platform} ${ch.conversation_name ?? ""} (${ch.thread_kind ?? "thread"})`;
+  const name = ch.conversation_name ?? ch.conversation_id;
+  return ch.platform === "feishu" ? `${platform} group chat «${name}»` : `${platform} #${name}`;
+}
+
+/** The people and other roles of the topic, as one line (conversations get it when it changes). */
+export async function rosterLine(db: Db, topic: Topic, role: Role): Promise<string> {
   const people: string[] = [];
   for (const p of await topicSvc.participants(db, topic.id, "user")) {
     const [u] = await db.select().from(users).where(eq(users.id, p.participantId)).limit(1);
@@ -60,11 +93,16 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
     const r = await topicSvc.getRole(db, p.participantId);
     if (r && r.id !== role.id) others.push(`@${r.handle} (${r.name}: ${r.description.slice(0, 80)})`);
   }
-  const [requester] = task.requesterUserId
-    ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
+  return `People here: ${people.join(", ") || "none"}. Other roles here: ${others.join(", ") || "none"}.`;
+}
+
+export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic): Promise<string> {
+  const [inst] = task.instanceId
+    ? await db.select().from(computerInstances).where(eq(computerInstances.id, task.instanceId)).limit(1)
     : [];
   const prompt = task.roleSnapshot.system_prompt ?? role.systemPrompt;
   const desktop = inst?.spec.desktop;
+  const conversation = isConversation(task);
   const parts = [
     `You are ${role.name} (@${role.handle}), an AI employee of the team.`,
     role.description ? `Responsibilities: ${role.description}` : "",
@@ -74,14 +112,28 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
       ? `- Computer: ${inst.name} (${inst.spec.kind}), user ${inst.spec.user}, working directory ${inst.spec.workdir}.` +
         (desktop ? ` Desktop ${desktop.width ?? 1280}x${desktop.height ?? 800}.` : " No desktop.")
       : "- You have no computer for this task.",
-    `- Topic: «${topic.title}»${topic.goal ? ` — goal: ${topic.goal}` : ""}${topic.kind === "dm" ? " (a private DM)" : ""}`,
-    `- People here: ${people.join(", ") || "none"}`,
-    `- Other roles here: ${others.join(", ") || "none"}`,
-    `- Requested by: ${requester?.name ?? "another role"}`,
-    `- Now: ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`,
-    PLATFORM_RULES,
-    role.systemAdmin ? ADMIN_RULES : "",
+    `- Topic: «${topic.title}»${topic.goal ? ` — goal: ${topic.goal}` : ""}${topic.kind === "dm" ? " (a private DM)" : ""}, in ${await topicPlace(db, topic)}`,
   ];
+  if (conversation) {
+    // Nothing here changes from one message to the next (no time, no asker): who is present and the time
+    // arrive with the messages, so the prompt start stays cacheable.
+    parts.push(PLATFORM_RULES, CONVERSATION_RULES);
+  } else {
+    const [requester] = task.requesterUserId
+      ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
+      : [];
+    parts.push(
+      `- ${await rosterLine(db, topic, role)}`,
+      `- Requested by: ${requester?.name ?? "another role"}`,
+      `- Started: ${task.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC`,
+      PLATFORM_RULES,
+      TASK_RULES,
+      task.envelope?.report_only
+        ? "- Your final answer goes back to the conversation that started this task; it is not posted to the topic. Put everything that conversation needs in it."
+        : "",
+    );
+  }
+  parts.push(role.systemAdmin ? ADMIN_RULES : "");
   return parts.filter(Boolean).join("\n");
 }
 
@@ -128,22 +180,17 @@ export async function firstUserMessage(db: Db, task: Task, topic: Topic): Promis
   return `${sessionPart}Recent messages in this topic:\n${lines.join("\n") || "(no earlier messages)"}\n\n---\n${trigger}Request from ${who}:\n${task.instruction}${auto}`;
 }
 
-const PLATFORMS: Record<string, string> = { slack: "Slack", github: "GitHub", feishu: "Feishu" };
 const THREAD_MESSAGES = 20;
 
-async function historyLine(db: Db, m: Message): Promise<string> {
+export async function historyLine(db: Db, m: Message, limit = 0): Promise<string> {
   const where = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
-  return `[${m.id} ${m.createdAt.toISOString().slice(5, 16).replace("T", " ")}] ${await authorName(db, m.authorType, m.authorId)}${where}: ${m.content}`;
+  const text =
+    limit && m.content.length > limit ? `${m.content.slice(0, limit)}… [cut; topic_history shows it whole]` : m.content;
+  return `[${m.id} ${m.createdAt.toISOString().slice(5, 16).replace("T", " ")}] ${await authorName(db, m.authorType, m.authorId)}${where}: ${text}`;
 }
 
-/**
- * The message being answered: who sent it, where (console, a channel, a Slack thread, a DM, an issue) and
- * when; and the thread so far when it was asked in one. The role's messages go back to the same place.
- */
-async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
-  if (!task.sourceMessageId) return "";
-  const [src] = await db.select().from(messages).where(eq(messages.id, task.sourceMessageId)).limit(1);
-  if (!src) return "";
+/** Where a message was posted: the console, a Slack / Feishu channel or thread, a DM, a GitHub issue or PR. */
+export async function messagePlace(db: Db, topic: Topic, src: Message): Promise<string> {
   const ref = src.externalRef as { conversation?: string } | null;
   let where = "this topic, in the witden console";
   if (ref?.conversation) {
@@ -157,7 +204,7 @@ async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
       .innerJoin(externalConversations, eq(externalConversations.id, externalThreadLinks.conversationId))
       .where(and(eq(externalThreadLinks.topicId, topic.id), eq(externalConversations.externalId, ref.conversation)))
       .limit(1);
-    const platform = PLATFORMS[src.source] ?? src.source;
+    const platform = PLATFORM_NAMES[src.source] ?? src.source;
     const place = conv?.name ?? ref.conversation;
     const meta = (conv?.meta ?? {}) as { kind?: string; title?: string };
     // A whole Slack channel or Feishu group chat is one topic.
@@ -171,6 +218,19 @@ async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
             ? `${platform} ${place}, ${meta.kind.replace("_", " ")} «${meta.title ?? ""}»`
             : `${platform} ${place}`;
   }
+  if (src.replyToId)
+    where = where.replace(", posted directly in it", "") + `, as a reply in the thread of ${src.replyToId}`;
+  return where;
+}
+
+/**
+ * The message being answered: who sent it, where (console, a channel, a Slack thread, a DM, an issue) and
+ * when; and the thread so far when it was asked in one. The role's messages go back to the same place.
+ */
+async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
+  if (!task.sourceMessageId) return "";
+  const [src] = await db.select().from(messages).where(eq(messages.id, task.sourceMessageId)).limit(1);
+  if (!src) return "";
   let thread = "";
   if (src.replyToId) {
     const posts = await db
@@ -187,12 +247,11 @@ async function triggerInfo(db: Db, task: Task, topic: Topic): Promise<string> {
       .limit(THREAD_MESSAGES);
     const shown: string[] = [];
     for (const m of posts.reverse()) if (m.id !== src.id) shown.push(await historyLine(db, m));
-    where = where.replace(", posted directly in it", "") + `, as a reply in the thread of ${src.replyToId}`;
     thread = `The thread so far:\n${shown.join("\n") || "(its first message is not in this topic)"}\n\n`;
   }
   return `${thread}The message you are answering:
 - From: ${await authorName(db, src.authorType, src.authorId)}
-- Where: ${where}
+- Where: ${await messagePlace(db, topic, src)}
 - Sent: ${src.createdAt.toISOString().slice(0, 16).replace("T", " ")} UTC
 - Message id: ${src.id}
 Your messages (send_message and the final answer) go to the same place.
@@ -200,16 +259,22 @@ Your messages (send_message and the final answer) go to the same place.
 `;
 }
 
+/**
+ * The system prompt, and for a task its first user turn (the brief). A conversation's user turns come from
+ * its session instead (agent/conversation.ts).
+ */
 export async function initialMessages(db: Db, task: Task, role: Role, topic: Topic): Promise<ChatMessage[]> {
-  return [
-    { role: "system", content: await systemPrompt(db, task, role, topic) },
-    { role: "user", content: await firstUserMessage(db, task, topic) },
-  ];
+  const system: ChatMessage = { role: "system", content: await systemPrompt(db, task, role, topic) };
+  if (isConversation(task)) return [system];
+  return [system, { role: "user", content: await firstUserMessage(db, task, topic) }];
 }
 
-/** Remember a delivered result in the role's session for this topic (never results that were withheld). */
+/**
+ * Remember a delivered result in the role's session for this topic (never results that were withheld).
+ * Only tasks from before conversations kept their context still do this; a conversation remembers itself.
+ */
 export async function recordSessionNote(db: Db, task: Task, result: string): Promise<void> {
-  if (!task.sessionId) return;
+  if (!task.sessionId || isConversation(task)) return;
   const [session] = await db.select().from(agentSessions).where(eq(agentSessions.id, task.sessionId)).limit(1);
   if (!session) return;
   const notes = [

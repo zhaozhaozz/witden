@@ -62,7 +62,15 @@ export async function deliver(
   role: Role,
   topic: Topic,
   content: string,
-  opts: { final: boolean; mentions?: Mention[]; attachments?: string[]; round?: number; toolCallId?: string | null },
+  opts: {
+    final: boolean;
+    mentions?: Mention[];
+    attachments?: string[];
+    round?: number;
+    toolCallId?: string | null;
+    /** Post in this thread instead of where the request was asked. */
+    replyToId?: string | null;
+  },
 ): Promise<Delivery> {
   const decision = await checkFlow(db, task.labels, await topicReaders(db, topic.id));
   if (decision.allowed) {
@@ -73,7 +81,7 @@ export async function deliver(
       attachments: opts.attachments ?? [],
       round: opts.round ?? task.round + 1,
       taskId: task.id,
-      replyToId: await answeredThread(db, task),
+      replyToId: opts.replyToId ?? (await answeredThread(db, task)),
     });
     await audit(db, "message.post", {
       actorType: "role",
@@ -106,6 +114,7 @@ export async function deliver(
         labels: decision.blockedLabels,
         sources,
         tool_call_id: opts.toolCallId ?? null,
+        reply_to_id: opts.replyToId ?? null,
       },
       approverUserIds: [...owners].sort(),
     })
@@ -148,7 +157,7 @@ export async function releaseApproved(
     attachments: detail.attachments ?? [],
     round: task.round + 1,
     taskId: task.id,
-    replyToId: await answeredThread(db, task),
+    replyToId: detail.reply_to_id ?? (await answeredThread(db, task)),
   });
   await dispatchRoleMessage(db, topic, msg, role, task);
   return msg;

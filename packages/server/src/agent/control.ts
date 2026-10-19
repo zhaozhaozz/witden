@@ -68,6 +68,11 @@ export async function setStatus(
   const [row] = await db.update(tasks).set(update).where(eq(tasks.id, task.id)).returning();
   await publishTask(db, row);
   if (status === "pending") await wake(db, "tasks");
+  if (TERMINAL.has(status)) {
+    // Conversations hear how the work they started ended (agent/conversation.ts; loaded late: it imports this).
+    const { afterEnd } = await import("./conversation.js");
+    await afterEnd(db, row);
+  }
   return row;
 }
 

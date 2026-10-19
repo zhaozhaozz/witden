@@ -19,6 +19,12 @@ const providerOut = (p: ModelProvider, manage: boolean) =>
     ? { ...row(p), has_api_key: !!p.apiKeyEncrypted }
     : { id: p.id, name: p.name, protocol: p.protocol, status: p.status };
 
+const contextOut = (c: ReturnType<typeof svc.contextLimits>) => ({
+  window: c.window,
+  compact_at: c.compactAt,
+  source: c.source,
+});
+
 async function modelOut(db: Db, m: ModelConfig, p: ModelProvider) {
   return {
     ...row(m),
@@ -28,6 +34,8 @@ async function modelOut(db: Db, m: ModelConfig, p: ModelProvider) {
     tokens_today: await svc.tokensToday(db, { modelConfigId: m.id }),
     // The reasoning effort levels roles may pick, and where they came from (services/effort.ts).
     effort: svc.isSystemOne(p) ? null : effortChoices(p.protocol, m.model, m.capabilities),
+    // The window and compaction threshold conversations on this model use (services/context-window.ts).
+    context: svc.isSystemOne(p) ? null : contextOut(svc.contextLimits(m)),
   };
 }
 
@@ -176,7 +184,12 @@ export async function modelRoutes(app: FastifyInstance) {
       );
       return {
         fetched_at: new Date().toISOString(),
-        models: remote.map((m) => ({ id: m.id, name: m.name, added: have.has(m.id) })),
+        models: remote.map((m) => ({
+          id: m.id,
+          name: m.name,
+          added: have.has(m.id),
+          context_window: m.contextWindow ?? null,
+        })),
       };
     }),
   );

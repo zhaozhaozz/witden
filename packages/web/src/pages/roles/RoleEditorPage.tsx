@@ -849,11 +849,13 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
 function RoleSessions({ role }: { role: Role }) {
   const res = useResource(() => api.get<AgentSession[]>(`/api/roles/${role.id}/sessions`), [role.id]);
   return (
-    <Section title="会话">
+    <Section title="对话">
       <p className="small muted">
-        角色在每个话题里有一个独立的会话，不同话题的上下文互不共享；这里只列出你能查看的话题。会话笔记是此前交付到话题的结果摘要，角色在同一话题继续工作时会读到。
+        角色在每个话题、每个私信里各有一段对话，上下文从一条消息延续到下一条，不同话题之间互不共享；这里只列出你能查看的话题。对话变长后，角色会在达到模型的整理点时把前面的内容压缩成摘要，系统提示词和工具说明不受影响。
       </p>
-      <Loaded res={res}>{(rows) => <AgentSessionList sessions={rows} by="topic" />}</Loaded>
+      <Loaded res={res}>
+        {(rows) => <AgentSessionList sessions={rows} by="topic" onChanged={() => void res.reload()} />}
+      </Loaded>
     </Section>
   );
 }

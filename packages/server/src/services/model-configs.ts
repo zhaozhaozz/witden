@@ -22,6 +22,7 @@ import {
 import { BadRequest, Conflict, type ModelError, NotFound } from "../errors.js";
 import { secretBox } from "../security/crypto.js";
 import { audit } from "./audit.js";
+import { contextLimits } from "./context-window.js";
 import { type EffortInfo, withEffort } from "./effort.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, LAYA_BOOTSTRAP, putSetting } from "./platform-settings.js";
 
@@ -187,7 +188,7 @@ export async function getModel(db: Db, id: string): Promise<ModelConfig> {
   return m;
 }
 
-/** Add models to a provider; ones it already has are skipped. Accepts ids or {model, name}. */
+/** Add models to a provider; ones it already has are skipped. Accepts ids or {model, name, context_window}. */
 export async function addModels(
   db: Db,
   p: ModelProvider,
@@ -196,24 +197,45 @@ export async function addModels(
   createdBy: string | null,
 ): Promise<ModelConfig[]> {
   if (!Array.isArray(items) || !items.length) throw new BadRequest("models must be a non-empty list");
-  const wanted = new Map<string, string>();
+  const wanted = new Map<string, { name: string; window: number | null }>();
   for (const item of items) {
     const raw = typeof item === "string" ? { model: item } : (item as Record<string, unknown>);
     const model = String(raw?.model ?? "").trim();
     if (!MODEL_ID.test(model)) throw new BadRequest(`invalid model id ${JSON.stringify(raw?.model ?? item)}`);
     const name = String(raw?.name ?? "").trim() || model;
-    if (!wanted.has(model)) wanted.set(model, name.slice(0, 200));
+    // The window the provider's list reported (picked from that list), kept as what the provider says.
+    const window = Number(raw?.context_window ?? raw?.contextWindow);
+    if (!wanted.has(model))
+      wanted.set(model, { name: name.slice(0, 200), window: Number.isInteger(window) && window > 0 ? window : null });
   }
   const added: ModelConfig[] = [];
-  for (const [model, name] of wanted) {
+  for (const [model, { name, window }] of wanted) {
     const rows = await db
       .insert(modelConfigs)
-      .values({ id: newId("mdl"), providerId: p.id, model, name, source, createdBy })
+      .values({
+        id: newId("mdl"),
+        providerId: p.id,
+        model,
+        name,
+        source,
+        createdBy,
+        capabilities: window ? { context_window: window } : {},
+      })
       .onConflictDoNothing()
       .returning();
     added.push(...rows);
   }
   return added;
+}
+
+/** Context window and compaction threshold of a model, with where the window came from. */
+export { contextLimits };
+
+function tokenSetting(v: unknown, field: string): number | null {
+  if (v === null || v === "") return null;
+  if (!Number.isInteger(v) || (v as number) < 1024)
+    throw new BadRequest(`${field} must be a whole number of tokens (at least 1024) or null`);
+  return v as number;
 }
 
 export async function updateModel(db: Db, m: ModelConfig, data: Record<string, any>): Promise<ModelConfig> {
@@ -234,6 +256,12 @@ export async function updateModel(db: Db, m: ModelConfig, data: Record<string, a
       throw new BadRequest("daily_token_limit must be a positive integer or null");
     update.dailyTokenLimit = v;
   }
+  if ("contextWindow" in data) update.contextWindow = tokenSetting(data.contextWindow, "context_window");
+  if ("compactTokens" in data) update.compactTokens = tokenSetting(data.compactTokens, "compact_tokens");
+  const compact = "compactTokens" in update ? update.compactTokens : m.compactTokens;
+  const { window } = contextLimits({ ...m, ...update });
+  if (compact && compact > window)
+    throw new BadRequest(`compact_tokens must not exceed the context window (${window} tokens)`);
   if (data.enabled !== undefined) update.enabled = !!data.enabled;
   if (!Object.keys(update).length) return m;
   const [row] = await db.update(modelConfigs).set(update).where(eq(modelConfigs.id, m.id)).returning();
@@ -306,7 +334,11 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
   const caps = isSystemOne(provider)
     ? await probeDecisionModel(await decisionModelFor(db, m))
     : await probeCapabilities(await chatModelFor(db, m));
-  if (!isSystemOne(provider)) caps.effort = await reportedEffort(provider, m);
+  if (!isSystemOne(provider)) {
+    const remote = await reported(provider, m);
+    caps.effort = remote.effort;
+    if (remote.contextWindow) caps.context_window = remote.contextWindow;
+  }
   const [row] = await db
     .update(modelConfigs)
     .set({ capabilities: caps, status: (caps.chat ?? caps.decide) ? "ok" : "error" })
@@ -315,13 +347,27 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
   return row;
 }
 
-/** The effort levels the service reports for this model (null: it reports none, or could not be asked now). */
-async function reportedEffort(provider: ModelProvider, m: ModelConfig): Promise<EffortInfo | null> {
+/**
+ * The effort levels and context window the service reports for this model (null effort: it reports none;
+ * when it cannot be asked now, what was recorded before).
+ */
+async function reported(
+  provider: ModelProvider,
+  m: ModelConfig,
+): Promise<{ effort: EffortInfo | null; contextWindow: number | null }> {
   try {
-    const remote = await listModels(provider.protocol, provider.baseUrl, apiKeyOf(provider));
-    return remote.find((r) => r.id === m.model)?.effort ?? null;
+    const remote = (await listModels(provider.protocol, provider.baseUrl, apiKeyOf(provider))).find(
+      (r) => r.id === m.model,
+    );
+    return {
+      effort: remote?.effort ?? null,
+      contextWindow: remote?.contextWindow ?? m.capabilities?.context_window ?? null,
+    };
   } catch {
-    return (m.capabilities?.effort as EffortInfo | undefined) ?? null;
+    return {
+      effort: (m.capabilities?.effort as EffortInfo | undefined) ?? null,
+      contextWindow: m.capabilities?.context_window ?? null,
+    };
   }
 }
 

@@ -141,6 +141,14 @@ export function fmtNumber(n: number | null | undefined): string {
   return n.toLocaleString("zh-CN");
 }
 
+/** Token counts as people read them: 850, 12.3K, 1.2M. */
+export function fmtTokens(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "—";
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`;
+  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0)}M`;
+}
+
 export function shortId(id: string | null | undefined): string {
   if (!id) return "—";
   const i = id.indexOf("_");
@@ -265,6 +273,7 @@ export const TOOL_LABEL: Record<string, string> = {
   browser_close: "关闭浏览器",
   message_role: "联系其他角色",
   delegate_task: "委派任务",
+  start_task: "拆出独立任务",
   remember: "记录记忆",
   recall: "检索记忆",
   read_topic: "查阅其他话题",

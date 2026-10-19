@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import * as approvalSvc from "../agent/approvals.js";
 import * as admin from "../agent/tasks-admin.js";
@@ -62,8 +62,12 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
   data.topic = topic ? { id: topic.id, title: topic.title, kind: topic.kind } : null;
   data.requester = requester ? { id: requester.id, name: requester.name } : null;
   if (opts.detail) {
+    // Work it waits for (delegated by a task) or that it started and gets the result of (a conversation).
     data.children = [];
-    for (const c of await db.select().from(tasks).where(eq(tasks.parentTaskId, task.id))) {
+    for (const c of await db
+      .select()
+      .from(tasks)
+      .where(or(eq(tasks.parentTaskId, task.id), and(eq(tasks.spawnedByTaskId, task.id), eq(tasks.kind, "task"))))) {
       data.children.push({
         id: c.id,
         title: (await contentVisible(db, opts.viewer ?? null, c)) ? c.title : "[restricted]",
@@ -107,6 +111,8 @@ export async function taskRoutes(app: FastifyInstance) {
       if (q.status) conds.push(inArray(tasks.status, q.status.split(",")));
       if (q.topic_id) conds.push(eq(tasks.topicId, q.topic_id));
       if (q.role_id) conds.push(eq(tasks.ownerRoleId, q.role_id));
+      // "task": independent tasks only; "conversation": runs of the roles' conversations.
+      if (q.kind) conds.push(eq(tasks.kind, q.kind));
       if (q.mine === "true") conds.push(eq(tasks.requesterUserId, user.id));
       const rows = await db
         .select()

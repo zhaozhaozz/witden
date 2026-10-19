@@ -109,6 +109,10 @@ export const modelConfigs = pgTable(
     capabilities: json<Json>("capabilities").notNull().default({}),
     status: text("status").notNull().default("unchecked"), // unchecked | ok | error (capability check)
     dailyTokenLimit: integer("daily_token_limit"),
+    /** Context window in tokens; null = what the provider reports or the recommendation for the model name. */
+    contextWindow: integer("context_window"),
+    /** A conversation is compacted when its context reaches this many tokens; null = recommended (3/4 of the window). */
+    compactTokens: integer("compact_tokens"),
     createdBy: text("created_by"),
     createdAt: created(),
     updatedAt: updated(),
@@ -338,10 +342,6 @@ export const messages = pgTable(
 );
 
 /**
- * Agent session: one role's model context inside one topic. Different topics never share a session, so a
- * role working in several topics never mixes their contexts.
- */
-/**
  * Messages in "auto" topics waiting for the dispatcher to decide which roles (if any) take them. The worker
  * claims them like tasks, so a crash or restart never loses one.
  */
@@ -362,6 +362,12 @@ export const messageRoutes = pgTable(
   (t) => [index("ix_message_routes_status").on(t.status)],
 );
 
+/**
+ * Agent session: one role's main conversation inside one topic (or DM). Its model context persists across
+ * messages: the steps of its conversation runs (task_steps with this session_id, from session_seq
+ * ``contextFrom`` on; a compaction summary starts it again). Different topics never share a session, so a role
+ * working in several topics never mixes their contexts.
+ */
 export const agentSessions = pgTable(
   "agent_sessions",
   {
@@ -373,16 +379,60 @@ export const agentSessions = pgTable(
       .notNull()
       .references(() => topics.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("active"),
-    /** Short record of earlier runs whose results were delivered to the topic. */
+    /** Short record of earlier runs (before conversations kept their context; shown once to the first run). */
     notes: json<{ task_id: string; request: string; result: string; at: string }[]>("notes").notNull().default([]),
     runs: integer("runs").notNull().default(0),
     lastRunAt: ts("last_run_at"),
+    /** What is waiting to be shown to the conversation: messages for the role, task results, follow-ups. */
+    inbox: json<InboxItem[]>("inbox").notNull().default([]),
+    /** Topic messages up to this time have been shown in the context. */
+    cursorAt: ts("cursor_at"),
+    /** Earliest follow-up the role scheduled (worker wakes the conversation then). */
+    wakeAt: ts("wake_at"),
+    /** Information-flow labels of everything in the context (it carries what earlier runs read). */
+    labels: json<string[]>("labels").notNull().default([]),
+    /** People the role asked a question and whose next message here answers it, mention or not. */
+    awaiting: json<{ user_ids: string[]; at: string } | null>("awaiting"),
+    /** session_seq where the model context starts (0 = from the beginning). */
+    contextFrom: integer("context_from").notNull().default(0),
+    /** Size of the context at the last model call (prompt + answer tokens). */
+    contextTokens: integer("context_tokens").notNull().default(0),
+    compactions: integer("compactions").notNull().default(0),
+    /** The participants line last shown to the conversation (shown again when it changes). */
+    roster: text("roster"),
     createdAt: created(),
     updatedAt: updated(),
   },
   (t) => [uniqueIndex("ux_agent_session").on(t.roleId, t.topicId)],
 );
 
+/** An entry of a conversation's inbox (agent_sessions.inbox). */
+export interface InboxItem {
+  kind: "message" | "result" | "timer" | "instruction";
+  at: string;
+  /** message: the message for the role; auto = it reached the role without an @-mention (auto topics). */
+  message_id?: string;
+  auto?: boolean;
+  /** result: a task this conversation started or delegated finished. */
+  task_id?: string;
+  /** timer: the role's own follow-up (shown once ``due`` has passed); instruction: a console note. */
+  note?: string;
+  due?: string;
+  by?: string;
+  /** The person this is for (who asked, or on whose behalf another role asked). */
+  user_id?: string;
+  /** Answers to it go where this message was asked (a follow-up promised in a Slack thread). */
+  reply_to?: string;
+  /** When the conversation was shown it (kept a while so a repeated delivery is recognised). */
+  done?: string;
+}
+
+/**
+ * Work units of the agent loop. ``kind`` "conversation": one run of a role's main conversation in a topic
+ * (its context is the session's; at most one unfinished run per session, and messages arriving meanwhile are
+ * fed into it). ``kind`` "task": independent work with its own context — started by a conversation
+ * (start_task), delegated by another role, or from before conversations kept their context.
+ */
 export const tasks = pgTable(
   "tasks",
   {
@@ -390,7 +440,10 @@ export const tasks = pgTable(
     topicId: text("topic_id")
       .notNull()
       .references(() => topics.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull().default("task"), // conversation | task
     sessionId: text("session_id"),
+    /** An independent task reports its outcome to this conversation (agent session) when it ends. */
+    reportSessionId: text("report_session_id"),
     title: text("title").notNull(),
     instruction: text("instruction").notNull().default(""),
     // pending | running | waiting_human | waiting_approval | waiting_children | waiting_resource | waiting_timer
@@ -434,6 +487,10 @@ export const tasks = pgTable(
     index("ix_tasks_topic").on(t.topicId),
     index("ix_tasks_parent").on(t.parentTaskId),
     index("ix_tasks_spawned").on(t.spawnedByTaskId),
+    // One unfinished run per conversation: later messages join it instead of starting parallel work.
+    uniqueIndex("ux_tasks_open_conversation")
+      .on(t.sessionId)
+      .where(sql`kind = 'conversation' and status not in ('completed', 'failed', 'cancelled')`),
   ],
 );
 
@@ -452,9 +509,15 @@ export const taskSteps = pgTable(
     seq: integer("seq").notNull(),
     kind: text("kind").notNull(), // user | assistant | tool | event
     payload: json<Json>("payload").notNull().default({}),
+    /** Conversation runs: the session and the step's place in its context (runs of a session never overlap). */
+    sessionId: text("session_id"),
+    sessionSeq: integer("session_seq"),
     createdAt: created(),
   },
-  (t) => [uniqueIndex("ux_steps_task_seq").on(t.taskId, t.seq)],
+  (t) => [
+    uniqueIndex("ux_steps_task_seq").on(t.taskId, t.seq),
+    index("ix_steps_session").on(t.sessionId, t.sessionSeq),
+  ],
 );
 
 /** Computer operations sent through the execution gateway (journal for recovery and audit). */
@@ -678,6 +741,8 @@ export const usageRecords = pgTable(
     modelConfigId: text("model_config_id"),
     promptTokens: integer("prompt_tokens").notNull().default(0),
     completionTokens: integer("completion_tokens").notNull().default(0),
+    /** Part of the prompt the service read from its prompt cache (included in prompt_tokens). */
+    cachedTokens: integer("cached_tokens").notNull().default(0),
     createdAt: created(),
   },
   (t) => [index("ix_usage_time").on(t.createdAt)],

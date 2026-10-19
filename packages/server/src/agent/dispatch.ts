@@ -4,6 +4,7 @@ import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
+  type AgentSession,
   agentSessions,
   computerInstances,
   externalThreadLinks,
@@ -31,6 +32,7 @@ import { publish, wake } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import * as topicSvc from "../services/topics.js";
 import { setStatus, textRestricted } from "./control.js";
+import { enqueue, rolesAwaiting } from "./conversation.js";
 import { appendStep } from "./transcript.js";
 
 export const MENTION = /(?<![\w@/])@([A-Za-z0-9][A-Za-z0-9_.-]{0,63})/g;
@@ -239,6 +241,13 @@ export async function sessionFor(db: Db, roleId: string, topicId: string) {
 export interface CreateTaskOptions {
   topic: Topic;
   role: Role;
+  /** "conversation": a run of the role's main conversation in the topic (``session``); default an independent task. */
+  kind?: "conversation" | "task";
+  session?: AgentSession | null;
+  /** An independent task reports its outcome to this conversation when it ends. */
+  reportSessionId?: string | null;
+  /** Its final answer only goes back to that conversation (start_task), instead of also into the topic. */
+  reportOnly?: boolean;
   requesterUserId: string | null;
   instruction: string;
   title?: string | null;
@@ -260,9 +269,13 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
     if (existing) return existing;
   }
   const { role, topic, parent = null } = o;
+  const conversation = o.kind === "conversation";
+  if (conversation && !o.session) throw new Error("a conversation run needs its session");
   const found = await models.modelWithProvider(db, role.modelConfigId);
   let labels = [topicLabel(topic.id)];
   if (parent) labels = [...new Set([...parent.labels, ...labels])];
+  // A conversation carries what its context has read before.
+  if (conversation) labels = [...new Set([...labels, ...o.session!.labels])];
   const budget: Record<string, any> = {
     max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
     max_tokens: role.maxTokensPerTask,
@@ -272,14 +285,16 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
     const left = parent.budget.max_tokens - (parent.usage?.tokens ?? 0);
     budget.max_tokens = Math.max(0, Math.min(budget.max_tokens ?? left, left));
   }
-  const session = await sessionFor(db, role.id, topic.id);
   const firstLine = plainTitle(o.instruction) || "task";
   const [task] = await db
     .insert(tasks)
     .values({
       id: newId("task"),
       topicId: topic.id,
-      sessionId: session.id,
+      kind: conversation ? "conversation" : "task",
+      // Independent tasks have their own context and belong to no session.
+      sessionId: conversation ? o.session!.id : null,
+      reportSessionId: o.reportSessionId ?? null,
       title: (o.title || firstLine).slice(0, 200),
       instruction: o.instruction,
       requesterUserId: o.requesterUserId,
@@ -292,7 +307,11 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       depth: parent ? parent.depth + 1 : 0,
       round: o.round ?? 0,
       envelope: {
-        ...buildEnvelope(role, parent),
+        // The conversation's own permissions: a message from another role does not narrow them (its contacts
+        // decide whom it may ask); delegated tasks are narrowed to the delegator's.
+        ...buildEnvelope(role, conversation ? null : parent),
+        ...(conversation ? { mode: "conversation" } : {}),
+        ...(o.reportOnly ? { report_only: true } : {}),
         ...(o.auto ? { auto: true } : {}),
         // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered.
         ...((await externalContext(db, topic.id)).conversationKind ? { outside: true } : {}),
@@ -454,6 +473,8 @@ export async function dispatchHumanMessage(
   const mentioned = msg.mentions.filter((m) => m.type === "role").map((m) => m.id);
   await hintUnknownMentions(db, topic, msg, user);
   const resumed = await resumeWaiting(db, topic, msg, user, new Set(mentioned));
+  // Roles whose conversation asked this person something: the reply is for them, @-mention or not.
+  const asked = (await rolesAwaiting(db, topic, user.id)).filter((r) => !resumed.has(r));
   const external = (await contextForTopic(db, topic, user.id, [])).conversationKind !== "internal";
   let explicit = true;
   let auto = false;
@@ -463,6 +484,8 @@ export async function dispatchHumanMessage(
     if (!candidates.length) return [];
   } else if (resumed.size) {
     return [];
+  } else if (asked.length) {
+    candidates = asked;
   } else if (topic.kind === "dm") {
     candidates = (await topicSvc.participants(db, topic.id, "role")).map((p) => p.participantId);
   } else if (external) {
@@ -488,18 +511,18 @@ export async function dispatchHumanMessage(
   const created: Task[] = [];
   for (const [role, assignment] of allowed) {
     if (external) await topicSvc.addParticipant(db, topic, "role", role.id);
-    created.push(
-      await createTask(db, {
-        topic,
-        role,
-        requesterUserId: user.id,
-        instruction: msg.content,
-        sourceMessage: msg,
-        assignment,
-        idempotencyKey: opts.idempotencyPrefix ? `${opts.idempotencyPrefix}:${role.id}` : null,
-        auto,
-      }),
-    );
+    // Into the role's conversation here: a new run, or the open one (it sees the message at its next step).
+    // A redelivered event is the same inbox item, never a second request.
+    const run = await enqueue(db, {
+      topic,
+      role,
+      item: { kind: "message", message_id: msg.id, ...(auto ? { auto: true } : {}) },
+      requesterUserId: user.id,
+      sourceMessage: msg,
+      assignment,
+      round: msg.round,
+    });
+    if (run) created.push(run);
   }
   if (refusals.length && explicit) {
     await audit(db, "task.denied", {
@@ -537,7 +560,10 @@ async function queueRoute(db: Db, topic: Topic, msg: Message, user: User): Promi
   await wake(db, "tasks");
 }
 
-/** A role @-mentioning other roles asks them to respond, bounded by contacts and round limits. */
+/**
+ * A role @-mentioning other roles asks them to respond (in their conversations here), bounded by contacts
+ * and round limits.
+ */
 export async function dispatchRoleMessage(
   db: Db,
   topic: Topic,
@@ -583,24 +609,25 @@ export async function dispatchRoleMessage(
       continue;
     }
     const [role, assignment] = allowed[0];
-    out.push(
-      await createTask(db, {
-        topic,
-        role,
-        requesterUserId: task.requesterUserId,
-        requesterRoleId: sender.id,
-        instruction: msg.content,
-        sourceMessage: msg,
-        parent: task,
-        assignment,
-        round: msg.round,
-      }),
-    );
+    const run = await enqueue(db, {
+      topic,
+      role,
+      item: { kind: "message", message_id: msg.id },
+      requesterUserId: task.requesterUserId,
+      requesterRoleId: sender.id,
+      sourceMessage: msg,
+      assignment,
+      round: msg.round,
+    });
+    if (run) out.push(run);
   }
   return out;
 }
 
-/** Explicit hand-off: only the brief and listed materials travel, never the whole context. */
+/**
+ * Explicit hand-off: only the brief and listed materials travel, never the whole context. A task waits for
+ * the result; a conversation goes on and gets the result as a new item when the delegate is done.
+ */
 export async function delegate(
   db: Db,
   parent: Task,
@@ -610,6 +637,8 @@ export async function delegate(
   expectedOutput: string,
   materials: string,
 ): Promise<Task> {
+  const fromConversation = parent.kind === "conversation";
+  if (fromConversation) await checkAutoRounds(parent);
   const [target] = await db
     .select()
     .from(roles)
@@ -638,7 +667,51 @@ export async function delegate(
     parent,
     assignment: allowed[0][1],
     round: parent.round + 1,
-    waitsForResult: true,
+    waitsForResult: !fromConversation,
+    reportSessionId: fromConversation ? parent.sessionId : null,
+  });
+}
+
+/**
+ * Work a conversation hands out comes back to it and may lead to more: like roles answering each other, the
+ * chain is bounded by the automatic rounds limit until a person speaks (their message starts again at 0).
+ */
+async function checkAutoRounds(run: Task): Promise<void> {
+  const limit = settings().maxAutoRounds;
+  if (run.round + 1 > limit)
+    throw new Forbidden(`${limit} rounds of automatic work without a person; ask a person before starting more`);
+}
+
+/**
+ * start_task: the conversation hands a separable piece of its own work to an independent task of the same
+ * role, with its own context. The result comes back to the conversation; nothing is posted for it.
+ */
+export async function startOwnTask(
+  db: Db,
+  run: Task,
+  role: Role,
+  brief: string,
+  expectedOutput: string,
+  materials: string,
+): Promise<Task> {
+  if (run.depth + 1 > settings().maxDelegationDepth) throw new Forbidden("task depth limit reached");
+  await checkAutoRounds(run);
+  const topic = await topicSvc.getTopic(db, run.topicId);
+  let instruction = `Started by your conversation in this topic as a separate task.\n\nTask:\n${brief}`;
+  if (expectedOutput) instruction += `\n\nExpected output:\n${expectedOutput}`;
+  if (materials) instruction += `\n\nMaterials provided:\n${materials}`;
+  return createTask(db, {
+    topic,
+    role,
+    requesterUserId: run.requesterUserId,
+    requesterRoleId: role.id,
+    instruction,
+    title: plainTitle(brief).slice(0, 120) || "task",
+    parent: run,
+    assignment: { summary: `@${role.handle}: separate task of its conversation`, trace: [] },
+    round: run.round + 1,
+    reportSessionId: run.sessionId,
+    reportOnly: true,
   });
 }
 

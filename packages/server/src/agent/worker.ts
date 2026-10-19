@@ -5,13 +5,14 @@
 
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, lt, lte } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
-import { computerInstances, messageRoutes, tasks } from "../db/schema.js";
+import { agentSessions, computerInstances, messageRoutes, tasks } from "../db/schema.js";
 import { WAKE_CHANNEL } from "../services/events.js";
 import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./control.js";
+import { wakeDue } from "./conversation.js";
 import { claimRoutes, routeMessage } from "./router.js";
 import { claimNext, collectChildren, TaskRunner } from "./runner.js";
 import { appendStep } from "./transcript.js";
@@ -134,6 +135,13 @@ export class Worker {
   /** Resume tasks whose computer is back, whose delegates finished, or whose follow-up time came. */
   async checkWaits(): Promise<void> {
     const db = getDb();
+    // Conversations whose follow-ups came due.
+    for (const s of await db
+      .select({ id: agentSessions.id })
+      .from(agentSessions)
+      .where(lte(agentSessions.wakeAt, new Date()))) {
+      await transaction((tx) => wakeDue(tx, s.id));
+    }
     for (const t of await db.select().from(tasks).where(eq(tasks.status, "waiting_children"))) {
       await transaction((tx) => collectChildren(tx, t));
     }

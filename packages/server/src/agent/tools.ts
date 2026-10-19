@@ -26,7 +26,8 @@ import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
 import * as topicSvc from "../services/topics.js";
 import { publishTaskStatus, textRestricted } from "./control.js";
-import { delegate } from "./dispatch.js";
+import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
+import { delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 
@@ -68,6 +69,8 @@ export interface ToolResult {
   statusReason?: string;
 }
 
+export type WorkMode = "conversation" | "task";
+
 export interface ToolContext {
   taskId: string;
   roleId: string;
@@ -75,6 +78,8 @@ export interface ToolContext {
   toolCallId: string;
   gateway: GatewayClient;
   db: () => Db;
+  /** A run of the role's main conversation (asking, delegating and follow-ups do not block it) or a task. */
+  mode?: WorkMode;
 }
 
 export interface ToolSpec {
@@ -83,7 +88,15 @@ export interface ToolSpec {
   description: string;
   parameters: Record<string, any>;
   handler: (ctx: ToolContext, args: Record<string, any>) => Promise<ToolResult>;
+  /** Offered only in these modes (default both). */
+  modes?: WorkMode[];
+  /** What the tool does in a conversation, when that differs from a task. */
+  conversation?: string;
 }
+
+/** The mode of the work an envelope belongs to. */
+export const modeOf = (envelope: Record<string, any> | null | undefined): WorkMode =>
+  envelope?.mode === "conversation" ? "conversation" : "task";
 
 const obj = (properties: Record<string, any>, required: string[] = []) => ({ type: "object", properties, required });
 const str = { type: "string" };
@@ -411,9 +424,21 @@ async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise
   if (!text) throw new BadRequest("text is required");
   return transaction(async (db) => {
     const { task, role, topic } = await load(ctx, db);
+    let replyToId: string | undefined;
+    if (args.thread) {
+      // In the thread of that message (or starting one under it), as people reply in Slack and Feishu.
+      const [m] = await db
+        .select()
+        .from(messages)
+        .where(and(eq(messages.id, String(args.thread)), eq(messages.topicId, topic.id)))
+        .limit(1);
+      if (!m) throw new BadRequest(`no message ${args.thread} in this topic`);
+      replyToId = m.replyToId ?? m.id;
+    }
     const result = await deliver(db, task, role, topic, text.slice(0, 20_000), {
       final: false,
       toolCallId: ctx.toolCallId,
+      ...(replyToId ? { replyToId } : {}),
     });
     if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a message");
     return { content: "sent" };
@@ -475,6 +500,24 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
 }
 
 async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  if (ctx.mode === "conversation") {
+    // The conversation goes on; the delegate's result arrives here as a new item when it is done.
+    const child = await transaction(async (db) => {
+      const { task, role } = await load(ctx, db);
+      return delegate(
+        db,
+        task,
+        role,
+        String(args.role ?? ""),
+        String(args.task ?? ""),
+        String(args.expected_output ?? ""),
+        String(args.materials ?? ""),
+      );
+    });
+    return {
+      content: `delegated to @${String(args.role ?? "").replace(/^@/, "")} as task ${child.id}; it posts its answer in this topic and the result also comes back to you here. Continue, or end your turn.`,
+    };
+  }
   const childId = await transaction(async (db) => {
     const { task, role } = await load(ctx, db);
     const child = await delegate(
@@ -498,20 +541,10 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
 }
 
 async function askHuman(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  if (ctx.mode === "conversation") return askInConversation(ctx, args);
   return transaction(async (db) => {
     const { task, role, topic } = await load(ctx, db);
-    const people: (typeof users.$inferSelect)[] = [];
-    for (const ref of args.people ?? []) {
-      const key = String(ref).replace(/^@/, "").toLowerCase();
-      for (const p of await topicSvc.participants(db, topic.id, "user")) {
-        const [u] = await db.select().from(users).where(eq(users.id, p.participantId)).limit(1);
-        if (u && (u.id === key || u.name.toLowerCase() === key) && !people.some((x) => x.id === u.id)) people.push(u);
-      }
-    }
-    if (!people.length && task.requesterUserId) {
-      const [u] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
-      if (u) people.push(u);
-    }
+    const people = await askedPeople(db, task, topic.id, args.people ?? []);
     await rateLimitMentions(
       db,
       topic.id,
@@ -532,6 +565,51 @@ async function askHuman(ctx: ToolContext, args: Record<string, any>): Promise<To
       status: "waiting_human",
       statusReason: `waiting for ${names || "a person"}`,
       wait,
+    };
+  });
+}
+
+/** The people ask_human addresses: those named, or else the requester. */
+async function askedPeople(db: Db, task: Task, topicId: string, refs: unknown[]) {
+  const people: (typeof users.$inferSelect)[] = [];
+  for (const ref of refs) {
+    const key = String(ref).replace(/^@/, "").toLowerCase();
+    for (const p of await topicSvc.participants(db, topicId, "user")) {
+      const [u] = await db.select().from(users).where(eq(users.id, p.participantId)).limit(1);
+      if (u && (u.id === key || u.name.toLowerCase() === key) && !people.some((x) => x.id === u.id)) people.push(u);
+    }
+  }
+  if (!people.length && task.requesterUserId) {
+    const [u] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
+    if (u) people.push(u);
+  }
+  return people;
+}
+
+/** In a conversation a question does not block: it is posted, and the answer arrives as a new message. */
+async function askInConversation(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return transaction(async (db) => {
+    const { task, role, topic } = await load(ctx, db);
+    const people = await askedPeople(db, task, topic.id, args.people ?? []);
+    await rateLimitMentions(
+      db,
+      topic.id,
+      people.map((u) => u.id),
+    );
+    const names = people.map((u) => `@${u.name}`).join(" ");
+    const result = await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
+      final: false,
+      mentions: people.map((u) => ({ type: "user" as const, id: u.id })),
+      toolCallId: ctx.toolCallId,
+    });
+    if (result.approval) return holdForApproval(result.approval.id, ctx, "waiting for approval to post a question");
+    await awaitAnswer(
+      db,
+      task,
+      people.map((u) => u.id),
+    );
+    return {
+      content: `question posted${names ? ` to ${names}` : ""}; the answer arrives here as a new message. End your turn now unless there is other work to do meanwhile.`,
     };
   });
 }
@@ -568,14 +646,51 @@ async function postProgress(ctx: ToolContext, args: Record<string, any>): Promis
   });
 }
 
-/** Pause this task and pick it up again later (check on a long build, a pending reply...). */
-async function stayQuiet(_ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+/** Not answering a message that reached the role without an @-mention. */
+async function stayQuiet(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  if (ctx.mode === "conversation" && (await lastBatchExplicit(ctx.db(), (await load(ctx, ctx.db())).task)))
+    throw new BadRequest(
+      "a message @-mentioned you: answer it (an empty final answer is fine if send_message said it)",
+    );
   return { content: `no reply: ${String(args.reason ?? "").slice(0, 300)}`, control: "silent" };
+}
+
+/** A separable piece of the conversation's work in its own context; the result comes back to the conversation. */
+async function startTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const brief = String(args.task ?? "").trim();
+  if (!brief) throw new BadRequest("task is required");
+  const child = await transaction(async (db) => {
+    const { task, role } = await load(ctx, db);
+    return startOwnTask(db, task, role, brief, String(args.expected_output ?? ""), String(args.materials ?? ""));
+  });
+  return {
+    content: `started task ${child.id} in a separate context; its result comes back to you here as a new item. Continue, or end your turn.`,
+  };
 }
 
 async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const minutes = Math.max(1, Math.min(Number(args.minutes ?? 30), 7 * 24 * 60));
   const until = new Date(Date.now() + minutes * 60_000);
+  if (ctx.mode === "conversation") {
+    // A reminder in the conversation's inbox: the conversation is free meanwhile and wakes up then.
+    await transaction(async (db) => {
+      const { task, role, topic } = await load(ctx, db);
+      await enqueue(db, {
+        topic,
+        role,
+        item: {
+          kind: "timer",
+          note: String(args.reason ?? "follow up"),
+          due: until.toISOString(),
+          ...(task.sourceMessageId ? { reply_to: task.sourceMessageId } : {}),
+        },
+        requesterUserId: task.requesterUserId,
+      });
+    });
+    return {
+      content: `follow-up scheduled for ${until.toISOString().slice(0, 16).replace("T", " ")} UTC; you will be reminded here then. End your turn if nothing else needs doing now.`,
+    };
+  }
   return {
     content: `will resume at ${until.toISOString()}`,
     control: "wait",
@@ -961,13 +1076,17 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ role: str, message: str }, ["role", "message"]),
       messageRole,
     ),
-    spec(
-      "delegate_task",
-      "collaborate",
-      "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back.",
-      obj({ role: str, task: str, expected_output: str, materials: str }, ["role", "task", "expected_output"]),
-      delegateTask,
-    ),
+    {
+      ...spec(
+        "delegate_task",
+        "collaborate",
+        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back.",
+        obj({ role: str, task: str, expected_output: str, materials: str }, ["role", "task", "expected_output"]),
+        delegateTask,
+      ),
+      conversation:
+        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in this topic; its result also comes back to you here, so you can go on or end your turn meanwhile.",
+    },
     spec(
       "remember",
       "memory",
@@ -1017,18 +1136,22 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ),
       changeConfig,
     ),
-    spec(
-      "ask_human",
-      null,
-      "Ask people in this topic a question (clarification, a decision, a login or approval) and wait for the answer. Defaults to the requester.",
-      obj({ question: str, people: { type: "array", items: str } }, ["question"]),
-      askHuman,
-    ),
+    {
+      ...spec(
+        "ask_human",
+        null,
+        "Ask people in this topic a question (clarification, a decision, a login or approval) and wait for the answer. Defaults to the requester.",
+        obj({ question: str, people: { type: "array", items: str } }, ["question"]),
+        askHuman,
+      ),
+      conversation:
+        "Ask people in this topic a question (clarification, a decision, a login or approval); it @-mentions them (default: whoever asked you). Then end your turn: their answer arrives here as a new message, even without an @-mention.",
+    },
     spec(
       "send_message",
       null,
-      "Post a message in this topic right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. It goes where the request was asked (the channel, or the Slack thread).",
-      obj({ text: str }, ["text"]),
+      "Post a message in this topic right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. It goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead.",
+      obj({ text: str, thread: { type: "string", description: "id of a message whose thread to post in" } }, ["text"]),
       sendMessage,
     ),
     spec(
@@ -1038,13 +1161,16 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ query: str, before: str, thread: str, limit: int }),
       topicHistory,
     ),
-    spec(
-      "post_progress",
-      null,
-      "Update the visible progress note of this task.",
-      obj({ progress: str }, ["progress"]),
-      postProgress,
-    ),
+    {
+      ...spec(
+        "post_progress",
+        null,
+        "Update the visible progress note of this task.",
+        obj({ progress: str }, ["progress"]),
+        postProgress,
+      ),
+      conversation: "Update the progress note shown with your current work in this topic.",
+    },
     spec(
       "stay_silent",
       null,
@@ -1052,13 +1178,27 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ reason: str }, []),
       stayQuiet,
     ),
-    spec(
-      "follow_up_later",
-      null,
-      "Pause this task and resume it after some minutes, to follow up on something that takes time.",
-      obj({ minutes: int, reason: str }, ["minutes", "reason"]),
-      followUpLater,
-    ),
+    {
+      ...spec(
+        "follow_up_later",
+        null,
+        "Pause this task and resume it after some minutes, to follow up on something that takes time.",
+        obj({ minutes: int, reason: str }, ["minutes", "reason"]),
+        followUpLater,
+      ),
+      conversation:
+        "Get reminded here after some minutes, to follow up on something that takes time (a build, a reply you expect). You are free meanwhile; the reminder arrives as a new item with your reason.",
+    },
+    {
+      ...spec(
+        "start_task",
+        null,
+        "Start a separate task of your own for a bigger piece of work that can be done on its own (long research, a build, changes across many files). It runs in its own context with your tools and computer, and its result comes back to you here; nothing is posted for it. Give a self-contained brief: it does not see this conversation.",
+        obj({ task: str, expected_output: str, materials: str }, ["task"]),
+        startTask,
+      ),
+      modes: ["conversation"] as WorkMode[],
+    },
     ...ALL_FEISHU_TOOLS,
   ].map((t) => [t.name, t]),
 );
@@ -1073,20 +1213,30 @@ function feishuOffered(group: string, tools: string[]): boolean {
   return grantedApps(tools, product, mode as "read" | "write").length > 0;
 }
 
+/**
+ * The tools of a piece of work. A conversation gets the same list (and descriptions) for every run, whatever
+ * its messages: a stable tool list keeps the start of its prompt cacheable.
+ */
 export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   const groups = new Set<string>(envelope.tools ?? []);
-  return [...TOOLS.values()].filter(
-    (t) =>
-      (t.group === null ||
-        groups.has(t.group) ||
-        (t.group.startsWith("feishu:") && feishuOffered(t.group, envelope.tools ?? []))) &&
-      // Declining to answer is for messages that reached the role without an @-mention.
-      (t.name !== "stay_silent" || !!envelope.auto) &&
-      // The configuration tools only for a system administrator's own work.
-      (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
-      // Some only where the conversation stays in the console.
-      (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside),
-  );
+  const mode = modeOf(envelope);
+  return [...TOOLS.values()]
+    .filter(
+      (t) =>
+        (t.group === null ||
+          groups.has(t.group) ||
+          (t.group.startsWith("feishu:") && feishuOffered(t.group, envelope.tools ?? []))) &&
+        (!t.modes || t.modes.includes(mode)) &&
+        // Declining to answer is for messages that reached the role without an @-mention: a conversation
+        // always has the tool (it refuses when the latest message did @-mention the role), a task only when
+        // it came that way.
+        (t.name !== "stay_silent" || mode === "conversation" || !!envelope.auto) &&
+        // The configuration tools only for a system administrator's own work.
+        (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
+        // Some only where the conversation stays in the console.
+        (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside),
+    )
+    .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {

@@ -192,11 +192,18 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     stickToBottom.current = true;
     appendMessage(msg);
     if (msg.tasks?.length) {
-      const names = msg.tasks.map((t) => {
+      const name = (t: { owner_role_id: string }) => {
         const r = dir.roleById.get(t.owner_role_id);
         return r ? `@${r.handle}` : "角色";
-      });
-      toast(`已交给 ${names.join("、")} 处理，任务已创建`, "ok");
+      };
+      // A role already at work here reads the message at its next step instead of starting over.
+      const joined = msg.tasks.filter((t) => t.joined).map(name);
+      const started = msg.tasks.filter((t) => !t.joined).map(name);
+      const parts = [
+        started.length ? `已交给 ${started.join("、")}` : "",
+        joined.length ? `${joined.join("、")} 正在工作，会在下一步读到这条消息` : "",
+      ].filter(Boolean);
+      toast(parts.join("；"), "ok");
       bumpTasks();
     }
     onTopicUpdated();

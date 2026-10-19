@@ -20,8 +20,11 @@ export interface LLMResponse {
   /** The model's reasoning, when the service returns it and wants it back (DeepSeek's reasoning_content). */
   reasoning?: string;
   toolCalls: ToolCall[];
+  /** All prompt tokens, including the part read from the service's prompt cache. */
   promptTokens: number;
   completionTokens: number;
+  /** Prompt tokens served from the prompt cache (0 when the service does not say). */
+  cachedTokens?: number;
   finishReason?: string | null;
 }
 
@@ -247,6 +250,8 @@ export class OpenAICompatibleModel implements ChatModel {
       toolCalls,
       promptTokens: data.usage?.prompt_tokens ?? 0,
       completionTokens: data.usage?.completion_tokens ?? 0,
+      // OpenAI and most compatible services report prompt_tokens_details.cached_tokens; DeepSeek its own field.
+      cachedTokens: data.usage?.prompt_tokens_details?.cached_tokens ?? data.usage?.prompt_cache_hit_tokens ?? 0,
       finishReason: choice.finish_reason,
     };
   }
@@ -317,13 +322,52 @@ export class AnthropicModel implements ChatModel {
     return { system, messages: out };
   }
 
+  /**
+   * Prompt caching: one breakpoint after the system prompt (tools and system are the stable start of every
+   * request) and one on the last block, so the next request of the same conversation reads everything before
+   * it from the cache. Off for a gateway that rejects the field.
+   */
+  caching = true;
+
+  private static withBreakpoints(system: string, messages: any[]): { system: any; messages: any[] } {
+    const mark = { type: "ephemeral" };
+    const out = messages.map((m) => ({ ...m }));
+    const last = out[out.length - 1];
+    if (last) {
+      const blocks = typeof last.content === "string" ? [{ type: "text", text: last.content }] : [...last.content];
+      const tail = blocks[blocks.length - 1];
+      // Empty text blocks cannot carry a breakpoint.
+      if (tail && !(tail.type === "text" && !tail.text)) {
+        blocks[blocks.length - 1] = { ...tail, cache_control: mark };
+        last.content = blocks;
+      }
+    }
+    return { system: system ? [{ type: "text", text: system, cache_control: mark }] : undefined, messages: out };
+  }
+
   async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta): Promise<LLMResponse> {
     const { system, messages: converted } = this.convert(messages);
-    const body: Record<string, any> = { model: this.model, messages: converted, ...this.params };
-    if (system) body.system = system;
-    if (tools?.length)
-      body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
-    const res = await postMaybeStreaming(this, this.url, this.headers, body, { stream: true }, this.timeoutMs, onDelta);
+    const build = () => {
+      const cached = this.caching ? AnthropicModel.withBreakpoints(system, converted) : { system, messages: converted };
+      const body: Record<string, any> = { model: this.model, messages: cached.messages, ...this.params };
+      if (cached.system) body.system = cached.system;
+      if (tools?.length)
+        body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+      return body;
+    };
+    let res: Response;
+    try {
+      res = await postMaybeStreaming(this, this.url, this.headers, build(), { stream: true }, this.timeoutMs, onDelta);
+    } catch (err) {
+      const rejected =
+        this.caching &&
+        err instanceof ModelError &&
+        err.detail.upstream_status === 400 &&
+        /cache_control/i.test(err.message);
+      if (!rejected) throw err;
+      this.caching = false;
+      res = await postMaybeStreaming(this, this.url, this.headers, build(), { stream: true }, this.timeoutMs, onDelta);
+    }
     if (!isEventStream(res)) return AnthropicModel.parse(await parseJson(res));
     // Streamed: content blocks open, grow by deltas (text or partial tool-input JSON), then close.
     const blocks: any[] = [];
@@ -352,6 +396,9 @@ export class AnthropicModel implements ChatModel {
 
   private static parse(data: any): LLMResponse {
     const blocks: any[] = data.content ?? [];
+    const u = data.usage ?? {};
+    // input_tokens counts only what was neither read from nor written to the cache.
+    const read = u.cache_read_input_tokens ?? 0;
     return {
       content: blocks
         .filter((b) => b.type === "text")
@@ -360,8 +407,9 @@ export class AnthropicModel implements ChatModel {
       toolCalls: blocks
         .filter((b) => b.type === "tool_use")
         .map((b) => ({ id: b.id, name: b.name, arguments: b.input ?? {} })),
-      promptTokens: data.usage?.input_tokens ?? 0,
-      completionTokens: data.usage?.output_tokens ?? 0,
+      promptTokens: (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + read,
+      completionTokens: u.output_tokens ?? 0,
+      cachedTokens: read,
       finishReason: data.stop_reason,
     };
   }
@@ -387,6 +435,17 @@ export interface RemoteModel {
   name: string | null;
   /** Reasoning effort levels, when the provider reports them (services/effort.ts). */
   effort?: EffortInfo;
+  /** Context window in tokens, when the provider reports it. */
+  contextWindow?: number;
+}
+
+/** The context window a model list entry reports (Anthropic, OpenRouter, vLLM and others name it differently). */
+export function listedContextWindow(item: Record<string, unknown>): number | undefined {
+  for (const key of ["max_input_tokens", "context_length", "context_window", "max_model_len", "max_context_length"]) {
+    const v = Number(item[key]);
+    if (Number.isFinite(v) && v >= 1024) return Math.floor(v);
+  }
+  return undefined;
 }
 
 /**
@@ -426,6 +485,7 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
             id: String(m.id),
             name: m.display_name ? String(m.display_name) : null,
             effort: anthropicEffort(m),
+            contextWindow: listedContextWindow(m),
           });
       }
       if (!data?.has_more || !data.last_id) break;
@@ -439,7 +499,12 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
     for (const m of list) {
       const item = m as Record<string, unknown> | string;
       const id = typeof item === "string" ? item : String(item?.id ?? item?.model ?? item?.name ?? "");
-      if (id) found.set(id, { id, name: null, effort: typeof item === "string" ? undefined : listedEffort(item) });
+      if (id)
+        found.set(id, {
+          id,
+          name: null,
+          ...(typeof item === "string" ? {} : { effort: listedEffort(item), contextWindow: listedContextWindow(item) }),
+        });
     }
   }
   return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));

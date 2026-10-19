@@ -105,7 +105,11 @@ export interface Message {
 }
 
 export interface PostMessageResult extends Message {
-  tasks: { id: string; owner_role_id: string; status: string }[];
+  /**
+   * The roles' conversations the message went to. joined: the role was already working there and reads it
+   * at its next step.
+   */
+  tasks: { id: string; owner_role_id: string; status: string; kind?: "conversation" | "task"; joined?: boolean }[];
 }
 
 export interface Artifact {
@@ -174,8 +178,15 @@ export interface TaskWait {
 export interface Task {
   id: string;
   topic_id: string;
-  /** Agent session (role × topic) the task ran in. */
+  /**
+   * conversation: one run of a role's conversation in the topic (its context is the session's);
+   * task: independent work with its own context.
+   */
+  kind: "conversation" | "task";
+  /** Agent session (role × topic) of a conversation run. */
   session_id: string | null;
+  /** The conversation an independent task reports its result to. */
+  report_session_id: string | null;
   title: string;
   instruction: string;
   status: TaskStatus;
@@ -256,10 +267,24 @@ export interface AgentSession {
   role_id: string;
   topic_id: string;
   status: string;
-  /** Short record of earlier runs whose results were delivered (stored with camelCase keys). */
+  /** Short record of earlier runs, from before conversations kept their context (stored with camelCase keys). */
   notes: { taskId?: string; task_id?: string; request: string; result: string; at: string }[];
   runs: number;
   last_run_at: string | null;
+  /** Size of the conversation's context at its last model call, in tokens. */
+  context_tokens: number;
+  compactions: number;
+  /** Labels of what the context has read. */
+  labels: string[];
+  /** Items (messages, results, due follow-ups) waiting to be shown to the conversation. */
+  waiting: number;
+  next_follow_up_at: string | null;
+  open_run: { id: string; status: TaskStatus } | null;
+  /** The context has read material not everyone in the topic may see: its answers wait for approval until cleared. */
+  restricted: boolean;
+  /** The role's model: its context window and when the conversation is compacted (null: no chat model). */
+  context_window: number | null;
+  compact_at: number | null;
   created_at: string;
   updated_at: string;
   /** Present on GET /api/roles/:id/sessions. */
@@ -555,6 +580,11 @@ export interface ModelConfig {
   capabilities: Capabilities;
   status: "unchecked" | "ok" | "error";
   daily_token_limit: number | null;
+  /** Set by an administrator (null: the provider's report or the recommendation). */
+  context_window: number | null;
+  compact_tokens: number | null;
+  /** In effect: the window, the compaction threshold and where the window came from (null for decision models). */
+  context?: { window: number; compact_at: number; source: "model" | "provider" | "family" | "default" } | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -604,6 +634,8 @@ export interface RemoteModel {
   id: string;
   name: string | null;
   added: boolean;
+  /** The context window the service reports, if it does. */
+  context_window: number | null;
 }
 
 export interface TraceStep {

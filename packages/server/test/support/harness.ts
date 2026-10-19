@@ -136,8 +136,25 @@ export function useScripts(scriptFor: (handle: string) => Script | undefined): v
   }));
 }
 
-/** How many model turns this task has had (assistant messages so far). */
-export const turnOf = (messages: ChatMessage[]) => messages.filter((m) => m.role === "assistant").length;
+/**
+ * How many model turns the current request has had: assistant messages since the latest user turn (a task's
+ * brief, or what was new when a conversation's latest messages reached it).
+ */
+export function turnOf(messages: ChatMessage[]): number {
+  let n = 0;
+  for (let i = messages.length - 1; i >= 0 && messages[i].role !== "user"; i--)
+    if (messages[i].role === "assistant") n++;
+  return n;
+}
+
+/** The latest user turn (a task's brief, or what was new for a conversation), as text. */
+export function lastUser(messages: ChatMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "user") return typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+  }
+  return "";
+}
 
 export function lastToolResult(messages: ChatMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {

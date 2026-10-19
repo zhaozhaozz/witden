@@ -25,6 +25,7 @@ import { modelLabel, modelWithProvider, tokensToday, unusableReason } from "../s
 import * as svc from "../services/roles.js";
 import { canView } from "../services/topics.js";
 import { authed, authedNoTx, body, params, row } from "./http.js";
+import { sessionOut } from "./sessions.js";
 
 /** Configuration problems that would make work fail later, shown up front. */
 export function roleWarnings(
@@ -245,7 +246,7 @@ export async function roleRoutes(app: FastifyInstance) {
       for (const s of await db.select().from(agentSessions).where(eq(agentSessions.roleId, role.id))) {
         const [topic] = await db.select().from(topics).where(eq(topics.id, s.topicId)).limit(1);
         if (topic && (await canView(db, user, topic)))
-          out.push({ ...row(s), topic: { id: topic.id, title: topic.title, kind: topic.kind } });
+          out.push({ ...(await sessionOut(db, s)), topic: { id: topic.id, title: topic.title, kind: topic.kind } });
       }
       return out;
     }),

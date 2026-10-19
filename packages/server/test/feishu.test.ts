@@ -348,8 +348,11 @@ describe("feishu groups and names", () => {
     let n = 0;
     w.scripts.dev = () => reply(`answer ${++n}`);
 
-    // two questions straight into the group: one topic, titled with the group's name
+    // two questions straight into the group (the second after the first was answered): one topic, titled
+    // with the group's name
     await link.push(group("第一个问题", "om_g1"));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
     await link.push(group("第二个问题", "om_g2"));
     await w.waitFor(async () => (await allTasks()).length === 2);
     const tasksNow = await allTasks();

@@ -204,6 +204,8 @@ export interface ModelChoice {
   model: string;
   name?: string;
   fromList: boolean;
+  /** The context window the service's list reported for it. */
+  contextWindow?: number;
 }
 
 function typedModels(text: string): ModelChoice[] {
@@ -247,6 +249,7 @@ export function ModelPicker({
     const fromList = ids.map((id) => ({
       model: id,
       ...(byId.get(id)?.name ? { name: byId.get(id)!.name! } : {}),
+      ...(byId.get(id)?.context_window ? { contextWindow: byId.get(id)!.context_window! } : {}),
       fromList: true,
     }));
     const typedOnes = typedModels(text).filter((t) => !ids.includes(t.model));
@@ -339,7 +342,11 @@ export function ModelPicker({
 
 /** Add the chosen models to the service (ones it has are skipped) and return them as configured. */
 export async function addModels(provider: ModelProvider, choices: ModelChoice[]): Promise<ModelConfig[]> {
-  const strip = ({ model, name }: ModelChoice) => (name ? { model, name } : { model });
+  const strip = ({ model, name, contextWindow }: ModelChoice) => ({
+    model,
+    ...(name ? { name } : {}),
+    ...(contextWindow ? { context_window: contextWindow } : {}),
+  });
   const listed = choices.filter((c) => c.fromList).map(strip);
   const typed = choices.filter((c) => !c.fromList).map(strip);
   if (listed.length) await api.post(`/api/model-providers/${provider.id}/models`, { models: listed, source: "api" });

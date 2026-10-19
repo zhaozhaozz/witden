@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
-import type { Approval, Artifact, Memory, Task, Topic } from "../../api/types";
-import { fmtBytes, fmtRelative, fmtTime, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
+import type { AgentSession, Approval, Artifact, Memory, Task, Topic } from "../../api/types";
+import { fmtBytes, fmtRelative, fmtTime, fmtTokens, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useTopics } from "../../lib/topics";
@@ -52,7 +52,9 @@ export function TopicSidePanel({
   const hasComputers = topicComputers(topic).length > 0;
   // Maximised, the panel shows only the computer (the tab row is hidden).
   const shown = computerMax ? "computer" : tab;
-  const tasks = useResource(() => api.get<Task[]>("/api/tasks", { topic_id: topic.id }), [topic.id]);
+  // The roles' conversations here, and the independent tasks (a conversation's runs are not listed as tasks).
+  const sessions = useResource(() => api.get<AgentSession[]>(`/api/topics/${topic.id}/sessions`), [topic.id]);
+  const tasks = useResource(() => api.get<Task[]>("/api/tasks", { topic_id: topic.id, kind: "task" }), [topic.id]);
   const approvals = useResource(
     () =>
       api
@@ -63,13 +65,16 @@ export function TopicSidePanel({
 
   useEffect(() => {
     if (version > 0) {
+      void sessions.reload();
       void tasks.reload();
       void approvals.reload();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
-  const activeCount = (tasks.data ?? []).filter((t) => isActiveTask(t.status)).length;
+  const activeCount =
+    (tasks.data ?? []).filter((t) => isActiveTask(t.status)).length +
+    (sessions.data ?? []).filter((s) => s.open_run).length;
 
   return (
     <aside className={`side-panel${computerMax ? " side-panel-max" : ""}`}>
@@ -77,7 +82,7 @@ export function TopicSidePanel({
         value={tab}
         onChange={(k) => guard(() => setTab(k))}
         tabs={[
-          { key: "tasks", label: "任务", badge: activeCount },
+          { key: "tasks", label: "工作", badge: activeCount },
           { key: "approvals", label: "审批", badge: approvals.data?.length },
           { key: "computer", label: "虚拟电脑", hidden: !hasComputers },
           { key: "people", label: "参与者", hidden: dm },
@@ -88,7 +93,12 @@ export function TopicSidePanel({
         ]}
       />
       <div className="side-body">
-        {shown === "tasks" ? <TasksTab res={tasks} dm={dm} /> : null}
+        {shown === "tasks" ? (
+          <>
+            <ConversationsBlock res={sessions} dm={dm} />
+            <TasksTab res={tasks} dm={dm} />
+          </>
+        ) : null}
         {shown === "approvals" ? (
           <Loaded res={approvals}>
             {(rows) =>
@@ -131,11 +141,114 @@ export function TopicSidePanel({
   );
 }
 
+/**
+ * Each role's conversation in this topic: one context it keeps from message to message. Shows whether it is
+ * working on something now, how large its context is and when it gets compacted; stop the current round or
+ * clear the context.
+ */
+function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: boolean }) {
+  const dir = useDirectory();
+  const { confirm } = useFeedback();
+  const { run, busy } = useAction();
+  const reset = async (s: AgentSession) => {
+    const name = s.role ? `@${s.role.handle}` : "角色";
+    const ok = await confirm({
+      title: `清空 ${name} 的上下文`,
+      body: (
+        <p>
+          {name}
+          会忘记在{dm ? "这个私信" : "这个话题"}
+          里之前的对话内容；消息都还在，下次有人找它时，它会从最近的消息重新读起。正在进行的这一轮会停止。
+        </p>
+      ),
+      confirmLabel: "清空上下文",
+      cancelLabel: "返回",
+      danger: true,
+    });
+    if (ok && (await run(() => api.post(`/api/sessions/${s.id}/reset`), "上下文已清空"))) void res.reload();
+  };
+  return (
+    <section className="work-section">
+      <h4 className="work-section-title">对话</h4>
+      <Loaded res={res}>
+        {(rows) =>
+          rows.length ? (
+            <ul className="task-cards">
+              {rows.map((s) => {
+                const role = s.role ? { ...s.role, ...(dir.roleById.get(s.role.id) ?? {}) } : null;
+                return (
+                  <li key={s.id} className="task-card">
+                    <div className="task-card-head">
+                      {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的角色</span>}
+                      {s.restricted ? (
+                        <Tag
+                          tone="wait"
+                          title="这段对话读过不是话题里每个人都能看的资料，之后的回答要等资料主人批准才会发出；清空上下文后恢复。"
+                        >
+                          读过受限资料
+                        </Tag>
+                      ) : null}
+                      {s.open_run ? <TaskStatusChip status={s.open_run.status} compact /> : <Tag tone="off">空闲</Tag>}
+                    </div>
+                    <div
+                      className="small muted"
+                      title="上下文：角色在这里的对话目前占用的大小；达到整理点时，它会把前面的内容压缩成摘要。"
+                    >
+                      上下文 {fmtTokens(s.context_tokens)}
+                      {s.compact_at ? ` / ${fmtTokens(s.compact_at)} 时整理` : ""}
+                      {s.compactions ? ` · 已整理 ${s.compactions} 次` : ""}
+                      {s.waiting ? ` · ${s.waiting} 条待读` : ""}
+                      {s.next_follow_up_at ? ` · ${fmtRelative(s.next_follow_up_at)}跟进` : ""}
+                    </div>
+                    <div className="btn-row">
+                      {s.open_run ? (
+                        <Link to={`/tasks/${s.open_run.id}`} className="btn btn-xs">
+                          查看过程
+                        </Link>
+                      ) : null}
+                      <button type="button" className="btn btn-xs" disabled={busy} onClick={() => void reset(s)}>
+                        清空上下文
+                      </button>
+                    </div>
+                    {s.open_run ? (
+                      <TaskControls
+                        size="xs"
+                        task={{
+                          id: s.open_run.id,
+                          status: s.open_run.status,
+                          owner_role_id: s.role_id,
+                          kind: "conversation",
+                        }}
+                        onChanged={() => void res.reload()}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <Empty
+              title="还没有对话"
+              hint={
+                dm
+                  ? "给角色发消息后，它在这里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+                  : "在消息里 @ 一个角色，它在这个话题里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+              }
+            />
+          )
+        }
+      </Loaded>
+    </section>
+  );
+}
+
+/** Independent tasks: work a conversation split off (start_task) or delegated, each with its own context. */
 function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
   const [onlyActive, setOnlyActive] = useState(false);
   return (
-    <>
+    <section className="work-section">
       <div className="side-toolbar">
+        <h4 className="work-section-title">任务</h4>
         <Toggle checked={onlyActive} onChange={setOnlyActive} label="只看进行中" />
       </div>
       <Loaded res={res}>
@@ -145,11 +258,7 @@ function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
             return (
               <Empty
                 title="还没有任务"
-                hint={
-                  dm
-                    ? "给角色发消息后，它接下的工作会作为任务出现在这里。"
-                    : "在消息里 @ 一个角色，它接下的工作会作为任务出现在这里。"
-                }
+                hint={`角色把一块较大的工作拆出去单独做、或交给其他角色时，会作为任务出现在这里，各自有独立的上下文，完成后结果回到${dm ? "私信" : "话题"}里的对话。`}
               />
             );
           return (
@@ -181,7 +290,7 @@ function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
           );
         }}
       </Loaded>
-    </>
+    </section>
   );
 }
 
