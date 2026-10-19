@@ -27,6 +27,7 @@ import { probeAnswer } from "../services/public-url.js";
 import { params, query, sendError } from "./http.js";
 import { getConn } from "./integrations.js";
 import { serveAvatar } from "./roles.js";
+import { triggerWebhookRoutes } from "./triggers.js";
 
 const escapeHtml = (t: string) =>
   t.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -49,6 +50,7 @@ function rejectedIf(connectionId: string, signed: boolean, verify: () => void): 
 }
 
 export async function webhookRoutes(app: FastifyInstance, listener: "console" | "webhooks") {
+  await app.register(triggerWebhookRoutes);
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (req: FastifyRequest, raw: Buffer, done) => {
     // Keep the raw body for signature checks; parse JSON for everything else.
     (req as any).rawBody = raw;

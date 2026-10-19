@@ -29,6 +29,7 @@ import { sessionRoutes } from "./api/sessions.js";
 import { setupRoutes } from "./api/setup.js";
 import { taskRoutes } from "./api/tasks.js";
 import { topicRoutes } from "./api/topics.js";
+import { triggerRoutes } from "./api/triggers.js";
 import { buildWebhookApp, webhookRoutes } from "./api/webhooks.js";
 import { ExecutionGateway, type GatewayClient, HttpGatewayClient } from "./compute/gateway.js";
 import { RunnerHub, stdioTransport } from "./compute/hub.js";
@@ -47,6 +48,7 @@ import { reconcile } from "./services/instances.js";
 import { bootstrapLaya } from "./services/model-configs.js";
 import { proxyConfigFor } from "./services/model-proxy.js";
 import { ensureSystemAdmin } from "./services/system-admin.js";
+import { processTriggerEvents, queueScheduledTriggers } from "./services/triggers.js";
 import { bootstrap } from "./services/users.js";
 
 export interface StartOptions {
@@ -114,6 +116,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     computerRoutes,
     roleRoutes,
     topicRoutes,
+    triggerRoutes,
     taskRoutes,
     sessionRoutes,
     knowledgeRoutes,
@@ -188,6 +191,22 @@ export async function start(opts: StartOptions): Promise<Witden> {
     const sweep = () => rt.background("inbound.sweep", async () => void (await processInbound()));
     sweep();
     timers.push(setInterval(sweep, 15_000));
+    // Durable trigger receipts and due schedules are shared by every API process; row locks prevent duplicates.
+    let sweepingTriggers = false;
+    const sweepTriggers = () => {
+      if (sweepingTriggers) return;
+      sweepingTriggers = true;
+      void rt.background("triggers.sweep", async () => {
+        try {
+          await queueScheduledTriggers();
+          await processTriggerEvents();
+        } finally {
+          sweepingTriggers = false;
+        }
+      });
+    };
+    sweepTriggers();
+    timers.push(setInterval(sweepTriggers, 5_000));
   }
   let worker: Worker | null = null;
   if (settings.processRole !== "api" && opts.startWorker !== false) {

@@ -155,7 +155,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       // Participant changes and archive notices arrive as system messages.
       if (m.author_type === "system") reloadTopic();
       if (m.task_id) bumpTasks();
-    } else if (type.startsWith("task.")) {
+    } else if (type.startsWith("task.") || type === "trigger.changed") {
       bumpTasks();
     }
   });

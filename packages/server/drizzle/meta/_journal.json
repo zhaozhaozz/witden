@@ -253,6 +253,13 @@
       "when": 1792406359572,
       "tag": "0035_feishu_calendar_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792414389086,
+      "tag": "0036_topic_triggers",
+      "breakpoints": true
     }
   ]
 }

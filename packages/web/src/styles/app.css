@@ -4460,3 +4460,10 @@ body.resizing {
 .form-narrow {
   max-width: 560px;
 }
+.trigger-request {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}

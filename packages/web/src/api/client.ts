@@ -141,7 +141,7 @@ export const api = {
   post: <T>(path: string, body?: unknown, query?: Query) => json<T>("POST", path, body ?? {}, query),
   patch: <T>(path: string, body?: unknown) => json<T>("PATCH", path, body ?? {}),
   put: <T>(path: string, body?: unknown) => json<T>("PUT", path, body ?? {}),
-  del: <T>(path: string) => json<T>("DELETE", path),
+  del: <T>(path: string, body?: unknown) => json<T>("DELETE", path, body),
   upload: <T>(path: string, form: FormData) => json<T>("POST", path, form),
   /** Authenticated binary download (files, screenshots); the caller owns the returned object URL. */
   blob: async (path: string, query?: Query): Promise<Blob> => {

@@ -296,6 +296,7 @@ export const topics = pgTable("topics", {
   id: id(),
   title: text("title").notNull(),
   goal: text("goal").notNull().default(""),
+  workInstructions: text("work_instructions").notNull().default(""),
   kind: text("kind").notNull().default("group"), // group | dm
   status: text("status").notNull().default("active"),
   /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
@@ -324,6 +325,76 @@ export const topicParticipants = pgTable(
   },
   (t) => [index("ix_participant_lookup").on(t.topicId, t.participantType, t.participantId)],
 );
+
+/** Explicit, administrator-configured work in a topic, including topics linked to external channels. */
+export const topicTriggers = pgTable(
+  "topic_triggers",
+  {
+    id: id(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(), // webhook | schedule
+    enabled: boolean("enabled").notNull().default(true),
+    roleId: text("role_id").notNull(),
+    instructions: text("instructions").notNull().default(""),
+    tokenHash: text("token_hash"),
+    filterCode: text("filter_code").notNull().default(""),
+    cron: text("cron"),
+    timezone: text("timezone").notNull().default("UTC"),
+    nextRunAt: ts("next_run_at"),
+    createdBy: text("created_by").notNull(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("ix_topic_triggers_due").on(t.enabled, t.nextRunAt), index("ix_topic_triggers_topic").on(t.topicId)],
+);
+
+export interface TriggerRequest {
+  method: string;
+  path: string;
+  query: Record<string, unknown>;
+  headers: Record<string, string | string[]>;
+  /** Exact bytes as base64; credential headers are never retained. */
+  body_base64: string;
+}
+
+/** Durable receipt and queue. Filtering never erases the original request. */
+export const triggerEvents = pgTable(
+  "trigger_events",
+  {
+    id: id(),
+    topicId: text("topic_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    // Kept after deleting a trigger, along with its name and the configuration used for this receipt.
+    triggerId: text("trigger_id").notNull(),
+    triggerName: text("trigger_name").notNull(),
+    kind: text("kind").notNull(),
+    eventKey: text("event_key"),
+    config: json<{ roleId: string; instructions: string; filterCode: string; createdBy: string }>("config").notNull(),
+    request: json<TriggerRequest | null>("request"),
+    scheduledAt: ts("scheduled_at"),
+    status: text("status").notNull().default("queued"), // queued | processing | dispatched | filtered | failed | skipped
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(0),
+    claimedAt: ts("claimed_at"),
+    claimToken: text("claim_token"),
+    messageId: text("message_id"),
+    taskId: text("task_id"),
+    createdAt: created(),
+    completedAt: ts("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("ux_trigger_event_key").on(t.triggerId, t.eventKey),
+    index("ix_trigger_events_topic").on(t.topicId, t.createdAt, t.id),
+    index("ix_trigger_events_queue").on(t.status, t.claimedAt),
+  ],
+);
+
+export type TopicTrigger = typeof topicTriggers.$inferSelect;
+export type TriggerEvent = typeof triggerEvents.$inferSelect;
 
 export const messages = pgTable(
   "messages",

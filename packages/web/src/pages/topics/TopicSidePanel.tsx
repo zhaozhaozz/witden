@@ -27,6 +27,7 @@ import { ApprovalCard } from "../approvalParts";
 import { MemoryList } from "../memoryParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
+import { TriggersTab } from "./TriggersTab";
 import { InviteDialog, PublishDialog } from "./topicDialogs";
 
 export function TopicSidePanel({
@@ -87,6 +88,7 @@ export function TopicSidePanel({
           { key: "role", label: "角色", hidden: !dm },
           { key: "files", label: "文件" },
           { key: "notes", label: "记忆" },
+          { key: "triggers", label: "触发器", hidden: dm },
           { key: "settings", label: "设置" },
         ]}
       />
@@ -128,6 +130,7 @@ export function TopicSidePanel({
         {shown === "role" ? <DmRoleTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} /> : null}
         {shown === "notes" ? <NotesTab topic={topic} /> : null}
+        {shown === "triggers" ? <TriggersTab key={topic.id} topic={topic} version={version} /> : null}
         {shown === "settings" ? (
           dm ? (
             <DmSettings topic={topic} onCleared={onCleared} />
@@ -503,6 +506,7 @@ function SettingsTab({
   const { run, busy } = useAction();
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
+  const [workInstructions, setWorkInstructions] = useState(topic.work_instructions);
   const [responseMode, setResponseMode] = useState(topic.response_mode);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
   const [publishing, setPublishing] = useState(false);
@@ -510,6 +514,7 @@ function SettingsTab({
   useEffect(() => {
     setTitle(topic.title);
     setGoal(topic.goal);
+    setWorkInstructions(topic.work_instructions);
     setResponseMode(topic.response_mode);
     setRounds(topic.max_auto_rounds?.toString() ?? "");
   }, [topic]);
@@ -525,6 +530,7 @@ function SettingsTab({
           {
             title: title.trim(),
             goal,
+            work_instructions: workInstructions,
             ...(topic.kind === "group" ? { response_mode: responseMode } : {}),
             max_auto_rounds: rounds ? Number(rounds) : null,
           },
@@ -534,6 +540,7 @@ function SettingsTab({
   useUnsavedChanges(
     title !== topic.title ||
       goal !== topic.goal ||
+      workInstructions !== topic.work_instructions ||
       responseMode !== topic.response_mode ||
       rounds !== (topic.max_auto_rounds?.toString() ?? ""),
     saveSettings,
@@ -553,6 +560,18 @@ function SettingsTab({
         </Field>
         <Field label="目标" hint="这个话题要完成什么；显示在标题下方，角色接到任务时也会读到。">
           <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
+        </Field>
+        <Field
+          label="工作说明"
+          hint="说明这个频道的工作用途，以及收到 webhook 或定时触发后该做什么。这里的所有角色都会读到。"
+        >
+          <textarea
+            rows={6}
+            maxLength={16000}
+            value={workInstructions}
+            onChange={(e) => setWorkInstructions(e.target.value)}
+            placeholder="例如：收到部署事件后检查结果；失败时分析原因并在这个频道汇报。"
+          />
         </Field>
         {topic.kind === "group" ? (
           <FieldGroup label="角色响应方式">
@@ -649,7 +668,7 @@ function DmSettings({ topic, onCleared }: { topic: Topic; onCleared: () => void 
 function CleanupBlock({ topic, onCleared }: { topic: Topic; onCleared: () => void }) {
   const { confirm, toast } = useFeedback();
   const { run, busy } = useAction();
-  const [clean, setClean] = useState({ messages: true, memories: true, files: true });
+  const [clean, setClean] = useState({ messages: true, memories: true, files: true, trigger_history: true });
   const dm = topic.kind === "dm";
   const name = dm
     ? `与 ${topic.participants?.find((p) => p.type === "role")?.name ?? "角色"} 的私信`
@@ -685,11 +704,21 @@ function CleanupBlock({ topic, onCleared }: { topic: Topic; onCleared: () => voi
           />
           文件
         </label>
+        {topic.kind !== "dm" ? (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={clean.trigger_history}
+              onChange={(e) => setClean({ ...clean, trigger_history: e.target.checked })}
+            />
+            触发历史（含原始请求及未处理事件）
+          </label>
+        ) : null}
       </div>
       <button
         type="button"
         className="btn btn-sm btn-danger"
-        disabled={busy || (!clean.messages && !clean.memories && !clean.files)}
+        disabled={busy || (!clean.messages && !clean.memories && !clean.files && !clean.trigger_history)}
         onClick={async () => {
           const ok = await confirm({
             title: dm ? "永久清空私信记录" : "永久清理话题数据",

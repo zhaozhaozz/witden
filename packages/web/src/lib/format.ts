@@ -355,6 +355,7 @@ export const TOOL_LABEL: Record<string, string> = {
   update_memory: "修改记忆",
   forget: "删除记忆",
   read_topic: "查阅其他话题",
+  read_webhook_history: "查阅本话题的 webhook 历史",
   ask_human: "向人提问",
   post_progress: "汇报进度",
   follow_up_later: "稍后跟进",

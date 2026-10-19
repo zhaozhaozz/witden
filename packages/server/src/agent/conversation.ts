@@ -29,7 +29,7 @@ import {
   tasks,
 } from "../db/schema.js";
 import * as topicSvc from "../services/topics.js";
-import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES } from "./context.js";
+import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES, triggerContext } from "./context.js";
 import { ACTIVE } from "./control.js";
 import { createTask, plainTitle, sessionFor } from "./dispatch.js";
 import { authorName } from "./tools.js";
@@ -260,7 +260,7 @@ async function line(db: Db, m: Message, forYou: boolean): Promise<string> {
   const text =
     m.content.length > limit ? `${m.content.slice(0, limit)}… [cut; topic_history shows it whole]` : m.content;
   const thread = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
-  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}`;
+  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${triggerContext(m)}`;
 }
 
 /**

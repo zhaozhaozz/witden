@@ -40,6 +40,7 @@ export interface Topic {
   id: string;
   title: string;
   goal: string;
+  work_instructions: string;
   kind: "group" | "dm";
   status: "active" | "archived";
   /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */

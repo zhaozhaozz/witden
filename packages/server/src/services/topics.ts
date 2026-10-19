@@ -125,6 +125,7 @@ export async function createTopic(
   data: {
     title: string;
     goal?: string;
+    workInstructions?: string;
     responseMode?: string;
     userIds?: string[];
     roleIds?: string[];
@@ -137,6 +138,11 @@ export async function createTopic(
   await requirePerm(db, user, Perm.TOPIC_CREATE);
   const responseMode = parseResponseMode(data.responseMode ?? "mention");
   if (!data.title?.trim()) throw new BadRequest("title is required");
+  if (
+    data.workInstructions !== undefined &&
+    (typeof data.workInstructions !== "string" || data.workInstructions.length > 16_000)
+  )
+    throw new BadRequest("work_instructions must be a string of at most 16000 characters");
   const kind = data.kind ?? "group";
   const [topic] = await db
     .insert(topics)
@@ -144,6 +150,7 @@ export async function createTopic(
       id: newId("top"),
       title: data.title.trim(),
       goal: data.goal ?? "",
+      workInstructions: data.workInstructions ?? "",
       kind,
       responseMode,
       maxAutoRounds: data.maxAutoRounds ?? null,

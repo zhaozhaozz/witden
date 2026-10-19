@@ -18,6 +18,7 @@ import {
   tasks,
   topicParticipants,
   topics,
+  triggerEvents,
   type User,
   users,
 } from "../db/schema.js";
@@ -189,14 +190,32 @@ export async function topicRoutes(app: FastifyInstance) {
       if (b.status !== undefined && !["active", "archived"].includes(b.status))
         throw new BadRequest("status must be active or archived");
       if (b.responseMode !== undefined) svc.parseResponseMode(b.responseMode);
-      const allowed = ["title", "goal", "status", "responseMode", "maxAutoRounds", "allowedModelConfigIds"];
+      if (
+        b.workInstructions !== undefined &&
+        (typeof b.workInstructions !== "string" || b.workInstructions.length > 16_000)
+      )
+        throw new BadRequest("work_instructions must be a string of at most 16000 characters");
+      const allowed = [
+        "title",
+        "goal",
+        "workInstructions",
+        "status",
+        "responseMode",
+        "maxAutoRounds",
+        "allowedModelConfigIds",
+      ];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
       const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
       if (b.status === "archived") {
         const ids = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.topicId, topic.id))).map((t) => t.id);
         await recheckActiveTasks(db, "topic archived", ids);
       }
-      await audit(db, "topic.update", { actorType: "user", actorId: user.id, topicId: topic.id, detail: b });
+      await audit(db, "topic.update", {
+        actorType: "user",
+        actorId: user.id,
+        topicId: topic.id,
+        detail: { fields: Object.keys(update) },
+      });
       return topicOut(db, updated, user, true);
     }),
   );
@@ -483,6 +502,8 @@ export async function topicRoutes(app: FastifyInstance) {
           code: "confirmation_required",
         });
       const counts = { messages: 0, memories: 0, files: 0 };
+      // Raw requests are another part of this topic's history, including receipts still in the queue.
+      if (b.triggerHistory !== false) await db.delete(triggerEvents).where(eq(triggerEvents.topicId, topic.id));
       if (b.messages !== false) {
         for (const m of await db
           .select()

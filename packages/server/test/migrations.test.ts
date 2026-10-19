@@ -6,6 +6,30 @@ import { describe, expect, it } from "vitest";
 
 const DIR = path.resolve(import.meta.dirname, "../drizzle");
 
+describe("0036_topic_triggers", () => {
+  it("keeps existing topic data and adds empty work instructions plus durable trigger storage", async () => {
+    const db = new PGlite();
+    try {
+      for (const file of fs
+        .readdirSync(DIR)
+        .filter((f) => f.endsWith(".sql") && f < "0036")
+        .sort())
+        await apply(db, file.replace(/\.sql$/, ""));
+      await db.exec(
+        "insert into topics (id, title, goal) values ('top_existing', 'Existing channel', 'Keep this goal')",
+      );
+      await apply(db, "0036_topic_triggers");
+      expect(
+        (await db.query("select title, goal, work_instructions from topics where id = 'top_existing'")).rows,
+      ).toEqual([{ title: "Existing channel", goal: "Keep this goal", work_instructions: "" }]);
+      expect((await db.query("select count(*)::int as count from topic_triggers")).rows).toEqual([{ count: 0 }]);
+      expect((await db.query("select count(*)::int as count from trigger_events")).rows).toEqual([{ count: 0 }]);
+    } finally {
+      await db.close();
+    }
+  });
+});
+
 async function apply(db: PGlite, tag: string) {
   const sql = fs.readFileSync(path.join(DIR, `${tag}.sql`), "utf8");
   for (const statement of sql.split("--> statement-breakpoint")) {
