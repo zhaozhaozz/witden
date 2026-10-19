@@ -97,13 +97,17 @@ export async function eventRoutes(app: FastifyInstance) {
     res.write("retry: 3000\n\n");
     let queue = Promise.resolve();
     const unsubscribe = runtime().bus.subscribe((event) => {
-      if (inbox && event.type === "message.created") {
+      if (inbox && (event.type === "message.created" || event.type === "approval.changed")) {
         const topicId = event.channels.find((c) => c.startsWith("topic:"))?.slice("topic:".length);
         if (topicId) {
           queue = queue.then(async () => {
             if (res.writableEnded || !(await canViewTopic(topicId))) return;
-            const data = { topic_id: topicId, at: event.data.created_at, author_type: event.data.author_type };
-            res.write(`event: topic.activity\ndata: ${JSON.stringify(data)}\n\n`);
+            if (event.type === "approval.changed") {
+              res.write(`event: approval.changed\ndata: ${JSON.stringify(event.data)}\n\n`);
+            } else {
+              const data = { topic_id: topicId, at: event.data.created_at, author_type: event.data.author_type };
+              res.write(`event: topic.activity\ndata: ${JSON.stringify(data)}\n\n`);
+            }
           });
         }
       }

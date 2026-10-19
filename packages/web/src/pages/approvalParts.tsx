@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import { APPROVALS_EVENT } from "../api/events";
 import type { Approval } from "../api/types";
-import { APPROVALS_EVENT } from "../Layout";
 import { fmtRelative, fmtTime, genericStatus, isRestricted, TOOL_LABEL } from "../lib/format";
 import { useDirectory } from "../lib/session";
 import { useAction } from "../ui/feedback";
@@ -38,6 +38,7 @@ export function ApprovalCard({
   const sources = detail.sources as string | string[] | undefined;
   const content = detail.content as string | undefined;
   const labels = detail.labels as string[] | undefined;
+  const flow = detail.flow as { sources?: string } | undefined;
 
   const decide = async (approve: boolean) => {
     const out = await run(
@@ -95,12 +96,17 @@ export function ApprovalCard({
         </div>
       ) : toolCall ? (
         <div className="approval-body">
-          <p className="small">该角色的这类操作被设置为每次都需要人工批准。</p>
+          <p className="small">
+            {flow
+              ? "此操作会把受限资料发送给原本无权查看的人，需要资料所属方确认。"
+              : "该角色的这类操作被设置为每次都需要人工批准。"}
+          </p>
+          {flow?.sources ? <p className="small">资料来源：{flow.sources}</p> : null}
           <div className="muted small">调用 {toolCall.name}</div>
           {argsHidden ? (
             <p className="small muted">参数涉及你无权查看的资料，已隐藏。</p>
           ) : (
-            <JsonBlock value={toolCall.arguments ?? {}} maxHeight={220} />
+            <ToolArguments value={toolCall.arguments ?? {}} />
           )}
         </div>
       ) : Object.keys(detail).length ? (
@@ -136,7 +142,12 @@ export function ApprovalCard({
         </div>
         {a.status === "pending" && a.can_decide ? (
           <div className="approval-decide">
-            <input placeholder="备注（可选）" value={note} onChange={(e) => setNote(e.target.value)} />
+            <input
+              aria-label="审批备注（可选）"
+              placeholder="备注（可选）"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+            />
             <button type="button" className="btn btn-sm btn-danger-ghost" disabled={busy} onClick={() => decide(false)}>
               拒绝
             </button>
@@ -151,5 +162,22 @@ export function ApprovalCard({
         ) : null}
       </footer>
     </article>
+  );
+}
+
+/** Keep multiline text readable (e.g. a memory's content), with a bounded area for long requests. */
+function ToolArguments({ value }: { value: unknown }) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return <JsonBlock value={value} maxHeight={260} />;
+  return (
+    <dl className="approval-arguments">
+      {Object.entries(value).map(([name, argument]) => (
+        <div key={name}>
+          <dt>{name}</dt>
+          <dd>
+            <JsonBlock value={argument} />
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

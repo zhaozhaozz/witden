@@ -17,7 +17,7 @@ import {
   type User,
   users,
 } from "../db/schema.js";
-import { Forbidden, NotFound } from "../errors.js";
+import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
@@ -211,12 +211,18 @@ export async function taskRoutes(app: FastifyInstance) {
   app.get(
     "/api/approvals",
     authed(async ({ db, user, req }) => {
-      const status = query(req).status ?? "pending";
+      const q = query(req);
+      const status = q.status ?? "pending";
+      if (!["pending", "approved", "rejected", "all"].includes(status)) throw new BadRequest("invalid approval status");
+      if (status === "all" && !q.topic_id) throw new BadRequest("topic_id is required for all approval statuses");
+      const conds = [];
+      if (status !== "all") conds.push(eq(approvals.status, status));
+      if (q.topic_id) conds.push(eq(approvals.topicId, q.topic_id));
       const out = [];
       for (const a of await db
         .select()
         .from(approvals)
-        .where(eq(approvals.status, status))
+        .where(and(...conds))
         .orderBy(desc(approvals.createdAt))) {
         const [topic] = await db.select().from(topics).where(eq(topics.id, a.topicId)).limit(1);
         if ((await approvalSvc.canDecide(db, user, a)) || (topic && (await topicSvc.canView(db, user, topic))))

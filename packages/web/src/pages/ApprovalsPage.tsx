@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { APPROVALS_EVENT } from "../api/events";
 import type { Approval } from "../api/types";
-import { useResource } from "../lib/hooks";
+import { useDebounced, useResource } from "../lib/hooks";
 import { Empty, Loaded, PageHeader, Tabs } from "../ui/kit";
 import { ApprovalCard } from "./approvalParts";
 
@@ -9,6 +10,11 @@ export default function ApprovalsPage() {
   const [status, setStatus] = useState("pending");
   const [mineOnly, setMineOnly] = useState(true);
   const res = useResource(() => api.get<Approval[]>("/api/approvals", { status }), [status]);
+  const refresh = useDebounced(() => void res.reload(), 200);
+  useEffect(() => {
+    window.addEventListener(APPROVALS_EVENT, refresh);
+    return () => window.removeEventListener(APPROVALS_EVENT, refresh);
+  }, [refresh]);
 
   return (
     <div className="page">

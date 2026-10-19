@@ -1,6 +1,7 @@
 import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api/client";
+import { APPROVALS_EVENT } from "./api/events";
 import type { Approval, KillSwitch, Topic } from "./api/types";
 import { connectionLabel, conversationIcon, conversationKind, sourceOf } from "./lib/conversations";
 import { useInterval } from "./lib/hooks";
@@ -14,8 +15,6 @@ import { ResizeHandle } from "./ui/resize";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
 export const KILL_SWITCH_EVENT = "witden:kill-switch-changed";
-/** Fired after approvals are decided so the nav badge refreshes. */
-export const APPROVALS_EVENT = "witden:approvals-changed";
 
 interface NavItem {
   to: string;

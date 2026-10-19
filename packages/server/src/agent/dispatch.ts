@@ -47,6 +47,7 @@ export function messageOut(msg: Message) {
     mentions: msg.mentions,
     reply_to_id: msg.replyToId,
     task_id: msg.taskId,
+    approval_id: msg.deletedAt ? null : msg.approvalId,
     attachments: msg.attachments,
     source: msg.source,
     round: msg.round,
@@ -88,6 +89,7 @@ export async function saveMessage(
     attachments?: string[];
     round?: number;
     taskId?: string | null;
+    approvalId?: string | null;
   } = {},
 ): Promise<Message> {
   const mentions = opts.mentions ?? (await parseMentions(db, topic, content));
@@ -106,6 +108,7 @@ export async function saveMessage(
       attachments: opts.attachments ?? [],
       round: opts.round ?? 0,
       taskId: opts.taskId ?? null,
+      approvalId: opts.approvalId ?? null,
     })
     .returning();
   await db.update(topics).set({ lastMessageAt: new Date() }).where(eq(topics.id, topic.id));
@@ -118,11 +121,12 @@ export function systemMessage(
   db: Db,
   topic: Topic,
   content: string,
-  opts: { taskId?: string | null; mentions?: Mention[]; replyToId?: string | null } = {},
+  opts: { taskId?: string | null; approvalId?: string; mentions?: Mention[]; replyToId?: string | null } = {},
 ) {
   return saveMessage(db, topic, "system", null, content, {
     mentions: opts.mentions ?? [],
     taskId: opts.taskId ?? null,
+    approvalId: opts.approvalId ?? null,
     replyToId: opts.replyToId ?? null,
   });
 }

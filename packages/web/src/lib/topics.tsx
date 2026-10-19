@@ -1,7 +1,7 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import { useLiveEvents } from "../api/events";
+import { APPROVALS_EVENT, useLiveEvents } from "../api/events";
 import type { Topic } from "../api/types";
 import { NewTopicDialog, OpenDmDialog } from "../pages/topics/topicDialogs";
 import { announceConfigChange } from "./configEvents";
@@ -85,7 +85,12 @@ export function TopicsProvider({ children }: { children: ReactNode }) {
   // Fallback for missed events (stream reconnects, topics shared with you by others).
   useInterval(() => void reload(), 60_000);
 
-  useLiveEvents({ inbox: true }, (type, data) => {
+  // Reuse the inbox stream for approvals: per-view streams can exhaust the browser's HTTP connection limit.
+  const live = useLiveEvents({ inbox: true }, (type, data) => {
+    if (type === "approval.changed") {
+      window.dispatchEvent(new Event(APPROVALS_EVENT));
+      return;
+    }
     // Roles, people, models ... changed elsewhere: whatever lists that area fetches it again.
     if (type === "config.changed") {
       announceConfigChange(String(data.area));
@@ -108,6 +113,10 @@ export function TopicsProvider({ children }: { children: ReactNode }) {
       reloadTimer.current = window.setTimeout(() => void reload(), 400);
     }
   });
+
+  useEffect(() => {
+    if (live) window.dispatchEvent(new Event(APPROVALS_EVENT));
+  }, [live]);
 
   // The open topic is read up to its latest message.
   useEffect(() => {

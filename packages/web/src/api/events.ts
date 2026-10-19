@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { buildUrl, getToken } from "./client";
 
+/** The shared inbox stream and local decisions invalidate approval views throughout this console. */
+export const APPROVALS_EVENT = "witden:approvals-changed";
+
 export type LiveEventType =
   | "message.created"
+  | "approval.changed"
   | "task.created"
   | "task.status"
   | "task.step"
@@ -16,6 +20,7 @@ export type LiveEventType =
 
 const EVENT_TYPES: LiveEventType[] = [
   "message.created",
+  "approval.changed",
   "task.created",
   "task.status",
   "task.step",

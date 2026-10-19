@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { type LiveHandler, useLiveEvents } from "../../api/events";
-import type { Artifact, Message, PostMessageResult, Topic } from "../../api/types";
+import type { Approval, Artifact, Message, PostMessageResult, Topic } from "../../api/types";
 import { connectionLabel, conversationKind, placeLabel } from "../../lib/conversations";
 import { PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
@@ -26,6 +26,12 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const { run } = useAction();
   const topicRes = useResource(() => api.get<Topic>(`/api/topics/${topicId}`), [topicId]);
   const files = useResource(() => api.get<Artifact[]>(`/api/topics/${topicId}/files`), [topicId]);
+  // One source for inline cards and the side panel, including decisions kept in message history.
+  const approvals = useResource(
+    () => api.get<Approval[]>("/api/approvals", { topic_id: topicId, status: "all" }),
+    [topicId],
+  );
+  const approvalMap = useMemo(() => new Map((approvals.data ?? []).map((a) => [a.id, a])), [approvals.data]);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [msgError, setMsgError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -96,10 +102,15 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       el.scrollTop = el.scrollHeight;
     }
     // also when the floating conversation opens (it was hidden, so it had no scroll position)
-  }, [messages, chatOpen, computerMax]);
+  }, [messages, approvals.data, chatOpen, computerMax]);
 
   const bumpTasks = useDebounced(() => setVersion((v) => v + 1), 400);
   const reloadTopic = useDebounced(() => void topicRes.reload(), 300);
+  const reloadApprovals = useDebounced(() => void approvals.reload(), 200);
+  const onDecided = (next: Approval) => {
+    approvals.setData((prev) => prev?.map((a) => (a.id === next.id ? next : a)));
+    bumpTasks();
+  };
 
   const appendMessage = useCallback(
     (m: Message) => {
@@ -131,10 +142,14 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const live = useLiveEvents({ topic_id: topicId }, (type, data) => {
     activityFeed.current?.(type, data);
     if (type === "task.live") return;
-    if (type === "message.created") {
+    if (type === "approval.changed") {
+      reloadApprovals();
+      bumpTasks();
+    } else if (type === "message.created") {
       const m = data as unknown as Message;
       if (m.topic_id !== topicId) return;
       appendMessage(m);
+      if (m.approval_id) reloadApprovals();
       if (computerMax && !chatOpen && m.author_id !== me?.id) setUnseen((n) => n + 1);
       if (data.truncated) refreshRecent();
       // Participant changes and archive notices arrive as system messages.
@@ -144,6 +159,15 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       bumpTasks();
     }
   });
+
+  // Fetch current decisions after a reconnect, including changes made in another console while offline.
+  useEffect(() => {
+    if (live) {
+      void approvals.reload();
+      refreshRecent();
+      bumpTasks();
+    }
+  }, [live]);
 
   const topic = topicRes.data;
   const participantMap = useMemo(() => {
@@ -363,6 +387,11 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                   <MessageItem
                     key={m.id}
                     msg={m}
+                    approval={m.approval_id ? approvalMap.get(m.approval_id) : undefined}
+                    approvalError={approvals.error}
+                    approvalLoading={approvals.loading}
+                    onReloadApproval={approvals.reload}
+                    onDecided={onDecided}
                     author={author}
                     replyTo={
                       m.reply_to_id
@@ -463,6 +492,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
         <TopicSidePanel
           topic={topic}
           version={version}
+          approvals={approvals}
+          onDecided={onDecided}
           computerMax={computerMax}
           onToggleComputerMax={toggleComputerMax}
           onTopicChange={(t) => {
@@ -472,6 +503,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           onCleared={() => {
             void loadMessages();
             void files.reload();
+            void approvals.reload();
             bumpTasks();
           }}
         />

@@ -1,5 +1,5 @@
 /** Human decisions on held AI actions. Roles can never approve anything themselves. */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
   type Approval,
@@ -16,6 +16,7 @@ import { Conflict, Forbidden } from "../errors.js";
 import { userCanRead } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { approvalChanged } from "../services/events.js";
 import { recordSessionNote } from "./context.js";
 import { deferWhilePaused, setStatus, TERMINAL, textRestricted } from "./control.js";
 import { noteRunEnd, settle } from "./conversation.js";
@@ -70,8 +71,10 @@ export async function decide(db: Db, approval: Approval, user: User, approve: bo
   const [decided] = await db
     .update(approvals)
     .set({ status: approve ? "approved" : "rejected", decidedBy: user.id, decidedAt: new Date() })
-    .where(eq(approvals.id, approval.id))
+    .where(and(eq(approvals.id, approval.id), eq(approvals.status, "pending")))
     .returning();
+  if (!decided) throw new Conflict("approval already decided; refresh to see the decision");
+  await approvalChanged(db, decided);
   await audit(db, `approval.${decided.status}`, {
     actorType: "user",
     actorId: user.id,

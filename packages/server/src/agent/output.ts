@@ -19,6 +19,7 @@ import {
 } from "../db/schema.js";
 import { checkFlow, labelOwners, topicLabel, topicReaders } from "../security/labels.js";
 import { audit } from "../services/audit.js";
+import { approvalChanged } from "../services/events.js";
 import { deleteArtifactData } from "../services/files.js";
 import { dispatchRoleMessage, saveMessage, systemMessage } from "./dispatch.js";
 
@@ -138,9 +139,14 @@ export async function deliver(
   await systemMessage(
     db,
     topic,
-    `A message from @${role.handle} is on hold: it draws on ${sources}, which not everyone here may see. The owners of that material can approve or reject releasing it.`,
-    { taskId: task.id, mentions: [...owners].sort().map((id) => ({ type: "user" as const, id })) },
+    `@${role.handle} 的消息涉及受限资料，正在等待资料所属方审批。请在控制台查看详情并处理。`,
+    {
+      taskId: task.id,
+      approvalId: approval.id,
+      mentions: [...owners].sort().map((id) => ({ type: "user" as const, id })),
+    },
   );
+  await approvalChanged(db, approval);
   return { message: null, approval };
 }
 

@@ -1,6 +1,6 @@
 /** The inbox stream behind the console's sidebar: activity in viewable topics only, never content. */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { reply } from "./support/harness.js";
+import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -46,6 +46,28 @@ function listen(token: string) {
 }
 
 describe("inbox stream", () => {
+  it("announces approval requests and decisions on the shared stream, without their arguments", async () => {
+    await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.alice, json: { approval_required: ["shell"] } });
+    w.scripts.dev = (_m, turn) =>
+      turn === 0 ? reply("", [call("run_command", { command: "private-command" })]) : reply("done");
+    const bob = listen(w.bob);
+    try {
+      await bob.ready;
+      await w.post(w.alice, w.ids.topic, "@dev run");
+      await w.drain();
+      const first = await w.waitFor(() => bob.events.find((e) => e.type === "approval.changed"));
+      expect(first.data).toMatchObject({ topic_id: w.ids.topic, status: "pending" });
+      await w.api("POST", `/api/approvals/${first.data.id}/decide`, { token: w.alice, json: { approve: false } });
+      const decided = await w.waitFor(() =>
+        bob.events.find((e) => e.type === "approval.changed" && e.data.status === "rejected"),
+      );
+      expect(decided.data.id).toBe(first.data.id);
+      expect(JSON.stringify(bob.events)).not.toContain("private-command");
+    } finally {
+      bob.stop();
+    }
+  });
+
   it("announces new messages in every conversation to console accounts, without their text", async () => {
     w.scripts.dev = () => reply("noted");
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;

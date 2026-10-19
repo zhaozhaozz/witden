@@ -330,6 +330,7 @@ export const messages = pgTable(
     mentions: json<Mention[]>("mentions").notNull().default([]),
     replyToId: text("reply_to_id"),
     taskId: text("task_id"),
+    approvalId: text("approval_id"),
     attachments: json<string[]>("attachments").notNull().default([]),
     source: text("source").notNull().default("web"),
     externalRef: json<Json | null>("external_ref"),

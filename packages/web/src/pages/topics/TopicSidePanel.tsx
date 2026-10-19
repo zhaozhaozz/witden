@@ -33,6 +33,8 @@ export function TopicSidePanel({
   onTopicChange,
   onCleared,
   version,
+  approvals,
+  onDecided,
   computerMax = false,
   onToggleComputerMax,
 }: {
@@ -41,6 +43,8 @@ export function TopicSidePanel({
   onCleared: () => void;
   /** Bumped by live task events so the task / approval lists refresh. */
   version: number;
+  approvals: Resource<Approval[]>;
+  onDecided: (a: Approval) => void;
   /** The computer tab is laid over the whole topic (tabs hidden). */
   computerMax?: boolean;
   onToggleComputerMax?: () => void;
@@ -55,19 +59,12 @@ export function TopicSidePanel({
   // The roles' conversations here, and the independent tasks (a conversation's runs are not listed as tasks).
   const sessions = useResource(() => api.get<AgentSession[]>(`/api/topics/${topic.id}/sessions`), [topic.id]);
   const tasks = useResource(() => api.get<Task[]>("/api/tasks", { topic_id: topic.id, kind: "task" }), [topic.id]);
-  const approvals = useResource(
-    () =>
-      api
-        .get<Approval[]>("/api/approvals", { status: "pending" })
-        .then((rows) => rows.filter((a) => a.topic_id === topic.id)),
-    [topic.id],
-  );
+  const pendingApprovals = approvals.data?.filter((a) => a.status === "pending");
 
   useEffect(() => {
     if (version > 0) {
       void sessions.reload();
       void tasks.reload();
-      void approvals.reload();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
@@ -83,7 +80,7 @@ export function TopicSidePanel({
         onChange={(k) => guard(() => setTab(k))}
         tabs={[
           { key: "tasks", label: "工作", badge: activeCount },
-          { key: "approvals", label: "审批", badge: approvals.data?.length },
+          { key: "approvals", label: "审批", badge: pendingApprovals?.length },
           { key: "computer", label: "虚拟电脑", hidden: !hasComputers },
           { key: "people", label: "参与者", hidden: dm },
           { key: "role", label: "角色", hidden: !dm },
@@ -100,7 +97,7 @@ export function TopicSidePanel({
           </>
         ) : null}
         {shown === "approvals" ? (
-          <Loaded res={approvals}>
+          <Loaded res={{ ...approvals, data: pendingApprovals }}>
             {(rows) =>
               rows.length ? (
                 <div className="approval-list">
@@ -109,8 +106,9 @@ export function TopicSidePanel({
                       key={a.id}
                       approval={a}
                       showContext={false}
-                      onDecided={() => {
-                        void approvals.reload();
+                      onDecided={(next) => {
+                        onDecided(next);
+                        void sessions.reload();
                         void tasks.reload();
                       }}
                     />

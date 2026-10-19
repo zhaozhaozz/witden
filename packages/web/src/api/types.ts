@@ -100,6 +100,7 @@ export interface Message {
   mentions: Mention[];
   reply_to_id: string | null;
   task_id: string | null;
+  approval_id?: string | null;
   attachments: string[];
   source: string;
   round: number;

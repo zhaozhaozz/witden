@@ -204,6 +204,13 @@
       "when": 1792387059894,
       "tag": "0028_read_topic_permission",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792396633883,
+      "tag": "0029_message_approvals",
+      "breakpoints": true
     }
   ]
 }

@@ -46,6 +46,20 @@ export async function publish(db: Db, type: string, data: Record<string, any>, .
   await db.execute(sql`select pg_notify(${EVENTS_CHANNEL}, ${encode({ type, data, channels })})`);
 }
 
+/** Invalidate approval views without putting held content or tool arguments on a shared stream. */
+export async function approvalChanged(
+  db: Db,
+  approval: { id: string; topicId: string; taskId: string; status: string },
+) {
+  await publish(
+    db,
+    "approval.changed",
+    { id: approval.id, topic_id: approval.topicId, task_id: approval.taskId, status: approval.status },
+    `topic:${approval.topicId}`,
+    "admin",
+  );
+}
+
 /**
  * Configuration that every console lists (roles, people, models, computers, connections, knowledge, settings)
  * changed, by a person in another browser or by the system administrator role. Only the area travels — the

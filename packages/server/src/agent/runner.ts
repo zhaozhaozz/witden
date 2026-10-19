@@ -35,6 +35,7 @@ import { checkFlow, labelOwners, PUBLIC, type Readers, readers, topicLabel } fro
 import { isConsoleUser, Perm, usersWithPermission } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { contextLimits } from "../services/context-window.js";
+import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL, textRestricted } from "./control.js";
@@ -771,20 +772,20 @@ export class TaskRunner {
       wait: { type: "approval", approval_id: approval.id, tool_call_id: call.id },
     });
     if (topic) {
-      const preview = (await textRestricted(db, task))
-        ? "(details withheld here because they draw on restricted material; see the approvals page)"
-        : redact(JSON.stringify(call.arguments)).slice(0, 500);
-      const why = sources ? ` (it would send material from ${sources} where not everyone may see it)` : "";
+      // Notices also reach external conversations. Keep arguments in the permission-checked approval API.
+      const why = sources ? "，此操作涉及向外部发送受限资料" : "";
       await systemMessage(
         db,
         topic,
-        `@${role?.handle ?? "?"} asks for approval to use ${call.name}${why}: ${preview}`,
+        `@${role?.handle ?? "?"} 申请使用 ${call.name}${why}。请在控制台查看详情并审批。`,
         {
           taskId: task.id,
+          approvalId: approval.id,
           mentions: approvers.slice(0, 5).map((id) => ({ type: "user" as const, id })),
         },
       );
     }
+    await approvalChanged(db, approval);
     await audit(db, "approval.request", {
       actorType: "role",
       actorId: task.ownerRoleId,

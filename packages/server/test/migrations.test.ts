@@ -613,6 +613,41 @@ describe("0024_slack_apps", () => {
   });
 });
 
+describe("0029_message_approvals", () => {
+  it("links old tool and disclosure notices, including repeated calls, without converting other messages", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0029")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into topics (id, title) values ('top_a', 'A');
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into tasks (id, topic_id, title, owner_role_id) values ('task_a', 'top_a', 't', 'role_dev');
+      insert into approvals (id, task_id, topic_id, role_id, action, created_at) values
+        ('apr_1', 'task_a', 'top_a', 'role_dev', 'remember', '2026-10-19 01:00:00Z'),
+        ('apr_2', 'task_a', 'top_a', 'role_dev', 'remember', '2026-10-19 02:00:00Z'),
+        ('apr_3', 'task_a', 'top_a', 'role_dev', 'disclose', '2026-10-19 03:00:00Z');
+      insert into messages (id, topic_id, task_id, author_type, content, created_at) values
+        ('msg_1', 'top_a', 'task_a', 'system', '@dev asks for approval to use remember: {"content":"first"}', '2026-10-19 01:00:01Z'),
+        ('msg_2', 'top_a', 'task_a', 'system', '@dev asks for approval to use remember (it would send material): {}', '2026-10-19 02:00:01Z'),
+        ('msg_3', 'top_a', 'task_a', 'system', 'A message from @dev is on hold: restricted material.', '2026-10-19 03:00:01Z'),
+        ('msg_4', 'top_a', 'task_a', 'system', 'Held message from @dev was not released.', '2026-10-19 04:00:00Z'),
+        ('msg_5', 'top_a', 'task_a', 'user', 'A message from @dev is on hold: quoted notice.', '2026-10-19 04:00:01Z');
+    `);
+    await apply(db, "0029_message_approvals");
+    expect((await db.query("select id, approval_id from messages order by id")).rows).toEqual([
+      { id: "msg_1", approval_id: "apr_1" },
+      { id: "msg_2", approval_id: "apr_2" },
+      { id: "msg_3", approval_id: "apr_3" },
+      { id: "msg_4", approval_id: null },
+      { id: "msg_5", approval_id: null },
+    ]);
+    await db.close();
+  });
+});
+
 describe("0028_read_topic_permission", () => {
   it("drops other topics' labels that read_topic left; keeps a row's own topic and other kinds", async () => {
     const db = new PGlite();

@@ -1,11 +1,12 @@
 import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 import { downloadFile } from "../../api/client";
-import type { Artifact, Message } from "../../api/types";
+import type { Approval, Artifact, Message } from "../../api/types";
 import { fmtBytes, fmtDateTime, fmtTime, PLATFORM_LABEL } from "../../lib/format";
 import { useAction } from "../../ui/feedback";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 import { isPreviewableImage, Markdown, MessageImage } from "../../ui/Markdown";
+import { ApprovalCard } from "../approvalParts";
 
 export interface Author {
   kind: "user" | "role" | "system" | "external";
@@ -95,8 +96,18 @@ export function MessageItem({
   onDelete,
   mentionTokens,
   replyTo,
+  approval,
+  approvalError,
+  approvalLoading,
+  onReloadApproval,
+  onDecided,
 }: {
   msg: Message;
+  approval?: Approval;
+  approvalError?: string | null;
+  approvalLoading?: boolean;
+  onReloadApproval?: () => void;
+  onDecided?: (a: Approval) => void;
   author: Author;
   /** The first message of the Slack thread this one replies in (null when it is not loaded). */
   replyTo?: { author: string | null; excerpt: string | null } | null;
@@ -112,6 +123,32 @@ export function MessageItem({
   const [draft, setDraft] = useState(msg.content);
 
   if (msg.author_type === "system") {
+    if (msg.approval_id && !msg.deleted) {
+      return (
+        <div className="msg-approval">
+          {approval ? (
+            <ApprovalCard approval={approval} showContext={false} onDecided={(next) => onDecided?.(next)} />
+          ) : (
+            <div className="approval">
+              <strong>审批请求</strong>
+              <p className="small muted">
+                {approvalError
+                  ? "审批详情加载失败，请重试。"
+                  : approvalLoading
+                    ? "正在加载审批详情…"
+                    : "审批记录已不存在或你无权查看。"}
+              </p>
+              <div className="btn-row">
+                <button type="button" className="btn btn-xs" onClick={onReloadApproval}>
+                  重新加载
+                </button>
+                <Link to="/approvals">打开审批</Link>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="msg-system" title={fmtDateTime(msg.created_at)}>
         <span>{msg.content}</span>
