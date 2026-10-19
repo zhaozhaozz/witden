@@ -151,6 +151,9 @@ export const GITHUB_FIELDS: Record<"app" | "token", [string, string][]> = {
   ],
 };
 
+/** An account that only authenticates the GitHub tools takes no events, so it has no webhook secret. */
+export const GITHUB_AUTH_ONLY_FIELDS: [string, string][] = [["token", "账号的 Token（ghp_… 或 github_pat_…）"]];
+
 /**
  * What goes into each Slack credential and where it is, shown right above the inputs. After an app is created
  * Slack shows a couple of tokens, and the app-level one (xapp-) is easily taken for the signing secret.
@@ -185,6 +188,8 @@ export interface ConnSettings {
   custom_identity: boolean;
   /** Feishu only: other bots @-mentioning the bot go to its role (otherwise their messages are context only). */
   bot_requests?: boolean;
+  /** GitHub only: not a bot; the account only authenticates the GitHub tools roles are given. */
+  auth_only?: boolean;
 }
 
 export const settingsOf = (conn: Connection | null): ConnSettings => ({
@@ -192,6 +197,7 @@ export const settingsOf = (conn: Connection | null): ConnSettings => ({
   auto_provision_users: !!conn?.settings?.auto_provision_users,
   custom_identity: !!conn?.settings?.custom_identity,
   ...(conn?.platform === "feishu" ? { bot_requests: !!conn.settings?.bot_requests } : {}),
+  ...(conn?.platform === "github" ? { auth_only: !!conn.settings?.auth_only } : {}),
 });
 
 /** Who may use the bot and how roles appear; shared by the connection form and setup guides. */

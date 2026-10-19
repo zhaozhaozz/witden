@@ -155,7 +155,7 @@ describe("feishu tools", () => {
     expect(all).toContain(`乙公司 (app: ${appB}): docs read`);
     expect(all).toContain("周会");
     expect(all).toContain("季度计划：上线 2.0");
-    expect(all).toContain(`you may not use docs (read) of the Feishu app ${appA}`);
+    expect(all).toContain(`you may not use docs (read) of the Feishu connection ${appA}`);
     // each call went with its own company's token
     expect(feishu.last("calendar/v4/calendars/cal_team/events")?.query.start_time).toBe("1792425600");
     const [task] = await db().select().from(tasks).where(eq(tasks.id, posted.tasks[0].id));

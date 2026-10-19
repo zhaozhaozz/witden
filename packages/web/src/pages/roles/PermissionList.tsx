@@ -86,7 +86,10 @@ function Choice({
   );
 }
 
-/** A section of the list besides the tool groups (e.g. Feishu tools), shown after the section ``after``. */
+/**
+ * A section of the list besides the tool groups (e.g. Feishu tools), shown after the built-in section ``after``;
+ * several after the same one keep their order.
+ */
 export interface ExtraSection {
   key: string;
   after: string;
@@ -121,18 +124,19 @@ export function PermissionList({
   details?: Record<string, ReactNode>;
   extra?: ExtraSection[];
 }) {
-  // Approvals for always-available tools are not shown here, nor the Feishu tools (FeishuPermissions): keep them
-  // when restoring defaults.
+  // Approvals for always-available tools are not shown here, nor the Feishu and GitHub tools of each connection
+  // (ConnectionToolPermissions): keep them when restoring defaults.
   const always = approval.filter((a) => alwaysTools.includes(a));
-  const feishu = (xs: string[]) => xs.filter((x) => x.startsWith("feishu:"));
+  const isGrant = (x: string) => /^(feishu|github):/.test(x);
+  const grants = (xs: string[]) => xs.filter(isGrant);
   const isDefault =
     !defaults ||
     (sameSet(
-      allowed.filter((x) => !x.startsWith("feishu:")),
+      allowed.filter((x) => !isGrant(x)),
       defaults.allowed,
     ) &&
       sameSet(
-        approval.filter((x) => !x.startsWith("feishu:")),
+        approval.filter((x) => !isGrant(x)),
         [...defaults.approval, ...always],
       ));
   const [open, setOpen] = useState<Set<string>>(() => new Set());
@@ -277,11 +281,11 @@ export function PermissionList({
           <button
             type="button"
             className="btn btn-xs"
-            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆和修改自己的职责说明需要询问；读取其他话题禁用。飞书工具不变。"
+            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆和修改自己的职责说明需要询问；读取其他话题禁用。飞书和 GitHub 工具不变。"
             onClick={() =>
               onChange(
-                [...defaults.allowed, ...feishu(allowed)],
-                [...defaults.approval, ...always, ...feishu(approval)],
+                [...defaults.allowed, ...grants(allowed)],
+                [...defaults.approval, ...always, ...grants(approval)],
               )
             }
           >

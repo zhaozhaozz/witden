@@ -1,12 +1,14 @@
-import type { FeishuTools } from "../../api/types";
+import type { PlatformTools } from "../../api/types";
 
 /**
- * What a role may do with each connected Feishu app (company), product by product: 禁用 / 只读 / 读写（写入需询问）
- * / 读写. Stored in the role's tool lists as ``feishu:<connection>:<product>:read|write``; a write level that
- * asks puts the write group in ``approval_required``. Every app is set on its own: allowing one company's
- * calendar allows nothing in another's.
+ * What a role may do with each connection of a platform (a Feishu app / company, a GitHub account or App), product
+ * by product: 禁用 / 只读 / 读写（写入需询问）/ 读写. Stored in the role's tool lists as
+ * ``<platform>:<connection>:<product>:read|write``; a write level that asks puts the write group in
+ * ``approval_required``. Every connection is set on its own: allowing one company's calendar allows nothing in
+ * another's.
  */
 type Level = "off" | "read" | "write_ask" | "write";
+export type ToolPlatform = "feishu" | "github";
 
 const LABELS: Record<Level, [string, string]> = {
   off: ["禁用", "角色不能使用"],
@@ -15,34 +17,39 @@ const LABELS: Record<Level, [string, string]> = {
   write: ["读写", "查看、创建和修改都直接进行"],
 };
 
-export const feishuGroup = (app: string, product: string, mode: "read" | "write") => `feishu:${app}:${product}:${mode}`;
+const PLATFORM_NAME: Record<ToolPlatform, string> = { feishu: "飞书", github: "GitHub" };
 
-function levelOf(app: string, product: string, allowed: string[], approval: string[]): Level {
-  const write = feishuGroup(app, product, "write");
-  if (allowed.includes(write)) return approval.includes(write) ? "write_ask" : "write";
-  return allowed.includes(feishuGroup(app, product, "read")) ? "read" : "off";
-}
+const toolGroup = (platform: ToolPlatform, conn: string, product: string, mode: "read" | "write") =>
+  `${platform}:${conn}:${product}:${mode}`;
 
 /** What Feishu has granted each app, per product (from /api/connections/:id/feishu-scopes); absent while unknown. */
 export type FeishuGranted = Record<string, Record<string, { read: boolean; write: boolean }> | null>;
 
-export function FeishuPermissions({
+export function ConnectionToolPermissions({
+  platform,
   data,
   granted,
   allowed,
   approval,
   onChange,
 }: {
-  data: FeishuTools;
+  platform: ToolPlatform;
+  data: PlatformTools;
   granted?: FeishuGranted;
   allowed: string[];
   approval: string[];
   onChange: (allowed: string[], approval: string[]) => void;
 }) {
   if (!data.apps.length) return null;
-  const set = (app: string, product: FeishuTools["products"][number], level: Level) => {
-    const read = feishuGroup(app, product.key, "read");
-    const write = feishuGroup(app, product.key, "write");
+  const group = (conn: string, product: string, mode: "read" | "write") => toolGroup(platform, conn, product, mode);
+  const levelOf = (conn: string, product: string): Level => {
+    const write = group(conn, product, "write");
+    if (allowed.includes(write)) return approval.includes(write) ? "write_ask" : "write";
+    return allowed.includes(group(conn, product, "read")) ? "read" : "off";
+  };
+  const set = (conn: string, product: PlatformTools["products"][number], level: Level) => {
+    const read = group(conn, product.key, "read");
+    const write = group(conn, product.key, "write");
     const nextAllowed = allowed.filter((g) => g !== read && g !== write);
     const nextApproval = approval.filter((g) => g !== read && g !== write);
     if (level !== "off" && product.read.length) nextAllowed.push(read);
@@ -54,9 +61,16 @@ export function FeishuPermissions({
     <div className="perm-list feishu-perms">
       {data.apps.map((app) => (
         <div key={app.id} className="perm-group">
-          <div className="perm-app">飞书 · {app.name}</div>
+          <div className="perm-app">
+            {PLATFORM_NAME[platform]} · {app.name}
+            {app.acts_as ? (
+              <span className="perm-app-note">
+                以 @{app.acts_as} 的身份{app.auth_only ? "（只作为认证）" : ""}
+              </span>
+            ) : null}
+          </div>
           {data.products.map((p) => {
-            const level = levelOf(app.id, p.key, allowed, approval);
+            const level = levelOf(app.id, p.key);
             const options: Level[] = [
               "off",
               ...(p.read.length ? (["read"] as Level[]) : []),
@@ -95,7 +109,7 @@ export function FeishuPermissions({
   );
 }
 
-/** Whether the app can do in Feishu what the role is allowed here. */
+/** Whether the Feishu app can do in Feishu what the role is allowed here. */
 function GrantNote({ status, level }: { status?: { read: boolean; write: boolean }; level: Level }) {
   if (!status) return null;
   if (status.write) return null;

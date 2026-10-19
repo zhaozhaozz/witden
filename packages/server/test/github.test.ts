@@ -135,6 +135,18 @@ describe("github", () => {
     expect(listed.find((c) => c.id === conn.id).bot_user_id).toBe("witden-bot");
   });
 
+  it("a connection that only authenticates takes no messages", async () => {
+    const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
+      token: w.adminToken,
+      json: { settings: { auth_only: true } },
+    });
+    expect(patched.status, patched.raw).toBe(200);
+    expect((await send("issue_comment", commented("@witden-bot can you check this?"))).status).toBe(200);
+    await settle();
+    expect(await allTasks()).toEqual([]);
+    expect(gh.comments).toEqual([]);
+  });
+
   it("an issue comment that mentions the bot starts work; the answer comes back as a comment", async () => {
     w.scripts.dev = () => reply("Looking into the Safari login now.");
     await send("issue_comment", commented("@witden-bot can you check this?"));

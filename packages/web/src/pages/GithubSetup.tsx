@@ -3,7 +3,7 @@ import { api, errorMessage } from "../api/client";
 import type { Connection } from "../api/types";
 import { fmtRelative } from "../lib/format";
 import { useAction } from "../ui/feedback";
-import { CopyText, Field, Section } from "../ui/kit";
+import { CopyText, Field, Section, Toggle } from "../ui/kit";
 import { PublicAddressStep } from "./PublicAddress";
 import {
   AccessStep,
@@ -16,7 +16,7 @@ import {
 } from "./setupParts";
 
 type Mode = "app" | "token";
-type StepKey = "address" | "create" | "install" | "account" | "credentials" | "webhook" | "access" | "try";
+type StepKey = "address" | "create" | "install" | "account" | "credentials" | "webhook" | "access" | "try" | "grant";
 
 const STEP_TITLES: Record<StepKey, string> = {
   address: "准备公网事件地址",
@@ -27,13 +27,19 @@ const STEP_TITLES: Record<StepKey, string> = {
   webhook: "在仓库中添加 Webhook",
   access: "选择机器人代表的角色",
   try: "在 GitHub 中试一试",
+  grant: "给角色授权",
 };
 
-/** GitHub pushes events to the public events URL either way; an app is created in one go from a manifest. */
-const FLOW: Record<Mode, StepKey[]> = {
+/**
+ * GitHub pushes events to the public events URL either way; an app is created in one go from a manifest. An
+ * account that only authenticates (``auth``) takes no events: no public address, webhook or role.
+ */
+const FLOW: Record<Mode | "auth", StepKey[]> = {
   app: ["address", "create", "install", "access", "try"],
   token: ["address", "account", "credentials", "webhook", "access", "try"],
+  auth: ["account", "credentials", "grant"],
 };
+const flowOf = (mode: Mode, authOnly: boolean) => (mode === "token" && authOnly ? FLOW.auth : FLOW[mode]);
 
 type StepNumber = (k: StepKey) => number;
 
@@ -144,14 +150,21 @@ export function GithubSetup({
 }) {
   const [conn, setConn] = useState(initial);
   const [mode, setMode] = useState<Mode>(initial?.github_auth ?? "app");
-  const flow = FLOW[mode];
+  // Token mode only: the account is no bot, it just authenticates the GitHub tools roles are given.
+  const [authOnly, setAuthOnly] = useState(!!initial?.settings.auth_only);
+  const flow = flowOf(mode, authOnly);
   /** Where to start: the first step, or where an existing connection left off. */
-  const startOf = (m: Mode): StepKey => {
-    if (!initial) return FLOW[m][0];
+  const startOf = (m: Mode, a: boolean): StepKey => {
+    if (!initial) return flowOf(m, a)[0];
     if (manifest || m === "app") return initial.has_credentials ? "install" : "create";
+    if (a) return initial.bot_user_id ? "grant" : "credentials";
     return initial.bot_user_id ? "webhook" : "credentials";
   };
-  const { step, setStep, reached, setReached, go, num } = useSteps(flow, manifest ? "create" : startOf(mode));
+  const { step, setStep, reached, setReached, go, num } = useSteps(flow, manifest ? "create" : startOf(mode, authOnly));
+  const restart = (m: Mode, a: boolean) => {
+    setStep(startOf(m, a));
+    setReached(flowOf(m, a).indexOf(startOf(m, a)));
+  };
   const [address, setAddress] = useState<string | null>(null);
   const [app, setApp] = useState<AppInfo | null>(null);
   const [accounts, setAccounts] = useState<string[] | null>(null);
@@ -191,10 +204,11 @@ export function GithubSetup({
     install: conn ? (
       <InstallStep conn={conn} since={since} onAccounts={setAccounts} onNext={() => go("access")} />
     ) : null,
-    account: <AccountStep onNext={() => go("credentials")} />,
+    account: <AccountStep authOnly={authOnly} onNext={() => go("credentials")} />,
     credentials: (
       <TokenStep
         conn={conn}
+        authOnly={authOnly}
         onCreated={(c) => {
           update(c);
           onCreated(c);
@@ -203,10 +217,11 @@ export function GithubSetup({
         onTested={(c, who) => {
           update(c);
           setLogin(who);
-          go("webhook");
+          go(authOnly ? "grant" : "webhook");
         }}
       />
     ),
+    grant: conn ? <GrantStep conn={conn} onDone={() => onClose(conn)} /> : null,
     webhook: conn ? (
       <WebhookStep conn={conn} secret={secret} since={since} onSecret={setSecret} onNext={() => go("access")} />
     ) : null,
@@ -251,7 +266,7 @@ export function GithubSetup({
     address: address ? `公网事件地址：${address}` : undefined,
     create: app ? `GitHub App「${app.name}」，@${app.app}` : bot ? `GitHub App @${bot}` : undefined,
     install: accounts?.length ? `已安装到：${accounts.join("、")}` : undefined,
-    credentials: login ? `机器人账号 @${login}` : bot ? `机器人账号 @${bot}` : undefined,
+    credentials: login || bot ? `${authOnly ? "GitHub 账号" : "机器人账号"} @${login || bot}` : undefined,
   };
 
   return (
@@ -263,11 +278,19 @@ export function GithubSetup({
         </button>
       }
     >
-      <p className="setup-intro">
-        按下面 {flow.length} 步把 GitHub 接入 witden。完成后，在仓库的 issue 和 pull request 中 @ 机器人，就能把工作交给
-        witden 中的角色：一个 issue 或 pull request 是 witden 中的一个话题，角色以评论回复。GitHub 把事件推送到 witden
-        的公网事件地址，所以先要准备一个公网地址。
-      </p>
+      {authOnly ? (
+        <p className="setup-intro">
+          按下面 {flow.length} 步接入一个 GitHub 账号，只作为认证：witden 不接收它的消息，也不需要公网地址和
+          Webhook。获得授权的角色可以用这个账号的身份在 GitHub 中做事，例如代替本人提 issue、开 pull request、查看
+          Actions；Token 由 witden 保管，不交给角色或电脑。
+        </p>
+      ) : (
+        <p className="setup-intro">
+          按下面 {flow.length} 步把 GitHub 接入 witden。完成后，在仓库的 issue 和 pull request 中 @
+          机器人，就能把工作交给 witden 中的角色：一个 issue 或 pull request 是 witden
+          中的一个话题，角色以评论回复。GitHub 把事件推送到 witden 的公网事件地址，所以先要准备一个公网地址。
+        </p>
+      )}
       {initial ? null : (
         <div className="setup-modes">
           <div className="segmented">
@@ -283,8 +306,7 @@ export function GithubSetup({
                 className={m === mode ? "seg seg-on" : "seg"}
                 onClick={() => {
                   setMode(m);
-                  setStep(startOf(m));
-                  setReached(FLOW[m].indexOf(startOf(m)));
+                  restart(m, authOnly);
                 }}
               >
                 {label}
@@ -294,15 +316,27 @@ export function GithubSetup({
           <p className="small muted">
             {mode === "app"
               ? "以 App 的身份工作，回复显示为“名称[bot]”；按安装授权到仓库，令牌自动续期。witden 把 App 的设置一次交给 GitHub，凭据自动取回，不需要手动复制。"
-              : "以一个 GitHub 账号的身份工作：需要手动创建 Token，并在仓库中添加 Webhook。"}
+              : authOnly
+                ? "这个账号不当机器人使用，只给角色的 GitHub 工具提供认证（在角色的权限中按接入授权）。"
+                : "以一个 GitHub 账号的身份工作：需要手动创建 Token，并在仓库中添加 Webhook。"}
           </p>
+          {mode === "token" ? (
+            <Toggle
+              checked={authOnly}
+              onChange={(v) => {
+                setAuthOnly(v);
+                restart(mode, v);
+              }}
+              label="只作为认证（不当机器人使用）"
+            />
+          ) : null}
         </div>
       )}
       <SetupSteps
         flow={flow}
         step={step}
         reached={reached}
-        title={(k) => STEP_TITLES[k]}
+        title={(k) => (authOnly && k === "account" ? "准备账号和 Token" : STEP_TITLES[k])}
         summary={summary}
         body={body}
         // Once the credentials work, every later step can be opened.
@@ -643,7 +677,72 @@ function InstallStep({
   );
 }
 
-function AccountStep({ onNext }: { onNext: () => void }) {
+/** What roles may do with an account that only authenticates, and the token permissions each needs. */
+const TOOL_PERMISSIONS: [string, string, string][] = [
+  ["Contents", "代码与文件", "读取：Read-only；提交文件、新建分支：Read and write"],
+  ["Issues", "Issue", "查看：Read-only；新建、评论、修改：Read and write"],
+  ["Pull requests", "Pull request", "查看：Read-only；新建、评论、合并：Read and write"],
+  ["Actions", "Actions", "查看运行：Read-only；重新运行、手动触发：Read and write"],
+];
+
+function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => void }) {
+  if (authOnly)
+    return (
+      <>
+        <p>
+          可以用本人的账号（角色代替本人操作，GitHub
+          上显示为本人），也可以用一个单独的账号。角色能做的不会超过这个账号和 Token
+          的权限，也不会超过在角色权限中授予的范围。
+        </p>
+        <ol className="setup-list">
+          <li>
+            用这个账号创建 Token，二选一：
+            <ul>
+              <li>
+                <b>Fine-grained token（推荐）：</b>打开{" "}
+                <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noreferrer">
+                  新建 fine-grained token ↗
+                </a>
+                。Resource owner 选择仓库所在的账号或组织（组织可能需要管理员批准）；Repository access
+                只选需要的仓库；Permissions 只给角色要用的（见下表，Metadata 会自动设为
+                Read-only）。设置有效期后生成，复制 <code>github_pat_</code> 开头的 Token。
+              </li>
+              <li>
+                <b>Classic token：</b>打开{" "}
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo,workflow&description=witden"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  新建 classic token ↗
+                </a>
+                （已勾选 repo 和 workflow 权限，能访问这个账号的所有仓库），设置有效期后生成，复制 <code>ghp_</code>{" "}
+                开头的 Token。
+              </li>
+            </ul>
+          </li>
+        </ol>
+        <table className="table table-compact">
+          <tbody>
+            {TOOL_PERMISSIONS.map(([p, label, level]) => (
+              <tr key={p}>
+                <td>{p}</td>
+                <td>{label}</td>
+                <td>{level}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="callout callout-wait">
+          Token 过期后角色的 GitHub 工具会失败；到期前请在接入的“编辑”中换上新的 Token。
+        </div>
+        <div className="setup-next">
+          <button type="button" className="btn btn-primary" onClick={onNext}>
+            已拿到 Token，下一步
+          </button>
+        </div>
+      </>
+    );
   return (
     <>
       <p>
@@ -690,11 +789,14 @@ function AccountStep({ onNext }: { onNext: () => void }) {
 
 function TokenStep({
   conn,
+  authOnly,
   onCreated,
   onSecret,
   onTested,
 }: {
   conn: Connection | null;
+  /** The account only authenticates: no webhook secret is made. */
+  authOnly: boolean;
   onCreated: (c: Connection) => void;
   onSecret: (s: string) => void;
   onTested: (c: Connection, login: string) => void;
@@ -711,17 +813,18 @@ function TokenStep({
     let c = conn;
     if (!c) {
       // witden makes the webhook secret; the next step shows it to copy into GitHub.
-      const webhookSecret = randomSecret();
+      const webhookSecret = authOnly ? null : randomSecret();
       c =
         (await run(() =>
           api.post<Connection>("/api/connections", {
             platform: "github",
             name: name.trim(),
-            credentials: { token: token.trim(), webhook_secret: webhookSecret },
+            credentials: { token: token.trim(), ...(webhookSecret ? { webhook_secret: webhookSecret } : {}) },
+            ...(authOnly ? { settings: { auth_only: true } } : {}),
           }),
         )) ?? null;
       if (!c) return;
-      onSecret(webhookSecret);
+      if (webhookSecret) onSecret(webhookSecret);
       onCreated(c);
     } else if (token.trim() || name.trim() !== c.name) {
       const id = c.id;
@@ -745,7 +848,11 @@ function TokenStep({
 
   return (
     <>
-      <p>把机器人账号的 Token 填到这里。witden 加密保存它，保存后不能再查看；同时生成下一步要用的 Webhook Secret。</p>
+      <p>
+        {authOnly
+          ? "把账号的 Token 填到这里。witden 加密保存它，保存后不能再查看，也不会交给角色或电脑。"
+          : "把机器人账号的 Token 填到这里。witden 加密保存它，保存后不能再查看；同时生成下一步要用的 Webhook Secret。"}
+      </p>
       <form
         className="form form-narrow"
         onSubmit={(e) => {
@@ -757,7 +864,7 @@ function TokenStep({
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
         <Field
-          label="机器人账号的 Token"
+          label={authOnly ? "账号的 Token" : "机器人账号的 Token"}
           hint={
             odd ? (
               <span className="text-wait">GitHub 的 Token 通常以 github_pat_ 或 ghp_ 开头，请确认复制完整。</span>
@@ -788,6 +895,34 @@ function TokenStep({
           <div className="small">GitHub 返回：{result.error}</div>
         </div>
       ) : null}
+    </>
+  );
+}
+
+/** The account takes no messages: roles use it once they are given its GitHub tools. */
+function GrantStep({ conn, onDone }: { conn: Connection; onDone: () => void }) {
+  return (
+    <>
+      <p>接入已经可以使用。它不接收消息；要让角色用这个账号在 GitHub 中做事：</p>
+      <ol className="setup-list">
+        <li>
+          打开 <b>角色</b>，编辑要授权的角色，在 <b>权限</b> 的 GitHub 部分找到「{conn.name}」。
+        </li>
+        <li>
+          按类别（代码与文件、Issue、Pull
+          request、Actions）勾选读取或写入。写入可以设为“需询问”：每次写入前在控制台批准。
+        </li>
+        <li>多个 GitHub 接入（例如不同的人或组织）分别授权，一个接入的权限不会用到另一个接入上。</li>
+      </ol>
+      <p className="small muted">
+        角色要把私有仓库或其他话题中的内容写到更多人能看到的地方（例如公开仓库的
+        issue）之前，会先请内容的所有者在控制台批准。
+      </p>
+      <div className="setup-next">
+        <button type="button" className="btn btn-primary" onClick={onDone}>
+          完成
+        </button>
+      </div>
     </>
   );
 }

@@ -27,10 +27,12 @@ import {
   tasks,
   topics,
   usageRecords,
+  users,
 } from "../db/schema.js";
-import { InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
+import { BadRequest, InstanceBusy, InstanceUnavailable, WitdenError } from "../errors.js";
 import { redact } from "../security/crypto.js";
-import { Perm, usersWithPermission } from "../security/permissions.js";
+import { checkFlow, labelOwners, PUBLIC, type Readers, readers, topicLabel } from "../security/labels.js";
+import { isConsoleUser, Perm, usersWithPermission } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { contextLimits } from "../services/context-window.js";
 import * as models from "../services/model-configs.js";
@@ -49,7 +51,7 @@ import {
 import { systemMessage } from "./dispatch.js";
 import { LiveFeed, type LiveTarget } from "./live.js";
 import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
-import { deliver } from "./output.js";
+import { deliver, describeLabel } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
 import { appendStep, isConversation, loadTranscript } from "./transcript.js";
@@ -443,6 +445,16 @@ export class TaskRunner {
 
   /** Run one tool call. Returns false when the task has to stop or wait. */
   private async execute(taskId: string, call: ToolCall): Promise<boolean> {
+    // A write outside witden names who will see it; asked before the transaction, as it may call the platform.
+    const writing = TOOLS.get(call.name);
+    let destination: Readers | null = null;
+    if (writing?.destination && !("__invalid_json__" in call.arguments)) {
+      const ctx = { taskId, roleId: "", topicId: "", toolCallId: call.id, gateway: this.gateway, db: getDb };
+      destination = await writing
+        .destination({ ...ctx, mode: "task" }, call.arguments)
+        // A call that is not allowed or malformed says so itself; otherwise unknown means everyone (fail closed).
+        .catch((err) => (err instanceof BadRequest ? null : readers([PUBLIC])));
+    }
     const pre = await transaction(async (tx) => {
       const task = await getTask(tx, taskId);
       if (task?.status !== "running") return null;
@@ -473,10 +485,14 @@ export class TaskRunner {
         });
         return { skip: true as const };
       }
-      if (
-        needsApproval(task.envelope, spec, call.arguments) &&
-        !(task.envelope.approved_calls ?? []).includes(call.id)
-      ) {
+      const approved = (task.envelope.approved_calls ?? []).includes(call.id);
+      // The task's material may not all go where the write sends it: its owners decide.
+      const blocked = destination && !approved ? await blockedForWrite(tx, task, destination) : [];
+      if (blocked.length) {
+        await this.requestApproval(tx, task, call, blocked);
+        return null;
+      }
+      if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
         await this.requestApproval(tx, task, call);
         return null;
       }
@@ -723,8 +739,17 @@ export class TaskRunner {
     });
   }
 
-  private async requestApproval(db: Db, task: Task, call: ToolCall): Promise<void> {
-    const approvers = [...(await usersWithPermission(db, Perm.APPROVAL_DECIDE, task.ownerRoleId))].sort();
+  /**
+   * Hold a call for a person's approval: anyone who decides approvals for the role, or — when the call would write
+   * material where not everyone may see it (``blocked`` labels) — only the owners of that material.
+   */
+  private async requestApproval(db: Db, task: Task, call: ToolCall, blocked: string[] = []): Promise<void> {
+    const owners = new Set<string>();
+    for (const label of blocked) for (const o of await labelOwners(db, label)) owners.add(o);
+    const sources = blocked.length ? (await Promise.all(blocked.map((l) => describeLabel(db, l)))).join(", ") : null;
+    const approvers = blocked.length
+      ? [...owners].sort()
+      : [...(await usersWithPermission(db, Perm.APPROVAL_DECIDE, task.ownerRoleId))].sort();
     const [approval] = await db
       .insert(approvals)
       .values({
@@ -733,7 +758,10 @@ export class TaskRunner {
         topicId: task.topicId,
         roleId: task.ownerRoleId,
         action: call.name,
-        detail: { tool_call: { id: call.id, name: call.name, arguments: call.arguments } },
+        detail: {
+          tool_call: { id: call.id, name: call.name, arguments: call.arguments },
+          ...(blocked.length ? { flow: { labels: blocked, sources } } : {}),
+        },
         approverUserIds: approvers,
       })
       .returning();
@@ -746,10 +774,16 @@ export class TaskRunner {
       const preview = (await textRestricted(db, task))
         ? "(details withheld here because they draw on restricted material; see the approvals page)"
         : redact(JSON.stringify(call.arguments)).slice(0, 500);
-      await systemMessage(db, topic, `@${role?.handle ?? "?"} asks for approval to use ${call.name}: ${preview}`, {
-        taskId: task.id,
-        mentions: approvers.slice(0, 5).map((id) => ({ type: "user" as const, id })),
-      });
+      const why = sources ? ` (it would send material from ${sources} where not everyone may see it)` : "";
+      await systemMessage(
+        db,
+        topic,
+        `@${role?.handle ?? "?"} asks for approval to use ${call.name}${why}: ${preview}`,
+        {
+          taskId: task.id,
+          mentions: approvers.slice(0, 5).map((id) => ({ type: "user" as const, id })),
+        },
+      );
     }
     await audit(db, "approval.request", {
       actorType: "role",
@@ -865,3 +899,16 @@ export async function claimNext(db: Db, workerId: string, limit: number, leaseMs
 }
 
 export { and };
+
+/**
+ * The labels of a task's material that may not go to ``audience``. What was said in the task's own topic counts as
+ * given when a console account asked there; anything else (other topics, DMs, a company's Feishu…) needs its owners.
+ */
+async function blockedForWrite(db: Db, task: Task, audience: Readers): Promise<string[]> {
+  const [requester] = task.requesterUserId
+    ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
+    : [];
+  const own = topicLabel(task.topicId);
+  const labels = isConsoleUser(requester) ? task.labels.filter((l) => l !== own) : task.labels;
+  return (await checkFlow(db, labels, audience)).blockedLabels;
+}

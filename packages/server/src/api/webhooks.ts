@@ -140,7 +140,8 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
     );
     const event = String(req.headers["x-github-event"] ?? "");
     noteWebhook(conn.id, event === "ping" ? "verified" : "received");
-    if (event === "ping" || conn.status !== "active") return { ok: true };
+    // A connection that only authenticates the GitHub tools takes no messages.
+    if (event === "ping" || conn.status !== "active" || conn.settings.auth_only) return { ok: true };
     const input = { event, delivery: String(req.headers["x-github-delivery"] ?? ""), payload: req.body ?? {} };
     await acceptEvents(conn.id, await (await getAdapter(conn)).parse(getDb(), conn, input));
     return { ok: true };

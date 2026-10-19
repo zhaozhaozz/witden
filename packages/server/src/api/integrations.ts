@@ -22,13 +22,8 @@ import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
 import { checkCredentials as checkFeishu, type FeishuMode, feishuMode } from "../integrations/feishu.js";
 import { feishuSockets } from "../integrations/feishu-socket.js";
-import {
-  FEISHU_BASE_SCOPES,
-  FEISHU_PRODUCTS,
-  grantedScopes,
-  parseFeishuGroup,
-  productStatus,
-} from "../integrations/feishu-tools.js";
+import { FEISHU_BASE_SCOPES, FEISHU_PRODUCTS, grantedScopes, productStatus } from "../integrations/feishu-tools.js";
+import { parseGrant } from "../integrations/platform-tools.js";
 import {
   appCredentials,
   appOf,
@@ -65,9 +60,20 @@ const PLATFORMS: Record<string, string[]> = {
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set(["auto_provision_users", "custom_identity", "role_id", "feishu_mode", "bot_requests"]);
-/** Settings only a Feishu connection has. */
-const FEISHU_SETTINGS = new Set(["feishu_mode", "bot_requests"]);
+const SETTINGS_KEYS = new Set([
+  "auto_provision_users",
+  "custom_identity",
+  "role_id",
+  "feishu_mode",
+  "bot_requests",
+  "auth_only",
+]);
+/** Settings only one platform's connections have. */
+const PLATFORM_SETTINGS: Record<string, string> = {
+  feishu_mode: "feishu",
+  bot_requests: "feishu",
+  auth_only: "github",
+};
 
 /** The long connections of Slack apps and Feishu connections follow what was just saved. */
 const syncSockets = () => Promise.all([slackSockets.sync(), feishuSockets.sync()]);
@@ -149,6 +155,7 @@ async function mergedCredentials(
   conn: Connection,
   entered: Record<string, unknown>,
   feishu: FeishuMode = feishuMode(conn),
+  githubAuthOnly = !!conn.settings.auth_only,
 ): Promise<string> {
   // Slack: only the workspace's bot token is the connection's; what is the app's is kept on the app.
   const current = conn.credentialsEncrypted ? JSON.parse(secretBox().decrypt(conn.credentialsEncrypted)) : {};
@@ -167,7 +174,7 @@ async function mergedCredentials(
     }
     checkFeishu(current, feishu);
   }
-  if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current);
+  if (conn.platform === "github") (await import("../integrations/github.js")).checkCredentials(current, githubAuthOnly);
   if (conn.platform === "slack") (await import("../integrations/slack.js")).checkCredentials(current);
   return secretBox().encrypt(JSON.stringify(current));
 }
@@ -178,13 +185,15 @@ const trimmed = (creds: Record<string, unknown>): Record<string, string> =>
 
 async function cleanSettings(db: Db, s: Record<string, any>, platform: string): Promise<Record<string, any>> {
   const unknown = Object.keys(s).filter(
-    (k) => !SETTINGS_KEYS.has(k) || (FEISHU_SETTINGS.has(k) && platform !== "feishu"),
+    (k) => !SETTINGS_KEYS.has(k) || (!!PLATFORM_SETTINGS[k] && PLATFORM_SETTINGS[k] !== platform),
   );
   if (unknown.length) throw new BadRequest(`unknown settings ${unknown.join(", ")}`);
   if (s.feishu_mode !== undefined && !["socket", "http"].includes(s.feishu_mode))
     throw new BadRequest("feishu_mode must be socket (long connection) or http (events URL)");
   if (s.bot_requests !== undefined && typeof s.bot_requests !== "boolean")
     throw new BadRequest("bot_requests must be true or false");
+  if (s.auth_only !== undefined && typeof s.auth_only !== "boolean")
+    throw new BadRequest("auth_only must be true or false");
   // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");
@@ -254,9 +263,11 @@ export async function integrationRoutes(app: FastifyInstance) {
       // A GitHub App made by the setup guide gets its credentials from GitHub after the connection exists
       // (its webhook URL names the connection): until then the connection has none.
       const pending = b.platform === "github" && !Object.values(creds).some(Boolean);
-      if (b.platform === "github" && !pending) (await import("../integrations/github.js")).checkCredentials(creds);
-      // Feishu: the long connection unless asked otherwise or given the events URL's verification token.
       const settings = await cleanSettings(db, b.settings ?? {}, b.platform);
+      // A GitHub connection that only authenticates the GitHub tools needs no webhook secret.
+      if (b.platform === "github" && !pending)
+        (await import("../integrations/github.js")).checkCredentials(creds, !!settings.auth_only);
+      // Feishu: the long connection unless asked otherwise or given the events URL's verification token.
       if (b.platform === "feishu") {
         settings.feishu_mode ??= creds.verification_token ? "http" : "socket";
         if (settings.feishu_mode === "socket" && creds.verification_token)
@@ -329,7 +340,10 @@ export async function integrationRoutes(app: FastifyInstance) {
       const feishuTo =
         conn.platform === "feishu" && update.settings ? feishuMode({ settings: update.settings }) : undefined;
       const switching = !!feishuTo && feishuTo !== feishuMode(conn);
-      if (b.credentials || switching) {
+      // A GitHub connection becoming a bot again needs its webhook secret.
+      const authOnly = !!(update.settings ?? conn.settings).auth_only;
+      const githubSwitch = conn.platform === "github" && authOnly !== !!conn.settings.auth_only;
+      if (b.credentials || switching || githubSwitch) {
         let entered = trimmed(b.credentials ?? {});
         if (conn.platform === "slack") {
           // The app's keys (e.g. switching it to Socket Mode from a workspace's guide) go to the app.
@@ -346,8 +360,8 @@ export async function integrationRoutes(app: FastifyInstance) {
           }
           entered = workspace;
         }
-        if (Object.values(entered).some(Boolean) || switching)
-          update.credentialsEncrypted = await mergedCredentials(conn, entered, feishuTo);
+        if (Object.values(entered).some(Boolean) || switching || githubSwitch)
+          update.credentialsEncrypted = await mergedCredentials(conn, entered, feishuTo, authOnly);
       }
       if (b.status) {
         if (!["active", "paused"].includes(b.status)) throw new BadRequest("status must be active or paused");
@@ -378,7 +392,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       await db.delete(connections).where(eq(connections.id, params(req).id));
       // What roles were allowed to do with this Feishu app goes with it.
       for (const r of await db.select().from(roles)) {
-        const keep = (xs: string[]) => xs.filter((g) => parseFeishuGroup(g)?.connectionId !== params(req).id);
+        const keep = (xs: string[]) => xs.filter((g) => parseGrant(g)?.connectionId !== params(req).id);
         if (
           keep(r.allowedTools).length !== r.allowedTools.length ||
           keep(r.approvalRequired).length !== r.approvalRequired.length

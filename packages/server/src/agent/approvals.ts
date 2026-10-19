@@ -26,8 +26,8 @@ import { appendStep, isConversation } from "./transcript.js";
 
 export async function canDecide(db: Db, user: User, approval: Approval): Promise<boolean> {
   if (!user.isActive) return false;
-  // Only the people whose material it is may release it to a wider audience.
-  if (approval.action === "disclose") return approval.approverUserIds.includes(user.id);
+  // Only the people whose material it is may release it to a wider audience (also a write that would send it out).
+  if (approval.action === "disclose" || approval.detail?.flow) return approval.approverUserIds.includes(user.id);
   return (
     approval.approverUserIds.includes(user.id) || (await hasPermission(db, user, Perm.APPROVAL_DECIDE, approval.roleId))
   );

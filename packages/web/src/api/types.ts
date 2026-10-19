@@ -546,9 +546,18 @@ export interface ToolGroup {
 }
 
 /** The Feishu tools roles may be given, and the Feishu apps (companies) they can be given for. */
-export interface FeishuTools {
+/** The tools roles may be given per connection of a platform (/api/roles/feishu-tools, /api/roles/github-tools). */
+export interface PlatformTools {
   products: { key: string; label: string; description: string; read: string[]; write: string[] }[];
-  apps: { id: string; name: string; status: string }[];
+  apps: {
+    id: string;
+    name: string;
+    status: string;
+    /** GitHub: the account or App the tools act as. */
+    acts_as?: string | null;
+    /** GitHub: the connection only authenticates the tools (takes no messages). */
+    auth_only?: boolean;
+  }[];
 }
 
 export interface Capabilities {
@@ -741,6 +750,8 @@ export interface Connection {
     feishu_mode?: "socket" | "http";
     /** Feishu: other bots @-mentioning the bot go to its role. */
     bot_requests?: boolean;
+    /** GitHub: no messages; the account only authenticates the GitHub tools roles are given. */
+    auth_only?: boolean;
     [key: string]: unknown;
   };
   has_credentials: boolean;

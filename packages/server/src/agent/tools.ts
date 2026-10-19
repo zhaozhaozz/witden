@@ -15,10 +15,10 @@ import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { memories, messages, modelConfigs, roles, type Task, tasks, topics, users } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
-import { feishuNeedsApproval, grantedApps, parseFeishuGroup } from "../integrations/feishu-tools.js";
 import { externalContext } from "../integrations/links.js";
+import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../integrations/platform-tools.js";
 import { findCredential } from "../security/crypto.js";
-import { spaceLabel, topicLabel, userLabel } from "../security/labels.js";
+import { type Readers, spaceLabel, topicLabel, userLabel } from "../security/labels.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { configCatalog } from "../services/config-access.js";
@@ -31,6 +31,7 @@ import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
+import { GITHUB_TOOLS } from "./tools-github.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -98,6 +99,11 @@ export interface ToolSpec {
   modes?: WorkMode[];
   /** What the tool does in a conversation, when that differs from a task. */
   conversation?: string;
+  /**
+   * Who will see what the call writes outside witden (a GitHub repository, a company's Feishu): the runner checks
+   * the task's material may go there before running it, and asks the owners of what may not.
+   */
+  destination?: (ctx: ToolContext, args: Record<string, any>) => Promise<Readers | null>;
 }
 
 /** The mode of the work an envelope belongs to. */
@@ -1227,22 +1233,15 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       modes: ["conversation"] as WorkMode[],
     },
     ...ALL_FEISHU_TOOLS,
+    ...GITHUB_TOOLS,
   ].map((t) => [t.name, t]),
 );
 
 /**
- * A Feishu tool (group ``feishu:<product>:<mode>``) is offered when the task may use that product and mode of at
- * least one Feishu app; ``feishu_apps`` when it may use any.
- */
-function feishuOffered(group: string, tools: string[]): boolean {
-  if (group === "feishu:apps") return tools.some((t) => !!parseFeishuGroup(t));
-  const [, product, mode] = group.split(":");
-  return grantedApps(tools, product, mode as "read" | "write").length > 0;
-}
-
-/**
  * The tools of a piece of work. A conversation gets the same list (and descriptions) for every run, whatever
- * its messages: a stable tool list keeps the start of its prompt cacheable.
+ * its messages: a stable tool list keeps the start of its prompt cacheable. A connection tool (group
+ * ``<platform>:<product>:<mode>``) is offered when the work may use that product and mode of at least one
+ * connection.
  */
 export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
   const groups = new Set<string>(envelope.tools ?? []);
@@ -1252,7 +1251,7 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
       (t) =>
         (t.group === null ||
           groups.has(t.group) ||
-          (t.group.startsWith("feishu:") && feishuOffered(t.group, envelope.tools ?? []))) &&
+          (isConnectionToolGroup(t.group) && groupOffered(t.group, envelope.tools ?? []))) &&
         (!t.modes || t.modes.includes(mode)) &&
         // Declining to answer is for messages that reached the role without an @-mention: a conversation
         // always has the tool (it refuses when the latest message did @-mention the role), a task only when
@@ -1269,11 +1268,8 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
-  // A Feishu tool asks when its app's product asks (the app comes from the call).
-  if (tool.group?.startsWith("feishu:") && tool.group !== "feishu:apps") {
-    const [, product, mode] = tool.group.split(":");
-    return feishuNeedsApproval(envelope, product, mode as "read" | "write", args);
-  }
+  // A connection tool (Feishu, GitHub) asks when its connection's product asks (the connection comes from the call).
+  if (isConnectionToolGroup(tool.group)) return grantNeedsApproval(envelope, tool.group!, args);
   return tool.group !== null && required.has(tool.group);
 }
 

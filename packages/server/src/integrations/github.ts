@@ -141,8 +141,9 @@ export function appJwt(appId: string, privateKey: string, now = Date.now()): str
 }
 
 /** Credentials for one of the two ways in: ``app_id`` + ``private_key``, or ``token``; always ``webhook_secret``. */
-export function checkCredentials(creds: Record<string, string>): void {
-  if (!creds.webhook_secret) throw new BadRequest("missing credentials: webhook_secret");
+/** ``authOnly``: a connection that only authenticates the GitHub tools takes no webhooks, so needs no secret. */
+export function checkCredentials(creds: Record<string, string>, authOnly = false): void {
+  if (!creds.webhook_secret && !authOnly) throw new BadRequest("missing credentials: webhook_secret");
   if (creds.app_id || creds.private_key) {
     if (!/^\d+$/.test(creds.app_id ?? "")) throw new BadRequest("app_id must be the GitHub App's numeric id");
     try {
@@ -174,6 +175,27 @@ export class GithubAdapter implements Adapter {
   private appClient(conn: Connection): GithubClient {
     const creds = credentials(conn);
     return new GithubClient(appJwt(creds.app_id, creds.private_key));
+  }
+
+  /** The repositories the connection can reach: the account's own and shared ones, or every installation's. */
+  async repositories(conn: Connection): Promise<{ full_name: string; private: boolean; description: string | null }[]> {
+    const pick = (r: any) => ({
+      full_name: String(r.full_name),
+      private: !!r.private,
+      description: r.description ?? null,
+    });
+    if (!credentials(conn).app_id) {
+      const { data } = await (await this.client(conn, "")).request("GET", "/user/repos?per_page=100&sort=updated");
+      return (data ?? []).map(pick);
+    }
+    const out: ReturnType<typeof pick>[] = [];
+    const { data: installs } = await this.appClient(conn).request("GET", "/app/installations?per_page=100");
+    for (const inst of installs ?? []) {
+      const { data: tok } = await this.appClient(conn).request("POST", `/app/installations/${inst.id}/access_tokens`);
+      const { data } = await new GithubClient(tok.token).request("GET", "/installation/repositories?per_page=100");
+      out.push(...(data?.repositories ?? []).map(pick));
+    }
+    return out;
   }
 
   /** A client for work on ``repo``: the bot account's token, or the app's token for the installation covering it. */

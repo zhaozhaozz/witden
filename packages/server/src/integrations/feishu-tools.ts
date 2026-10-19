@@ -10,10 +10,7 @@
  * itself only lets the app reach what it was granted: the scopes it applied for, and the documents, bases and
  * calendars shared with it.
  */
-import { eq } from "drizzle-orm";
-import type { Db } from "../db/client.js";
-import { type Connection, connections } from "../db/schema.js";
-import { BadRequest } from "../errors.js";
+import type { Connection } from "../db/schema.js";
 import { feishuLabel } from "../security/labels.js";
 import { FeishuAdapter } from "./feishu.js";
 
@@ -112,8 +109,6 @@ export const FEISHU_PRODUCTS: FeishuProduct[] = [
   },
 ];
 
-const PRODUCT_KEYS = new Set(FEISHU_PRODUCTS.map((p) => p.key));
-
 /**
  * The scopes Feishu has granted the app, asked of Feishu itself (``application/v6/scopes``: no permission needed;
  * a scope is either granted or not, review pending counts as not).
@@ -145,46 +140,6 @@ function writeOf(p: FeishuProduct, read: FeishuScope): string {
   return p.write[i]?.scope ?? "";
 }
 
-// --- permissions ---------------------------------------------------------------------------------------------
-
-export const feishuGroup = (connectionId: string, product: string, mode: FeishuMode) =>
-  `feishu:${connectionId}:${product}:${mode}`;
-
-export function parseFeishuGroup(group: string): { connectionId: string; product: string; mode: FeishuMode } | null {
-  const m = /^feishu:([^:]+):([a-z]+):(read|write)$/.exec(group);
-  if (!m || !PRODUCT_KEYS.has(m[2])) return null;
-  return { connectionId: m[1], product: m[2], mode: m[3] as FeishuMode };
-}
-
-/** The apps a task may use a product of in a mode, from its envelope's tool groups. */
-export function grantedApps(tools: string[], product: string, mode: FeishuMode): string[] {
-  const out: string[] = [];
-  for (const g of tools) {
-    const p = parseFeishuGroup(g);
-    if (p && p.product === product && p.mode === mode) out.push(p.connectionId);
-  }
-  return out;
-}
-
-/** The app a call uses: the one named, or the only one the task may use for it. */
-export function chosenApp(tools: string[], product: string, mode: FeishuMode, app: unknown): string | null {
-  const granted = grantedApps(tools, product, mode);
-  if (typeof app === "string" && app) return granted.includes(app) ? app : null;
-  return granted.length === 1 ? granted[0] : null;
-}
-
-/**
- * Whether a Feishu tool call needs a person's approval: its app's write group asks. An app not named among several
- * counts as asking if any of them asks (the call fails anyway until it names one).
- */
-export function feishuNeedsApproval(envelope: Record<string, any>, product: string, mode: FeishuMode, args: any) {
-  const asking = new Set<string>(envelope.approval_required ?? []);
-  const tools: string[] = envelope.tools ?? [];
-  const app = chosenApp(tools, product, mode, args?.app);
-  const apps = app ? [app] : grantedApps(tools, product, mode);
-  return apps.some((a) => asking.has(feishuGroup(a, product, mode)));
-}
-
 // --- calls -----------------------------------------------------------------------------------------------------
 
 /** Feishu's answers to a call that went wrong, said so a role can tell the person what to do. */
@@ -201,35 +156,6 @@ export function explainFeishuError(err: Error): string {
   if (code === "190007") return `${m}\n(飞书应用没有开启机器人能力。)`;
   if (code === "1470403") return `${m}\n(应用不能访问这个任务。)`;
   return m;
-}
-
-export interface FeishuCallContext {
-  db: Db;
-  tools: string[];
-}
-
-/** The connection a call uses, checked: granted to the task for this product and mode, a Feishu app, active. */
-export async function appFor(
-  ctx: FeishuCallContext,
-  product: string,
-  mode: FeishuMode,
-  app: unknown,
-): Promise<Connection> {
-  const granted = grantedApps(ctx.tools, product, mode);
-  const id = chosenApp(ctx.tools, product, mode, app);
-  if (!id) {
-    if (typeof app === "string" && app)
-      throw new BadRequest(`you may not use ${product} (${mode}) of the Feishu app ${app}`);
-    throw new BadRequest(
-      granted.length
-        ? `several Feishu apps are open to you for ${product}: name one with "app" (${granted.join(", ")}; feishu_apps lists them)`
-        : `you may not use Feishu ${product} (${mode})`,
-    );
-  }
-  const [conn] = await ctx.db.select().from(connections).where(eq(connections.id, id)).limit(1);
-  if (conn?.platform !== "feishu") throw new BadRequest(`the Feishu app ${id} is no longer connected`);
-  if (conn.status === "paused") throw new BadRequest(`the Feishu app ${conn.name} is paused`);
-  return conn;
 }
 
 export async function feishuApi(

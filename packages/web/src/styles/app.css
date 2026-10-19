@@ -1519,11 +1519,17 @@ textarea.prompt {
   font-weight: 500;
   color: var(--wait);
 }
-/* Feishu tools in the role editor and the Feishu permission check */
+/* Feishu and GitHub tools in the role editor, and the Feishu permission check */
 .perm-app {
   padding: 8px 10px 2px;
   font-weight: 600;
   font-size: 13px;
+}
+.perm-app-note {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ink-3);
 }
 .feishu-products {
   display: grid;

@@ -6,6 +6,7 @@ import {
   type Approval,
   approvals,
   artifacts,
+  connections,
   knowledgeSpaces,
   type Mention,
   type Message,
@@ -41,6 +42,12 @@ export async function describeLabel(db: Db, label: string): Promise<string> {
   if (kind === "space") {
     const [s] = await db.select().from(knowledgeSpaces).where(eq(knowledgeSpaces.id, ident)).limit(1);
     return `knowledge space «${s?.name ?? ident}»`;
+  }
+  if (kind === "feishu" || kind === "github") {
+    const [c] = await db.select().from(connections).where(eq(connections.id, ident)).limit(1);
+    return kind === "feishu"
+      ? `the Feishu of «${c?.name ?? ident}»`
+      : `private GitHub repositories of «${c?.name ?? ident}»`;
   }
   return label;
 }

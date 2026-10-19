@@ -3,10 +3,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api } from "../../api/client";
 import type {
   AgentSession,
-  FeishuTools,
   Instance,
   KnowledgeSpace,
   ModelConfig,
+  PlatformTools,
   Role,
   RoleImpact,
   ToolGroup,
@@ -39,7 +39,7 @@ import {
 import { ResizeHandle } from "../../ui/resize";
 import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
-import { type FeishuGranted, FeishuPermissions } from "./FeishuPermissions";
+import { ConnectionToolPermissions, type FeishuGranted } from "./ConnectionToolPermissions";
 import { defaultPermissions, PermissionList } from "./PermissionList";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
@@ -150,10 +150,13 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const [draft, setDraft] = useState<Draft>(() => toDraft(role));
   const [dialog, setDialog] = useState<null | "copy" | "disable">(null);
   const toolGroups = useResource(() => api.get<ToolGroup[]>("/api/roles/tool-groups"), []);
-  const feishuTools = useResource(() => api.get<FeishuTools>("/api/roles/feishu-tools"), []);
+  const feishuTools = useResource(() => api.get<PlatformTools>("/api/roles/feishu-tools"), []);
+  const githubTools = useResource(() => api.get<PlatformTools>("/api/roles/github-tools"), []);
+  const setToolGrants = (allowed: string[], approval: string[]) =>
+    setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }));
   // What Feishu has granted each app, to say beside a product the app cannot offer yet.
   const feishuGranted = useResource(async () => {
-    const apps = (await api.get<FeishuTools>("/api/roles/feishu-tools")).apps;
+    const apps = (await api.get<PlatformTools>("/api/roles/feishu-tools")).apps;
     const out: FeishuGranted = {};
     await Promise.all(
       apps.map(async (a) => {
@@ -610,8 +613,8 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                       </>
                     ),
                   }}
-                  extra={
-                    !isAdmin && feishuTools.data?.apps.length
+                  extra={[
+                    ...(!isAdmin && feishuTools.data?.apps.length
                       ? [
                           {
                             key: "feishu",
@@ -622,23 +625,48 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                               <>
                                 <p className="small muted perm-section-note">
                                   角色通过 witden
-                                  使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，发到别处需要批准。
+                                  使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，写到别处（包括另一个公司的飞书）需要内容的所有者批准。
                                 </p>
-                                <FeishuPermissions
+                                <ConnectionToolPermissions
+                                  platform="feishu"
                                   data={feishuTools.data}
                                   granted={feishuGranted.data ?? undefined}
                                   allowed={draft.allowed_tools}
                                   approval={draft.approval_required}
-                                  onChange={(allowed, approval) =>
-                                    setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
-                                  }
+                                  onChange={setToolGrants}
                                 />
                               </>
                             ),
                           },
                         ]
-                      : []
-                  }
+                      : []),
+                    ...(!isAdmin && githubTools.data?.apps.length
+                      ? [
+                          {
+                            key: "github",
+                            after: "knowledge",
+                            label: "GitHub",
+                            hint: "按 GitHub 接入（账号或 App）分别设置",
+                            content: (
+                              <>
+                                <p className="small muted perm-section-note">
+                                  角色通过 witden 以接入的账号或 App 的身份读代码、处理 issue 和 pull request、查看
+                                  Actions，Token 和私钥只留在平台；能做的不超过这个账号在 GitHub
+                                  上的权限。私有仓库的内容视为这个接入内可见；写到公开仓库的内容所有人都能看到，带有别人看不到的内容时需要内容的所有者批准。
+                                </p>
+                                <ConnectionToolPermissions
+                                  platform="github"
+                                  data={githubTools.data}
+                                  allowed={draft.allowed_tools}
+                                  approval={draft.approval_required}
+                                  onChange={setToolGrants}
+                                />
+                              </>
+                            ),
+                          },
+                        ]
+                      : []),
+                  ]}
                 />
               )}
             </Loaded>

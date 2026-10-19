@@ -2,8 +2,9 @@
  * Information-flow labels.
  *
  * Every piece of data an AI task reads carries a label naming where it came from (`topic:<id>`,
- * `user:<id>`, `space:<id>`, `feishu:<connection_id>` or `public`). Each label has a *reader set*: the people allowed to see that
- * data. Before a task sends anything to a destination (a topic, an external channel), the destination's
+ * `user:<id>`, `space:<id>`, `feishu:<connection_id>`, `github:<connection_id>` or `public`). Each label has a
+ * *reader set*: the people allowed to see that data. Before a task sends anything to a destination (a topic, an
+ * external channel, a GitHub repository or a company's Feishu written through a tool), the destination's
  * audience must be a subset of the readers of every label the task has read. This stops one person's DM
  * from leaking into a channel and stops delegation from widening access: permissions are checked on the
  * data flow itself, not on which role happens to hold the data.
@@ -123,7 +124,8 @@ export async function labelReaders(db: Db, label: string): Promise<Readers> {
   const ident = label.slice(idx + 1);
   if (kind === "topic") return topicReaders(db, ident);
   if (kind === "user") return readers([CONSOLE], [`u:${ident}`]);
-  if (kind === "feishu") return readers([CONSOLE, `ws:${ident}`]);
+  // Read through a connection's own credentials: a company's Feishu, a private GitHub repository.
+  if (kind === "feishu" || kind === "github") return readers([CONSOLE, `ws:${ident}`]);
   if (kind === "space") {
     const ids = await usersWithPermission(db, Perm.KNOWLEDGE_READ, ident);
     return readers(

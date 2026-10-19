@@ -7,12 +7,26 @@ import { useResource } from "../lib/hooks";
 import { useAuth, useDirectory } from "../lib/session";
 import { useChanged, useLeaveGuard, useUnsavedChanges } from "../lib/unsaved";
 import { useAction, useFeedback } from "../ui/feedback";
-import { CopyText, Empty, Field, JsonBlock, KV, Loaded, PageHeader, Section, StatusChip, Tabs, Tag } from "../ui/kit";
+import {
+  CopyText,
+  Empty,
+  Field,
+  JsonBlock,
+  KV,
+  Loaded,
+  PageHeader,
+  Section,
+  StatusChip,
+  Tabs,
+  Tag,
+  Toggle,
+} from "../ui/kit";
 import { ResizeHandle } from "../ui/resize";
 import {
   ConnectionSettingsFields,
   CREDENTIAL_FIELDS,
   FEISHU_FIELDS,
+  GITHUB_AUTH_ONLY_FIELDS,
   GITHUB_FIELDS,
   Identities,
   INBOUND_STATUS,
@@ -455,6 +469,8 @@ function ConnectionDetail({
   const [tab, setTab] = useState("conversations");
   const [editing, setEditing] = useState(false);
   const rejected = lastRejected(conn);
+  // A GitHub account that only authenticates the GitHub tools: no bot, no events, no role.
+  const authOnly = conn.platform === "github" && !!conn.settings?.auth_only;
 
   if (editing)
     return (
@@ -564,7 +580,12 @@ function ConnectionDetail({
         <div className={`status-banner${conn.status === "error" ? " status-banner-bad" : ""}`}>
           <StatusChip meta={genericStatus(conn.status)} compact />
           <div className="status-banner-text">
-            {conn.status_reason ?? (conn.status === "active" ? "正在接收和发送消息" : "")}
+            {conn.status_reason ??
+              (conn.status === "active"
+                ? authOnly
+                  ? "只作为认证：不接收消息，供获得授权的角色使用 GitHub 工具"
+                  : "正在接收和发送消息"
+                : "")}
           </div>
         </div>
         {!conn.bot_user_id ? (
@@ -575,7 +596,13 @@ function ConnectionDetail({
             </button>
           </div>
         ) : null}
-        {conn.settings?.role_id ? null : (
+        {authOnly ? (
+          <div className="callout">
+            这个账号不当机器人使用：witden 不接收它的消息，也不需要 Webhook。要让角色用它在 GitHub 中做事（读代码、提
+            issue、开 pull request 等），在“角色 → 编辑 → 权限”的 GitHub
+            部分为角色勾选这个接入的读取或写入，并选择写入是否需要询问。Token 不交给角色或电脑。
+          </div>
+        ) : conn.settings?.role_id ? null : (
           <div className="callout callout-bad" role="alert">
             这个机器人还没有选择代表的角色，发给它的请求都会被拒绝。{" "}
             <button type="button" className="btn btn-xs" onClick={() => setEditing(true)}>
@@ -610,109 +637,126 @@ function ConnectionDetail({
           </div>
         ) : null}
         <KV
-          items={[
-            ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
-            [
-              "机器人代表的角色",
-              typeof conn.settings?.role_id === "string" && conn.settings.role_id ? (
-                dir.roleLabel(conn.settings.role_id)
-              ) : (
-                <span className="text-bad">未选择</span>
-              ),
-            ],
-            ...(conn.platform === "slack"
+          items={
+            authOnly
               ? [
-                  ["接入方式", conn.slack_mode === "socket" ? "Socket Mode（不需要公网地址）" : "事件地址（HTTP）"] as [
-                    string,
-                    ReactNode,
-                  ],
+                  ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
+                  ["接入方式", "账号 Token，只作为认证（不当机器人使用）"],
                   [
-                    "所属的 Slack 应用",
-                    conn.slack_app ? (
-                      <button type="button" className="btn btn-xs" onClick={() => onOpenApp(conn.slack_app!.id)}>
-                        {conn.slack_app.name}
-                      </button>
+                    "GitHub 账号",
+                    conn.bot_user_id ? (
+                      <code className="id">{conn.bot_user_id}</code>
                     ) : (
-                      <span className="text-bad">没有</span>
+                      <span className="muted">首次测试后获取</span>
                     ),
-                  ] as [string, ReactNode],
+                  ],
                 ]
-              : []),
-            ...(conn.platform === "feishu"
-              ? [
-                  ["接入方式", conn.feishu_mode === "socket" ? "长连接（不需要公网地址）" : "事件地址（HTTP）"] as [
-                    string,
-                    ReactNode,
+              : [
+                  ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
+                  [
+                    "机器人代表的角色",
+                    typeof conn.settings?.role_id === "string" && conn.settings.role_id ? (
+                      dir.roleLabel(conn.settings.role_id)
+                    ) : (
+                      <span className="text-bad">未选择</span>
+                    ),
+                  ],
+                  ...(conn.platform === "slack"
+                    ? [
+                        [
+                          "接入方式",
+                          conn.slack_mode === "socket" ? "Socket Mode（不需要公网地址）" : "事件地址（HTTP）",
+                        ] as [string, ReactNode],
+                        [
+                          "所属的 Slack 应用",
+                          conn.slack_app ? (
+                            <button type="button" className="btn btn-xs" onClick={() => onOpenApp(conn.slack_app!.id)}>
+                              {conn.slack_app.name}
+                            </button>
+                          ) : (
+                            <span className="text-bad">没有</span>
+                          ),
+                        ] as [string, ReactNode],
+                      ]
+                    : []),
+                  ...(conn.platform === "feishu"
+                    ? [
+                        [
+                          "接入方式",
+                          conn.feishu_mode === "socket" ? "长连接（不需要公网地址）" : "事件地址（HTTP）",
+                        ] as [string, ReactNode],
+                        [
+                          "其他机器人的消息",
+                          conn.settings?.bot_requests
+                            ? `@ 这个机器人时交给角色（连续 ${conn.bot_request_limit ?? 8} 次机器人请求后，等有人发言再继续）`
+                            : "只作为上下文，不交给角色",
+                        ] as [string, ReactNode],
+                      ]
+                    : []),
+                  (conn.slack_mode ?? conn.feishu_mode) === "socket"
+                    ? [
+                        conn.platform === "slack" ? "与 Slack 的连接" : "与飞书的连接",
+                        <Tag key="socket" tone={socketText(conn.socket, conn.platform).tone}>
+                          {socketText(conn.socket, conn.platform).text}
+                        </Tag>,
+                      ]
+                    : ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
+                  [
+                    "外部工作空间",
+                    conn.external_workspace_id ? (
+                      <code className="id">{conn.external_workspace_id}</code>
+                    ) : (
+                      <span className="muted">首次测试后获取</span>
+                    ),
                   ],
                   [
-                    "其他机器人的消息",
-                    conn.settings?.bot_requests
-                      ? `@ 这个机器人时交给角色（连续 ${conn.bot_request_limit ?? 8} 次机器人请求后，等有人发言再继续）`
-                      : "只作为上下文，不交给角色",
-                  ] as [string, ReactNode],
-                ]
-              : []),
-            (conn.slack_mode ?? conn.feishu_mode) === "socket"
-              ? [
-                  conn.platform === "slack" ? "与 Slack 的连接" : "与飞书的连接",
-                  <Tag key="socket" tone={socketText(conn.socket, conn.platform).tone}>
-                    {socketText(conn.socket, conn.platform).text}
-                  </Tag>,
-                ]
-              : ["事件地址", conn.events_url ? <CopyText text={conn.events_url} /> : null],
-            [
-              "外部工作空间",
-              conn.external_workspace_id ? (
-                <code className="id">{conn.external_workspace_id}</code>
-              ) : (
-                <span className="muted">首次测试后获取</span>
-              ),
-            ],
-            [
-              "机器人账号",
-              conn.bot_user_id ? (
-                <code className="id">{conn.bot_user_id}</code>
-              ) : (
-                <span className="muted">首次测试后获取</span>
-              ),
-            ],
-            ...(conn.platform === "github"
-              ? [
+                    "机器人账号",
+                    conn.bot_user_id ? (
+                      <code className="id">{conn.bot_user_id}</code>
+                    ) : (
+                      <span className="muted">首次测试后获取</span>
+                    ),
+                  ],
+                  ...(conn.platform === "github"
+                    ? [
+                        [
+                          "接入方式",
+                          conn.github_auth === "app"
+                            ? "GitHub App"
+                            : conn.github_auth === "token"
+                              ? "机器人账号 Token"
+                              : "还没有设置（在设置引导中创建 App）",
+                        ] as [string, string],
+                      ]
+                    : []),
                   [
-                    "接入方式",
-                    conn.github_auth === "app"
-                      ? "GitHub App"
-                      : conn.github_auth === "token"
-                        ? "机器人账号 Token"
-                        : "还没有设置（在设置引导中创建 App）",
-                  ] as [string, string],
+                    "外部成员",
+                    conn.settings?.auto_provision_users
+                      ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的角色"
+                      : "关闭：未关联的人不能使用，需要管理员关联身份",
+                  ],
+                  [
+                    "角色身份显示",
+                    `机器人就是它代表的角色，回复不另加名称；被请来协作的其他角色${
+                      conn.platform === "github"
+                        ? "在评论开头写角色名称"
+                        : conn.platform === "slack" && conn.settings?.custom_identity
+                          ? "以自己的名称和头像发言"
+                          : "在消息前写角色名称"
+                    }`,
+                  ],
                 ]
-              : []),
-            [
-              "外部成员",
-              conn.settings?.auto_provision_users
-                ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的角色"
-                : "关闭：未关联的人不能使用，需要管理员关联身份",
-            ],
-            [
-              "角色身份显示",
-              `机器人就是它代表的角色，回复不另加名称；被请来协作的其他角色${
-                conn.platform === "github"
-                  ? "在评论开头写角色名称"
-                  : conn.platform === "slack" && conn.settings?.custom_identity
-                    ? "以自己的名称和头像发言"
-                    : "在消息前写角色名称"
-              }`,
-            ],
-          ]}
+          }
         />
         <p className="small muted">
           {PLATFORM_LABEL[conn.platform] ?? conn.platform}
-          {conn.platform === "github"
-            ? " App 的安装、Webhook 和试用步骤见“设置引导”。"
-            : conn.platform === "slack"
-              ? " 应用的事件订阅、权限和试用步骤见“设置引导”。"
-              : "应用的权限、事件订阅、版本发布和试用步骤见“设置引导”。"}
+          {authOnly
+            ? " Token 的创建和所需权限见“设置引导”。"
+            : conn.platform === "github"
+              ? " App 的安装、Webhook 和试用步骤见“设置引导”。"
+              : conn.platform === "slack"
+                ? " 应用的事件订阅、权限和试用步骤见“设置引导”。"
+                : "应用的权限、事件订阅、版本发布和试用步骤见“设置引导”。"}
         </p>
       </Section>
       {conn.platform === "feishu" ? (
@@ -932,10 +976,14 @@ function ConnectionForm({
   const [feishuMode, setFeishuMode] = useState<"socket" | "http">(conn?.feishu_mode ?? "socket");
   // A Slack workspace's own credential is its bot token; the app's keys are edited on the app.
   const workspace = platform === "slack" && !!conn;
+  // GitHub: an account that only authenticates the GitHub tools is no bot (no webhook, no role).
+  const authOnly = platform === "github" && githubAuth === "token" && !!settings.auth_only;
   const fields: [string, string][] = workspace
     ? [["bot_token", "Bot User OAuth Token"]]
     : platform === "github"
-      ? GITHUB_FIELDS[githubAuth]
+      ? authOnly
+        ? GITHUB_AUTH_ONLY_FIELDS
+        : GITHUB_FIELDS[githubAuth]
       : platform === "slack"
         ? SLACK_FIELDS[slackMode]
         : platform === "feishu"
@@ -949,17 +997,26 @@ function ConnectionForm({
       (platform === "feishu" && (conn.feishu_mode ?? "http") !== feishuMode));
   const shared =
     platform === "github" ? ["webhook_secret"] : platform === "feishu" ? ["app_id", "app_secret"] : ["bot_token"];
+  // An account that only authenticated has no webhook secret yet: becoming a bot needs one.
+  const becomingBot = !!conn?.settings?.auth_only && !authOnly;
   // New connections need every field; an existing one keeps what is left empty.
-  const required = fields.filter(([k]) => !conn || (switching && !shared.includes(k)));
+  const required = fields.filter(
+    ([k]) => !conn || (switching && !shared.includes(k)) || (becomingBot && k === "webhook_secret"),
+  );
   const missing = required.some(([k]) => !creds[k]?.trim());
-  const disabled = busy || !name.trim() || missing || !settings.role_id;
+  const disabled = busy || !name.trim() || missing || (!authOnly && !settings.role_id);
   const [changed] = useChanged({ name, creds, settings, githubAuth, slackMode, feishuMode });
 
   const submit = async (): Promise<boolean> => {
     if (disabled) return false;
     const filled = Object.fromEntries(Object.entries(creds).filter(([, v]) => v.trim()));
     // Feishu: the way is a setting; switching to the long connection drops the verification token.
-    const saved = platform === "feishu" ? { ...settings, feishu_mode: feishuMode } : settings;
+    const saved =
+      platform === "feishu"
+        ? { ...settings, feishu_mode: feishuMode }
+        : platform === "github"
+          ? { ...settings, auth_only: authOnly }
+          : settings;
     const out = await run(
       () =>
         conn
@@ -1011,6 +1068,19 @@ function ConnectionForm({
           </select>
         </Field>
       ) : null}
+      {platform === "github" && githubAuth === "token" ? (
+        <>
+          <Toggle
+            checked={authOnly}
+            onChange={(v) => setSettings({ ...settings, auth_only: v })}
+            label="只作为认证（不当机器人使用）"
+          />
+          <span className="field-hint">
+            开启后不接收 GitHub 的消息，也不需要 Webhook；这个账号只给获得授权的角色使用 GitHub
+            工具（在角色的权限中按接入设置），例如代替本人提 issue、开 pull request。Token 不交给角色或电脑。
+          </span>
+        </>
+      ) : null}
       {workspace ? (
         <p className="small muted">
           这里只填这个工作区的机器人令牌。应用的令牌、接入方式和 OAuth 凭据在应用「{conn?.slack_app?.name ?? "?"}
@@ -1055,7 +1125,11 @@ function ConnectionForm({
           key={k}
           label={label}
           description={platform === "slack" ? SLACK_FIELD_HELP[k] : undefined}
-          hint={conn && (!switching || shared.includes(k)) ? "留空保持不变" : undefined}
+          hint={
+            conn && (!switching || shared.includes(k)) && !(becomingBot && k === "webhook_secret")
+              ? "留空保持不变"
+              : undefined
+          }
         >
           {k === "private_key" ? (
             <textarea
@@ -1078,12 +1152,14 @@ function ConnectionForm({
           )}
         </Field>
       ))}
-      <ConnectionSettingsFields
-        platform={platform}
-        value={settings}
-        onChange={setSettings}
-        botLimit={conn?.bot_request_limit}
-      />
+      {authOnly ? null : (
+        <ConnectionSettingsFields
+          platform={platform}
+          value={settings}
+          onChange={setSettings}
+          botLimit={conn?.bot_request_limit}
+        />
+      )}
       <div className="btn-row">
         <button type="submit" className="btn btn-primary" disabled={disabled}>
           {busy ? "处理中…" : conn ? "保存" : "创建接入"}
@@ -1091,7 +1167,7 @@ function ConnectionForm({
         <button type="button" className="btn" onClick={onCancel}>
           取消
         </button>
-        {settings.role_id ? null : <span className="small muted">选择机器人代表的角色后才能保存。</span>}
+        {authOnly || settings.role_id ? null : <span className="small muted">选择机器人代表的角色后才能保存。</span>}
       </div>
     </form>
   );

@@ -9,15 +9,14 @@ import type { Db } from "../db/client.js";
 import { connections, externalIdentities, tasks } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import {
-  appFor,
   explainFeishuError,
   FEISHU_PRODUCTS,
   type FeishuMode,
   feishuApi,
-  grantedApps,
   labelsFor,
-  parseFeishuGroup,
 } from "../integrations/feishu-tools.js";
+import { connectionFor, grantedApps, parseGrant } from "../integrations/platform-tools.js";
+import { readers } from "../security/labels.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
 const str = { type: "string" };
@@ -74,9 +73,26 @@ function feishuTool(
     group: `feishu:${product}:${mode}`,
     description,
     parameters: obj({ ...properties, app: appArg }, required),
+    // What is written there is seen by that company's Feishu.
+    ...(mode === "write"
+      ? {
+          destination: async (ctx: ToolContext, args: Record<string, any>) => {
+            const db = ctx.db();
+            const conn = await connectionFor(
+              db,
+              await envelopeTools(db, ctx.taskId),
+              "feishu",
+              product,
+              mode,
+              args.app,
+            );
+            return readers([`ws:${conn.id}`]);
+          },
+        }
+      : {}),
     handler: async (ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> => {
       const db = ctx.db();
-      const conn = await appFor({ db, tools: await envelopeTools(db, ctx.taskId) }, product, mode, args.app);
+      const conn = await connectionFor(db, await envelopeTools(db, ctx.taskId), "feishu", product, mode, args.app);
       try {
         const out = await run(conn, args, { db, taskId: ctx.taskId });
         return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)), labels: labelsFor(conn) };
@@ -137,8 +153,8 @@ const appsTool: ToolSpec = {
     const ids = [
       ...new Set(
         tools
-          .map(parseFeishuGroup)
-          .filter((g) => !!g)
+          .map(parseGrant)
+          .filter((g) => g?.platform === "feishu")
           .map((g) => g!.connectionId),
       ),
     ];
@@ -150,7 +166,7 @@ const appsTool: ToolSpec = {
       labels.push(...labelsFor(conn));
       const can = FEISHU_PRODUCTS.flatMap((p) =>
         (["read", "write"] as FeishuMode[])
-          .filter((m) => grantedApps(tools, p.key, m).includes(id))
+          .filter((m) => grantedApps(tools, "feishu", p.key, m).includes(id))
           .map((m) => `${p.key} ${m}`),
       );
       const people = await db

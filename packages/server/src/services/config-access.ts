@@ -41,6 +41,11 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
         note: "Feishu tools by product and the Feishu apps; a role gets them per app in allowed_tools as feishu:<connection>:<product>:read|write (a write group in approval_required asks first)",
       },
       {
+        method: "GET",
+        path: "/api/roles/github-tools",
+        note: "GitHub tools by product and the GitHub connections; granted per connection like the Feishu tools (github:<connection>:<product>:read|write)",
+      },
+      {
         method: "POST",
         path: "/api/roles",
         note: 'name, handle, description, system_prompt, model_config_id, reasoning_effort (one of the levels in the model\'s capabilities.effort, or null for its default), model_params, instance_id, allowed_tools (groups), approval_required (groups or tools), allowed_contacts (role ids or "*"), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color',
@@ -117,7 +122,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       {
         method: "PATCH",
         path: "/api/connections/:id",
-        note: "name, status (active | paused), settings: role_id (the role its bot stands for), auto_provision_users, custom_identity, feishu_mode (Feishu: socket = long connection, http = events URL, which needs a verification token only a person can enter), bot_requests (Feishu: other bots @-mentioning the bot go to its role)",
+        note: "name, status (active | paused), settings: role_id (the role its bot stands for), auto_provision_users, custom_identity, auth_only (GitHub: authenticates the GitHub tools only, takes no messages), feishu_mode (Feishu: socket = long connection, http = events URL, which needs a verification token only a person can enter), bot_requests (Feishu: other bots @-mentioning the bot go to its role)",
       },
       { method: "POST", path: "/api/connections/:id/test", note: "test the saved credentials" },
       { method: "GET", path: "/api/connections/:id/feishu-scopes", note: "permissions Feishu has granted the app" },

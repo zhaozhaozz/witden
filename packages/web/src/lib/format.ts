@@ -236,13 +236,17 @@ const groupRank = (g: string) => {
   return i < 0 ? GROUP_ORDER.length : i;
 };
 
-/** A role's tool groups as labels, in the editor's order; Feishu grants (one per app and product) as one entry. */
+/**
+ * A role's tool groups as labels, in the editor's order; Feishu and GitHub grants (one per connection and product)
+ * as one entry each.
+ */
 export function permissionLabels(groups: string[]): string[] {
   const labels = groups
-    .filter((g) => !g.startsWith("feishu:"))
+    .filter((g) => !/^(feishu|github):/.test(g))
     .sort((a, b) => groupRank(a) - groupRank(b))
     .map((g) => TOOL_GROUP_LABEL[g] ?? g);
   if (groups.some((g) => g.startsWith("feishu:"))) labels.push("飞书工具");
+  if (groups.some((g) => g.startsWith("github:"))) labels.push("GitHub 工具");
   return labels;
 }
 
@@ -283,6 +287,24 @@ export const TOOL_LABEL: Record<string, string> = {
   feishu_sheet_write: "写入飞书电子表格",
   feishu_meeting_reserve: "预约飞书视频会议",
   feishu_task_create: "创建飞书任务",
+  github_apps: "查看可用的 GitHub 接入",
+  github_repos: "查看能访问的 GitHub 仓库",
+  github_read_path: "读取 GitHub 仓库中的文件",
+  github_write_file: "向 GitHub 仓库提交文件",
+  github_create_branch: "新建 GitHub 分支",
+  github_issue_list: "查看 GitHub issue 列表",
+  github_issue_get: "查看 GitHub issue",
+  github_issue_create: "新建 GitHub issue",
+  github_issue_comment: "评论 GitHub issue",
+  github_issue_update: "修改 GitHub issue",
+  github_pr_list: "查看 pull request 列表",
+  github_pr_get: "查看 pull request",
+  github_pr_create: "新建 pull request",
+  github_pr_comment: "评论 pull request",
+  github_pr_merge: "合并 pull request",
+  github_actions_runs: "查看 GitHub Actions 运行",
+  github_actions_rerun: "重新运行 GitHub Actions",
+  github_workflow_dispatch: "手动触发 GitHub 工作流",
   run_command: "执行命令",
   terminal_start: "启动终端",
   terminal_read: "读取终端输出",

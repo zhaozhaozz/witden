@@ -17,6 +17,7 @@ import {
 } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { FEISHU_PRODUCTS } from "../integrations/feishu-tools.js";
+import { GITHUB_PRODUCTS } from "../integrations/github-tools.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { avatarFile, MAX_AVATAR_BYTES, saveAvatar } from "../services/appearance.js";
 import { audit } from "../services/audit.js";
@@ -103,28 +104,38 @@ export async function serveAvatar(req: FastifyRequest, reply: FastifyReply) {
 }
 
 export async function roleRoutes(app: FastifyInstance) {
-  // The Feishu tools a role can be given, per product, and the Feishu apps (companies) to give them for.
-  app.get(
-    "/api/roles/feishu-tools",
-    authed(async ({ db, user }) => {
-      await requirePerm(db, user, Perm.ROLE_MANAGE);
-      const toolsOf = (key: string, mode: string) =>
-        [...TOOLS.values()].filter((t) => t.group === `feishu:${key}:${mode}`).map((t) => t.name);
-      const apps = await db.select().from(connections).where(eq(connections.platform, "feishu"));
-      return {
-        products: FEISHU_PRODUCTS.map((p) => ({
-          key: p.key,
-          label: p.label,
-          description: p.description,
-          read: toolsOf(p.key, "read"),
-          write: toolsOf(p.key, "write"),
-        })),
-        apps: apps
-          .sort((a, b) => a.name.localeCompare(b.name))
-          .map((c) => ({ id: c.id, name: c.name, status: c.status })),
-      };
-    }),
-  );
+  // The connection tools a role can be given (Feishu, GitHub), per product, and the connections to give them for.
+  for (const [platform, products] of [
+    ["feishu", FEISHU_PRODUCTS],
+    ["github", GITHUB_PRODUCTS],
+  ] as const)
+    app.get(
+      `/api/roles/${platform}-tools`,
+      authed(async ({ db, user }) => {
+        await requirePerm(db, user, Perm.ROLE_MANAGE);
+        const toolsOf = (key: string, mode: string) =>
+          [...TOOLS.values()].filter((t) => t.group === `${platform}:${key}:${mode}`).map((t) => t.name);
+        const apps = await db.select().from(connections).where(eq(connections.platform, platform));
+        return {
+          products: products.map((p) => ({
+            key: p.key,
+            label: p.label,
+            description: p.description,
+            read: toolsOf(p.key, "read"),
+            write: toolsOf(p.key, "write"),
+          })),
+          apps: apps
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((c) => ({
+              id: c.id,
+              name: c.name,
+              status: c.status,
+              // GitHub: as whom it acts, and whether it only authenticates (takes no messages)
+              ...(platform === "github" ? { acts_as: c.botUserId, auth_only: !!c.settings.auth_only } : {}),
+            })),
+        };
+      }),
+    );
 
   app.get(
     "/api/roles/tool-groups",
