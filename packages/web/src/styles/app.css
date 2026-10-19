@@ -731,6 +731,29 @@ textarea.prompt {
   border-radius: 50%;
   background: var(--harbor);
 }
+/* A computer in little space: its colour, a screen icon and the first four letters of its name. */
+.computer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--badge);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.01em;
+}
+.computer-chip-name {
+  font-family: var(--mono);
+}
+/* Not running: the same box, faded */
+.computer-chip-off {
+  opacity: 0.45;
+}
 /* A connection's roles and computers beside its section title */
 .side-cast {
   display: inline-flex;
@@ -740,17 +763,6 @@ textarea.prompt {
   margin-right: 2px;
   color: var(--ink-3);
 }
-.side-cast-computer {
-  position: relative;
-  display: inline-flex;
-  margin-left: 2px;
-}
-.side-cast-computer .side-presence {
-  width: 6px;
-  height: 6px;
-  right: -1px;
-  bottom: 1px;
-}
 .side-cast-more {
   font-size: 11px;
 }
@@ -758,20 +770,6 @@ textarea.prompt {
   position: relative;
   display: inline-flex;
   flex: none;
-}
-/* Is the role's computer running? */
-.side-presence {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #b8c0c7;
-  box-shadow: 0 0 0 2px var(--paper-2);
-}
-.side-online {
-  background: var(--ok);
 }
 /* Shortcut buttons on a sidebar item (e.g. edit a role): hidden until the row is hovered or focused. */
 .side-row {

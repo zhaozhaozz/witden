@@ -116,6 +116,36 @@ export function ComputerBadge({ computer, title }: { computer: ComputerLike; tit
   );
 }
 
+/**
+ * A computer where space is short (the sidebar): a box in the computer's colour with a screen icon and the
+ * first four letters of its name. Faded when the computer is not running.
+ */
+export function ComputerChip({
+  computer,
+  running,
+  title,
+}: {
+  computer: ComputerLike;
+  /** null: state unknown (shown as running). */
+  running?: boolean | null;
+  title?: string;
+}) {
+  const off = running === false;
+  return (
+    <span
+      className={`computer-chip${off ? " computer-chip-off" : ""}`}
+      style={{ "--badge": badgeColor(computer.id, computer.color) } as CSSProperties}
+      title={title ?? `虚拟电脑 ${computer.name}${off ? "（未运行）" : ""}`}
+    >
+      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+        <rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+        <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+      <span className="computer-chip-name">{[...computer.name].slice(0, 4).join("")}</span>
+    </span>
+  );
+}
+
 export const BADGE_COLORS = [
   "#1e6fd9",
   "#0b7285",

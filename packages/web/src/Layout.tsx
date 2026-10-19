@@ -10,7 +10,7 @@ import { useAuth, useDirectory } from "./lib/session";
 import { isWebDm, useTopics } from "./lib/topics";
 import { PageErrorBoundary } from "./ui/ErrorBoundary";
 import { useAction } from "./ui/feedback";
-import { Avatar, Loading } from "./ui/kit";
+import { Avatar, ComputerChip, Loading } from "./ui/kit";
 import { ResizeHandle } from "./ui/resize";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
@@ -381,7 +381,7 @@ type DirRole = ReturnType<typeof useDirectory>["roles"][number];
 
 /**
  * Who works in a connection's conversations, at a glance: the role its bot stands for first, then other roles
- * brought in, and the virtual computers they work on (a dot when running).
+ * brought in, and the virtual computers they work on (faded when not running).
  */
 function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleIds: string[]; roles: DirRole[] }) {
   const ids = [...new Set([...(bound ? [bound] : []), ...roleIds])];
@@ -400,22 +400,10 @@ function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleI
       ))}
       {cast.length > MAX ? <span className="side-cast-more">+{cast.length - MAX}</span> : null}
       {computers.slice(0, 2).map((m) => (
-        <span key={m.id} className="side-cast-computer">
-          <ComputerIcon />
-          <span className={`side-presence${m.status === "running" ? " side-online" : ""}`} />
-        </span>
+        <ComputerChip key={m.id} computer={m} running={m.status === "running"} />
       ))}
       {computers.length > 2 ? <span className="side-cast-more">+{computers.length - 2}</span> : null}
     </span>
-  );
-}
-
-function ComputerIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
-      <rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -446,9 +434,10 @@ function RoleList() {
             >
               <span className="side-avatar">
                 <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
-                <span className={`side-presence${online ? " side-online" : ""}`} aria-hidden />
               </span>
               <span className="side-label">{r.name}</span>
+              {/* The computer it works on; faded when that computer is not running. */}
+              {r.instance ? <ComputerChip computer={r.instance} running={online} /> : null}
               {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
             </button>
             {canEdit ? (
