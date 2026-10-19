@@ -5,6 +5,7 @@ import {
   validateBackupRequest,
   validateComputerSpec,
   validateImageRef,
+  validatePackagesRequest,
   validateRestoreRequest,
   validateScrubPaths,
 } from "../src/validate.js";
@@ -86,12 +87,6 @@ describe("validateComputerSpec", () => {
     rejects(() => validateComputerSpec(spec({ volumes }), options), /mounted twice/);
   });
 
-  it("keeps no-new-privileges unless privilege escalation is explicitly allowed", () => {
-    expect(validateComputerSpec(spec(), options).allowPrivilegeEscalation).toBe(false);
-    expect(validateComputerSpec(spec({ allowPrivilegeEscalation: true }), options).allowPrivilegeEscalation).toBe(true);
-    rejects(() => validateComputerSpec(spec({ allowPrivilegeEscalation: "yes" }), options), /must be a boolean/);
-  });
-
   it.each([["SYS_ADMIN"], ["NET_ADMIN"], ["SYS_PTRACE"], ["ALL"], ["CAP_CHOWN"]])("rejects capability %s", (cap) => {
     rejects(() => validateComputerSpec(spec({ capAdd: [cap] }), options), /capabilities not allowed/);
   });
@@ -154,6 +149,36 @@ describe("validateComputerSpec", () => {
         validateComputerSpec(spec({ runner: { token: "0123456789abcdef", hubUrl: "file:///etc/passwd" } }), options),
       /hubUrl/,
     );
+  });
+});
+
+describe("validatePackagesRequest", () => {
+  it("accepts plain package names, with an architecture, and drops duplicates", () => {
+    expect(
+      validatePackagesRequest({ action: "install", packages: ["ffmpeg", "libssl3:amd64", "g++", "ffmpeg"] }),
+    ).toEqual({ action: "install", packages: ["ffmpeg", "libssl3:amd64", "g++"] });
+  });
+
+  it.each([
+    ["-o", "option"],
+    ["--allow-remove-essential", "option"],
+    ["./evil.deb", "file"],
+    ["https://x.example/p.deb", "URL"],
+    ["foo bar", "space"],
+    ["foo;rm", "shell"],
+    ["Foo", "upper case"],
+    ["a", "too short"],
+    ["foo=1.0", "version pin"],
+  ])("rejects %j (%s)", (name) => {
+    rejects(() => validatePackagesRequest({ action: "install", packages: [name] }), /package name/);
+  });
+
+  it("rejects other actions, empty and oversized lists and unknown fields", () => {
+    rejects(() => validatePackagesRequest({ action: "purge", packages: ["htop"] }), /install or remove/);
+    rejects(() => validatePackagesRequest({ action: "install", packages: [] }), /non-empty/);
+    const many = Array.from({ length: 101 }, (_, i) => `pkg${i}`);
+    rejects(() => validatePackagesRequest({ action: "install", packages: many }), /at most/);
+    rejects(() => validatePackagesRequest({ action: "install", packages: ["htop"], options: "-y" }), /unknown/);
   });
 });
 

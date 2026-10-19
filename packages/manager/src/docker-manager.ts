@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import type { Duplex } from "node:stream";
+import { type Duplex, PassThrough } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import {
   type BackupRequest,
@@ -12,9 +12,11 @@ import {
   type ContainerStats,
   type CreateComputerResult,
   DEFAULT_CAPS,
-  ESCALATION_CAPS,
+  IMAGE_PACKAGES_FILE,
   type ManagerApi,
   type NetworkMode,
+  type PackagesRequest,
+  type PackagesResult,
   type RemoveComputerRequest,
   type RestoreRequest,
   type RunnerChannel,
@@ -31,6 +33,7 @@ import {
   validateComputerSpec,
   validateContainerRef,
   validateImageRef,
+  validatePackagesRequest,
   validateRemoveRequest,
   validateRestoreRequest,
   validateTimeout,
@@ -63,6 +66,18 @@ export const PROTECTED_RUNNER_COMMAND: readonly string[] = [
 ];
 export const DEFAULT_RUNNER_USER = "witden";
 const TOKEN_ENV = "WITDEN_RUNNER_TOKEN";
+/** The whole environment of a root exec (see `rootExec`). */
+const ROOT_ENV = ["PATH=/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "LANG=C.UTF-8", "DEBIAN_FRONTEND=noninteractive"];
+/** Wait for another apt instead of failing; keep existing configuration files without asking. */
+const APT_OPTIONS = [
+  "-o",
+  "DPkg::Lock::Timeout=300",
+  "-o",
+  "Dpkg::Options::=--force-confdef",
+  "-o",
+  "Dpkg::Options::=--force-confold",
+];
+const APT_TIMEOUT_SEC = 900;
 export const DEFAULT_HUB_HOST = "witden-hub";
 
 const ICC_OPTION = "com.docker.network.bridge.enable_icc";
@@ -414,6 +429,101 @@ export class DockerManager implements ManagerApi {
     await rm(this.backupDir(id), { recursive: true, force: true });
   }
 
+  /**
+   * Installs or removes system packages with a fixed apt command run as root through `docker exec`. The
+   * computer keeps no-new-privileges and its user never becomes root; names were validated as plain package
+   * names. Packages of the computer's image are never removed (the computer depends on them).
+   */
+  async packages(containerId: string, request: PackagesRequest): Promise<PackagesResult> {
+    const req = validatePackagesRequest(request);
+    const { container, info } = await this.managedContainer(containerId);
+    if (!info.State?.Running) throw new ManagerError("not_running", "the computer is not running");
+    const refused: Record<string, string> = {};
+    const outputs: string[] = [];
+    let ok = true;
+    const run = async (cmd: string[]) => {
+      const r = await this.rootExec(container, ["timeout", "-k", "10", String(APT_TIMEOUT_SEC), ...cmd]);
+      outputs.push(r.output);
+      return r;
+    };
+    const before = await this.packageStates(container, req.packages);
+
+    if (req.action === "install") {
+      const missing = req.packages.filter((p) => !before[p]);
+      if (missing.length) {
+        // The images ship without package lists, and old lists miss new versions: always refresh first.
+        ok = (await run(["apt-get", "update", "-q"])).code === 0;
+        if (ok) ok = (await run(["apt-get", "install", "-y", "-q", ...APT_OPTIONS, ...missing])).code === 0;
+      } else outputs.push("all requested packages are already installed");
+    } else {
+      const image = await this.rootExec(container, ["cat", IMAGE_PACKAGES_FILE]);
+      const ofImage = new Set(image.code === 0 ? image.output.split("\n").map((l) => l.trim()) : []);
+      for (const p of req.packages) {
+        if (image.code !== 0) {
+          refused[p] = "this computer's image does not list its own packages, so nothing can be removed safely";
+        } else if (ofImage.has(p.split(":")[0])) refused[p] = "part of the computer's image";
+      }
+      const remove = req.packages.filter((p) => !refused[p] && before[p]);
+      if (remove.length) {
+        // Simulate first: removing a package must never take an image package with it (reverse dependencies).
+        const sim = await this.rootExec(container, ["apt-get", "-s", "remove", "--auto-remove", ...remove]);
+        const taken = [...sim.output.matchAll(/^Remv (\S+)/gm)]
+          .map((m) => m[1].split(":")[0])
+          .filter((p) => ofImage.has(p));
+        if (sim.code !== 0) {
+          outputs.push(sim.output);
+          ok = false;
+        } else if (taken.length) {
+          for (const p of remove) refused[p] = `removing it would also remove ${taken.join(", ")} of the image`;
+        } else {
+          ok = (await run(["apt-get", "remove", "-y", "-q", "--auto-remove", ...APT_OPTIONS, ...remove])).code === 0;
+        }
+      } else if (!Object.keys(refused).length) outputs.push("none of the requested packages is installed");
+    }
+
+    const installed = await this.packageStates(container, req.packages);
+    const output = outputs.join("\n").trim();
+    return { ok, installed, refused, output: output.length > 8000 ? `...${output.slice(-8000)}` : output };
+  }
+
+  /** Whether each package is installed (dpkg's own record). */
+  private async packageStates(container: Docker.Container, packages: string[]): Promise<Record<string, boolean>> {
+    const script =
+      'for p in "$@"; do printf \'%s\\t%s\\n\' "$p" "$(dpkg-query -W -f=\'${db:Status-Status}\' "$p" 2>/dev/null)"; done';
+    const r = await this.rootExec(container, ["sh", "-c", script, "sh", ...packages]);
+    const states = new Map(r.output.split("\n").map((line) => line.split("\t") as [string, string]));
+    return Object.fromEntries(packages.map((p) => [p, states.get(p) === "installed"]));
+  }
+
+  /**
+   * Runs a fixed command as root. `/usr/bin/env -i` (by absolute path: the computer's PATH starts in the
+   * user's home) gives it a clean environment, so nothing from the computer's environment (the runner token,
+   * LD_PRELOAD, PYTHONPATH, that PATH) reaches a root process.
+   */
+  private async rootExec(container: Docker.Container, cmd: string[]): Promise<{ code: number; output: string }> {
+    const exec = await container.exec({
+      Cmd: ["/usr/bin/env", "-i", ...ROOT_ENV, ...cmd],
+      Env: [`${TOKEN_ENV}=`, "LD_PRELOAD=", "LD_LIBRARY_PATH=", "LD_AUDIT="],
+      User: "0",
+      WorkingDir: "/",
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: false,
+    });
+    const stream = await exec.start({});
+    const sink = new PassThrough();
+    const chunks: Buffer[] = [];
+    sink.on("data", (c: Buffer) => chunks.push(c));
+    this.docker.modem.demuxStream(stream, sink, sink);
+    await new Promise<void>((resolve, reject) => {
+      stream.on("end", resolve);
+      stream.on("close", resolve);
+      stream.on("error", reject);
+    });
+    const { ExitCode } = await exec.inspect();
+    return { code: ExitCode ?? -1, output: Buffer.concat(chunks).toString("utf8") };
+  }
+
   async openRunnerChannel(containerId: string): Promise<RunnerChannel> {
     const { container, info } = await this.managedContainer(containerId);
     if (!isRunning(info)) throw new ManagerError("not_running", `computer is not running (${info.State.Status})`);
@@ -469,12 +579,10 @@ export class DockerManager implements ManagerApi {
     const image = await this.inspectImage(spec.image);
     const networkMode = await this.networkFor(spec.network);
     const res = spec.resources;
-    const escalation = spec.allowPrivilegeEscalation === true;
     const hostConfig: Docker.HostConfig = {
       CapDrop: ["ALL"],
-      CapAdd: spec.capAdd.length ? [...spec.capAdd] : [...DEFAULT_CAPS, ...(escalation ? ESCALATION_CAPS : [])],
-      // Without the flag setuid programs (sudo) can raise privileges; the capabilities still cap what root gets.
-      SecurityOpt: escalation ? [] : ["no-new-privileges:true"],
+      CapAdd: spec.capAdd.length ? [...spec.capAdd] : [...DEFAULT_CAPS],
+      SecurityOpt: ["no-new-privileges:true"],
       Privileged: false,
       // Reaps orphaned processes; protected images do that with their own init.
       Init: !protectedInit(image?.Config?.Labels),
@@ -587,33 +695,12 @@ export class DockerManager implements ManagerApi {
     }
   }
 
-  /** Runs a fixed `rm -rf -- <paths>` as root; the only exec besides the runner channel. */
+  /** Runs a fixed `rm -rf -- <paths>` as root (besides the runner channel, only this and `packages` exec). */
   private async scrub(container: Docker.Container, paths: string[]): Promise<void> {
-    const exec = await container.exec({
-      Cmd: ["rm", "-rf", "--", ...paths],
-      Env: [`${TOKEN_ENV}=`],
-      User: "0",
-      WorkingDir: "/",
-      AttachStdout: true,
-      AttachStderr: true,
-      Tty: false,
-    });
-    const stream = await exec.start({});
-    const chunks: Buffer[] = [];
-    await new Promise<void>((resolve, reject) => {
-      stream.on("data", (c: Buffer) => chunks.push(c));
-      stream.on("end", resolve);
-      stream.on("close", resolve);
-      stream.on("error", reject);
-    });
-    const { ExitCode } = await exec.inspect();
-    if (ExitCode !== 0) {
-      const output = Buffer.concat(chunks)
-        .toString("utf8")
-        // Drops the multiplexing headers and other control bytes.
-        .replace(/\p{Cc}+/gu, " ")
-        .slice(0, 500);
-      throw new ManagerError("docker_error", `credential scrub failed (exit ${ExitCode}): ${output.trim()}`);
+    const { code, output } = await this.rootExec(container, ["rm", "-rf", "--", ...paths]);
+    if (code !== 0) {
+      const detail = output.replace(/\p{Cc}+/gu, " ").slice(0, 500);
+      throw new ManagerError("docker_error", `credential scrub failed (exit ${code}): ${detail.trim()}`);
     }
   }
 

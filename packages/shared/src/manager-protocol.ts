@@ -36,11 +36,6 @@ export interface ComputerSpec {
   network: NetworkMode;
   /** Capabilities from the safe list only; empty = the manager's defaults. */
   capAdd: string[];
-  /**
-   * Leave out `no-new-privileges`, so setuid programs such as sudo work (the images grant passwordless
-   * `sudo apt-get`). Whoever can run them is root inside the computer. Default false.
-   */
-  allowPrivilegeEscalation?: boolean;
   runtime?: string | null;
   /** How the runner inside reaches the platform. hubUrl null: no network route, use the stdio channel. */
   runner: { token: string; hubUrl: string | null };
@@ -91,6 +86,36 @@ export interface BackupResult {
   sizeBytes: number;
 }
 
+/**
+ * System packages installed or removed for the computer by the Docker Manager: a fixed apt command run as root
+ * through `docker exec`, so nobody inside the computer needs root. Names only (no options, files or URLs).
+ */
+export interface PackagesRequest {
+  action: "install" | "remove";
+  packages: string[];
+}
+
+export interface PackagesResult {
+  /** apt finished without error (or there was nothing to do). */
+  ok: boolean;
+  /** Whether each requested package is installed afterwards. */
+  installed: Record<string, boolean>;
+  /** Packages refused before apt ran, with the reason (e.g. part of the computer's image). */
+  refused: Record<string, string>;
+  /** Tail of apt's output. */
+  output: string;
+}
+
+/** A Debian package name (policy 5.6.7), optionally with an architecture. */
+export const PACKAGE_NAME = /^[a-z0-9][a-z0-9+.-]{1,99}(?::[a-z0-9-]{1,20})?$/;
+export const MAX_PACKAGES = 100;
+
+/**
+ * The witden images list their own packages here (root-owned). They cannot be removed through the platform:
+ * the computer depends on them, and a reset would bring them back anyway.
+ */
+export const IMAGE_PACKAGES_FILE = "/opt/witden/image-packages";
+
 export interface RestoreRequest {
   /** Spec of the computer to (re)create; its image is replaced by the backup image. */
   spec: ComputerSpec;
@@ -137,9 +162,6 @@ export const DEFAULT_CAPS: readonly string[] = [
   "SETUID",
   "NET_BIND_SERVICE",
 ];
-
-/** Added to the defaults when privilege escalation is allowed: sudo reports every command to the audit log. */
-export const ESCALATION_CAPS: readonly string[] = ["AUDIT_WRITE"];
 
 /** Mounting volumes over these would break the OS or expose kernel interfaces. */
 export const FORBIDDEN_MOUNTS: readonly string[] = [
@@ -188,6 +210,8 @@ export interface ManagerApi {
   backup(containerId: string, request: BackupRequest): Promise<BackupResult>;
   restore(request: RestoreRequest): Promise<CreateComputerResult>;
   deleteBackup(backupId: string): Promise<void>;
+  /** Install or remove system packages in a running computer (as root, with a fixed apt command). */
+  packages(containerId: string, request: PackagesRequest): Promise<PackagesResult>;
   /** Fallback runner transport through `docker exec` (computers without a network route to the hub). */
   openRunnerChannel(containerId: string): Promise<RunnerChannel>;
 }

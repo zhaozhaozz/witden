@@ -10,7 +10,10 @@ import {
   type ComputerSpec,
   ENV_KEY,
   FORBIDDEN_MOUNTS,
+  MAX_PACKAGES,
   type NetworkMode,
+  PACKAGE_NAME,
+  type PackagesRequest,
   type RemoveComputerRequest,
   type RestoreRequest,
   SAFE_CAPS,
@@ -253,7 +256,6 @@ const SPEC_FIELDS = [
   "resources",
   "network",
   "capAdd",
-  "allowPrivilegeEscalation",
   "runtime",
   "runner",
 ] as const;
@@ -265,8 +267,6 @@ export function validateComputerSpec(value: unknown, options: ValidationOptions)
   if (typeof network !== "string" || !NETWORK_MODES.includes(network as NetworkMode)) {
     invalid(`network must be one of ${NETWORK_MODES.join(", ")}`);
   }
-  const escalation = spec.allowPrivilegeEscalation ?? false;
-  if (typeof escalation !== "boolean") invalid("allowPrivilegeEscalation must be a boolean");
   return {
     instanceId: match(spec.instanceId, INSTANCE_ID, "instanceId"),
     name: match(spec.name, COMPUTER_NAME, "computer name"),
@@ -279,7 +279,6 @@ export function validateComputerSpec(value: unknown, options: ValidationOptions)
     resources: validateResources(spec.resources ?? {}),
     network: network as NetworkMode,
     capAdd: validateCaps(spec.capAdd ?? []),
-    allowPrivilegeEscalation: escalation,
     runtime: validateRuntime(spec.runtime, options.allowedRuntimes),
     runner: validateRunner(spec.runner),
   };
@@ -303,6 +302,16 @@ export function validateRemoveRequest(value: unknown): RemoveComputerRequest {
     invalid("removeVolumes must be a boolean");
   }
   return { volumes: validateVolumeNames(req.volumes ?? []), removeVolumes: req.removeVolumes === true };
+}
+
+/** Package names reach apt as arguments after `--`; anything that is not a plain name is refused. */
+export function validatePackagesRequest(value: unknown): PackagesRequest {
+  const req = record(value, "packages request", ["action", "packages"]);
+  if (req.action !== "install" && req.action !== "remove") invalid("action must be install or remove");
+  if (!Array.isArray(req.packages) || req.packages.length === 0) invalid("packages must be a non-empty array");
+  if (req.packages.length > MAX_PACKAGES) invalid(`at most ${MAX_PACKAGES} packages at a time`);
+  const packages = req.packages.map((p) => match(p, PACKAGE_NAME, "package name"));
+  return { action: req.action, packages: [...new Set(packages)] };
 }
 
 export function validateBackupRequest(value: unknown): BackupRequest {

@@ -7,6 +7,8 @@ import type {
   CreateComputerResult,
   ManagerApi,
   ManagerErrorBody,
+  PackagesRequest,
+  PackagesResult,
   RemoveComputerRequest,
   RestoreRequest,
   RunnerChannel,
@@ -107,6 +109,10 @@ export class ManagerClient implements ManagerApi {
 
   restore(request: RestoreRequest): Promise<CreateComputerResult> {
     return this.call("POST", `/v1/backups/${encodeURIComponent(request.backupId)}/restore`, request);
+  }
+
+  packages(containerId: string, request: PackagesRequest): Promise<PackagesResult> {
+    return this.call("POST", `${this.computer(containerId)}/packages`, request);
   }
 
   async deleteBackup(backupId: string): Promise<void> {

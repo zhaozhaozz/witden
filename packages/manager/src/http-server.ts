@@ -176,6 +176,10 @@ export function createManagerServer(manager: ManagerApi, options: ManagerServerO
       return reply.code(201).send(result);
     });
 
+    api.post("/v1/computers/:id/packages", async (request) =>
+      manager.packages(param(request, "id"), objectBody(request.body) as never),
+    );
+
     api.delete("/v1/backups/:backupId", async (request, reply) => {
       await manager.deleteBackup(param(request, "backupId"));
       return reply.code(204).send();

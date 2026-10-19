@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { type ComputerSpec, DEFAULT_CAPS, ESCALATION_CAPS, type RunnerChannel } from "@witden/shared";
+import { type ComputerSpec, DEFAULT_CAPS, type RunnerChannel } from "@witden/shared";
 import Docker from "dockerode";
 import { afterAll, describe, expect, it } from "vitest";
 import { ManagerClient } from "../src/client.js";
@@ -164,20 +164,6 @@ describe.skipIf(!enabled)("DockerManager with a real Docker daemon", () => {
   );
 
   it(
-    "leaves out no-new-privileges only when the spec allows privilege escalation",
-    async () => {
-      const sudo = makeSpec("sudo", { volumes: {}, allowPrivilegeEscalation: true });
-      const { containerId } = await manager.create(sudo);
-      const host = (await docker.getContainer(containerId).inspect()).HostConfig;
-      expect(host.CapDrop).toEqual(["ALL"]);
-      expect(caps(host.CapAdd)).toEqual([...DEFAULT_CAPS, ...ESCALATION_CAPS].sort());
-      expect(host.SecurityOpt ?? []).not.toContain("no-new-privileges:true");
-      expect(host.Privileged).toBe(false);
-    },
-    SLOW,
-  );
-
-  it(
     "puts internal and offline computers on isolated networks",
     async () => {
       const offlineRunner = { token: `token-${run}-offline-0123456789`, hubUrl: null };
@@ -288,6 +274,52 @@ describe.skipIf(!enabled)("DockerManager with a real Docker daemon", () => {
       const usage = await manager.volumeUsage({ volumes: [...Object.values(specA.volumes), "witden-not-there"] });
       expect(Object.keys(usage).sort()).toEqual(Object.values(specA.volumes).sort());
       for (const size of Object.values(usage)) expect(typeof size).toBe("number");
+    },
+    SLOW,
+  );
+
+  it(
+    "installs and removes packages as root with a clean environment, never touching the image's own",
+    async () => {
+      const { containerId } = await manager.create(
+        makeSpec("pkg", { volumes: {}, env: { PATH: "/tmp/evil:/usr/sbin:/usr/bin:/sbin:/bin" } }),
+      );
+      await manager.start(containerId);
+      // Programs the computer's user controls, named like the commands a root exec runs: never to be used.
+      await sh(
+        containerId,
+        "mkdir -p /tmp/evil && for c in env apt-get dpkg-query timeout cat rm; do " +
+          "printf '#!/bin/sh\\ntouch /tmp/evil/ran\\n' > /tmp/evil/$c; chmod +x /tmp/evil/$c; done",
+      );
+
+      const unlisted = await manager.packages(containerId, { action: "remove", packages: ["bash"] });
+      expect(unlisted.refused.bash).toMatch(/does not list its own packages/);
+
+      const hello = await manager.packages(containerId, { action: "install", packages: ["hello"] });
+      expect(hello, hello.output).toMatchObject({ ok: true, installed: { hello: true }, refused: {} });
+      expect((await sh(containerId, "/usr/bin/hello")).out).toContain("Hello, world!");
+      const again = await manager.packages(containerId, { action: "install", packages: ["hello"] });
+      expect(again.output).toMatch(/already installed/);
+      const unknown = await manager.packages(containerId, { action: "install", packages: ["no-such-package-xyz"] });
+      expect(unknown).toMatchObject({ ok: false, installed: { "no-such-package-xyz": false } });
+
+      // The image lists its packages: those stay, what was installed later can go.
+      await sh(
+        containerId,
+        "mkdir -p /opt/witden && /usr/bin/dpkg-query -W -f='${Package}\\n' | grep -vx hello > /opt/witden/image-packages",
+      );
+      const removed = await manager.packages(containerId, { action: "remove", packages: ["bash", "hello"] });
+      expect(removed.refused).toEqual({ bash: "part of the computer's image" });
+      expect(removed.installed).toEqual({ bash: true, hello: false });
+
+      expect((await sh(containerId, "test -e /tmp/evil/ran && echo hijacked || echo clean")).out).toBe("clean\n");
+      await expect(manager.packages(containerId, { action: "install", packages: ["-o"] })).rejects.toMatchObject({
+        code: "invalid",
+      });
+      await manager.stop(containerId, 1);
+      await expect(manager.packages(containerId, { action: "install", packages: ["hello"] })).rejects.toMatchObject({
+        code: "not_running",
+      });
     },
     SLOW,
   );

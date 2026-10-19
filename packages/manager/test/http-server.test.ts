@@ -7,6 +7,8 @@ import type {
   ContainerStats,
   CreateComputerResult,
   ManagerApi,
+  PackagesRequest,
+  PackagesResult,
   RemoveComputerRequest,
   RestoreRequest,
   RunnerChannel,
@@ -91,6 +93,11 @@ class FakeManager implements ManagerApi {
   }
   async deleteBackup(backupId: string) {
     this.calls.push(["deleteBackup", backupId]);
+  }
+  async packages(id: string, request: PackagesRequest): Promise<PackagesResult> {
+    this.check(id);
+    this.calls.push(["packages", id, request]);
+    return { ok: true, installed: { htop: true }, refused: {}, output: "done" };
   }
   async openRunnerChannel(id: string): Promise<RunnerChannel> {
     this.check(id);
@@ -220,6 +227,12 @@ describe("manager HTTP server", () => {
     };
     expect(await client.restore(restore)).toEqual({ containerId: "restored", warnings: [] });
     await client.deleteBackup("bk1");
+    expect(await client.packages("c-box", { action: "install", packages: ["htop"] })).toEqual({
+      ok: true,
+      installed: { htop: true },
+      refused: {},
+      output: "done",
+    });
 
     expect(fake.calls).toEqual([
       ["ensureImage", "debian:bookworm-slim"],
@@ -233,6 +246,7 @@ describe("manager HTTP server", () => {
       ["backup", "c-box", { backupId: "bk1", mounts: ["/workspace"] }],
       ["restore", restore],
       ["deleteBackup", "bk1"],
+      ["packages", "c-box", { action: "install", packages: ["htop"] }],
     ]);
   });
 
