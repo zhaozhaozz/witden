@@ -9,7 +9,7 @@ import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { connections, externalIdentities, tasks, topics, users } from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
-import { messageText, setFeishuFetch } from "../src/integrations/feishu.js";
+import { FeishuAdapter, messageText, setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
 import { resolveIdentity } from "../src/integrations/inbound.js";
 import { secretBox } from "../src/security/crypto.js";
@@ -29,6 +29,8 @@ const json = (body: unknown) =>
 class FakeFeishu {
   sent: { path: string; body: any }[] = [];
   asked: string[] = [];
+  /** Refuse rich-text posts, as Feishu does with content it cannot render. */
+  refusePosts = false;
 
   fetch: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -59,6 +61,7 @@ class FakeFeishu {
     if (path === "contact/v3/users/ou_carol") return json({ code: 0, data: { user: { name: "Carol 王" } } });
     if (path.startsWith("contact/v3/users/")) return json({ code: 41050, msg: "no user authority error" });
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
+      if (this.refusePosts && body.msg_type === "post") return json({ code: 230001, msg: "invalid message content" });
       this.sent.push({ path, body });
       return json({ code: 0, data: { message_id: `om_out_${this.sent.length}` } });
     }
@@ -126,6 +129,17 @@ const textEvent = (
 });
 
 const allTasks = () => db().select().from(tasks).orderBy(asc(tasks.createdAt));
+
+/** The words of a sent message: a text's, or a rich-text post's Markdown. */
+const words = (m: { body: any }) => {
+  const content = JSON.parse(m.body.content);
+  return m.body.msg_type === "post"
+    ? content.zh_cn.content
+        .flat()
+        .map((e: any) => e.text)
+        .join("\n")
+    : content.text;
+};
 
 let w: World;
 let feishu: FakeFeishu;
@@ -197,9 +211,7 @@ describe("feishu long connection", () => {
     expect(task.requesterUserId).toBe(w.ids.alice);
     await w.drain();
     await deliverPending();
-    expect(feishu.sent.map((m) => [m.body.receive_id, JSON.parse(m.body.content).text])).toEqual([
-      ["oc_dm_alice", "hi alice"],
-    ]);
+    expect(feishu.sent.map((m) => [m.body.receive_id, words(m)])).toEqual([["oc_dm_alice", "hi alice"]]);
     expect((await current(conn.id)).webhook.received_at).toBeTruthy();
 
     // Feishu pushing the same event again (no answer within 3 s) starts nothing new
@@ -551,7 +563,7 @@ describe("feishu: other bots and rich messages", () => {
     expect((await db().select().from(users).where(eq(users.id, user.id)))[0].name).toBe("小明（测试）");
   });
 
-  it("rich-text posts and cards are read as text; a post that @-mentions the bot is a request", async () => {
+  it("rich-text posts are read as Markdown, cards as text; a post that @-mentions the bot is a request", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
     await w.waitFor(async () => link.open().length === 1);
     await ready(conn);
@@ -577,7 +589,7 @@ describe("feishu: other bots and rich messages", () => {
       ),
     );
     await w.waitFor(async () => (await allTasks()).length === 1);
-    expect((await allTasks())[0].instruction).toBe("周报\n 帮我整理 这份文档\n[图片]");
+    expect((await allTasks())[0].instruction).toBe("周报\n 帮我整理 [这份文档](https://example.com)\n[图片]");
     // an image alone has no words: not recorded
     await link.push(raw("om_img", "image", { image_key: "img_2" }));
     await w.drain();
@@ -588,6 +600,57 @@ describe("feishu: other bots and rich messages", () => {
         JSON.stringify({ header: { title: { content: "标题" } }, elements: [{ text: { content: "正文" } }] }),
       ),
     ).toBe("标题\n正文");
+  });
+
+  it("Markdown goes out as rich text; another role's name is the title; notices and refused posts as text", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    // the bot's own role: the Markdown as Feishu renders it, nothing in front
+    const table = "**完成**\n\n| 项 | 状态 |\n|---|---|\n| 构建 | 通过 |";
+    w.scripts.dev = () => reply(table);
+    await link.push(textEvent("进展如何"));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+    expect(feishu.sent.at(-1)!.body).toMatchObject({ receive_id: "oc_dm_alice", msg_type: "post" });
+    expect(JSON.parse(feishu.sent.at(-1)!.body.content)).toEqual({
+      zh_cn: { content: [[{ tag: "md", text: table }]] },
+    });
+
+    const [row] = await db().select().from(connections).where(eq(connections.id, conn.id));
+    const adapter = new FeishuAdapter();
+    const out = { threadKey: null, conversationExternalId: "oc_group" } as any;
+    const send = (msg: Record<string, unknown>) =>
+      adapter.send(db(), row, out, { topicId: "top_x", mentions: [], ...msg } as any);
+    // another role asking alice (linked here): its name as the title, alice mentioned the Feishu way
+    await send({
+      authorType: "role",
+      authorId: w.ids.test,
+      content: "@alice 请看 [任务](/tasks/t1)",
+      mentions: [{ type: "user", id: w.ids.alice }],
+    });
+    const base = settings().publicUrl.replace(/\/+$/, "");
+    expect(JSON.parse(feishu.sent.at(-1)!.body.content)).toEqual({
+      zh_cn: {
+        title: "Test (@test)",
+        content: [[{ tag: "md", text: `<at user_id="ou_alice">alice</at> 请看 [任务](${base}/tasks/t1)` }]],
+      },
+    });
+    // system notices are plain text
+    await send({ authorType: "system", authorId: null, content: "@dev asks for approval to use run_command: *" });
+    expect(feishu.sent.at(-1)!.body).toMatchObject({
+      msg_type: "text",
+      content: JSON.stringify({ text: "@dev asks for approval to use run_command: *" }),
+    });
+    // a post Feishu refuses goes again as plain text, with the name in front
+    feishu.refusePosts = true;
+    const sent = feishu.sent.length;
+    expect(await send({ authorType: "role", authorId: w.ids.test, content: "**好**" })).toBe(`om_out_${sent + 1}`);
+    expect(feishu.sent.at(-1)!.body).toMatchObject({
+      msg_type: "text",
+      content: JSON.stringify({ text: "Test (@test): **好**" }),
+    });
   });
 });
 
@@ -629,7 +692,10 @@ describe("feishu events URL", () => {
     expect(feishu.sent[0].path).toBe("im/v1/messages");
     expect(feishu.sent[0].body.receive_id).toBe("oc_dm_alice");
     // the bot is dev: no name in front
-    expect(JSON.parse(feishu.sent[0].body.content).text).toBe("hi alice");
+    expect(feishu.sent[0].body.msg_type).toBe("post");
+    expect(JSON.parse(feishu.sent[0].body.content)).toEqual({
+      zh_cn: { content: [[{ tag: "md", text: "hi alice" }]] },
+    });
     // no long connection for a connection on the events URL
     expect(link.clients).toHaveLength(0);
   });

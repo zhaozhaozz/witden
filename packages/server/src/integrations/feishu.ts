@@ -1,13 +1,15 @@
 /**
- * Feishu adapter (experimental): text messages in groups and bot DMs. Files and edits are not synchronised.
- * Events arrive over the long connection witden keeps open (feishu-socket.ts) or at the events URL.
+ * Feishu adapter (experimental): messages in groups and bot DMs, Markdown sent as rich text (feishu-format.ts).
+ * Files and edits are not synchronised. Events arrive over the long connection witden keeps open
+ * (feishu-socket.ts) or at the events URL.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { type Db, db as getDb } from "../db/client.js";
 import {
   type Connection,
   type ExternalConversation,
   externalConversations,
+  externalIdentities,
   type Message,
   type OutboundMessage,
   outboundMessages,
@@ -16,10 +18,14 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
+import { consoleBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, type InboundAction, register } from "./base.js";
+import { fromFeishuPost, toFeishu } from "./feishu-format.js";
 import { noteWebhook } from "./webhook-status.js";
 
 const API = "https://open.feishu.cn/open-apis/";
+// Feishu takes a rich-text message of up to 30 KB (a text one up to 150 KB).
+const POST_MAX_BYTES = 29_000;
 const tokenCache = new Map<string, { token: string; expires: number }>();
 
 // Names are only for display, looked up while an event waits for its answer (Feishu allows 3 s): each lookup
@@ -74,8 +80,8 @@ export async function acceptFeishuEvent(conn: Connection, payload: any): Promise
 }
 
 /**
- * The words of a message: plain text; a rich-text post (title and paragraphs, @ as the mention key so it is
- * replaced like in text); or a card's titles and texts. Images, files and other kinds have none (null).
+ * The words of a message: plain text; a rich-text post as Markdown (title and paragraphs, @ as the mention key so
+ * it is replaced like in text); or a card's titles and texts. Images, files and other kinds have none (null).
  */
 export function messageText(type: string, raw: string | undefined): string | null {
   let content: any;
@@ -85,21 +91,8 @@ export function messageText(type: string, raw: string | undefined): string | nul
     return null;
   }
   if (type === "text") return String(content.text ?? "");
-  if (type === "post") {
-    // either {title, content} or the same per language: {zh_cn: {title, content}}
-    const post = Array.isArray(content.content)
-      ? content
-      : (Object.values(content).find((v: any) => v?.content) as any);
-    if (!post) return null;
-    const lines: string[] = post.title ? [String(post.title)] : [];
-    for (const paragraph of post.content ?? []) {
-      const parts = (Array.isArray(paragraph) ? paragraph : []).map((el: any) =>
-        el.tag === "at" ? (el.user_id ?? `@${el.user_name ?? ""}`) : el.tag === "img" ? "[图片]" : (el.text ?? ""),
-      );
-      lines.push(parts.join(""));
-    }
-    return lines.join("\n");
-  }
+  // either {title, content} or the same per language: {zh_cn: {title, content}}
+  if (type === "post") return fromFeishuPost(content);
   if (type === "interactive") {
     const texts: string[] = [];
     const walk = (v: any, key = "") => {
@@ -334,24 +327,65 @@ export class FeishuAdapter implements Adapter {
     ];
   }
 
+  /**
+   * System notices go as plain text; everything else is Markdown written for the console, sent as a rich-text
+   * post. Who speaks, when not the bot's own role, is the post's title (in plain text, before the words).
+   */
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
-    let text = msg.content;
+    let who: string | null = null;
     if (msg.authorType === "role") {
       const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      if (!role || role.id !== conn.settings.role_id)
-        text = `${role?.name ?? "role"} (@${role?.handle ?? "?"}): ${text}`;
+      if (!role || role.id !== conn.settings.role_id) who = `${role?.name ?? "role"} (@${role?.handle ?? "?"})`;
     } else if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
-      text = `${user?.name ?? "member"} (witden): ${text}`;
+      who = `${user?.name ?? "member"} (witden)`;
     }
-    const content = JSON.stringify({ text });
+    const plain = { msg_type: "text", content: JSON.stringify({ text: who ? `${who}: ${msg.content}` : msg.content }) };
+    if (msg.authorType === "system") return this.post(conn, out, plain);
+    const base = consoleBase();
+    const md = toFeishu(msg.content, {
+      baseUrl: base,
+      viewUrl: `${base}/topics/${msg.topicId}`,
+      mentions: await this.mentioned(db, conn, msg),
+    });
+    const rich = {
+      msg_type: "post",
+      content: JSON.stringify({ zh_cn: { ...(who ? { title: who } : {}), content: [[{ tag: "md", text: md }]] } }),
+    };
+    if (!md || Buffer.byteLength(rich.content) > POST_MAX_BYTES) return this.post(conn, out, plain);
+    try {
+      return await this.post(conn, out, rich);
+    } catch (err) {
+      // Feishu answered and refused the post, so nothing was sent: the same words as plain text instead.
+      if (!/failed \(\d+\)/.test((err as Error).message)) throw err;
+      return this.post(conn, out, plain);
+    }
+  }
+
+  /** People @-mentioned in a message who are linked on this connection: their name → open_id. */
+  private async mentioned(db: Db, conn: Connection, msg: Message): Promise<Map<string, string>> {
+    const ids = (msg.mentions ?? []).filter((m) => m.type === "user").map((m) => m.id);
+    if (!ids.length) return new Map();
+    const rows = await db
+      .select({ name: users.name, openId: externalIdentities.externalUserId })
+      .from(externalIdentities)
+      .innerJoin(users, eq(users.id, externalIdentities.userId))
+      .where(and(eq(externalIdentities.connectionId, conn.id), inArray(externalIdentities.userId, ids)));
+    return new Map(rows.map((r) => [r.name, r.openId]));
+  }
+
+  private async post(
+    conn: Connection,
+    out: OutboundMessage,
+    body: { msg_type: string; content: string },
+  ): Promise<string | null> {
     const data = out.threadKey
       ? await this.call(conn, "POST", `im/v1/messages/${out.threadKey}/reply`, {
-          body: { msg_type: "text", content, reply_in_thread: true },
+          body: { ...body, reply_in_thread: true },
         })
       : await this.call(conn, "POST", "im/v1/messages", {
           params: { receive_id_type: "chat_id" },
-          body: { receive_id: out.conversationExternalId, msg_type: "text", content },
+          body: { receive_id: out.conversationExternalId, ...body },
         });
     return data.message_id ?? null;
   }
