@@ -10,7 +10,7 @@ import { useAuth, useDirectory } from "./lib/session";
 import { isWebDm, useTopics } from "./lib/topics";
 import { PageErrorBoundary } from "./ui/ErrorBoundary";
 import { useAction } from "./ui/feedback";
-import { Avatar, ComputerChip, Loading } from "./ui/kit";
+import { Avatar, ComputerChip, Loading, RoleChip } from "./ui/kit";
 import { ResizeHandle } from "./ui/resize";
 
 /** Fired by pages that change kill switches so the global banner refreshes immediately. */
@@ -392,15 +392,16 @@ function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleI
     ...cast.map((r) => `${r.id === bound ? "机器人代表" : "参与"}的角色：${r.name} @${r.handle}`),
     ...computers.map((m) => `虚拟电脑：${m.name}${m.status === "running" ? "（运行中）" : "（未运行）"}`),
   ].join("\n");
-  const MAX = 3;
+  // Chips are wider than avatars were: two of each fit beside a section title.
+  const MAX = 2;
   return (
     <span className="side-cast" title={title} role="img" aria-label={title}>
       {cast.slice(0, MAX).map((r) => (
-        <Avatar key={r.id} id={r.id} name={r.name} kind="role" size={16} src={r.avatar_url} color={r.color} />
+        <RoleChip key={r.id} role={r} title={title} />
       ))}
       {cast.length > MAX ? <span className="side-cast-more">+{cast.length - MAX}</span> : null}
       {computers.slice(0, 2).map((m) => (
-        <ComputerChip key={m.id} computer={m} running={m.status === "running"} />
+        <ComputerChip key={m.id} computer={m} running={m.status === "running"} title={title} />
       ))}
       {computers.length > 2 ? <span className="side-cast-more">+{computers.length - 2}</span> : null}
     </span>
@@ -436,9 +437,9 @@ function RoleList() {
                 <Avatar id={r.id} name={r.name} kind="role" size={20} src={r.avatar_url} color={r.color} />
               </span>
               <span className="side-label">{r.name}</span>
-              {/* The computer it works on; faded when that computer is not running. */}
-              {r.instance ? <ComputerChip computer={r.instance} running={online} /> : null}
               {unread ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+              {/* At the right edge: the computer it works on, faded when that computer is not running. */}
+              {r.instance ? <ComputerChip computer={r.instance} running={online} /> : null}
             </button>
             {canEdit ? (
               <Link

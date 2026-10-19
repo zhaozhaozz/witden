@@ -731,8 +731,8 @@ textarea.prompt {
   border-radius: 50%;
   background: var(--harbor);
 }
-/* A computer in little space: its colour, a screen icon and the first four letters of its name. */
-.computer-chip {
+/* A role or computer in little space: its colour, an icon and a four-character abbreviation. */
+.mark-chip {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -747,11 +747,11 @@ textarea.prompt {
   line-height: 16px;
   letter-spacing: 0.01em;
 }
-.computer-chip-name {
+.mark-chip-name {
   font-family: var(--mono);
 }
 /* Not running: the same box, faded */
-.computer-chip-off {
+.mark-chip-off {
   opacity: 0.45;
 }
 /* A connection's roles and computers beside its section title */
@@ -775,8 +775,15 @@ textarea.prompt {
 .side-row {
   position: relative;
 }
-.side-row-edit .side-item {
-  padding-right: 34px;
+/* The edit shortcut takes room only while it shows, so the markers sit at the right edge otherwise. */
+.side-row-edit:hover .side-item,
+.side-row-edit:focus-within .side-item {
+  padding-right: 30px;
+}
+@media (hover: none) {
+  .side-row-edit .side-item {
+    padding-right: 30px;
+  }
 }
 .side-quick {
   position: absolute;

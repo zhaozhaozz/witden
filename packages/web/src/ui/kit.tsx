@@ -116,10 +116,41 @@ export function ComputerBadge({ computer, title }: { computer: ComputerLike; tit
   );
 }
 
+/** The first four characters of a name (by character, so Chinese names keep whole characters). */
+const shortName = (name: string) => [...name].slice(0, 4).join("");
+
 /**
- * A computer where space is short (the sidebar): a box in the computer's colour with a screen icon and the
- * first four letters of its name. Faded when the computer is not running.
+ * Who or what, where space is short (the sidebar): a box in its colour with an icon and a four-character
+ * abbreviation. ``off`` fades it (a computer that is not running).
  */
+function MarkChip({
+  id,
+  color,
+  icon,
+  text,
+  title,
+  off,
+}: {
+  id: string;
+  color?: string | null;
+  icon: ReactNode;
+  text: string;
+  title: string;
+  off?: boolean;
+}) {
+  return (
+    <span
+      className={`mark-chip${off ? " mark-chip-off" : ""}`}
+      style={{ "--badge": badgeColor(id, color) } as CSSProperties}
+      title={title}
+    >
+      {icon}
+      <span className="mark-chip-name">{text}</span>
+    </span>
+  );
+}
+
+/** A computer as a chip: screen icon and the first four characters of its name; faded when not running. */
 export function ComputerChip({
   computer,
   running,
@@ -132,17 +163,40 @@ export function ComputerChip({
 }) {
   const off = running === false;
   return (
-    <span
-      className={`computer-chip${off ? " computer-chip-off" : ""}`}
-      style={{ "--badge": badgeColor(computer.id, computer.color) } as CSSProperties}
+    <MarkChip
+      id={computer.id}
+      color={computer.color}
+      off={off}
       title={title ?? `虚拟电脑 ${computer.name}${off ? "（未运行）" : ""}`}
-    >
-      <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
-        <rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-      </svg>
-      <span className="computer-chip-name">{[...computer.name].slice(0, 4).join("")}</span>
-    </span>
+      text={shortName(computer.name)}
+      icon={
+        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+          <rect x="1.5" y="2.5" width="13" height="8.5" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M5.5 13.5h5M8 11v2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      }
+    />
+  );
+}
+
+/** A role as a chip: robot icon and the first four characters of its @-name (or its name). */
+export function RoleChip({ role, title }: { role: RoleLike; title?: string }) {
+  return (
+    <MarkChip
+      id={role.id}
+      color={role.color}
+      title={title ?? (role.handle ? `角色 ${role.name} @${role.handle}` : `角色 ${role.name}`)}
+      text={shortName(role.handle || role.name)}
+      icon={
+        <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>
+          <path d="M8 1.2v2.3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+          <rect x="2.5" y="3.5" width="11" height="9.5" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <circle cx="6" cy="8.2" r="1.2" fill="currentColor" />
+          <circle cx="10" cy="8.2" r="1.2" fill="currentColor" />
+          <path d="M1 7.2v3M15 7.2v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+        </svg>
+      }
+    />
   );
 }
 
