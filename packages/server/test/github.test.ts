@@ -8,6 +8,7 @@ import { externalIdentities, externalThreadLinks, messages, tasks, topics } from
 import { deliverPending } from "../src/integrations/delivery.js";
 import { imagesAsLinks, setGithubFetch } from "../src/integrations/github.js";
 import { call, reply } from "./support/harness.js";
+import { restrictedNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "github-webhook-secret";
@@ -212,13 +213,10 @@ describe("github", () => {
     expect(await texts()).not.toContain("second version");
   });
 
-  it("a public repository is readable by anyone: DM material needs its owner's approval first", async () => {
-    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
-    w.scripts.dev = () => reply("noted");
-    await w.post(w.alice, dm.id, "the staging password is hunter2");
-    await w.drain();
+  it("a public repository is readable by anyone: console-only material needs approval first", async () => {
+    await restrictedNote(w, "the staging password is hunter2");
     w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("The staging password is hunter2");
+      turn === 0 ? reply("", [call("recall", { query: "staging" })]) : reply("The staging password is hunter2");
     await send("issue_comment", commented("@witden-bot what is the staging password?", { number: 40 }));
     await settle();
     await w.drain();

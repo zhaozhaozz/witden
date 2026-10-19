@@ -612,3 +612,39 @@ describe("0024_slack_apps", () => {
     await db.close();
   });
 });
+
+describe("0028_read_topic_permission", () => {
+  it("drops other topics' labels that read_topic left; keeps a row's own topic and other kinds", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0028")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into topics (id, title) values ('top_a', 'A'), ('top_b', 'B');
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into agent_sessions (id, role_id, topic_id, labels)
+        values ('ses_1', 'role_dev', 'top_a', '["topic:top_a", "topic:top_b", "space:sp1"]');
+      insert into tasks (id, topic_id, title, owner_role_id, labels)
+        values ('task_1', 'top_a', 't', 'role_dev', '["topic:top_b", "topic:top_a", "user:u1"]'),
+               ('task_2', 'top_b', 't', 'role_dev', '["topic:top_a"]');
+      insert into memories (id, scope, topic_id, user_id, content, labels) values
+        ('mem_topic', 'topic', 'top_a', null, 'x', '["topic:top_a", "topic:top_b"]'),
+        ('mem_user', 'user', null, 'u1', 'y', '["topic:top_b", "user:u1"]');
+    `);
+    await apply(db, "0028_read_topic_permission");
+    const labels = async (table: string) =>
+      Object.fromEntries(
+        ((await db.query(`select id, labels from ${table} order by id`)).rows as any[]).map((r) => [r.id, r.labels]),
+      );
+    expect(await labels("agent_sessions")).toEqual({ ses_1: ["topic:top_a", "space:sp1"] });
+    expect(await labels("tasks")).toEqual({ task_1: ["topic:top_a", "user:u1"], task_2: [] });
+    // a person's private notes keep every label
+    expect(await labels("memories")).toEqual({
+      mem_topic: ["topic:top_a"],
+      mem_user: ["topic:top_b", "user:u1"],
+    });
+    await db.close();
+  });
+});

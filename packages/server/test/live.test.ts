@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtime } from "../src/runtime.js";
 import type { BusEvent } from "../src/services/events.js";
 import { call, reply } from "./support/harness.js";
-import { linkChannel } from "./support/outside.js";
+import { linkChannel, restrictedNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 let w: World;
@@ -48,12 +48,9 @@ describe("live activity", () => {
   it("no streamed text while the material may not reach the topic's Slack channel", async () => {
     const SECRET = "salary-12345";
     await linkChannel(w, w.ids.topic, ["UCAROL"]);
-    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
-    w.scripts.dev = () => reply("noted");
-    await w.post(w.alice, dm.id, `my ${SECRET} is private`);
-    await w.drain();
+    await restrictedNote(w, `alice earns ${SECRET}`);
     w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply(`alice earns ${SECRET}`);
+      turn === 0 ? reply("", [call("recall", { query: "alice" })]) : reply(`alice earns ${SECRET}`);
     const id = (await w.post(w.alice, w.ids.topic, "@dev summarise")).tasks[0].id;
     await w.drain();
     await settle();

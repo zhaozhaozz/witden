@@ -676,7 +676,7 @@ export async function delegate(
  * Work a conversation hands out comes back to it and may lead to more: like roles answering each other, the
  * chain is bounded by the automatic rounds limit until a person speaks (their message starts again at 0).
  */
-async function checkAutoRounds(run: Task): Promise<void> {
+export async function checkAutoRounds(run: Task): Promise<void> {
   const limit = settings().maxAutoRounds;
   if (run.round + 1 > limit)
     throw new Forbidden(`${limit} rounds of automatic work without a person; ask a person before starting more`);

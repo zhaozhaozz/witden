@@ -1,15 +1,16 @@
 /**
  * Indirect leak paths and control-flow bypasses (from a security review of the first version).
  * Setup: the group topic is mirrored into a Slack channel with carol, an outside person; alice asks @dev there
- * and the task reads alice's DM, which holds SECRET. Nothing derived from it may reach the channel unless
- * alice approves. Console accounts (all administrators) may read everything.
+ * and it consults a knowledge-space note holding SECRET, which only console accounts may read. Nothing derived
+ * from it may reach the channel unless a console account approves. Console accounts (all administrators) may
+ * read everything, alice's DM with @dev included.
  */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db, db as getDb } from "../src/db/client.js";
 import { outboundMessages, tasks, users } from "../src/db/schema.js";
 import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
-import { linkChannel } from "./support/outside.js";
+import { linkChannel, restrictedNote } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const SECRET = "salary-12345";
@@ -23,6 +24,7 @@ beforeEach(async () => {
   await w.post(w.alice, dm.id, `my ${SECRET} is private`);
   await w.drain();
   await linkChannel(w, w.ids.topic, ["UCAROL"]);
+  await restrictedNote(w, `alice ${SECRET}`);
 });
 afterEach(async () => {
   await w.close();
@@ -30,7 +32,7 @@ afterEach(async () => {
 
 async function runDev(...steps: ReturnType<typeof call>[]) {
   w.scripts.dev = (_m, turn) => {
-    const plan = [call("read_topic", { topic_id: dm.id }), ...steps];
+    const plan = [call("recall", { query: "alice" }), ...steps];
     return turn < plan.length ? reply("", [plan[turn]]) : reply("ok");
   };
   const posted = await w.post(w.alice, w.ids.topic, "@dev go");

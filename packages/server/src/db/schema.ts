@@ -425,6 +425,8 @@ export interface InboxItem {
   reply_to?: string;
   /** When the conversation was shown it (kept a while so a repeated delivery is recognised). */
   done?: string;
+  /** timer: the automatic round it counts as (a chain of follow-ups without a person is bounded like others). */
+  round?: number;
 }
 
 /**

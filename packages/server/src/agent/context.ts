@@ -71,7 +71,7 @@ export const ADMIN_RULES = `## You are witden's system administrator
 const PLATFORM_NAMES: Record<string, string> = { slack: "Slack", github: "GitHub", feishu: "Feishu" };
 
 /** Where the topic's messages are read: the console, or the Slack / Feishu / GitHub conversation it is linked to. */
-async function topicPlace(db: Db, topic: Topic): Promise<string> {
+export async function topicPlace(db: Db, topic: Topic): Promise<string> {
   const ch = (await channelsOf(db, [topic.id])).get(topic.id);
   if (!ch) return topic.kind === "dm" ? "a private DM in the witden console" : "the witden console";
   const platform = PLATFORM_NAMES[ch.platform] ?? ch.platform;

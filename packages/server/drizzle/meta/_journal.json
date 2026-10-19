@@ -197,6 +197,13 @@
       "when": 1792380358701,
       "tag": "0027_conversation_context",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792387059894,
+      "tag": "0028_read_topic_permission",
+      "breakpoints": true
     }
   ]
 }

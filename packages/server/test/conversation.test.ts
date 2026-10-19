@@ -300,6 +300,39 @@ describe("work a conversation hands out", () => {
   });
 });
 
+describe("follow-ups", () => {
+  it("waking itself up again and again without a person is bounded like other automatic work", async () => {
+    w.scripts.dev = (m, turn) =>
+      turn === 0
+        ? reply("", [call("follow_up_later", { minutes: 1, reason: "check again" })])
+        : reply(lastToolResult(m));
+    await w.post(w.alice, w.ids.topic, "@dev keep checking the build");
+    await w.drain();
+    for (let i = 0; i < 12; i++) {
+      // the follow-up comes due now instead of in a minute
+      const [s] = await db().select().from(agentSessions).where(eq(agentSessions.topicId, w.ids.topic));
+      if (!s.wakeAt) break;
+      const past = new Date(Date.now() - 1000).toISOString();
+      await db()
+        .update(agentSessions)
+        .set({
+          inbox: s.inbox.map((x) => (x.kind === "timer" && !x.done ? { ...x, due: past } : x)),
+          wakeAt: new Date(past),
+        })
+        .where(eq(agentSessions.id, s.id));
+      await w.drain();
+    }
+    const [s] = await db().select().from(agentSessions).where(eq(agentSessions.topicId, w.ids.topic));
+    expect(s.inbox.filter((x) => x.kind === "timer")).toHaveLength(w.settings.maxAutoRounds);
+    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("rounds of automatic work without a person");
+    // a person speaking starts the count again
+    await w.post(w.alice, w.ids.topic, "@dev once more");
+    await w.drain();
+    const [after] = await db().select().from(agentSessions).where(eq(agentSessions.topicId, w.ids.topic));
+    expect(after.inbox.filter((x) => x.kind === "timer")).toHaveLength(w.settings.maxAutoRounds + 1);
+  });
+});
+
 describe("model context settings", () => {
   it("recommended by model family, reported by the provider, or set on the model", async () => {
     expect(recommendedWindow("claude-opus-4-6")).toBe(1_000_000);

@@ -209,7 +209,7 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   browser: "浏览器",
   collaborate: "协作委托",
   memory: "记忆",
-  topics: "跨话题引用",
+  topics: "读取其他话题",
   config: "witden 配置",
   profile: "职责说明",
 };
@@ -223,7 +223,8 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   browser: "操作虚拟电脑里的浏览器（桌面上可见的或后台的），下载的文件保存在虚拟电脑里",
   collaborate: "给其他角色发消息、委派任务（受「可以联系的角色」限制），不在虚拟电脑里",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",
-  topics: "读取请求者能看到的其他话题，不在虚拟电脑里",
+  topics:
+    "查找并读取其他话题（不含私信），包括 Slack、飞书、GitHub 中的会话；读到的内容可以在角色工作的任何地方使用。新角色默认禁用",
   profile:
     "修改自己的职责说明（别人邀请、私信时看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
   config:

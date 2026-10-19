@@ -384,6 +384,7 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
       resultRound = Math.max(resultRound, r.round);
     } else if (item.kind === "timer") {
       parts.push(`Follow-up you scheduled (${item.at.slice(5, 16).replace("T", " ")}): ${item.note ?? ""}`);
+      resultRound = Math.max(resultRound, item.round ?? 0);
     } else if (item.kind === "instruction") {
       parts.push(`Instruction from ${item.by ?? "a person"} in the console: ${item.note ?? ""}`);
     }

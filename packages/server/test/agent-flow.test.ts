@@ -97,40 +97,59 @@ describe("permissions and isolation", () => {
     await w.drain();
     expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
 
-    w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("From the DM: salary 12345");
-    const posted = await w.post(w.alice, w.ids.topic, "@dev check my DM with you and tell everyone");
+    // A DM stays between its person and its role: no other topic can read it, permission or not.
+    let refused = "";
+    w.scripts.dev = (m, turn) => {
+      if (turn === 0) return reply("", [call("read_topic", { topic_id: dm.id })]);
+      refused = lastToolResult(m);
+      return reply("I cannot read that DM from here.");
+    };
+    await w.post(w.alice, w.ids.topic, "@dev check my DM with you and tell everyone");
     await w.drain();
-    const task = await w.task(posted.tasks[0].id);
-    expect(task.status).toBe("waiting_approval");
+    expect(refused).toContain("a DM is private between its person and its role");
     expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
     expect((await w.api("GET", "/api/audit", { token: w.adminToken })).raw).not.toContain("salary is 12345");
-    // the material is alice's: she decides whether the channel may see it
-    const held = (await w.api("GET", "/api/approvals", { token: w.alice })).body.find(
-      (a: any) => a.task_id === task.id,
-    );
-    expect(held.approver_user_ids).toEqual([w.ids.alice]);
-    expect(
-      (await w.api("POST", `/api/approvals/${held.id}/decide`, { token: w.bob, json: { approve: true } })).status,
-    ).toBe(403);
-    expect(
-      (await w.api("POST", `/api/approvals/${held.id}/decide`, { token: w.alice, json: { approve: true } })).status,
-    ).toBe(200);
-    expect((await w.task(task.id)).status).toBe("completed");
-    expect((await w.messages(w.ids.topic)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
   });
 
-  it("inside the console, material moves freely: every console account may read it", async () => {
-    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
-    w.scripts.dev = () => reply("noted");
-    await w.post(w.alice, dm.id, "my salary is 12345");
+  it("reading other topics is a permission: with it, a role uses them wherever it works; new roles lack it", async () => {
+    await linkChannel(w, w.ids.topic, ["UCAROL"]);
+    const other = (
+      await w.api("POST", "/api/topics", {
+        token: w.alice,
+        json: { title: "Release blockers", role_ids: [w.ids.test] },
+      })
+    ).body;
+    await w.post(w.alice, other.id, "the release waits for issue 12");
+    const results: string[] = [];
+    w.scripts.dev = (m, turn) => {
+      if (turn > 0) results.push(lastToolResult(m));
+      if (turn === 0) return reply("", [call("read_topic", { query: "blockers" })]);
+      if (turn === 1) return reply("", [call("read_topic", { topic_id: other.id })]);
+      return reply("From «Release blockers»: the release waits for issue 12");
+    };
+    const posted = await w.post(w.alice, w.ids.topic, "@dev what blocks the release?");
     await w.drain();
-    w.scripts.dev = (_m, turn) =>
-      turn === 0 ? reply("", [call("read_topic", { topic_id: dm.id })]) : reply("From the DM: salary 12345");
-    const posted = await w.post(w.alice, w.ids.topic, "@dev check my DM and tell bob");
-    await w.drain();
+    expect(results[0]).toContain(`${other.id} «Release blockers» in the witden console`);
+    expect(results[1]).toContain("alice: the release waits for issue 12");
+    // not tracked as a source: the answer goes to the Slack channel (carol is outside the console) at once
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
-    expect((await w.messages(w.ids.topic, w.bob)).map((m: any) => m.content)).toContain("From the DM: salary 12345");
+    expect((await w.messages(w.ids.topic)).at(-1).content).toBe(
+      "From «Release blockers»: the release waits for issue 12",
+    );
+    const session = (await w.api("GET", `/api/topics/${w.ids.topic}/sessions`, { token: w.alice })).body.find(
+      (x: any) => x.role_id === w.ids.dev,
+    );
+    expect(session.restricted).toBe(false);
+    // a role without the permission is not offered the tool
+    let offered: string[] = [];
+    w.scripts.test = (_m, _turn, tools) => {
+      offered = (tools ?? []).map((t) => t.name);
+      return reply("ok");
+    };
+    await w.post(w.alice, w.ids.topic, "@test hi");
+    await w.drain();
+    expect(offered).toContain("send_message");
+    expect(offered).not.toContain("read_topic");
   });
 
   it("asks the right person; their answer reaches the conversation without an @", async () => {
@@ -199,6 +218,7 @@ describe("permissions and isolation", () => {
       json: { name: "Fresh", handle: "fresh", model_config_id: w.ids.model, instance_id: w.ids.instance },
     });
     expect(created.status, created.raw).toBe(200);
+    // reading other topics is off until someone turns it on
     expect(created.body.allowed_tools).toEqual([
       "browser",
       "collaborate",
@@ -208,13 +228,13 @@ describe("permissions and isolation", () => {
       "profile",
       "shell",
       "terminal",
-      "topics",
     ]);
-    expect(created.body.approval_required).toEqual(["collaborate", "memory", "profile", "topics"]);
+    expect(created.body.approval_required).toEqual(["collaborate", "memory", "profile"]);
     const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
     const files = groups.find((g: any) => g.group === "files");
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
     expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
+    expect(groups.find((g: any) => g.group === "topics").default_level).toBe("off");
 
     await w.api("POST", "/api/grants", {
       token: w.adminToken,

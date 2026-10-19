@@ -7,7 +7,7 @@
  * computer; the worker never executes anything itself.
  */
 import type { RunnerOp } from "@witden/shared";
-import { and, desc, eq, gte, ilike, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
@@ -25,9 +25,10 @@ import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
 import * as topicSvc from "../services/topics.js";
+import { topicPlace } from "./context.js";
 import { publishTaskStatus, textRestricted } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
-import { delegate, startOwnTask } from "./dispatch.js";
+import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 
@@ -39,7 +40,7 @@ export const TOOL_GROUPS: Record<string, string> = {
   browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
   collaborate: "Message and delegate to other roles (limited by contacts)",
   memory: "Remember and recall scoped notes on the platform",
-  topics: "Reference other topics the requester can read",
+  topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
   config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
   profile: "Change the role's own description, in console conversations only",
 };
@@ -49,15 +50,20 @@ export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 /** Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub. */
 export const CONSOLE_ONLY_GROUPS = new Set(["profile"]);
 
+/** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
+export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
+
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
- * into the topic, is always allowed; reaching other roles, platform memory or other topics asks a person
- * first. (Shared files still pass the information-flow check like any other output.)
+ * into the topic, is always allowed; reaching other roles or platform memory asks a person first; reading
+ * other topics is off. (Shared files still pass the information-flow check like any other output.)
  */
-export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
+export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter(
+  (g) => !ADMIN_TOOL_GROUPS.has(g) && !DEFAULT_OFF_GROUPS.has(g),
+);
 /** A new system administrator: the configuration tools; it needs no computer. */
 export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
-export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "topics", "profile"];
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "profile"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
@@ -672,9 +678,11 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
   const minutes = Math.max(1, Math.min(Number(args.minutes ?? 30), 7 * 24 * 60));
   const until = new Date(Date.now() + minutes * 60_000);
   if (ctx.mode === "conversation") {
-    // A reminder in the conversation's inbox: the conversation is free meanwhile and wakes up then.
+    // A reminder in the conversation's inbox: the conversation is free meanwhile and wakes up then. Waking
+    // itself up again and again without a person counts as automatic rounds, like work it hands out.
     await transaction(async (db) => {
       const { task, role, topic } = await load(ctx, db);
+      await checkAutoRounds(task);
       await enqueue(db, {
         topic,
         role,
@@ -682,6 +690,7 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
           kind: "timer",
           note: String(args.reason ?? "follow up"),
           due: until.toISOString(),
+          round: task.round + 1,
           ...(task.sourceMessageId ? { reply_to: task.sourceMessageId } : {}),
         },
         requesterUserId: task.requesterUserId,
@@ -796,30 +805,48 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
   };
 }
 
-/** Explicit cross-topic reference, checked against the requester's access; the source is labelled. */
+/**
+ * Other topics, as far as the role's permission (the "topics" group, off by default) goes: find them by title,
+ * or read one by id. Whether it may is the permission alone — not who asked, and what it read is not tracked
+ * as a source: a role allowed to read other topics may use it wherever it works, e.g. answer in Feishu about
+ * a GitHub issue (00 的 D58). DMs stay between their person and role and are never read from elsewhere.
+ */
 async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
-  const { task } = await load(ctx, db);
-  const [requester] = task.requesterUserId
-    ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
-    : [];
-  const [source] = await db
-    .select()
-    .from(topics)
-    .where(eq(topics.id, String(args.topic_id ?? "")))
-    .limit(1);
-  if (!source || !requester || !(await topicSvc.canView(db, requester, source))) {
-    throw new Forbidden("the requester cannot read that topic (or it does not exist)");
+  const id = String(args.topic_id ?? "").trim();
+  if (!id) {
+    const q = String(args.query ?? "").trim();
+    const found = await db
+      .select()
+      .from(topics)
+      .where(and(ne(topics.kind, "dm"), ne(topics.id, ctx.topicId), q ? ilike(topics.title, `%${q}%`) : undefined))
+      .orderBy(desc(topics.lastMessageAt))
+      .limit(20);
+    const lines: string[] = [];
+    for (const t of found)
+      lines.push(
+        `- ${t.id} «${t.title}» in ${await topicPlace(db, t)}${t.status !== "active" ? " (archived)" : ""}${t.lastMessageAt ? `, last message ${t.lastMessageAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : ""}`,
+      );
+    return {
+      content: lines.length
+        ? `Topics${q ? ` matching «${q}»` : ""}, most recently active first (read one with topic_id):\n${lines.join("\n")}`
+        : `no topics${q ? ` matching «${q}»` : ""}`,
+    };
   }
-  const msgs = await topicSvc.visibleMessages(db, source, { limit: Number(args.limit ?? 40) });
+  const [source] = await db.select().from(topics).where(eq(topics.id, id)).limit(1);
+  if (!source) throw new BadRequest(`no topic ${id}; find topics with query`);
+  if (source.kind === "dm")
+    throw new Forbidden("a DM is private between its person and its role; it cannot be read from other topics");
+  const msgs = await topicSvc.visibleMessages(db, source, {
+    limit: Math.max(1, Math.min(Number(args.limit ?? 40), 200)),
+  });
   const lines: string[] = [];
   for (const m of msgs)
     lines.push(
-      `[${m.createdAt.toISOString().slice(0, 16)}] ${await authorName(db, m.authorType, m.authorId)}: ${m.content}`,
+      `[${m.id} ${m.createdAt.toISOString().slice(0, 16)}] ${await authorName(db, m.authorType, m.authorId)}: ${m.content}`,
     );
   return {
-    content: `Source: topic «${source.title}» (${source.id}). Cite it when you use this.\n${lines.join("\n") || "(no messages)"}`,
-    labels: [topicLabel(source.id)],
+    content: `Source: topic «${source.title}» (${source.id}) in ${await topicPlace(db, source)}. Cite it when you use this.\n${lines.join("\n") || "(no messages)"}`,
   };
 }
 
@@ -1104,8 +1131,8 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "read_topic",
       "topics",
-      "Read another topic the requester has access to (by id). Cite the source.",
-      obj({ topic_id: str, limit: int }, ["topic_id"]),
+      "Read other topics of the team (not DMs), in the console, Slack, Feishu or GitHub: give query to find topics by title (no topic_id), then topic_id to read one's latest messages. You may use what you read where you work now; cite the source.",
+      obj({ topic_id: str, query: str, limit: int }),
       readTopic,
     ),
     spec(
