@@ -12,7 +12,7 @@ import {
   genericStatus,
   instanceStatus,
   isRestricted,
-  TOOL_GROUP_LABEL,
+  permissionLabels,
   taskStatus,
 } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
@@ -673,8 +673,8 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
                 "工具",
                 env.tools?.length ? (
                   <span className="inline-list">
-                    {env.tools.map((g) => (
-                      <Tag key={g}>{TOOL_GROUP_LABEL[g] ?? g}</Tag>
+                    {permissionLabels(env.tools).map((label) => (
+                      <Tag key={label}>{label}</Tag>
                     ))}
                   </span>
                 ) : (

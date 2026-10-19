@@ -1,7 +1,7 @@
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Role } from "../../api/types";
-import { fmtNumber, genericStatus, instanceStatus, TOOL_GROUP_LABEL } from "../../lib/format";
+import { fmtNumber, genericStatus, instanceStatus, permissionLabels } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { Avatar, ComputerBadge, Empty, Handle, Loaded, PageHeader, StatusChip, Tag } from "../../ui/kit";
 import { translateWarning } from "./roleParts";
@@ -89,7 +89,7 @@ export default function RolesPage() {
                       <td>
                         <span className="inline-list">
                           {r.allowed_tools.length ? (
-                            r.allowed_tools.map((g) => <Tag key={g}>{TOOL_GROUP_LABEL[g] ?? g}</Tag>)
+                            permissionLabels(r.allowed_tools).map((label) => <Tag key={label}>{label}</Tag>)
                           ) : (
                             <span className="muted">仅对话</span>
                           )}

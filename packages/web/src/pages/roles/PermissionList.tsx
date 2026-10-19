@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import type { ToolGroup } from "../../api/types";
-import { TOOL_GROUP_HINT, TOOL_GROUP_LABEL, TOOL_LABEL } from "../../lib/format";
+import { PERMISSION_SECTIONS, TOOL_GROUP_HINT, TOOL_GROUP_LABEL, TOOL_LABEL } from "../../lib/format";
 
 /**
- * One list for everything a role may do, each row set to 始终允许 / 询问 / 禁用.
+ * Everything a role may do, sorted into sections by kind, each row set to 始终允许 / 询问 / 禁用.
  *
  * It edits the role's two stored lists: ``allowed_tools`` (tool groups the role may use at all) and
  * ``approval_required`` (groups or single tools that need a person's approval each time). The server enables
@@ -86,6 +86,20 @@ function Choice({
   );
 }
 
+/** A section of the list besides the tool groups (e.g. Feishu tools), shown after the section ``after``. */
+export interface ExtraSection {
+  key: string;
+  after: string;
+  label: string;
+  hint?: string;
+  content: ReactNode;
+}
+
+/**
+ * The role's permissions, by kind (``PERMISSION_SECTIONS``): its virtual computer, collaboration, material on the
+ * platform, itself. ``details`` adds the settings that belong to a tool group under its row (which roles it may
+ * contact, which knowledge spaces it may read); ``extra`` adds sections of their own.
+ */
 export function PermissionList({
   groups,
   alwaysTools,
@@ -93,6 +107,8 @@ export function PermissionList({
   approval,
   onChange,
   defaults,
+  details = {},
+  extra = [],
 }: {
   groups: ToolGroup[];
   /** Tools every role has (asking people, progress notes, follow-ups). */
@@ -102,6 +118,8 @@ export function PermissionList({
   onChange: (allowed: string[], approval: string[]) => void;
   /** Offer "恢复默认" when the settings differ from these. */
   defaults?: { allowed: string[]; approval: string[] } | null;
+  details?: Record<string, ReactNode>;
+  extra?: ExtraSection[];
 }) {
   // Approvals for always-available tools are not shown here, nor the Feishu tools (FeishuPermissions): keep them
   // when restoring defaults.
@@ -126,81 +144,129 @@ export function PermissionList({
       return next;
     });
 
-  return (
-    <div className="perm-list">
-      {groups.map((g) => {
-        const name = g.group!;
-        const level = groupLevel(name, allowed, approval);
-        const asking = level === "allow" ? g.tools.filter((t) => approval.includes(t)) : [];
-        // Some tools ask while the rest are allowed: no single answer for the group.
-        const shown = asking.length ? null : level;
-        const expanded = open.has(name) || asking.length > 0;
-        const groupLabel = TOOL_GROUP_LABEL[name] ?? name;
-        return (
-          <div key={name} className={`perm-group perm-group-${level}`}>
-            <div className="perm-row">
-              <button
-                type="button"
-                className="perm-expand"
-                aria-expanded={expanded}
-                title={expanded ? "收起" : "逐个工具设置"}
-                onClick={() => toggle(name)}
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-                  <path d="M3 2l4 3-4 3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-              </button>
-              <div className="perm-text">
-                <div className="perm-name">
-                  {groupLabel}
-                  {asking.length ? <span className="perm-mixed">其中 {asking.length} 项需询问</span> : null}
-                </div>
-                <div className="perm-hint">{TOOL_GROUP_HINT[name] ?? g.description}</div>
-              </div>
-              <Choice
-                label={groupLabel}
-                value={shown}
-                options={["allow", "ask", "off"]}
-                onChange={(v) => {
-                  const next = setGroupLevel(g, v, allowed, approval);
-                  onChange(next.allowed, next.approval);
-                }}
-              />
+  const byName = new Map(groups.map((g) => [g.group!, g]));
+  const listed = new Set(PERMISSION_SECTIONS.flatMap((sec) => sec.groups));
+  const sections = [
+    ...PERMISSION_SECTIONS.map((sec) => ({
+      ...sec,
+      rows: sec.groups.map((name) => byName.get(name)).filter((g): g is ToolGroup => !!g),
+    })),
+    // A group the console does not know yet still shows up, under 其他.
+    {
+      key: "other",
+      label: "其他",
+      hint: "",
+      groups: [],
+      rows: groups.filter((g) => !listed.has(g.group!)),
+    },
+  ].filter((sec) => sec.rows.length);
+
+  const row = (g: ToolGroup) => {
+    const name = g.group!;
+    const level = groupLevel(name, allowed, approval);
+    const asking = level === "allow" ? g.tools.filter((t) => approval.includes(t)) : [];
+    // Some tools ask while the rest are allowed: no single answer for the group.
+    const shown = asking.length ? null : level;
+    const expanded = open.has(name) || asking.length > 0;
+    const groupLabel = TOOL_GROUP_LABEL[name] ?? name;
+    const detail = details[name];
+    return (
+      <div key={name} className={`perm-group perm-group-${level}`}>
+        <div className="perm-row">
+          <button
+            type="button"
+            className="perm-expand"
+            aria-expanded={expanded}
+            title={expanded ? "收起" : "逐个工具设置"}
+            onClick={() => toggle(name)}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
+              <path d="M3 2l4 3-4 3" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+          <div className="perm-text">
+            <div className="perm-name">
+              {groupLabel}
+              {asking.length ? <span className="perm-mixed">其中 {asking.length} 项需询问</span> : null}
             </div>
-            {expanded ? (
-              <div className="perm-tools">
-                {g.tools.map((t) => {
-                  const toolLevel: Level = level === "allow" ? (approval.includes(t) ? "ask" : "allow") : level;
-                  return (
-                    <div key={t} className="perm-row perm-tool">
-                      <div className="perm-text">
-                        <div className="perm-name">{TOOL_LABEL[t] ?? t}</div>
-                        <div className="perm-hint mono">{t}</div>
-                      </div>
-                      <Choice
-                        label={TOOL_LABEL[t] ?? t}
-                        value={toolLevel}
-                        options={level === "off" ? ["off"] : ["allow", "ask"]}
-                        // Single tools follow a group set to 询问 or 禁用; only an allowed group can mix.
-                        disabled={level !== "allow"}
-                        onChange={(v) =>
-                          onChange(allowed, v === "ask" ? [...approval, t] : approval.filter((a) => a !== t))
-                        }
-                      />
-                    </div>
-                  );
-                })}
-                {level !== "allow" ? (
-                  <div className="perm-note">
-                    整组设为「{level === "ask" ? "询问" : "禁用"}
-                    」时，其中每个工具都相同；设为「始终允许」后可以单独要求询问。
+            <div className="perm-hint">{TOOL_GROUP_HINT[name] ?? g.description}</div>
+          </div>
+          <Choice
+            label={groupLabel}
+            value={shown}
+            options={["allow", "ask", "off"]}
+            onChange={(v) => {
+              const next = setGroupLevel(g, v, allowed, approval);
+              onChange(next.allowed, next.approval);
+            }}
+          />
+        </div>
+        {expanded ? (
+          <div className="perm-tools">
+            {g.tools.map((t) => {
+              const toolLevel: Level = level === "allow" ? (approval.includes(t) ? "ask" : "allow") : level;
+              return (
+                <div key={t} className="perm-row perm-tool">
+                  <div className="perm-text">
+                    <div className="perm-name">{TOOL_LABEL[t] ?? t}</div>
+                    <div className="perm-hint mono">{t}</div>
                   </div>
-                ) : null}
+                  <Choice
+                    label={TOOL_LABEL[t] ?? t}
+                    value={toolLevel}
+                    options={level === "off" ? ["off"] : ["allow", "ask"]}
+                    // Single tools follow a group set to 询问 or 禁用; only an allowed group can mix.
+                    disabled={level !== "allow"}
+                    onChange={(v) =>
+                      onChange(allowed, v === "ask" ? [...approval, t] : approval.filter((a) => a !== t))
+                    }
+                  />
+                </div>
+              );
+            })}
+            {level !== "allow" ? (
+              <div className="perm-note">
+                整组设为「{level === "ask" ? "询问" : "禁用"}
+                」时，其中每个工具都相同；设为「始终允许」后可以单独要求询问。
               </div>
             ) : null}
           </div>
-        );
-      })}
+        ) : null}
+        {detail ? (
+          <div className={`perm-detail${level === "off" ? " perm-detail-off" : ""}`}>
+            {detail}
+            {level === "off" ? <div className="perm-note">「{groupLabel}」禁用时，这项设置不起作用。</div> : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const head = (label: string, hint?: string) => (
+    <div className="perm-section-head">
+      <span className="perm-section-title">{label}</span>
+      {hint ? <span className="perm-section-hint">{hint}</span> : null}
+    </div>
+  );
+
+  return (
+    <div className="perm-sections">
+      {sections.map((sec) => (
+        <Fragment key={sec.key}>
+          <section className="perm-section">
+            {head(sec.label, sec.hint)}
+            <div className="perm-list">{sec.rows.map(row)}</div>
+          </section>
+          {extra
+            .filter((x) => x.after === sec.key)
+            .map((x) => (
+              <section key={x.key} className="perm-section">
+                {head(x.label, x.hint)}
+                {x.content}
+              </section>
+            ))}
+        </Fragment>
+      ))}
       <div className="perm-always">
         <span>
           {alwaysTools.length
@@ -211,7 +277,7 @@ export function PermissionList({
           <button
             type="button"
             className="btn btn-xs"
-            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆、其他话题和修改自己的职责说明需要询问"
+            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；联系其他角色、平台记忆和修改自己的职责说明需要询问；读取其他话题禁用。飞书工具不变。"
             onClick={() =>
               onChange(
                 [...defaults.allowed, ...feishu(allowed)],

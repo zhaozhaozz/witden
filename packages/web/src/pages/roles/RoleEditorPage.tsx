@@ -565,64 +565,83 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
           </Section>
 
           <Section title="权限">
-            <FieldGroup
-              label="工具"
-              hint="新角色默认：虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许，联系其他角色、平台记忆、其他话题和修改自己的职责说明需要询问。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求。点左侧箭头可以逐个工具设置。"
-            >
-              <Loaded res={toolGroups}>
-                {() => (
-                  <PermissionList
-                    groups={groups}
-                    alwaysTools={alwaysTools}
-                    allowed={draft.allowed_tools}
-                    approval={draft.approval_required}
-                    defaults={isAdmin ? ADMIN_DEFAULTS : defaults}
-                    onChange={(allowed, approval) =>
-                      setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
-                    }
-                  />
-                )}
-              </Loaded>
-            </FieldGroup>
-            {!isAdmin && feishuTools.data?.apps.length ? (
-              <FieldGroup
-                label="飞书工具"
-                hint="角色通过 witden 使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台。每个飞书应用（公司）单独设置；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，发到别处需要批准。"
-              >
-                <FeishuPermissions
-                  data={feishuTools.data}
-                  granted={feishuGranted.data ?? undefined}
+            <p className="small muted perm-intro">
+              每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求；点左侧箭头可以逐个工具设置。新角色默认：虚拟电脑里的操作始终允许，协作、平台记忆和修改职责说明需要询问，读取其他话题禁用。
+            </p>
+            <Loaded res={toolGroups}>
+              {() => (
+                <PermissionList
+                  groups={groups}
+                  alwaysTools={alwaysTools}
                   allowed={draft.allowed_tools}
                   approval={draft.approval_required}
+                  defaults={isAdmin ? ADMIN_DEFAULTS : defaults}
                   onChange={(allowed, approval) =>
                     setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
                   }
+                  details={{
+                    collaborate: (
+                      <>
+                        <div className="perm-detail-label">可以联系、委托的角色</div>
+                        <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
+                        {!draft.any_contact ? (
+                          <MultiPick
+                            columns={3}
+                            options={dir.roles
+                              .filter((r) => r.id !== role?.id)
+                              .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
+                            value={draft.allowed_contacts}
+                            onChange={(v) => set("allowed_contacts", v)}
+                            empty="没有其他角色"
+                          />
+                        ) : null}
+                      </>
+                    ),
+                    memory: (
+                      <>
+                        <div className="perm-detail-label">可读取的知识空间</div>
+                        <MultiPick
+                          columns={3}
+                          options={(spaces.data ?? []).map((sp) => ({ value: sp.id, label: sp.name }))}
+                          value={draft.knowledge_space_ids}
+                          onChange={(v) => set("knowledge_space_ids", v)}
+                          empty="还没有知识空间（在「管理 → 知识」中创建）"
+                        />
+                      </>
+                    ),
+                  }}
+                  extra={
+                    !isAdmin && feishuTools.data?.apps.length
+                      ? [
+                          {
+                            key: "feishu",
+                            after: "knowledge",
+                            label: "飞书",
+                            hint: "按飞书应用（公司）分别设置",
+                            content: (
+                              <>
+                                <p className="small muted perm-section-note">
+                                  角色通过 witden
+                                  使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，发到别处需要批准。
+                                </p>
+                                <FeishuPermissions
+                                  data={feishuTools.data}
+                                  granted={feishuGranted.data ?? undefined}
+                                  allowed={draft.allowed_tools}
+                                  approval={draft.approval_required}
+                                  onChange={(allowed, approval) =>
+                                    setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
+                                  }
+                                />
+                              </>
+                            ),
+                          },
+                        ]
+                      : []
+                  }
                 />
-              </FieldGroup>
-            ) : null}
-            <FieldGroup label="可以联系、委托的角色">
-              <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
-              {!draft.any_contact ? (
-                <MultiPick
-                  columns={3}
-                  options={dir.roles
-                    .filter((r) => r.id !== role?.id)
-                    .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
-                  value={draft.allowed_contacts}
-                  onChange={(v) => set("allowed_contacts", v)}
-                  empty="没有其他角色"
-                />
-              ) : null}
-            </FieldGroup>
-            <FieldGroup label="可读取的知识空间">
-              <MultiPick
-                columns={3}
-                options={(spaces.data ?? []).map((s) => ({ value: s.id, label: s.name }))}
-                value={draft.knowledge_space_ids}
-                onChange={(v) => set("knowledge_space_ids", v)}
-                empty="还没有知识空间（在「管理 → 知识」中创建）"
-              />
-            </FieldGroup>
+              )}
+            </Loaded>
           </Section>
 
           <Section title="限额">

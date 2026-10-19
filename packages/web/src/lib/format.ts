@@ -214,6 +214,38 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   profile: "职责说明",
 };
 
+/**
+ * How permissions are ordered and grouped wherever a role's are shown: where the role works, whom it works
+ * with, what it reads, and the role itself. Groups not listed (none yet) go last.
+ */
+export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; groups: string[] }[] = [
+  {
+    key: "computer",
+    label: "虚拟电脑",
+    hint: "在角色自己的虚拟电脑里工作",
+    groups: ["shell", "terminal", "files", "browser", "desktop"],
+  },
+  { key: "collaborate", label: "协作", hint: "联系其他角色，把工作交给它们", groups: ["collaborate"] },
+  { key: "knowledge", label: "资料", hint: "平台上的记忆和知识空间，以及其他话题", groups: ["memory", "topics"] },
+  { key: "self", label: "角色与平台", hint: "角色自己的介绍，以及 witden 本身的配置", groups: ["profile", "config"] },
+];
+
+const GROUP_ORDER = PERMISSION_SECTIONS.flatMap((s) => s.groups);
+const groupRank = (g: string) => {
+  const i = GROUP_ORDER.indexOf(g);
+  return i < 0 ? GROUP_ORDER.length : i;
+};
+
+/** A role's tool groups as labels, in the editor's order; Feishu grants (one per app and product) as one entry. */
+export function permissionLabels(groups: string[]): string[] {
+  const labels = groups
+    .filter((g) => !g.startsWith("feishu:"))
+    .sort((a, b) => groupRank(a) - groupRank(b))
+    .map((g) => TOOL_GROUP_LABEL[g] ?? g);
+  if (groups.some((g) => g.startsWith("feishu:"))) labels.push("飞书工具");
+  return labels;
+}
+
 /** What each tool group covers, in people's words. */
 export const TOOL_GROUP_HINT: Record<string, string> = {
   shell: "在角色的虚拟电脑里执行命令",
