@@ -48,6 +48,7 @@ describe("templates", () => {
     [{ default_resources: { memory_mb: 1 } }, "memory_mb"],
     [{ user: "root" }, "unprivileged"],
     [{ env: { WITDEN_RUNNER_TOKEN: "x" } }, "reserved"],
+    [{ sudo_apt: "yes" }, "sudo_apt"],
   ])("rejects unsafe config %o", async (overrides, message) => {
     const res = await h.api("POST", "/api/templates", {
       token: h.adminToken,
@@ -70,6 +71,22 @@ describe("templates", () => {
     ).body;
     expect(copy.image).toBe(tpl.image);
     expect((await h.api("DELETE", `/api/templates/${tpl.id}`, { token: h.adminToken })).status).toBe(409);
+  });
+
+  it("sudo apt is on by default and decides whether the computer may escalate privileges", async () => {
+    const open = await template();
+    expect(open.sudo_apt).toBe(true);
+    const strict = await template({ name: "strict", sudo_apt: false });
+    expect(strict.sudo_apt).toBe(false);
+    const a = await instance(open.id, "box-open");
+    const b = await instance(strict.id, "box-strict");
+    expect(h.manager.computer(a.id).spec.allowPrivilegeEscalation).toBe(true);
+    expect(h.manager.computer(b.id).spec.allowPrivilegeEscalation).toBe(false);
+    // Turning it off later leaves existing computers as they were created.
+    await h.api("PATCH", `/api/templates/${open.id}`, { token: h.adminToken, json: { sudo_apt: false } });
+    const { eq } = await import("drizzle-orm");
+    const [row] = await db().select().from(computerInstances).where(eq(computerInstances.id, a.id));
+    expect(row.spec.sudo_apt).toBe(true);
   });
 });
 

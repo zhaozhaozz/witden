@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { type ComputerSpec, DEFAULT_CAPS, type RunnerChannel } from "@witden/shared";
+import { type ComputerSpec, DEFAULT_CAPS, ESCALATION_CAPS, type RunnerChannel } from "@witden/shared";
 import Docker from "dockerode";
 import { afterAll, describe, expect, it } from "vitest";
 import { ManagerClient } from "../src/client.js";
@@ -159,6 +159,20 @@ describe.skipIf(!enabled)("DockerManager with a real Docker daemon", () => {
       expect(net.Labels?.["witden.managed"]).toBe("true");
       expect(net.Options?.["com.docker.network.bridge.enable_icc"]).toBe("false");
       expect((await sh(containerId, "getent hosts witden-hub")).code).toBe(0);
+    },
+    SLOW,
+  );
+
+  it(
+    "leaves out no-new-privileges only when the spec allows privilege escalation",
+    async () => {
+      const sudo = makeSpec("sudo", { volumes: {}, allowPrivilegeEscalation: true });
+      const { containerId } = await manager.create(sudo);
+      const host = (await docker.getContainer(containerId).inspect()).HostConfig;
+      expect(host.CapDrop).toEqual(["ALL"]);
+      expect(caps(host.CapAdd)).toEqual([...DEFAULT_CAPS, ...ESCALATION_CAPS].sort());
+      expect(host.SecurityOpt ?? []).not.toContain("no-new-privileges:true");
+      expect(host.Privileged).toBe(false);
     },
     SLOW,
   );

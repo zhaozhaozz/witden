@@ -136,7 +136,7 @@ export default function TemplatesPage() {
                     </div>
                     {t.software.length ? (
                       <div className="kv-row">
-                        <dt>软件</dt>
+                        <dt>镜像内软件</dt>
                         <dd className="inline-list">
                           {t.software.map((s) => (
                             <Tag key={s}>{s}</Tag>
@@ -144,6 +144,16 @@ export default function TemplatesPage() {
                         </dd>
                       </div>
                     ) : null}
+                    <div className="kv-row">
+                      <dt>sudo apt</dt>
+                      <dd className="small">
+                        {t.sudo_apt ? (
+                          "允许免密执行（相当于电脑内 root）"
+                        ) : (
+                          <span className="muted">不允许，电脑内不能提权</span>
+                        )}
+                      </dd>
+                    </div>
                   </dl>
                   <footer className="card-foot">
                     <span className="small muted">更新于 {fmtRelative(t.updated_at)}</span>
@@ -268,6 +278,7 @@ function TemplateEditor({
     credential_paths: listToLines(t?.credential_paths),
     software: listToLines(t?.software),
     cap_add: listToLines(t?.cap_add),
+    sudo_apt: t?.sudo_apt ?? true,
     runtime: t?.runtime ?? "",
     desktop: t?.desktop ? JSON.stringify(t.desktop, null, 2) : DEFAULT_DESKTOP,
   });
@@ -317,6 +328,7 @@ function TemplateEditor({
       software: linesToList(form.software),
       default_resources: fromDraft(resources),
       cap_add: linesToList(form.cap_add),
+      sudo_apt: form.sudo_apt,
       runtime: form.runtime.trim() || null,
       desktop,
     };
@@ -379,7 +391,10 @@ function TemplateEditor({
         </Field>
       </div>
       <div className="form-row">
-        <Field label="预装软件" hint="每行一个，用于说明">
+        <Field
+          label="镜像内软件"
+          hint="每行一个，只作说明：平台不会按此安装。需要的软件请做进镜像，或在电脑里用 sudo apt-get 安装"
+        >
           <textarea rows={3} value={form.software} onChange={set("software")} />
         </Field>
         <Field label="环境变量" hint="每行 KEY=VALUE">
@@ -397,6 +412,19 @@ function TemplateEditor({
           <input className="mono" value={form.runtime} onChange={set("runtime")} />
         </Field>
       </div>
+      <Field
+        label="系统软件安装"
+        hint="允许后，这台电脑上的角色和成员可以不输密码执行 sudo apt-get 安装系统软件，相当于在电脑内拥有 root 权限。需要更强隔离的电脑请关闭。和模板的其他设置一样，只对之后新建的电脑生效"
+      >
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={form.sudo_apt}
+            onChange={(e) => setForm({ ...form, sudo_apt: e.target.checked })}
+          />
+          允许免密 sudo apt-get
+        </label>
+      </Field>
       {form.kind === "desktop" ? (
         <Field label="桌面配置（JSON）" hint="显示编号与 VNC 端口；只读观察使用 vnc_view_port">
           <textarea className="mono" rows={5} value={form.desktop} onChange={set("desktop")} />

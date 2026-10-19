@@ -89,6 +89,7 @@ export async function createInstance(
         runtime: template.runtime,
         desktop: template.desktop,
         software: template.software,
+        sudo_apt: template.sudoApt,
       },
       resources: validateResources({ ...template.defaultResources, ...(resources ?? {}) }),
       volumes: Object.fromEntries(template.persistentPaths.map((p) => [p, `witden-${name}-${slug(p)}`])),
@@ -121,6 +122,8 @@ function buildSpec(inst: ComputerInstance, runnerToken: string): ComputerSpec {
     },
     network,
     capAdd: spec.cap_add ?? [],
+    // Snapshots from before the setting existed follow the template default (on).
+    allowPrivilegeEscalation: spec.sudo_apt ?? true,
     runtime: spec.runtime ?? null,
     runner: { token: runnerToken, hubUrl: network === "bridge" ? runtime().settings.hubUrlForComputers : null },
   };

@@ -87,6 +87,8 @@ export function validateTemplate(data: Record<string, any>, settings: Settings):
   if (command !== null && (!Array.isArray(command) || !command.every((c: unknown) => typeof c === "string"))) {
     throw new BadRequest("command must be a list of strings");
   }
+  const sudoApt = data.sudoApt ?? data.sudo_apt ?? true;
+  if (typeof sudoApt !== "boolean") throw new BadRequest("sudo_apt must be true or false");
   const workdir = data.workdir || "/home/witden";
   if (!workdir.startsWith("/")) throw new BadRequest("workdir must be absolute");
   const user = data.user || "witden";
@@ -110,6 +112,7 @@ export function validateTemplate(data: Record<string, any>, settings: Settings):
     software: [...(data.software ?? [])],
     defaultResources: validateResources(data.defaultResources ?? data.default_resources ?? {}),
     capAdd: caps,
+    sudoApt,
     runtime,
     desktop: kind === "desktop" ? (data.desktop ?? { display: ":1", width: 1280, height: 800 }) : null,
   };
@@ -185,26 +188,42 @@ export const BUILTIN_TEMPLATES: Record<string, any>[] = [
     name: "dev-shell",
     description:
       "Development computer: Debian with git, Python, Node.js, build tools and tmux. The runner and every AI " +
-      "action run as the unprivileged user 'witden'; install tools user-locally or bake them into a template.",
+      "action run as the unprivileged user 'witden'; system packages install with `sudo apt-get` (no " +
+      "password), other tools user-locally under ~/.local.",
     image: "witden/computer-shell:latest",
     kind: "shell",
     workdir: "/home/witden",
     user: "witden",
     persistentPaths: ["/home/witden"],
-    software: ["bash", "git", "python3", "nodejs", "build-essential", "tmux", "curl", "ripgrep"],
+    software: ["bash", "git", "python3", "nodejs", "npm", "build-essential", "tmux", "curl", "ripgrep"],
     defaultResources: { cpus: 2, memory_mb: 4096, pids_limit: 2048, network: "bridge" },
   },
   {
     name: "desktop-browser",
     description:
-      "Linux desktop (Xvfb + Fluxbox) with Chromium. AI actions and people watching over noVNC use the same " +
-      "desktop; background browser sessions are shown separately.",
+      "Linux desktop (Xvfb + Fluxbox) with Chromium and the same development tools as dev-shell. AI actions and " +
+      "people watching over noVNC use the same desktop; background browser sessions are shown separately. " +
+      "System packages install with `sudo apt-get` (no password).",
     image: "witden/computer-desktop:latest",
     kind: "desktop",
     workdir: "/home/witden",
     user: "witden",
     persistentPaths: ["/home/witden"],
-    software: ["chromium", "fluxbox", "xdotool", "imagemagick", "tmux", "x11vnc"],
+    software: [
+      "chromium",
+      "fluxbox",
+      "xdotool",
+      "imagemagick",
+      "x11vnc",
+      "git",
+      "python3",
+      "nodejs",
+      "npm",
+      "build-essential",
+      "tmux",
+      "curl",
+      "ripgrep",
+    ],
     defaultResources: { cpus: 2, memory_mb: 4096, pids_limit: 4096, network: "bridge" },
     desktop: { display: ":1", width: 1280, height: 800, vnc_port: 5900, vnc_view_port: 5901 },
   },

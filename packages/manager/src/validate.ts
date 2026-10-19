@@ -253,6 +253,7 @@ const SPEC_FIELDS = [
   "resources",
   "network",
   "capAdd",
+  "allowPrivilegeEscalation",
   "runtime",
   "runner",
 ] as const;
@@ -264,6 +265,8 @@ export function validateComputerSpec(value: unknown, options: ValidationOptions)
   if (typeof network !== "string" || !NETWORK_MODES.includes(network as NetworkMode)) {
     invalid(`network must be one of ${NETWORK_MODES.join(", ")}`);
   }
+  const escalation = spec.allowPrivilegeEscalation ?? false;
+  if (typeof escalation !== "boolean") invalid("allowPrivilegeEscalation must be a boolean");
   return {
     instanceId: match(spec.instanceId, INSTANCE_ID, "instanceId"),
     name: match(spec.name, COMPUTER_NAME, "computer name"),
@@ -276,6 +279,7 @@ export function validateComputerSpec(value: unknown, options: ValidationOptions)
     resources: validateResources(spec.resources ?? {}),
     network: network as NetworkMode,
     capAdd: validateCaps(spec.capAdd ?? []),
+    allowPrivilegeEscalation: escalation,
     runtime: validateRuntime(spec.runtime, options.allowedRuntimes),
     runner: validateRunner(spec.runner),
   };

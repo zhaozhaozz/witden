@@ -1,0 +1,5 @@
+# Passwordless package installs for the computer's user. Works only when the platform starts the computer with
+# privilege escalation allowed (template setting sudo_apt); otherwise no-new-privileges stops sudo.
+# apt can run any command as root (hooks, maintainer scripts), so whoever may use this is root in the computer.
+Defaults:witden env_keep += "DEBIAN_FRONTEND"
+witden ALL=(root) NOPASSWD: /usr/bin/apt-get, /usr/bin/apt

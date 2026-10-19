@@ -86,7 +86,13 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       {
         method: "POST",
         path: "/api/templates",
-        note: "name, description, image, kind (shell | desktop), workdir, persistent_paths, software, default_resources",
+        note:
+          "name, description, image, kind (shell | desktop), workdir, persistent_paths, software, default_resources, " +
+          "sudo_apt. What a computer contains comes only from its image: software is a description of the image " +
+          "and installs nothing, so list only what the image has (witden/computer-shell: git, Python with pip and " +
+          "venv, Node.js with npm, build-essential, ripgrep, no desktop; witden/computer-desktop: the same plus a " +
+          "desktop and Chromium). sudo_apt (default true) lets everyone on the computer run `sudo apt-get` without a " +
+          "password, which is root inside it; false keeps the computer without any privilege escalation",
       },
       { method: "PATCH", path: "/api/templates/:id" },
       { method: "POST", path: "/api/templates/:id/copy" },

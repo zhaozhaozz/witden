@@ -12,6 +12,7 @@ import {
   type ContainerStats,
   type CreateComputerResult,
   DEFAULT_CAPS,
+  ESCALATION_CAPS,
   type ManagerApi,
   type NetworkMode,
   type RemoveComputerRequest,
@@ -468,10 +469,12 @@ export class DockerManager implements ManagerApi {
     const image = await this.inspectImage(spec.image);
     const networkMode = await this.networkFor(spec.network);
     const res = spec.resources;
+    const escalation = spec.allowPrivilegeEscalation === true;
     const hostConfig: Docker.HostConfig = {
       CapDrop: ["ALL"],
-      CapAdd: spec.capAdd.length ? [...spec.capAdd] : [...DEFAULT_CAPS],
-      SecurityOpt: ["no-new-privileges:true"],
+      CapAdd: spec.capAdd.length ? [...spec.capAdd] : [...DEFAULT_CAPS, ...(escalation ? ESCALATION_CAPS : [])],
+      // Without the flag setuid programs (sudo) can raise privileges; the capabilities still cap what root gets.
+      SecurityOpt: escalation ? [] : ["no-new-privileges:true"],
       Privileged: false,
       // Reaps orphaned processes; protected images do that with their own init.
       Init: !protectedInit(image?.Config?.Labels),

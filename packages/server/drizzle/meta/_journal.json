@@ -218,6 +218,13 @@
       "when": 1792399516198,
       "tag": "0030_drop_private_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792399961251,
+      "tag": "0031_template_sudo_apt",
+      "breakpoints": true
     }
   ]
 }

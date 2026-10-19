@@ -1,11 +1,12 @@
 # Desktop computer: Xvfb + Fluxbox + Chromium, driven by the Computer Runner (xdotool, ImageMagick, CDP) and
 # observed over VNC. Two VNC servers listen on localhost only: 5900 (control) and 5901 (view-only); the platform
 # reaches them through the runner's loopback streams, so the desktop is never exposed directly.
+# It carries the same development tools as images/shell, so a desktop computer is also a development computer.
 # Build from the repository root:  docker build -f images/desktop/Dockerfile -t witden/computer-desktop:latest .
 #
 # Everything, supervisord included, runs as the unprivileged user `witden` (uid 1000). witden-init starts
 # supervisord without the runner token and the runner with it; see images/shell/Dockerfile and
-# packages/runner/src/init.ts for how the token is kept from the rest of the computer.
+# packages/runner/src/init.ts for how the token is kept from the rest of the computer, and for `sudo apt-get`.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -30,14 +31,23 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 DISPLAY=:1 TERM=xterm-256color
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       xvfb x11vnc fluxbox xterm xdotool imagemagick x11-utils dbus-x11 \
-      chromium fonts-noto-cjk fonts-dejavu-core \
-      supervisor socat tmux procps ca-certificates curl git python3 tini \
+      chromium fonts-noto-cjk fonts-dejavu-core supervisor socat \
+      bash ca-certificates curl wget git tmux procps less vim-tiny nano \
+      python3 python3-pip python3-venv build-essential pkg-config \
+      ripgrep jq unzip zip xz-utils openssh-client file tini sudo \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -s /bin/bash -u 1000 witden \
  && echo 'export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox --disable-dev-shm-usage --no-first-run"' \
       > /etc/chromium.d/witden-container
+COPY images/common/sudoers-apt /etc/sudoers.d/witden-apt
+RUN chmod 0440 /etc/sudoers.d/witden-apt
 
+# Node.js 22 with npm, as in the shell image; the runner uses the same binary.
 COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+ && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+ && ln -s ../lib/node_modules/corepack/dist/corepack.js /usr/local/bin/corepack
 COPY --from=runner /opt/witden/runner /opt/witden/runner
 # Execute-only copies for the processes that hold the runner token (tini as PID 1, witden-init, the runner).
 RUN install -d -m 755 /opt/witden/bin \
@@ -57,6 +67,11 @@ COPY images/desktop/fluxbox-overlay /home/witden/.fluxbox/overlay
 # fbsetbg cannot set the style's wallpaper in this minimal image and would pop up an error dialog; use a solid colour.
 RUN chown -R witden:witden /home/witden/.fluxbox && chmod +x /home/witden/.fluxbox/startup \
  && printf '#!/bin/sh\nexec fbsetroot -solid "#2f3b45"\n' > /usr/bin/fbsetbg
+
+# Global npm / pip installs without sudo go to ~/.local, as in the shell image.
+ENV NPM_CONFIG_PREFIX=/home/witden/.local \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PATH=/home/witden/.local/bin:$PATH
 
 USER witden
 WORKDIR /home/witden

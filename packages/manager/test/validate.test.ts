@@ -86,6 +86,12 @@ describe("validateComputerSpec", () => {
     rejects(() => validateComputerSpec(spec({ volumes }), options), /mounted twice/);
   });
 
+  it("keeps no-new-privileges unless privilege escalation is explicitly allowed", () => {
+    expect(validateComputerSpec(spec(), options).allowPrivilegeEscalation).toBe(false);
+    expect(validateComputerSpec(spec({ allowPrivilegeEscalation: true }), options).allowPrivilegeEscalation).toBe(true);
+    rejects(() => validateComputerSpec(spec({ allowPrivilegeEscalation: "yes" }), options), /must be a boolean/);
+  });
+
   it.each([["SYS_ADMIN"], ["NET_ADMIN"], ["SYS_PTRACE"], ["ALL"], ["CAP_CHOWN"]])("rejects capability %s", (cap) => {
     rejects(() => validateComputerSpec(spec({ capAdd: [cap] }), options), /capabilities not allowed/);
   });

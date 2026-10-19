@@ -36,6 +36,11 @@ export interface ComputerSpec {
   network: NetworkMode;
   /** Capabilities from the safe list only; empty = the manager's defaults. */
   capAdd: string[];
+  /**
+   * Leave out `no-new-privileges`, so setuid programs such as sudo work (the images grant passwordless
+   * `sudo apt-get`). Whoever can run them is root inside the computer. Default false.
+   */
+  allowPrivilegeEscalation?: boolean;
   runtime?: string | null;
   /** How the runner inside reaches the platform. hubUrl null: no network route, use the stdio channel. */
   runner: { token: string; hubUrl: string | null };
@@ -132,6 +137,9 @@ export const DEFAULT_CAPS: readonly string[] = [
   "SETUID",
   "NET_BIND_SERVICE",
 ];
+
+/** Added to the defaults when privilege escalation is allowed: sudo reports every command to the audit log. */
+export const ESCALATION_CAPS: readonly string[] = ["AUDIT_WRITE"];
 
 /** Mounting volumes over these would break the OS or expose kernel interfaces. */
 export const FORBIDDEN_MOUNTS: readonly string[] = [

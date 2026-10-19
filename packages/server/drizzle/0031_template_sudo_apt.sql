@@ -1,0 +1,1 @@
+ALTER TABLE "computer_templates" ADD COLUMN "sudo_apt" boolean DEFAULT true NOT NULL;

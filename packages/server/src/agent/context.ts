@@ -138,7 +138,11 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
     "## Where you are",
     inst
       ? `- Computer: ${inst.name} (${inst.spec.kind}), user ${inst.spec.user}, working directory ${inst.spec.workdir}.` +
-        (desktop ? ` Desktop ${desktop.width ?? 1280}x${desktop.height ?? 800}.` : " No desktop.")
+        (desktop ? ` Desktop ${desktop.width ?? 1280}x${desktop.height ?? 800}.` : " No desktop.") +
+        // Same default as the container setting (instances.ts buildSpec).
+        (inst.spec.sudo_apt !== false
+          ? " Install system packages with `sudo apt-get` (no password; `sudo apt-get update` first); other tools go under ~/.local."
+          : " No root or sudo: install tools under ~/.local.")
       : "- You have no computer for this task.",
     `- Topic: «${topic.title}»${topic.goal ? ` — goal: ${topic.goal}` : ""}${topic.kind === "dm" ? " (a private DM)" : ""}, in ${await topicPlace(db, topic)}`,
   ];

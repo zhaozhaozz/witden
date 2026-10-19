@@ -330,9 +330,12 @@ export interface Template {
   env: Record<string, string>;
   persistent_paths: string[];
   credential_paths: string[];
+  /** What the image contains, for people to read; nothing is installed from it. */
   software: string[];
   default_resources: Resources;
   cap_add: string[];
+  /** Passwordless `sudo apt-get` in the computer (privilege escalation allowed; root inside). */
+  sudo_apt: boolean;
   runtime: string | null;
   desktop: Dict | null;
   archived: boolean;

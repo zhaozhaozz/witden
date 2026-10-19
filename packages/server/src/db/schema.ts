@@ -134,9 +134,12 @@ export const computerTemplates = pgTable("computer_templates", {
   env: json<Record<string, string>>("env").notNull().default({}),
   persistentPaths: json<string[]>("persistent_paths").notNull().default([]),
   credentialPaths: json<string[]>("credential_paths").notNull().default([]),
+  /** Informational: what the image contains. Nothing is installed from this list. */
   software: json<string[]>("software").notNull().default([]),
   defaultResources: json<Json>("default_resources").notNull().default({}),
   capAdd: json<string[]>("cap_add").notNull().default([]),
+  /** Containers allow privilege escalation, so the image's passwordless `sudo apt-get` works (root in the computer). */
+  sudoApt: boolean("sudo_apt").notNull().default(true),
   runtime: text("runtime"),
   desktop: json<Json | null>("desktop"),
   archived: boolean("archived").notNull().default(false),
