@@ -98,6 +98,7 @@ const SECRET_FIELDS = new Set([
   "tokenHash",
   "runnerTokenHash",
   "modelProxyKeyEncrypted",
+  "secretEncrypted",
 ]);
 
 const toSnake = (k: string) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);

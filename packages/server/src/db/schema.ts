@@ -943,13 +943,15 @@ export const topicLinks = pgTable(
 );
 
 /**
- * Every webhook trigger receives through one of these; one source may feed several independent rules. Only
- * the hash of its server-generated secret is kept. No result callback is stored.
+ * Every webhook trigger receives through one of these; one source may feed several independent rules. Its
+ * server-generated secret is checked by hash; an encrypted copy lets console accounts copy it again (sources
+ * made before migration 0041 have only the hash). No result callback is stored.
  */
 export const webhookSources = pgTable("webhook_sources", {
   id: id(),
   name: text("name").notNull(),
   tokenHash: text("token_hash").notNull(),
+  secretEncrypted: text("secret_encrypted"),
   enabled: boolean("enabled").notNull().default(true),
   allowedRoleIds: json<string[]>("allowed_role_ids").notNull().default([]),
   createdBy: text("created_by").notNull(),

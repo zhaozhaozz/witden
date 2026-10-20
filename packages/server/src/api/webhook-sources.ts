@@ -6,7 +6,7 @@ import { newId } from "../db/ids.js";
 import { roles, topicTriggers, webhookReceipts, webhookSources } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { hashToken, newToken } from "../security/crypto.js";
+import { hashToken, newToken, secretBox } from "../security/crypto.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { redactWebhookHeaders } from "../services/collaboration-policy.js";
@@ -32,12 +32,12 @@ async function validRoles(ctx: Ctx, ids: string[] = []) {
   }
 }
 /**
- * Senders put it in `Authorization: Bearer` or `X-Webhook-Token`. Only its hash is stored: the plain secret is
- * in the one response that created it, shown on the source's card to copy, and cannot be read again.
+ * Senders put it in `Authorization: Bearer` or `X-Webhook-Token`. The hash authenticates them; the encrypted
+ * copy is for console accounts to copy it from the source's card (an exception to "secrets are never read").
  */
 function newSecret() {
   const secret = newToken("whsec_");
-  return { secret, tokenHash: hashToken(secret) };
+  return { secret, tokenHash: hashToken(secret), secretEncrypted: secretBox().encrypt(secret) };
 }
 async function sourceOut(ctx: Ctx, source: typeof webhookSources.$inferSelect) {
   const rules = await ctx.db
@@ -51,6 +51,7 @@ async function sourceOut(ctx: Ctx, source: typeof webhookSources.$inferSelect) {
     .where(eq(topicTriggers.sourceId, source.id));
   return {
     ...row(source),
+    secret_readable: !!source.secretEncrypted,
     webhook_url: `${await webhookBase(ctx.db)}/api/hook-sources/${source.id}`,
     rules: rules.map((r) => row(r)),
   };
@@ -115,7 +116,24 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
       return sourceOut(ctx, updated);
     }),
   );
-  // A new secret, in this response only; the old one stops working. Not open to the system administrator role.
+  // Console accounts only, audited. Neither this nor regenerating is open to the system administrator role.
+  app.get(
+    "/api/webhook-sources/:id/secret",
+    authed(async (ctx) => {
+      admin(ctx);
+      const source = await webhookSource(ctx.db, params(ctx.req).id);
+      if (!source.secretEncrypted)
+        throw new BadRequest("这个来源的密钥只保存了哈希，无法显示；发送方已保存的密钥仍然有效，需要复制时请重新生成");
+      await audit(ctx.db, "webhook_source.secret_read", {
+        actorType: "user",
+        actorId: ctx.user.id,
+        resourceType: "webhook_source",
+        resourceId: source.id,
+      });
+      return { secret: secretBox().decrypt(source.secretEncrypted) };
+    }),
+  );
+  // The old secret stops working at once.
   app.post(
     "/api/webhook-sources/:id/secret",
     authed(async (ctx) => {

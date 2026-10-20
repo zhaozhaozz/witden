@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
+import { copyToClipboard } from "../lib/clipboard";
 import { fmtTime } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
@@ -12,6 +13,8 @@ export interface WebhookSource {
   name: string;
   enabled: boolean;
   webhook_url: string;
+  /** False for sources made before secrets were kept encrypted: only the hash exists, so it cannot be shown. */
+  secret_readable: boolean;
   allowed_role_ids: string[];
   rules: { id: string; topic_id: string; name: string; enabled: boolean }[];
 }
@@ -21,9 +24,8 @@ export const newSourceLink = (topicId: string) => `/connections?webhook_source=n
 export const sourceLink = (sourceId: string) => `/connections?webhook_source=${sourceId}`;
 
 /**
- * Every webhook trigger receives through one of these sources. The server generates each source's secret and
- * keeps only its hash: the secret is on the card, ready to copy, right after it is created or regenerated, and
- * cannot be shown again once this page is left.
+ * Every webhook trigger receives through one of these sources. The server generates each source's secret; its
+ * card shows the address and lets console accounts copy the secret, so neither is ever typed into a form.
  */
 export function WebhookSourcesPanel() {
   const [params, setParams] = useSearchParams();
@@ -35,12 +37,13 @@ export function WebhookSourcesPanel() {
   const [history, setHistory] = useState<WebhookSource | null>(null);
   const [highlight, setHighlight] = useState(focus === "new" ? null : focus);
   const [created, setCreated] = useState<string | null>(null);
-  // Secrets generated while on this page, by source id. The API never returns them again.
+  // Secrets shown on this page (just generated, or fetched on request), by source id.
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const sources = useResource(() => api.get<WebhookSource[]>("/api/webhook-sources"), [], open);
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
-  const showSecret = (id: string, secret: string) => setSecrets((prev) => ({ ...prev, [id]: secret }));
+  const showSecret = (id: string, secret: string | null) =>
+    setSecrets(({ [id]: _, ...rest }) => (secret ? { ...rest, [id]: secret } : rest));
 
   useEffect(() => {
     if (!focus) return;
@@ -219,7 +222,10 @@ export function WebhookSourcesPanel() {
   );
 }
 
-/** A secret generated on this page is shown until the page is left; regenerating invalidates the old one. */
+/**
+ * The secret is fetched only when someone copies or shows it (each read is audited). Regenerating invalidates
+ * the old one at once.
+ */
 function SourceSecret({
   source,
   secret,
@@ -227,44 +233,81 @@ function SourceSecret({
 }: {
   source: WebhookSource;
   secret?: string;
-  onSecret: (secret: string) => void;
+  onSecret: (secret: string | null) => void;
 }) {
   const { run, busy } = useAction();
-  const { confirm } = useFeedback();
+  const { confirm, toast } = useFeedback();
+  const read = () => run(() => api.get<{ secret: string }>(`/api/webhook-sources/${source.id}/secret`));
   return (
-    <div>
-      <span className="inline-list">
-        {secret ? <CopyText text={secret} /> : <span className="muted">已设置（不可查看）</span>}
-        <button
-          type="button"
-          className="btn btn-xs"
-          disabled={busy}
-          onClick={async () => {
-            if (
-              !(await confirm({
-                title: "重新生成密钥？",
-                body: <p>旧密钥立即失效，所有往这个来源发送的一方都要换成新密钥。</p>,
-                confirmLabel: "重新生成",
-                cancelLabel: "返回",
-              }))
-            )
-              return;
-            const r = await run(
-              () => api.post<{ secret: string }>(`/api/webhook-sources/${source.id}/secret`),
-              "已生成新密钥",
-            );
-            if (r) onSecret(r.secret);
-          }}
-        >
-          重新生成
-        </button>
-      </span>
+    <span className="inline-list">
       {secret ? (
-        <p className="small muted">
-          密钥只在这里显示，离开本页后无法再查看；请现在复制并保存到发送方，遗失时重新生成。
-        </p>
-      ) : null}
-    </div>
+        <>
+          <CopyText text={secret} />
+          <button type="button" className="btn btn-xs" onClick={() => onSecret(null)}>
+            隐藏
+          </button>
+        </>
+      ) : source.secret_readable ? (
+        <>
+          <code className="id">••••••••••••••••</code>
+          <button
+            type="button"
+            className="btn btn-xs"
+            disabled={busy}
+            onClick={async () => {
+              const r = await read();
+              if (!r) return;
+              if (await copyToClipboard(r.secret)) toast("密钥已复制", "ok");
+              else {
+                // The browser refused the write after the request: show it, and its copy button takes over.
+                onSecret(r.secret);
+                toast("浏览器未允许自动复制，已显示密钥，请再点一次复制", "info");
+              }
+            }}
+          >
+            复制
+          </button>
+          <button
+            type="button"
+            className="btn btn-xs"
+            disabled={busy}
+            onClick={async () => {
+              const r = await read();
+              if (r) onSecret(r.secret);
+            }}
+          >
+            显示
+          </button>
+        </>
+      ) : (
+        <span className="small muted">
+          这个来源的密钥只保存了哈希，无法显示；发送方已保存的密钥仍然有效，需要复制时请重新生成。
+        </span>
+      )}
+      <button
+        type="button"
+        className="btn btn-xs"
+        disabled={busy}
+        onClick={async () => {
+          if (
+            !(await confirm({
+              title: "重新生成密钥？",
+              body: <p>旧密钥立即失效，所有往这个来源发送的一方都要换成新密钥。</p>,
+              confirmLabel: "重新生成",
+              cancelLabel: "返回",
+            }))
+          )
+            return;
+          const r = await run(
+            () => api.post<{ secret: string }>(`/api/webhook-sources/${source.id}/secret`),
+            "已生成新密钥",
+          );
+          if (r) onSecret(r.secret);
+        }}
+      >
+        重新生成
+      </button>
+    </span>
   );
 }
 
@@ -304,7 +347,7 @@ function SourceEditor({
         <input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} autoFocus />
       </Field>
       {source ? null : (
-        <p className="small muted">密钥由系统生成。添加后，地址和密钥显示在来源卡片上，可以直接复制。</p>
+        <p className="small muted">密钥由系统生成。添加后，地址和密钥显示在来源卡片上，随时可以复制。</p>
       )}
       <Field
         label="允许自主订阅的角色"

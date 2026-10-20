@@ -213,6 +213,7 @@ const MEMORY_SCOPES = new Set(["team", "role"]);
 /** Fields that carry a secret. A person enters these in the console; they never pass through a role. */
 const SECRET_KEYS = new Set([
   "token_hash",
+  "secret_encrypted",
   "password",
   "api_key",
   "apikey",

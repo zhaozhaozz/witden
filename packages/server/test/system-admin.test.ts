@@ -172,10 +172,12 @@ describe("system administrator role", () => {
       call("read_config", { path: "/api/users" }),
       call("change_config", { method: "POST", path: "/api/users", body: { name: "eve", email: "eve@x.io" } }),
       call("change_config", { method: "PATCH", path: "/api/identities/ext_1", body: { user_id: w.ids.bob } }),
+      // A webhook source's secret can be copied in the console, but not by this role.
+      call("read_config", { path: "/api/webhook-sources/whs_1/secret" }),
     ]);
     expect(results[0]).toContain('"api_key" is a secret field. A person enters secrets in the console');
     // accounts are managed by people only
-    for (const i of [1, 8, 9, 10]) expect(results[i]).toContain("not a configuration endpoint");
+    for (const i of [1, 8, 9, 10, 11]) expect(results[i]).toContain("not a configuration endpoint");
     expect(results[2]).toContain("configured by people only");
     expect(results[3]).toContain("only a person in the console");
     expect(results[4]).toContain("not a configuration endpoint");
