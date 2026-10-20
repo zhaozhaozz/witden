@@ -1,5 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
-import { ApiError, errorMessage } from "../api/client";
+import { errorMessage } from "../api/client";
 import { Modal } from "./kit";
 
 type ToastTone = "info" | "ok" | "bad";
@@ -168,27 +168,4 @@ export function useAction() {
     [toast],
   );
   return { run, busy };
-}
-
-/**
- * Destructive endpoints answer `400 confirmation_required` (or another listed code) with a detail.
- * Call `attempt(false)` first; on such a refusal show a dialog built from the detail and, if the user
- * agrees, call `attempt(true)`.
- */
-export async function withConfirmation<T>(
-  confirm: FeedbackState["confirm"],
-  attempt: (confirmed: boolean) => Promise<T>,
-  describe: (err: ApiError) => ConfirmOptions,
-  codes: string[] = ["confirmation_required"],
-): Promise<T | undefined> {
-  try {
-    return await attempt(false);
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 400 && codes.includes(err.code)) {
-      const ok = await confirm(describe(err));
-      if (!ok) return undefined;
-      return await attempt(true);
-    }
-    throw err;
-  }
 }

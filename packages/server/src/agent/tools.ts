@@ -63,8 +63,11 @@ export const TOOL_GROUPS: Record<string, string> = {
 
 /** Groups only system administrator roles may have. */
 export const ADMIN_TOOL_GROUPS = new Set(["config"]);
-/** Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub. */
-export const CONSOLE_ONLY_GROUPS = new Set(["profile"]);
+/**
+ * Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub: there only the
+ * bot's role works, so it brings in no other role (collaborate).
+ */
+export const CONSOLE_ONLY_GROUPS = new Set(["profile", "collaborate"]);
 
 /** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
 export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
@@ -1019,7 +1022,7 @@ async function updateMyDescription(ctx: ToolContext, args: Record<string, any>):
     throw new BadRequest(`keep your description under ${DESCRIPTION_LIMIT} characters`);
   return transaction(async (db) => {
     const { task, role, topic } = await load(ctx, db);
-    // Checked again here: the topic may have been shared to Slack since the task started.
+    // Console conversations only: the tool is not offered elsewhere, and checked here too.
     if ((await externalContext(db, topic.id)).conversationKind)
       throw new Forbidden(
         "your description can be changed only in console conversations, not from Slack, Feishu or GitHub",

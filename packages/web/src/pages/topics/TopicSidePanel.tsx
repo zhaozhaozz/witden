@@ -29,7 +29,7 @@ import { SessionRuns } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { TriggersTab } from "./TriggersTab";
-import { InviteDialog, PublishDialog } from "./topicDialogs";
+import { InviteDialog } from "./topicDialogs";
 
 export function TopicSidePanel({
   topic,
@@ -545,7 +545,6 @@ function SettingsTab({
   const [workInstructions, setWorkInstructions] = useState(topic.work_instructions);
   const [responseMode, setResponseMode] = useState(topic.response_mode);
   const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
-  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     setTitle(topic.title);
@@ -609,7 +608,8 @@ function SettingsTab({
             placeholder="例如：收到部署事件后检查结果；失败时分析原因并在这个频道汇报。"
           />
         </Field>
-        {topic.kind === "group" ? (
+        {/* Response mode and the rounds limit are about several roles: a Slack, Feishu or GitHub conversation has one. */}
+        {topic.kind === "group" && !topic.channel ? (
           <FieldGroup label="角色响应方式">
             <div className="mode-options">
               {(["mention", "auto"] as const).map((m) => (
@@ -624,9 +624,11 @@ function SettingsTab({
             </div>
           </FieldGroup>
         ) : null}
-        <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
-          <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
-        </Field>
+        {topic.channel ? null : (
+          <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
+            <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
+          </Field>
+        )}
         <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !title.trim()}>
           保存设置
         </button>
@@ -653,33 +655,6 @@ function SettingsTab({
           {topic.status === "archived" ? "恢复话题" : "归档话题"}
         </button>
       </div>
-
-      {topic.kind === "group" ? (
-        <div className="settings-block">
-          <h4>发布到外部频道</h4>
-          <p className="small muted">
-            把话题发布到 Slack 或飞书的频道 / 群聊，并在对应 thread
-            中继续交流。需要对该通讯接入拥有「发布话题到外部频道」权限。
-            {topic.channel ? " 这个话题已经关联了一个外部会话。" : ""}
-          </p>
-          <button type="button" className="btn btn-sm" onClick={() => setPublishing(true)}>
-            发布到频道
-          </button>
-          {publishing ? (
-            <PublishDialog
-              topic={topic}
-              onClose={() => setPublishing(false)}
-              onPublished={() => {
-                // The topic now carries its external link (`external`).
-                void api
-                  .get<Topic>(`/api/topics/${topic.id}`)
-                  .then(onTopicChange)
-                  .catch(() => {});
-              }}
-            />
-          ) : null}
-        </div>
-      ) : null}
 
       <CleanupBlock topic={topic} onCleared={onCleared} />
     </div>

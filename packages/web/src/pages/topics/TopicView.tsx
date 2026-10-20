@@ -297,7 +297,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               )}
               {ch ? (
                 <Tag tone="accent" title={`thread ${ch.thread_key}`}>
-                  {topic.source === "internal" ? "已同步到 " : ""}
                   {connectionLabel(ch)}
                   {placeLabel(topic) ? ` · ${placeLabel(topic)}` : ""}
                 </Tag>

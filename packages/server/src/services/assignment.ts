@@ -1,10 +1,11 @@
 /**
  * Who handles a request, on which computer, and why it may or may not.
  *
- * 1. Outside the console a connection's bot stands for one role (its ``role_id`` setting): requests that name
- *    no role go to it. A connection without a role takes no requests.
- * 2. Otherwise the roles asked for: named in the console, picked by the dispatcher, or the target of a role's
- *    @-mention or hand-over.
+ * 1. Outside the console a connection's bot stands for one role (its ``role_id`` setting), the only role that
+ *    works there: requests go to it, and no other role is brought in. A connection without a role takes no
+ *    requests.
+ * 2. In the console the roles asked for: named, picked by the dispatcher, or the target of a role's @-mention or
+ *    hand-over.
  * 3. Each role is then checked: it exists and is enabled, in a console topic it takes part, the person may use
  *    it (external members only their connection's role; when a role asks another role, its contacts decide
  *    instead), and it has a computer. A system administrator role works only in the console, only for people
@@ -86,7 +87,7 @@ export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
   }
 
   const candidates: RoleDecision[] = [];
-  for (const roleId of candidateIds) candidates.push(await checkRole(db, user, ctx, roleId));
+  for (const roleId of candidateIds) candidates.push(await checkRole(db, user, ctx, roleId, bound));
   trace.push({ step: "roles", detail: candidates });
   const ok = candidates.some((c) => c.allowed);
   const reason = ok ? null : candidates.flatMap((c) => c.reasons).join("; ");
@@ -99,6 +100,7 @@ async function checkRole(
   user: typeof users.$inferSelect,
   ctx: RequestContext,
   roleId: string,
+  bound: string | null,
 ): Promise<RoleDecision> {
   const d: RoleDecision = { role_id: roleId, allowed: false, instance_id: null, reasons: [] };
   const [role] = await db.select().from(roles).where(eq(roles.id, roleId)).limit(1);
@@ -108,10 +110,12 @@ async function checkRole(
   }
   const label = `@${role.handle}`;
   if (role.status !== "active") d.reasons.push(`${label} is disabled`);
-  // Console topics: only roles someone invited. External threads: the dispatcher adds the role it hands work to.
+  // Console topics: only roles someone invited. Outside: only the role the bot stands for (it joins on its own).
   if (ctx.conversationKind === "internal" && ctx.topicId && !(await participant(db, ctx.topicId, "role", roleId))) {
     d.reasons.push(`${label} is not a participant of this topic`);
   }
+  if (ctx.conversationKind !== "internal" && roleId !== bound)
+    d.reasons.push(`${label} does not work here: in a Slack, Feishu or GitHub conversation only the bot's role does`);
   if (!ctx.byRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, roleId)))
     d.reasons.push(`you do not have permission to use ${label}`);
   if (role.systemAdmin) {

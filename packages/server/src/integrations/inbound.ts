@@ -305,9 +305,7 @@ async function threadTopic(
         .limit(1)
     )[0];
   const key = msg.topicKey ?? msg.threadKey;
-  // A thread an internal topic was published to keeps going to that topic, even inside a channel topic.
-  const own = key !== msg.threadKey ? await linkFor(msg.threadKey) : undefined;
-  const link = own ?? (await linkFor(key));
+  const link = await linkFor(key);
   if (link) return topicSvc.getTopic(db, link.topicId);
   const isDm = conv.kind === "im";
   const first = (msg.text.trim().split("\n")[0] || "thread").replace(/\*\*/g, "").slice(0, 80);

@@ -133,7 +133,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       {
         method: "PATCH",
         path: "/api/connections/:id",
-        note: "name, status (active | paused), settings: role_id (the role its bot stands for), auto_provision_users, custom_identity, auth_only (GitHub: authenticates the GitHub tools only, takes no messages), feishu_mode (Feishu: socket = long connection, http = events URL, which needs a verification token only a person can enter), bot_requests (Feishu: other bots @-mentioning the bot go to its role)",
+        note: "name, status (active | paused), settings: role_id (the role its bot stands for, the only one working in its conversations), auto_provision_users, auth_only (GitHub: authenticates the GitHub tools only, takes no messages), feishu_mode (Feishu: socket = long connection, http = events URL, which needs a verification token only a person can enter), bot_requests (Feishu: other bots @-mentioning the bot go to its role)",
       },
       { method: "POST", path: "/api/connections/:id/test", note: "test the saved credentials" },
       { method: "GET", path: "/api/connections/:id/feishu-scopes", note: "permissions Feishu has granted the app" },

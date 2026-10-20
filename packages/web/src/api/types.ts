@@ -780,8 +780,6 @@ export interface Connection {
     /** The role the connection's bot stands for; external members may use only it. */
     role_id?: string | null;
     auto_provision_users?: boolean;
-    /** Slack: other roles brought in speak under their own name and icon. */
-    custom_identity?: boolean;
     /** Feishu: how events arrive (absent: the events URL, as before there was a choice). */
     feishu_mode?: "socket" | "http";
     /** Feishu: other bots @-mentioning the bot go to its role. */
@@ -819,19 +817,6 @@ export interface Connection {
   events_url?: string | null;
   created_at?: string;
   updated_at?: string;
-}
-
-/** GET /api/connections/publishable: connections the viewer holds topic.publish on (no settings or credentials). */
-export interface PublishableConnection {
-  id: string;
-  name: string;
-  platform: string;
-}
-
-export interface PublishResult {
-  ok: boolean;
-  thread_key: string;
-  conversation_id: string;
 }
 
 export interface ExternalConversation {

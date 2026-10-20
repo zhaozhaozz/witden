@@ -55,7 +55,6 @@ const CAP_ROWS: [string, string][] = [
   ["threads", "话题 / thread"],
   ["mentions", "@ 与选择角色"],
   ["files", "文件"],
-  ["role_identity", "角色身份显示"],
   ["edits_deletes", "编辑与删除"],
   ["limits", "限制"],
 ];
@@ -736,16 +735,6 @@ function ConnectionDetail({
                     conn.settings?.auto_provision_users
                       ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的角色"
                       : "关闭：未关联的人不能使用，需要管理员关联身份",
-                  ],
-                  [
-                    "角色身份显示",
-                    `机器人就是它代表的角色，回复不另加名称；被请来协作的其他角色${
-                      conn.platform === "github"
-                        ? "在评论开头写角色名称"
-                        : conn.platform === "slack" && conn.settings?.custom_identity
-                          ? "以自己的名称和头像发言"
-                          : "在消息前写角色名称"
-                    }`,
                   ],
                 ]
           }

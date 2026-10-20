@@ -1,10 +1,9 @@
 /**
  * Slack adapter: Events API in (over Socket Mode, or HTTP to the events URL), Web API out.
  *
- * A Slack thread (root message + replies) is one topic; a 1:1 DM with the bot is one topic. One bot user fronts
- * any number of roles; replies carry the role's name (and icon with ``chat:write.customize``) so people
- * always see which role is speaking. Files a role shares are uploaded to Slack (``files:write``): the console
- * is not reachable from Slack, so a link to it would not open there.
+ * A Slack thread (root message + replies) is one topic; a 1:1 DM with the bot is one topic. The bot speaks for
+ * one role, the only one that works in its conversations. Files a role shares are uploaded to Slack
+ * (``files:write``): the console is not reachable from Slack, so a link to it would not open there.
  */
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
@@ -19,14 +18,12 @@ import {
   externalIdentities,
   type Message,
   type OutboundMessage,
-  roles,
   users,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, Unauthorized } from "../errors.js";
 import { safeEqual, secretBox } from "../security/crypto.js";
-import { absoluteAvatarUrl } from "../services/appearance.js";
 import { artifactPath } from "../services/files.js";
-import { consoleBase, webhookBase } from "../services/public-url.js";
+import { consoleBase } from "../services/public-url.js";
 import { type Adapter, CHANNEL, getAdapter, type InboundAction, register } from "./base.js";
 import { integrationError } from "./diagnostics.js";
 import { appCredentials, appOf } from "./slack-apps.js";
@@ -232,12 +229,7 @@ export class SlackAdapter implements Adapter {
     };
   }
 
-  private async render(
-    db: Db,
-    conn: Connection,
-    msg: Message,
-    refused: Artifact[] = [],
-  ): Promise<[string, Record<string, string>]> {
+  private async render(db: Db, conn: Connection, msg: Message, refused: Artifact[] = []): Promise<string> {
     const base = consoleBase();
     // System notices are plain text; everything else is Markdown written for the console.
     let text =
@@ -247,7 +239,6 @@ export class SlackAdapter implements Adapter {
             .map((l) => (l.trim() ? `_${escapeSlack(l.trim())}_` : l))
             .join("\n")
         : toSlack(msg.content, { baseUrl: base, viewUrl: `${base}/topics/${msg.topicId}` });
-    const extra: Record<string, string> = {};
     for (const m of msg.mentions ?? []) {
       if (m.type !== "user") continue;
       const [ident] = await db
@@ -260,22 +251,12 @@ export class SlackAdapter implements Adapter {
     }
     // Attachments are uploaded (send); only files Slack refused appear here, as links.
     if (refused.length) text += `${text ? "\n" : ""}${fileLinks(refused)}`;
-    if (msg.authorType === "role") {
-      const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      const name = role ? `${role.name} (@${role.handle})` : "role";
-      // A bot that stands for this role needs no name: its own name and icon say who speaks.
-      const ownRole = !!role && role.id === conn.settings.role_id;
-      if (!ownRole && conn.settings.custom_identity) {
-        extra.username = name;
-        // Slack fetches the icon itself, through the public address (avatars are served on the webhook listener).
-        const icon = absoluteAvatarUrl(role?.avatarUrl, await webhookBase(db));
-        if (icon) extra.icon_url = icon;
-      } else if (!ownRole) text = signed(`*${escapeSlack(name)}*`, text);
-    } else if (msg.authorType === "user") {
+    // The bot's own name and icon say which role speaks: it stands for the only role working here.
+    if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       text = signed(`*${escapeSlack(user?.name ?? "member")}* (witden)`, text);
     }
-    return [text, extra];
+    return text;
   }
 
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
@@ -305,12 +286,12 @@ export class SlackAdapter implements Adapter {
         break;
       }
     }
-    const [text, extra] = await this.render(db, conn, msg, refused ? files : []);
+    const text = await this.render(db, conn, msg, refused ? files : []);
     const where: Record<string, unknown> = { channel: out.conversationExternalId };
     if (out.threadKey) where.thread_ts = out.threadKey;
     // No previews: Slack would fetch whatever address the text links to, images included.
     const ts = text.trim()
-      ? await this.post(client, { ...where, text, unfurl_links: false, unfurl_media: false }, extra)
+      ? (await client.call("chat.postMessage", { ...where, text, unfurl_links: false, unfurl_media: false })).ts
       : null;
     if (uploaded.length && !refused) {
       try {
@@ -335,33 +316,6 @@ export class SlackAdapter implements Adapter {
       }
     }
     return ts;
-  }
-
-  private async post(
-    client: SlackClient,
-    params: Record<string, unknown>,
-    extra: Record<string, string>,
-  ): Promise<string> {
-    try {
-      return (await client.call("chat.postMessage", { ...params, ...extra })).ts;
-    } catch (err) {
-      if (
-        Object.keys(extra).length &&
-        err instanceof SlackError &&
-        ["missing_scope", "not_allowed_token_type"].includes(err.error)
-      ) {
-        // No chat:write.customize: fall back to a visible name prefix rather than losing the identity.
-        const text2 = signed(`*${escapeSlack(extra.username)}*`, String(params.text ?? ""));
-        return (await client.call("chat.postMessage", { ...params, text: text2 })).ts;
-      }
-      throw err;
-    }
-  }
-
-  async postRoot(conn: Connection, channel: string, text: string): Promise<string> {
-    return (
-      await this.client(conn).call("chat.postMessage", { channel, text, unfurl_links: false, unfurl_media: false })
-    ).ts;
   }
 
   async reply(conn: Connection, channel: string, thread: string, text: string): Promise<void> {

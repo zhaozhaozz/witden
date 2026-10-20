@@ -16,7 +16,6 @@ import {
   type Message,
   type OutboundMessage,
   outboundMessages,
-  roles,
   users,
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
@@ -361,14 +360,11 @@ export class FeishuAdapter implements Adapter {
 
   /**
    * System notices go as plain text; everything else is Markdown written for the console, sent as a rich-text
-   * post. Who speaks, when not the bot's own role, is the post's title (in plain text, before the words).
+   * post. The bot speaks for its role; a console member's message is titled with their name.
    */
   async send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null> {
     let who: string | null = null;
-    if (msg.authorType === "role") {
-      const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      if (!role || role.id !== conn.settings.role_id) who = `${role?.name ?? "role"} (@${role?.handle ?? "?"})`;
-    } else if (msg.authorType === "user") {
+    if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       who = `${user?.name ?? "member"} (witden)`;
     }
@@ -556,14 +552,6 @@ export class FeishuAdapter implements Adapter {
           body: { receive_id: out.conversationExternalId, ...body },
         });
     return data.message_id ?? null;
-  }
-
-  async postRoot(conn: Connection, channel: string, text: string): Promise<string> {
-    const data = await this.call(conn, "POST", "im/v1/messages", {
-      params: { receive_id_type: "chat_id" },
-      body: { receive_id: channel, msg_type: "text", content: JSON.stringify({ text }) },
-    });
-    return data.message_id;
   }
 }
 

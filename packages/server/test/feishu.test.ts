@@ -795,7 +795,7 @@ describe("feishu: other bots and rich messages", () => {
     expect(records.filter((r: any) => r.detail.stage === "send")).toHaveLength(2);
   });
 
-  it("Markdown goes out as rich text; another role's name is the title; notices and refused posts as text", async () => {
+  it("Markdown goes out as rich text, people mentioned the Feishu way; notices and refused posts as text", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
     await w.waitFor(async () => link.open().length === 1);
     await ready(conn);
@@ -816,17 +816,16 @@ describe("feishu: other bots and rich messages", () => {
     const out = { threadKey: null, conversationExternalId: "oc_group" } as any;
     const send = (msg: Record<string, unknown>) =>
       adapter.send(db(), row, out, { topicId: "top_x", mentions: [], ...msg } as any);
-    // another role asking alice (linked here): its name as the title, alice mentioned the Feishu way
+    // the bot's role asking alice (linked here): no title, alice mentioned the Feishu way
     await send({
       authorType: "role",
-      authorId: w.ids.test,
+      authorId: w.ids.dev,
       content: "@alice 请看 [任务](/tasks/t1)",
       mentions: [{ type: "user", id: w.ids.alice }],
     });
     const base = settings().publicUrl.replace(/\/+$/, "");
     expect(JSON.parse(feishu.sent.at(-1)!.body.content)).toEqual({
       zh_cn: {
-        title: "Test (@test)",
         content: [[{ tag: "md", text: `<at user_id="ou_alice">alice</at> 请看 [任务](${base}/tasks/t1)` }]],
       },
     });
@@ -836,13 +835,16 @@ describe("feishu: other bots and rich messages", () => {
       msg_type: "text",
       content: JSON.stringify({ text: "@dev asks for approval to use run_command: *" }),
     });
-    // a post Feishu refuses goes again as plain text, with the name in front
+    // a post Feishu refuses goes again as plain text; a console member's name stays in front
     feishu.refusePosts = true;
-    const sent = feishu.sent.length;
-    expect(await send({ authorType: "role", authorId: w.ids.test, content: "**好**" })).toBe(`om_out_${sent + 1}`);
+    let sent = feishu.sent.length;
+    expect(await send({ authorType: "role", authorId: w.ids.dev, content: "**好**" })).toBe(`om_out_${sent + 1}`);
+    expect(feishu.sent.at(-1)!.body).toMatchObject({ msg_type: "text", content: JSON.stringify({ text: "**好**" }) });
+    sent = feishu.sent.length;
+    expect(await send({ authorType: "user", authorId: w.ids.alice, content: "收到" })).toBe(`om_out_${sent + 1}`);
     expect(feishu.sent.at(-1)!.body).toMatchObject({
       msg_type: "text",
-      content: JSON.stringify({ text: "Test (@test): **好**" }),
+      content: JSON.stringify({ text: "alice (witden): 收到" }),
     });
   });
 });

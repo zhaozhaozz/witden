@@ -1,4 +1,4 @@
-/** Chat connections, conversations, deliveries, publishing topics outward, and the platform webhooks. */
+/** Chat connections, conversations, deliveries and the platform webhooks. */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { recheckActiveTasks } from "../agent/revocation.js";
@@ -10,7 +10,6 @@ import {
   type Connection,
   connections,
   externalConversations,
-  externalIdentities,
   externalThreadLinks,
   outboundMessages,
   processedEvents,
@@ -18,7 +17,7 @@ import {
   type SlackApp,
   slackApps,
 } from "../db/schema.js";
-import { BadRequest, Forbidden, NotFound } from "../errors.js";
+import { BadRequest, NotFound } from "../errors.js";
 import { CAPABILITIES, getAdapter } from "../integrations/base.js";
 import { deliverPending } from "../integrations/delivery.js";
 import { checkCredentials as checkFeishu, type FeishuMode, feishuMode } from "../integrations/feishu.js";
@@ -50,13 +49,11 @@ import {
 } from "../integrations/slack-install.js";
 import { slackSockets } from "../integrations/slack-socket.js";
 import { webhookStatus } from "../integrations/webhook-status.js";
-import { conversationReaders, describeReaders, isSubset, topicReaders } from "../security/audience.js";
 import { secretBox } from "../security/crypto.js";
-import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
+import { Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
 import { webhookBase } from "../services/public-url.js";
-import * as topicSvc from "../services/topics.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
 
 const PLATFORMS: Record<string, string[]> = {
@@ -67,14 +64,7 @@ const PLATFORMS: Record<string, string[]> = {
   // A GitHub App (app_id + private_key) or a bot account (token); checked by checkCredentials.
   github: [],
 };
-const SETTINGS_KEYS = new Set([
-  "auto_provision_users",
-  "custom_identity",
-  "role_id",
-  "feishu_mode",
-  "bot_requests",
-  "auth_only",
-]);
+const SETTINGS_KEYS = new Set(["auto_provision_users", "role_id", "feishu_mode", "bot_requests", "auth_only"]);
 /** Settings only one platform's connections have. */
 const PLATFORM_SETTINGS: Record<string, string> = {
   feishu_mode: "feishu",
@@ -234,23 +224,6 @@ export async function integrationRoutes(app: FastifyInstance) {
       const rows = await db.select().from(connections).orderBy(connections.name);
       const apps = await appsFor(db, rows);
       return rows.map((c) => connOut(c, base, apps));
-    }),
-  );
-
-  app.get(
-    "/api/connections/publishable",
-    authed(async ({ db, user }) => {
-      // Connections this person may publish topics to, without credentials or settings.
-      const out = [];
-      for (const c of await db
-        .select()
-        .from(connections)
-        .where(eq(connections.status, "active"))
-        .orderBy(connections.name)) {
-        if (await hasPermission(db, user, Perm.TOPIC_PUBLISH, c.id))
-          out.push({ id: c.id, name: c.name, platform: c.platform });
-      }
-      return out;
     }),
   );
 
@@ -746,81 +719,6 @@ export async function integrationRoutes(app: FastifyInstance) {
       });
       await wake(db, "outbound");
       return row(updated);
-    }),
-  );
-
-  app.post(
-    "/api/topics/:id/publish",
-    authedNoTx(async ({ db, user, req }) => {
-      const topic = await topicSvc.getTopic(db, params(req).id);
-      if (!(await topicSvc.canAdminister(db, user, topic)))
-        throw new Forbidden("only console accounts can publish a topic");
-      if (topic.kind === "dm") throw new BadRequest("DMs cannot be published to a channel");
-      const b = body(req);
-      const conn = await getConn(db, String(b.connectionId ?? ""));
-      await requirePerm(db, user, Perm.TOPIC_PUBLISH, conn.id);
-      if (conn.status !== "active") throw new BadRequest("connection is not active");
-      const adapter = await getAdapter(conn);
-      const channel = String(b.channelId ?? "");
-      let [conv] = await db
-        .select()
-        .from(externalConversations)
-        .where(and(eq(externalConversations.connectionId, conn.id), eq(externalConversations.externalId, channel)))
-        .limit(1);
-      if (!conv) {
-        const [kind, name] = adapter.conversationKind
-          ? await adapter.conversationKind(db, conn, channel, null)
-          : ["private", null];
-        [conv] = await db
-          .insert(externalConversations)
-          .values({ id: newId("conv"), connectionId: conn.id, externalId: channel, kind, name })
-          .returning();
-      }
-      if (adapter.syncMembers) await adapter.syncMembers(db, conn, conv, true).catch(() => {});
-      [conv] = await db.select().from(externalConversations).where(eq(externalConversations.id, conv.id)).limit(1);
-      if (conv.kind !== "public") {
-        // Linking a private conversation pulls its replies into the topic: only for its own members.
-        const mine = (
-          await db
-            .select()
-            .from(externalIdentities)
-            .where(and(eq(externalIdentities.connectionId, conn.id), eq(externalIdentities.userId, user.id)))
-        ).map((i) => i.externalUserId);
-        if (!conv.membersSyncedAt || !mine.some((m) => conv.memberIds.includes(m)))
-          throw new Forbidden("you are not a (verified) member of that conversation");
-      }
-      const audience = await conversationReaders(db, conv);
-      if (!(await isSubset(db, audience, await topicReaders(db, topic.id))) && !b.confirmExpandAudience) {
-        throw new BadRequest(
-          "the channel's audience is wider than the people who can see this topic now; confirm that the topic may become visible to them",
-          {
-            code: "audience_expansion",
-            detail: { channel_audience: describeReaders(audience), channel_kind: conv.kind },
-          },
-        );
-      }
-      const root = await adapter.postRoot(
-        conn,
-        channel,
-        `Topic: ${topic.title}\n${topic.goal}\n(continued from witden; earlier history is not copied)`,
-      );
-      await transaction(async (tx) => {
-        await tx.insert(externalThreadLinks).values({
-          id: newId("lnk"),
-          connectionId: conn.id,
-          conversationId: conv.id,
-          threadKey: root,
-          topicId: topic.id,
-        });
-        await audit(tx, "topic.publish", {
-          actorType: "user",
-          actorId: user.id,
-          topicId: topic.id,
-          connectionId: conn.id,
-          detail: { channel, thread: root, expanded_audience: !!b.confirmExpandAudience },
-        });
-      });
-      return { ok: true, thread_key: root, conversation_id: conv.id };
     }),
   );
 

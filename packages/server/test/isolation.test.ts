@@ -1,7 +1,7 @@
 /**
  * Files, notes and control-flow bypasses (from a security review of the first version).
- * Setup: the group topic is mirrored into a Slack channel with carol, an outside person; alice asks @dev there
- * and it consults a knowledge-space note holding SECRET. The role may read that space, so it may use what it
+ * Setup: a knowledge-space note holds SECRET; in the first part the group topic is a Slack channel's, with carol,
+ * an outside person, and alice asks @dev (the bot's role) there, and it consults that note. The role may read that space, so it may use what it
  * read there. Console accounts (all administrators) may read everything, alice's DM with @dev included.
  */
 import { eq } from "drizzle-orm";
@@ -22,7 +22,6 @@ beforeEach(async () => {
   w.scripts.dev = () => reply("noted");
   await w.post(w.alice, dm.id, `my ${SECRET} is private`);
   await w.drain();
-  await linkChannel(w, w.ids.topic, ["UCAROL"]);
   await teamNote(w, `alice ${SECRET}`);
 });
 afterEach(async () => {
@@ -40,6 +39,9 @@ async function runDev(...steps: ReturnType<typeof call>[]) {
 }
 
 describe("what a role may read, it may use where it works", () => {
+  beforeEach(async () => {
+    await linkChannel(w, w.ids.topic, ["UCAROL"]);
+  });
   it("a file is shared with the topic and its channel right away, after reading a knowledge space", async () => {
     w.manager.computer(w.ids.instance).files.set("/home/witden/report.txt", Buffer.from(SECRET));
     const id = await runDev(call("share_file", { path: "report.txt" }));

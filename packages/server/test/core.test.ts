@@ -1,21 +1,12 @@
-/** Security primitives, audiences, model configurations and the model wire protocols. */
+/** Security primitives, model configurations and the model wire protocols. */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { plainTitle } from "../src/agent/dispatch.js";
 import { AnthropicModel, type ChatMessage, imagePart, OpenAICompatibleModel, setFetch } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import {
-  connections,
-  externalConversations,
-  externalIdentities,
-  externalThreadLinks,
-  modelProviders,
-  topicParticipants,
-  topics,
-} from "../src/db/schema.js";
+import { connections, modelProviders, topicParticipants, topics } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
-import { CONSOLE, isSubset, readers, topicReaders } from "../src/security/audience.js";
 import { findCredential, hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
 import { setModelFactory } from "../src/services/model-configs.js";
@@ -53,7 +44,7 @@ describe("with a database", () => {
     await h.close();
   });
 
-  const topic = async (kind: string, userIds: string[]) => {
+  const _topic = async (kind: string, userIds: string[]) => {
     const [t] = await db()
       .insert(topics)
       .values({ id: newId("top"), title: "t", kind })
@@ -80,92 +71,6 @@ describe("with a database", () => {
     expect(await hasPermission(db(), carol, Perm.ROLE_USE, "role_x")).toBe(true);
     expect(await hasPermission(db(), carol, Perm.ROLE_USE, "role_y")).toBe(false);
     expect(await hasPermission(db(), carol, Perm.TOPIC_CREATE)).toBe(false);
-  });
-
-  it("a topic's audience: its people and the console; a linked channel's outside members widen it", async () => {
-    const alice = await createUser(db(), { name: "alice", email: "a@x.io" });
-    const bob = await createUser(db(), { name: "bob", email: "b@x.io" });
-    const dm = await topic("dm", [alice.id]);
-    const group = await topic("group", [alice.id, bob.id]);
-    // whether everyone who sees ``to`` also sees ``from`` (publishing asks for confirmation when not)
-    const within = async (to: string, from: string) =>
-      isSubset(db(), await topicReaders(db(), to), await topicReaders(db(), from));
-    expect(await within(dm.id, group.id)).toBe(true);
-    // the group is mirrored into a Slack channel with carol, who has no console account
-    const [conn] = await db()
-      .insert(connections)
-      .values({ id: newId("conn"), platform: "slack", name: "acme" })
-      .returning();
-    const [conv] = await db()
-      .insert(externalConversations)
-      .values({
-        id: newId("conv"),
-        connectionId: conn.id,
-        externalId: "G1",
-        kind: "private",
-        memberIds: ["UCAROL"],
-        membersSyncedAt: new Date(),
-      })
-      .returning();
-    await db()
-      .insert(externalThreadLinks)
-      .values({
-        id: newId("lnk"),
-        connectionId: conn.id,
-        conversationId: conv.id,
-        threadKey: "1.0",
-        topicId: group.id,
-      });
-    expect(await within(group.id, dm.id)).toBe(false);
-    expect(await within(dm.id, group.id)).toBe(true);
-  });
-
-  it("public and private Slack channels; unknown membership counts as the whole workspace", async () => {
-    const alice = await createUser(db(), { name: "alice", email: "a@x.io" });
-    const [conn] = await db()
-      .insert(connections)
-      .values({ id: newId("conn"), platform: "slack", name: "acme" })
-      .returning();
-    await db()
-      .insert(externalIdentities)
-      .values({ id: newId("ext"), connectionId: conn.id, externalUserId: "UALICE", userId: alice.id });
-    const [pub] = await db()
-      .insert(externalConversations)
-      .values({ id: newId("conv"), connectionId: conn.id, externalId: "C1", kind: "public" })
-      .returning();
-    const [priv] = await db()
-      .insert(externalConversations)
-      .values({
-        id: newId("conv"),
-        connectionId: conn.id,
-        externalId: "G1",
-        kind: "private",
-        memberIds: ["UALICE"],
-        membersSyncedAt: new Date(),
-      })
-      .returning();
-    const tPublic = await topic("group", []);
-    const tPrivate = await topic("group", []);
-    for (const [conv, key, t] of [
-      [pub, "1.0", tPublic],
-      [priv, "2.0", tPrivate],
-    ] as const) {
-      await db()
-        .insert(externalThreadLinks)
-        .values({ id: newId("lnk"), connectionId: conn.id, conversationId: conv.id, threadKey: key, topicId: t.id });
-    }
-    const within = async (to: string, from: string) =>
-      isSubset(db(), await topicReaders(db(), to), await topicReaders(db(), from));
-    // a public channel reaches more than a private one (only alice); a private one, no more than the workspace
-    expect(await within(tPublic.id, tPrivate.id)).toBe(false);
-    expect(await within(tPrivate.id, tPublic.id)).toBe(true);
-    // unknown membership counts as the whole workspace
-    await db()
-      .update(externalConversations)
-      .set({ membersSyncedAt: null })
-      .where(eq(externalConversations.id, priv.id));
-    const aliceOnly = readers([CONSOLE], [`u:${alice.id}`]);
-    expect(await isSubset(db(), await topicReaders(db(), tPrivate.id), aliceOnly)).toBe(false);
   });
 
   it("login and /me", async () => {

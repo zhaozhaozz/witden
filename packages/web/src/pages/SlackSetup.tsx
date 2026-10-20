@@ -23,7 +23,6 @@ export const BOT_SCOPES: [string, string][] = [
   ["im:read", "读取私信会话的信息"],
   ["mpim:read", "读取多人私信会话的信息"],
   ["chat:write", "发送角色的回复"],
-  ["chat:write.customize", "以角色自己的名称和头像发言（可在设置中关闭）"],
   ["users:read", "读取发消息的人的名字"],
   ["files:read", "读取消息中的文件"],
   ["files:write", "把角色分享的文件和截图发到 Slack"],

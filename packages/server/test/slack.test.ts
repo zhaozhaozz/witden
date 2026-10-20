@@ -1094,27 +1094,36 @@ describe("slack", () => {
     );
   });
 
-  it("other roles the bot's role brings in speak under their own name; a paused connection takes no requests", async () => {
+  it("only the bot's role works in a Slack conversation; a paused connection takes no requests", async () => {
     // Both admin calls below used to wait forever on the embedded database (query outside the request transaction).
     const patched = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
-      json: { settings: { custom_identity: true, auto_provision_users: true } },
+      json: { settings: { auto_provision_users: true } },
     });
     expect(patched.status, patched.raw).toBe(200);
-    w.scripts.dev = (_m, turn) =>
-      turn === 0
-        ? reply("", [call("message_role", { role: "test", message: "please run the tests" })])
-        : reply("on it");
+    let offered: string[] = [];
+    w.scripts.dev = (_m, _turn, tools) => {
+      offered = (tools ?? []).map((t) => t.name);
+      return reply("on it, @test will not be asked here");
+    };
     w.scripts.test = () => reply("tests pass");
-    // carol is an external member: she may use only dev, yet dev may still hand work to test
     await send(event("<@UBOT> hi", { user: "UCAROL", ts: "700.1" }));
     await w.waitFor(async () => (await allTasks()).length === 1);
     await w.drain();
-    expect((await allTasks()).map((t) => t.ownerRoleId).sort()).toEqual([w.ids.dev, w.ids.test].sort());
-    expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 3 });
-    // the bot's own role speaks as the bot; another role under its own name
-    expect(slack.posts.find((p) => p.text === "on it")?.username).toBeUndefined();
-    expect(slack.posts.find((p) => p.text === "tests pass")).toMatchObject({ channel: "C1", username: "Test (@test)" });
+    // it brings in no other role: no tools for it, and its @-mentions hand nothing over
+    expect(offered).not.toContain("message_role");
+    expect(offered).not.toContain("delegate_task");
+    expect((await allTasks()).map((t) => t.ownerRoleId)).toEqual([w.ids.dev]);
+    expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 1 });
+    // the bot speaks as itself, under no other name
+    expect(slack.posts.find((p) => p.text.startsWith("on it"))?.username).toBeUndefined();
+    // nor does the console add another role
+    const topicId = (await allTasks())[0].topicId;
+    const invite = await w.api("POST", `/api/topics/${topicId}/participants`, {
+      token: w.adminToken,
+      json: { type: "role", id: w.ids.test },
+    });
+    expect(invite.status).toBe(400);
 
     const paused = await w.api("PATCH", `/api/connections/${conn.id}`, {
       token: w.adminToken,
@@ -1123,30 +1132,8 @@ describe("slack", () => {
     expect(paused.body.status).toBe("paused");
     expect((await send(event("<@UBOT> @dev again", { ts: "700.2" }))).status).toBe(200);
     await settle();
-    expect(await allTasks()).toHaveLength(2);
+    expect(await allTasks()).toHaveLength(1);
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
     expect(inbound.map((e: any) => e.event_key)).toEqual(["msg:C1:700.1"]);
-  });
-
-  it("publishing an internal topic needs an audience confirmation", async () => {
-    const topicId = w.ids.topic;
-    const body = { connection_id: conn.id, channel_id: "C_PUBLIC" };
-    let res = await w.api("POST", `/api/topics/${topicId}/publish`, { token: w.alice, json: body });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("audience_expansion");
-    expect(slack.posts).toEqual([]); // nothing posted before the confirmation
-    res = await w.api("POST", `/api/topics/${topicId}/publish`, {
-      token: w.alice,
-      json: { ...body, confirm_expand_audience: true },
-    });
-    expect(res.status, res.raw).toBe(200);
-    const root = res.body.thread_key;
-    await w.post(w.alice, topicId, "hello from inside");
-    await deliverPending();
-    expect(slack.posts.some((p) => p.thread_ts === root && p.text.includes("hello from inside"))).toBe(true);
-    // no role has worked in this thread yet: the follow-up is not handed to an arbitrary participant
-    await w.drain();
-    await deliverPending();
-    expect(slack.posts.some((p) => p.thread_ts === root && p.text.includes("not assigned"))).toBe(false);
   });
 });

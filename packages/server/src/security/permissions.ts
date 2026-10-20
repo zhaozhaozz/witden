@@ -26,7 +26,6 @@ export const Perm = {
   SECRETS_MANAGE: "secrets.manage",
   MODEL_USE: "model.use",
   CONNECTION_MANAGE: "connection.manage",
-  TOPIC_PUBLISH: "topic.publish",
   AUDIT_VIEW: "audit.view",
   USER_MANAGE: "user.manage",
   APPROVAL_DECIDE: "approval.decide",

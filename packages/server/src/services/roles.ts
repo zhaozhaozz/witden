@@ -22,6 +22,7 @@ import {
   type User,
 } from "../db/schema.js";
 import { BadRequest, Conflict, NotFound } from "../errors.js";
+import { externalRoleId } from "../integrations/links.js";
 import { parseGrant, TOOL_PLATFORMS } from "../integrations/platform-tools.js";
 import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
@@ -306,6 +307,9 @@ export async function disableRole(db: Db, user: User, role: Role, onTasks: strin
     // Tasks move to the other role; the role's own conversations end (they are its context, not work items).
     for (const t of active)
       if (t.kind === "conversation") await cancelTree(db, t, `@${role.handle} was disabled`);
+      // In a Slack, Feishu or GitHub conversation no other role may take over: the work ends there.
+      else if ((await externalRoleId(db, t.topicId)) !== undefined)
+        await cancelTree(db, t, `@${role.handle} was disabled`);
       else await reassign(db, user, t, target, { byRoleManager: true });
   } else if (onTasks === "pause") for (const t of active) await pause(db, t, `@${role.handle} was disabled`);
   else throw new BadRequest("on_tasks must be cancel, reassign or pause");

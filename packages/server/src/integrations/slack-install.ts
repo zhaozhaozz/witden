@@ -156,7 +156,7 @@ export async function installWorkspace(
       externalWorkspaceId: inst.teamId,
       ...values,
       // The same bot in another workspace: the role of the app's first workspace until chosen; nobody unlinked.
-      settings: { role_id: first.role_id ?? null, custom_identity: !!first.custom_identity },
+      settings: { role_id: first.role_id ?? null },
       createdBy: by,
     })
     .returning();

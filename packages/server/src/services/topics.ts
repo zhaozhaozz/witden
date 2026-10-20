@@ -4,6 +4,7 @@ import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { messages, type Role, roles, type Topic, topicParticipants, topics, type User, users } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
+import { externalRoleId } from "../integrations/links.js";
 import { hasPermission, isConsoleUser, Perm, requirePerm } from "../security/permissions.js";
 
 export async function getTopic(db: Db, id: string): Promise<Topic> {
@@ -109,6 +110,10 @@ export async function inviteRole(
   if (role.status !== "active") throw new BadRequest(`role ${role.handle} is disabled`);
   if (topic.kind === "dm" && (await participants(db, topic.id, "role")).length)
     throw new BadRequest("a DM has exactly one role");
+  // A Slack, Feishu or GitHub conversation has one role: the one its bot stands for.
+  const bound = await externalRoleId(db, topic.id);
+  if (bound !== undefined && bound !== role.id)
+    throw new BadRequest("only the role its bot stands for works in a Slack, Feishu or GitHub conversation");
   if (opts.byRole) {
     const contacts = opts.byRole.allowedContacts;
     if (!contacts.includes("*") && !contacts.includes(role.id)) {

@@ -1,5 +1,5 @@
 /** Turning messages into work: who should respond, is it allowed, and what may the work touch. */
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -7,7 +7,6 @@ import {
   type AgentSession,
   agentSessions,
   computerInstances,
-  externalThreadLinks,
   type Mention,
   type Message,
   messageRoutes,
@@ -22,8 +21,7 @@ import {
   users,
 } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
-import { CHANNEL } from "../integrations/base.js";
-import { externalContext } from "../integrations/links.js";
+import { externalContext, externalRoleId } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
@@ -388,56 +386,6 @@ async function resumeWaiting(
   return resumed;
 }
 
-export async function lastActiveRole(db: Db, topic: Topic, msg?: Message): Promise<string | null> {
-  const [channel] = await db
-    .select({ id: externalThreadLinks.id })
-    .from(externalThreadLinks)
-    .where(and(eq(externalThreadLinks.topicId, topic.id), eq(externalThreadLinks.threadKey, CHANNEL)))
-    .limit(1);
-  if (channel) return threadRole(db, topic, msg?.replyToId ?? null);
-  const [last] = await db
-    .select({ authorId: messages.authorId })
-    .from(messages)
-    .where(and(eq(messages.topicId, topic.id), eq(messages.authorType, "role")))
-    .orderBy(desc(messages.createdAt))
-    .limit(1);
-  if (last?.authorId && (await topicSvc.participant(db, topic.id, "role", last.authorId))) return last.authorId;
-  // Nobody has answered yet: the role whose task is newest here. Never an arbitrary participant; with no
-  // work in the thread the connection's role takes it.
-  const [recent] = await db
-    .select({ roleId: tasks.ownerRoleId })
-    .from(tasks)
-    .where(eq(tasks.topicId, topic.id))
-    .orderBy(desc(tasks.createdAt))
-    .limit(1);
-  if (recent && (await topicSvc.participant(db, topic.id, "role", recent.roleId))) return recent.roleId;
-  return null;
-}
-
-/**
- * In a channel topic only a Slack thread carries on with the role working in it (the last one that answered
- * there, or whose task was asked there); a message posted in the channel itself goes to the connection's role.
- */
-async function threadRole(db: Db, topic: Topic, root: string | null): Promise<string | null> {
-  if (!root) return null;
-  const [last] = await db
-    .select({ authorId: messages.authorId })
-    .from(messages)
-    .where(and(eq(messages.topicId, topic.id), eq(messages.authorType, "role"), eq(messages.replyToId, root)))
-    .orderBy(desc(messages.createdAt))
-    .limit(1);
-  if (last?.authorId && (await topicSvc.participant(db, topic.id, "role", last.authorId))) return last.authorId;
-  const [recent] = await db
-    .select({ roleId: tasks.ownerRoleId })
-    .from(tasks)
-    .innerJoin(messages, eq(messages.id, tasks.sourceMessageId))
-    .where(and(eq(tasks.topicId, topic.id), or(eq(messages.id, root), eq(messages.replyToId, root))))
-    .orderBy(desc(tasks.createdAt))
-    .limit(1);
-  if (recent && (await topicSvc.participant(db, topic.id, "role", recent.roleId))) return recent.roleId;
-  return null;
-}
-
 /**
  * `@handle` of an existing role that is not in this (internal) topic: say so instead of staying silent. Not in
  * a DM, which is with one role only: there a role's name is just a name (e.g. asking the system administrator
@@ -486,10 +434,8 @@ export async function dispatchHumanMessage(
   } else if (topic.kind === "dm") {
     candidates = (await topicSvc.participants(db, topic.id, "role")).map((p) => p.participantId);
   } else if (external) {
-    // Messages from the console into an external thread go to the role already working there, or else to the
-    // role the connection's bot stands for (empty candidate list).
-    const last = await lastActiveRole(db, topic, msg);
-    candidates = last ? [last] : [];
+    // Outside the console only the role the connection's bot stands for works (empty candidate list).
+    candidates = [];
   } else {
     // Nobody was @-mentioned. "mention" topics stay quiet. In "auto" topics a single role sees the message and
     // decides itself whether to answer; with several roles the dispatcher chooses, in the worker (it calls a
@@ -570,6 +516,8 @@ export async function dispatchRoleMessage(
 ): Promise<Task[]> {
   const targets = msg.mentions.filter((m) => m.type === "role" && m.id !== sender.id).map((m) => m.id);
   if (!targets.length) return [];
+  // Outside the console only the bot's role works: its @-mentions of other roles are just text.
+  if ((await externalRoleId(db, topic.id)) !== undefined) return [];
   const s = settings();
   const limit = Math.min(topic.maxAutoRounds ?? s.maxAutoRounds, s.maxAutoRounds);
   if (msg.round > limit) {

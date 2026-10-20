@@ -185,7 +185,6 @@ export interface ConnSettings {
   /** The role the connection's bot stands for (null: not chosen yet; the bot takes no requests). */
   role_id: string | null;
   auto_provision_users: boolean;
-  custom_identity: boolean;
   /** Feishu only: other bots @-mentioning the bot go to its role (otherwise their messages are context only). */
   bot_requests?: boolean;
   /** GitHub only: not a bot; the account only authenticates the GitHub tools roles are given. */
@@ -195,12 +194,11 @@ export interface ConnSettings {
 export const settingsOf = (conn: Connection | null): ConnSettings => ({
   role_id: typeof conn?.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null,
   auto_provision_users: !!conn?.settings?.auto_provision_users,
-  custom_identity: !!conn?.settings?.custom_identity,
   ...(conn?.platform === "feishu" ? { bot_requests: !!conn.settings?.bot_requests } : {}),
   ...(conn?.platform === "github" ? { auth_only: !!conn.settings?.auth_only } : {}),
 });
 
-/** Who may use the bot and how roles appear; shared by the connection form and setup guides. */
+/** Who may use the bot; shared by the connection form and setup guides. */
 export function ConnectionSettingsFields({
   platform,
   value,
@@ -258,13 +256,6 @@ export function ConnectionSettingsFields({
           onChange={(v) => set({ bot_requests: v })}
           label="其他机器人 @ 这个机器人时，也交给角色处理"
           hint={`关闭时（默认），群里其他机器人发的消息只记入话题、作为角色的上下文。开启后，其他机器人 @ 这个机器人的消息也交给角色；为防止机器人之间来回触发，连续 ${botLimit} 次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。`}
-        />
-      ) : null}
-      {platform === "slack" ? (
-        <Toggle
-          checked={value.custom_identity}
-          onChange={(v) => set({ custom_identity: v })}
-          label="被请来协作的其他角色以自己的名称和头像发言（需要 chat:write.customize；否则在消息前写角色名称）"
         />
       ) : null}
     </>

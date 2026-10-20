@@ -22,7 +22,6 @@ import {
   externalIdentities,
   type Message,
   type OutboundMessage,
-  roles,
   users,
 } from "../db/schema.js";
 import { BadRequest, Unauthorized } from "../errors.js";
@@ -271,13 +270,8 @@ export class GithubAdapter implements Adapter {
       const links = msg.attachments.map((a) => `📎 [${byId.get(a)?.name ?? "文件"}](${base}/api/files/${a})`);
       text += `${text ? "\n\n" : ""}${links.join("\n")}`;
     }
-    // One account fronts every role: say who is speaking. No "@handle" here: on GitHub that pings a person.
-    if (msg.authorType === "role") {
-      const [role] = msg.authorId ? await db.select().from(roles).where(eq(roles.id, msg.authorId)).limit(1) : [];
-      // the app stands for this role: no heading needed
-      if (!role || role.id !== conn.settings.role_id)
-        text = `**${role?.name ?? "role"}** (\`${role?.handle ?? "role"}\`)\n\n${text}`;
-    } else if (msg.authorType === "user") {
+    // The account speaks for its role; a console member's comment is headed with their name.
+    if (msg.authorType === "user") {
       const [user] = msg.authorId ? await db.select().from(users).where(eq(users.id, msg.authorId)).limit(1) : [];
       text = `**${user?.name ?? "member"}** (witden)\n\n${text}`;
     }
@@ -294,33 +288,10 @@ export class GithubAdapter implements Adapter {
     return String(data.id);
   }
 
-  /** Publishing a topic into a repository opens an issue; its number is the thread. */
-  async postRoot(conn: Connection, repo: string, text: string): Promise<string> {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new BadRequest("a GitHub repository is written owner/repo");
-    const [title, ...rest] = text.split("\n");
-    const { data } = await (await this.client(conn, repo)).request("POST", `/repos/${repo}/issues`, {
-      title: title.replace(/^Topic:\s*/, "").slice(0, 250) || "witden",
-      body: rest.join("\n"),
-    });
-    return String(data.number);
-  }
-
   async reply(conn: Connection, repo: string, thread: string, text: string): Promise<void> {
     await (await this.client(conn, repo)).request("POST", `${issuePath(repo, thread)}/comments`, {
       body: `_${text}_`,
     });
-  }
-
-  async conversationKind(db: Db, conn: Connection, repo: string, hint: string | null): Promise<[string, string]> {
-    if (hint) return [hint, repo];
-    const [conv] = await db
-      .select()
-      .from(externalConversations)
-      .where(and(eq(externalConversations.connectionId, conn.id), eq(externalConversations.externalId, repo)))
-      .limit(1);
-    if (conv) return [conv.kind, repo];
-    const { data } = await (await this.client(conn, repo)).request("GET", `/repos/${repo}`);
-    return [data.private ? "private" : "public", repo];
   }
 
   /** Private repositories: their collaborators are who can read what is posted there. */

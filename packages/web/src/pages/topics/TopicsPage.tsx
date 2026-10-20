@@ -119,7 +119,6 @@ function AllTopics() {
                         <td className="nowrap">
                           {x.channel ? (
                             <>
-                              {x.source === "internal" ? "控制台，已同步到 " : ""}
                               {connectionLabel(x.channel)}
                               {placeLabel(x) ? <div className="small muted">{placeLabel(x)}</div> : null}
                             </>

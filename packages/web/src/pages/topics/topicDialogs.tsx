@@ -1,10 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
-import type { ExternalConversation, PublishableConnection, PublishResult, Topic } from "../../api/types";
-import { CONVERSATION_KIND, PLATFORM_LABEL } from "../../lib/format";
+import type { Topic } from "../../api/types";
 import { useAuth, useDirectory } from "../../lib/session";
-import { useAction, useFeedback, withConfirmation } from "../../ui/feedback";
+import { useAction } from "../../ui/feedback";
 import { Field, FieldGroup, FormModal, MultiPick } from "../../ui/kit";
 
 export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (t: Topic) => void }) {
@@ -131,7 +130,9 @@ export function InviteDialog({
 }) {
   const dir = useDirectory();
   const { run, busy } = useAction();
-  const [type, setType] = useState<"role" | "user">("role");
+  // A Slack, Feishu or GitHub conversation has one role, the one its bot stands for: only people are added.
+  const external = !!topic.channel;
+  const [type, setType] = useState<"role" | "user">(external ? "user" : "role");
   const [id, setId] = useState("");
   const present = new Set((topic.participants ?? []).map((p) => `${p.type}:${p.id}`));
   const roles = dir.roles.filter((r) => r.status === "active" && !present.has(`role:${r.id}`));
@@ -154,6 +155,8 @@ export function InviteDialog({
         <button
           type="button"
           className={type === "role" ? "seg seg-on" : "seg"}
+          disabled={external}
+          title={external ? "外部会话中只有机器人代表的角色工作，不能邀请其他角色" : undefined}
           onClick={() => (setType("role"), setId(""))}
         >
           角色
@@ -187,156 +190,6 @@ export function InviteDialog({
       <p className="small muted">
         新加入者可以阅读这个话题的全部历史，包括加入之前的消息；被移除后将无法再访问这个话题。
       </p>
-    </FormModal>
-  );
-}
-
-const CHANNEL_HINT: Record<string, string> = {
-  slack: "Slack 频道 ID，例如 C0123456。",
-  feishu: "飞书群聊 ID（chat_id，oc_ 开头）。",
-  github: "仓库，写成 owner/repo；发布时会在这个仓库新建一个 issue。",
-};
-
-/**
- * Publish an internal topic to a channel of a chat connection. The server refuses with
- * `audience_expansion` when the channel's audience is wider than the topic's readers; publishing then
- * needs explicit confirmation. Private channels additionally require the publisher to be a verified member.
- */
-export function PublishDialog({
-  topic,
-  onClose,
-  onPublished,
-}: {
-  topic: Topic;
-  onClose: () => void;
-  onPublished?: () => void;
-}) {
-  const { can } = useAuth();
-  const { confirm, toast } = useFeedback();
-  const { run, busy } = useAction();
-  const [connections, setConnections] = useState<PublishableConnection[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [connectionId, setConnectionId] = useState("");
-  const [conversations, setConversations] = useState<ExternalConversation[]>([]);
-  const [channelId, setChannelId] = useState("");
-  const platform = connections?.find((c) => c.id === connectionId)?.platform ?? "";
-
-  useEffect(() => {
-    // Only connections this user holds topic.publish on (no credentials or settings are returned).
-    api
-      .get<PublishableConnection[]>("/api/connections/publishable")
-      .then((rows) => {
-        setConnections(rows);
-        if (rows.length === 1) setConnectionId(rows[0].id);
-      })
-      .catch((e: Error) => setLoadError(e.message));
-  }, []);
-
-  useEffect(() => {
-    setConversations([]);
-    setChannelId("");
-    // Listing known conversations needs connection.manage; everyone else types the channel id.
-    if (!connectionId || !can("connection.manage")) return;
-    api
-      .get<ExternalConversation[]>(`/api/connections/${connectionId}/conversations`)
-      .then((rows) => setConversations(rows.filter((c) => c.kind === "public" || c.kind === "private")))
-      .catch(() => setConversations([]));
-  }, [connectionId, can]);
-
-  const submit = async () => {
-    const out = await run(() =>
-      withConfirmation(
-        confirm,
-        (confirmed) =>
-          api.post<PublishResult>(`/api/topics/${topic.id}/publish`, {
-            connection_id: connectionId,
-            channel_id: channelId.trim(),
-            confirm_expand_audience: confirmed,
-          }),
-        (err) => ({
-          title: "发布会让更多人看到这个话题",
-          danger: true,
-          confirmLabel: "仍然发布",
-          body: (
-            <>
-              <p>
-                频道里的成员比当前能看到这个话题的人更多，原本只有少数人可见的内容会因此对他们可见。发布不会复制已有的历史消息，但之后的交流会同步到频道。
-              </p>
-              {err.detail.channel_kind ? (
-                <p className="small">
-                  频道类型：{CONVERSATION_KIND[String(err.detail.channel_kind)] ?? String(err.detail.channel_kind)}
-                </p>
-              ) : null}
-              {err.detail.channel_audience ? (
-                <p className="small">
-                  频道可见范围：<code className="id">{String(err.detail.channel_audience)}</code>
-                </p>
-              ) : null}
-            </>
-          ),
-        }),
-        ["audience_expansion"],
-      ),
-    );
-    if (out !== undefined) {
-      toast(`已发布到${PLATFORM_LABEL[platform] ?? "外部"}频道，后续在对应 thread 中继续交流`, "ok");
-      onPublished?.();
-      onClose();
-    }
-  };
-
-  return (
-    <FormModal
-      title="发布到外部频道"
-      submitLabel="发布"
-      busy={busy}
-      disabled={!connectionId || !channelId.trim()}
-      onClose={onClose}
-      onSubmit={submit}
-    >
-      <p className="muted">
-        发布后会在所选频道创建一条主消息，话题之后的交流同步到这个
-        thread；已有的历史消息不会被复制。发布前会检查频道可见范围，不会自动公开原本仅少数人可见的内容；发布到私有频道需要你是该频道已验证的成员。
-      </p>
-      {loadError ? (
-        <Field label="通讯接入 ID" hint="无法加载可用接入列表，可直接填写管理员授权给你的接入 ID（conn_…）。">
-          <input className="mono" value={connectionId} onChange={(e) => setConnectionId(e.target.value.trim())} />
-        </Field>
-      ) : (
-        <Field label="通讯接入">
-          <select value={connectionId} onChange={(e) => setConnectionId(e.target.value)}>
-            <option value="">选择接入</option>
-            {(connections ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}（{PLATFORM_LABEL[c.platform] ?? c.platform}）
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-      {connections && !connections.length ? (
-        <p className="small muted">
-          没有你可以发布到的通讯接入（需要管理员授予该接入的「发布话题到外部频道」权限，且接入处于启用状态）。
-        </p>
-      ) : null}
-      <Field
-        label="频道"
-        hint={`${CHANNEL_HINT[platform] ?? "频道或群聊 ID。"}${conversations.length ? "也可以从已同步的会话中选择。" : ""}`}
-      >
-        <input
-          list="publish-channels"
-          value={channelId}
-          onChange={(e) => setChannelId(e.target.value)}
-          placeholder="频道 ID"
-        />
-        <datalist id="publish-channels">
-          {conversations.map((c) => (
-            <option key={c.id} value={c.external_id}>
-              {c.name ?? c.external_id}（{CONVERSATION_KIND[c.kind] ?? c.kind}）
-            </option>
-          ))}
-        </datalist>
-      </Field>
     </FormModal>
   );
 }

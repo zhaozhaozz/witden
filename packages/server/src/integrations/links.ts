@@ -1,6 +1,6 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { connections, externalConversations, externalThreadLinks } from "../db/schema.js";
+import { type Connection, connections, externalConversations, externalThreadLinks } from "../db/schema.js";
 
 export interface ExternalContext {
   connectionId?: string;
@@ -25,6 +25,21 @@ export async function externalContext(db: Db, topicId: string): Promise<External
     conversationKind: conv.kind,
     threadKey: link.threadKey,
   };
+}
+
+/** The role a connection's bot stands for, or null when none is chosen. */
+export const connectionRoleId = (conn: Connection): string | null =>
+  typeof conn.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
+
+/**
+ * A Slack, Feishu or GitHub conversation has one role at work: the one its connection's bot stands for. Returns
+ * that role for a topic linked outside (null when the bot has none), or undefined for a console topic.
+ */
+export async function externalRoleId(db: Db, topicId: string): Promise<string | null | undefined> {
+  const ext = await externalContext(db, topicId);
+  if (!ext.connectionId) return undefined;
+  const [conn] = await db.select().from(connections).where(eq(connections.id, ext.connectionId)).limit(1);
+  return conn ? connectionRoleId(conn) : null;
 }
 
 /** Where a conversation lives outside the console, as the console shows it. */
@@ -81,7 +96,7 @@ export async function channelsOf(db: Db, topicIds: string[]): Promise<Map<string
       thread_key: link.threadKey,
       thread_kind: typeof meta.kind === "string" ? meta.kind : null,
       url: typeof meta.url === "string" ? meta.url : null,
-      role_id: typeof conn.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null,
+      role_id: connectionRoleId(conn),
     });
   }
   return out;

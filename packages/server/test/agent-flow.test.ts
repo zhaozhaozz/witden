@@ -158,7 +158,7 @@ describe("permissions and isolation", () => {
       offered = (tools ?? []).map((t) => t.name);
       return reply("ok");
     };
-    await w.post(w.alice, w.ids.topic, "@test hi");
+    await w.post(w.alice, other.id, "@test hi");
     await w.drain();
     expect(offered).toContain("send_message");
     expect(offered).not.toContain("read_topic");

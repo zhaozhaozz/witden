@@ -27,7 +27,6 @@ export interface Adapter {
   platform: string;
   test(db: Db, conn: Connection): Promise<Record<string, unknown>>;
   send(db: Db, conn: Connection, out: OutboundMessage, msg: Message): Promise<string | null>;
-  postRoot(conn: Connection, channel: string, text: string): Promise<string>;
   parse(db: Db, conn: Connection, payload: any): Promise<InboundAction[]>;
   conversationKind?(db: Db, conn: Connection, channel: string, hint: string | null): Promise<[string, string | null]>;
   syncMembers?(db: Db, conn: Connection, conv: ExternalConversation, force?: boolean): Promise<void>;
@@ -39,14 +38,13 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
   slack: {
     status: "supported",
     account_types: [
-      "Slack app bot user (one bot can front many roles)",
+      "Slack app bot user, standing for one role",
       "Socket Mode with an app-level token (no public address), or events sent to a public URL",
     ],
     conversations: ["public channel", "private channel", "direct message", "group DM"],
     threads: "a thread (root message + replies) maps to one topic",
-    mentions: "@bot plus @role-handle or role:handle in the text to choose a role",
+    mentions: "@bot; the bot's role handles everything addressed to it",
     files: "incoming files are downloaded (size-limited); roles can share files back as links",
-    role_identity: "custom username/icon per role with chat:write.customize, otherwise a name prefix",
     edits_deletes: "edits update the internal message; deletes remove it and derived memories",
     limits: [
       "bots only see conversations they were invited to",
@@ -61,10 +59,9 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     ],
     conversations: ["group chat", "p2p chat with the bot"],
     threads: "reply threads (root_id) map to topics; p2p chats map to one topic",
-    mentions: "@bot plus @role-handle in text",
+    mentions: "@bot; the bot's role handles everything addressed to it",
     files:
       "images and files both ways: roles' attachments uploaded (im:resource; images in the message, up to 10 MB, files up to 30 MB, others as links), incoming ones downloaded (im:message:readonly, up to 20 MB)",
-    role_identity: "another role's name as the message title",
     edits_deletes: "not synchronised",
     limits: [
       "events URL: event encryption must be disabled",
@@ -76,9 +73,8 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     account_types: ["GitHub App (replies as <app>[bot])", "a bot account (user or machine account) with a token"],
     conversations: ["public repository", "private repository"],
     threads: "an issue or pull request maps to one topic",
-    mentions: "@app-name (or @bot-login) in an issue, pull request or comment; role:handle to choose a role",
+    mentions: "@app-name (or @bot-login) in an issue, pull request or comment; the app's role handles it",
     files: "not synchronised (images in comments stay links)",
-    role_identity: "the role's name at the top of each comment",
     edits_deletes: "comment edits update the internal message; deletes remove it and derived memories",
     limits: [
       "inline review comments on pull requests are not synchronised yet",
@@ -92,7 +88,6 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     threads: "not available",
     mentions: "not available",
     files: "not available",
-    role_identity: "not available",
     edits_deletes: "not available",
     limits: ["personal WeChat is not supported: it has no official bot API"],
   },

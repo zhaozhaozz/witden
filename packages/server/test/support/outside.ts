@@ -2,9 +2,11 @@
  * People outside the console: a Slack workspace whose (private) channel mirrors a topic, and a knowledge space
  * a role may consult.
  */
+
+import { and, eq, ne } from "drizzle-orm";
 import { db } from "../../src/db/client.js";
 import { newId } from "../../src/db/ids.js";
-import { connections, externalConversations, externalThreadLinks } from "../../src/db/schema.js";
+import { connections, externalConversations, externalThreadLinks, topicParticipants } from "../../src/db/schema.js";
 import type { World } from "./world.js";
 
 export interface Channel {
@@ -13,9 +15,8 @@ export interface Channel {
 }
 
 /**
- * Mirror ``topicId`` into a private Slack channel whose members are ``members`` (Slack user ids). The
- * connection's bot stands for @dev (external conversations refuse work without a role); the console still
- * brings in any role.
+ * Make ``topicId`` the topic of a private Slack channel whose members are ``members`` (Slack user ids). The
+ * connection's bot stands for @dev, the only role working there: the topic's other roles leave it.
  */
 export async function linkChannel(w: World, topicId: string, members: string[], name = "partners"): Promise<Channel> {
   const connectionId = newId("conn");
@@ -43,6 +44,16 @@ export async function linkChannel(w: World, topicId: string, members: string[], 
   await db()
     .insert(externalThreadLinks)
     .values({ id: newId("lnk"), connectionId, conversationId: conv.id, threadKey: "1.1", topicId });
+  await db()
+    .update(topicParticipants)
+    .set({ removedAt: new Date() })
+    .where(
+      and(
+        eq(topicParticipants.topicId, topicId),
+        eq(topicParticipants.participantType, "role"),
+        ne(topicParticipants.participantId, w.ids.dev),
+      ),
+    );
   return { connectionId, conversationId: conv.id };
 }
 

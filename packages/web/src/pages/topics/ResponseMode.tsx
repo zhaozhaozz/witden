@@ -13,7 +13,8 @@ const MODES = ["mention", "auto"] as const;
  */
 export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange: (t: Topic) => void }) {
   const { run, busy } = useAction();
-  if (topic.kind !== "group") return null;
+  // A Slack, Feishu or GitHub conversation has one role, answering when the bot is addressed: nothing to choose.
+  if (topic.kind !== "group" || topic.channel) return null;
   const editable = topic.status === "active";
   const pick = async (mode: (typeof MODES)[number]) => {
     if (!editable || busy || mode === topic.response_mode) return;
@@ -49,7 +50,7 @@ export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange
 /** Auto mode with several roles needs the dispatcher model; say so when it is missing. */
 export function DispatcherWarning({ topic }: { topic: Topic }) {
   const roles = (topic.participants ?? []).filter((p) => p.type === "role" && p.status !== "disabled").length;
-  const needed = topic.kind === "group" && topic.response_mode === "auto" && roles > 1;
+  const needed = topic.kind === "group" && !topic.channel && topic.response_mode === "auto" && roles > 1;
   const res = useResource(
     () => api.get<{ usable: boolean }>("/api/settings/dispatcher"),
     [topic.id, topic.response_mode, roles],

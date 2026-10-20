@@ -267,6 +267,13 @@
       "when": 1792419571242,
       "tag": "0037_model_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1792491762407,
+      "tag": "0038_external_one_role",
+      "breakpoints": true
     }
   ]
 }

@@ -253,16 +253,20 @@ describe("system administrator role", () => {
     expect(bot.status).toBe(400);
     expect(bot.raw).toContain("system administrator");
 
-    // not in a topic shared with a Slack channel
-    await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
+    // not in a Slack channel's topic: only the bot's role works there
+    const invited = await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
       token: w.alice,
       json: { type: "role", id: adminId },
     });
-    w.scripts.admin = () => reply("hello");
+    expect(invited.status).toBe(400);
+    let ran = false;
+    w.scripts.admin = () => {
+      ran = true;
+      return reply("hello");
+    };
     await w.post(w.alice, w.ids.topic, "@admin hello");
     await w.drain();
-    const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
-    expect(texts.some((t: string) => t.includes("works only in the witden console"))).toBe(true);
+    expect(ran).toBe(false);
 
     // other roles cannot hand it work
     w.scripts.dev = (_m, turn) =>

@@ -821,3 +821,60 @@ describe("0034_software_lists", () => {
     await db.close();
   });
 });
+
+describe("0038_external_one_role", () => {
+  it("unpublishes internal topics; a Slack, Feishu or GitHub conversation keeps only its bot's role", async () => {
+    const db = new PGlite();
+    try {
+      for (const file of fs
+        .readdirSync(DIR)
+        .filter((f) => f.endsWith(".sql") && f < "0038")
+        .sort())
+        await apply(db, file.replace(/\.sql$/, ""));
+      await db.exec(`
+        insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev'), ('role_test', 'Test', 'test');
+        insert into connections (id, platform, name, settings) values
+          ('conn_s', 'slack', 'acme', '{"role_id": "role_dev", "custom_identity": true}');
+        insert into external_conversations (id, connection_id, external_id, kind, name) values
+          ('conv_1', 'conn_s', 'C1', 'public', 'general');
+        insert into topics (id, title, source, response_mode) values
+          ('top_ext', '#general', 'slack', 'auto'), ('top_pub', 'Published', 'internal', 'auto');
+        insert into external_thread_links (id, connection_id, conversation_id, thread_key, topic_id) values
+          ('lnk_ext', 'conn_s', 'conv_1', '__channel__', 'top_ext'), ('lnk_pub', 'conn_s', 'conv_1', '1.1', 'top_pub');
+        insert into topic_participants (id, topic_id, participant_type, participant_id) values
+          ('tp_1', 'top_ext', 'role', 'role_dev'), ('tp_2', 'top_ext', 'role', 'role_test'),
+          ('tp_3', 'top_pub', 'role', 'role_test');
+        insert into topic_triggers (id, topic_id, name, kind, role_id, created_by) values
+          ('trg_dev', 'top_ext', 'dev', 'webhook', 'role_dev', 'usr_1'),
+          ('trg_test', 'top_ext', 'test', 'webhook', 'role_test', 'usr_1');
+        insert into messages (id, topic_id, author_type, author_id, content) values
+          ('msg_ext', 'top_ext', 'role', 'role_dev', 'hi'), ('msg_pub', 'top_pub', 'role', 'role_test', 'hi');
+        insert into outbound_messages (id, connection_id, message_id, conversation_external_id, status, idempotency_key)
+          values ('out_ext', 'conn_s', 'msg_ext', 'C1', 'pending', 'k1'), ('out_pub', 'conn_s', 'msg_pub', 'C1', 'pending', 'k2');
+      `);
+      await apply(db, "0038_external_one_role");
+      const rows = async (sql: string) => (await db.query(sql)).rows;
+      // the published topic is a console topic again, and nothing more of it goes to the channel
+      expect(await rows("select topic_id from external_thread_links")).toEqual([{ topic_id: "top_ext" }]);
+      expect(await rows("select id from outbound_messages")).toEqual([{ id: "out_ext" }]);
+      expect(await rows("select participant_id from topic_participants where topic_id = 'top_pub'")).toEqual([
+        { participant_id: "role_test" },
+      ]);
+      // the Slack conversation keeps its bot's role and only that one
+      expect(
+        await rows("select participant_id from topic_participants where topic_id = 'top_ext' and removed_at is null"),
+      ).toEqual([{ participant_id: "role_dev" }]);
+      expect(await rows("select id, enabled from topic_triggers order by id")).toEqual([
+        { id: "trg_dev", enabled: true },
+        { id: "trg_test", enabled: false },
+      ]);
+      expect(await rows("select id, response_mode from topics order by id")).toEqual([
+        { id: "top_ext", response_mode: "mention" },
+        { id: "top_pub", response_mode: "auto" },
+      ]);
+      expect(await rows("select settings from connections")).toEqual([{ settings: { role_id: "role_dev" } }]);
+    } finally {
+      await db.close();
+    }
+  });
+});
