@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import { type LiveHandler, useLiveEvents } from "../../api/events";
 import type { Approval, Artifact, Message, PostMessageResult, Topic } from "../../api/types";
@@ -36,7 +37,9 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [version, setVersion] = useState(0);
-  const [panel, setPanel] = useState(() => localStorage.getItem(PANEL_KEY) !== "0");
+  // A link naming a side-panel tab (?panel=…) opens the panel even if it was closed.
+  const [params] = useSearchParams();
+  const [panel, setPanel] = useState(() => !!params.get("panel") || localStorage.getItem(PANEL_KEY) !== "0");
   // The side panel's virtual computer laid over the whole topic; the conversation then floats.
   const [computerMax, setComputerMax] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);

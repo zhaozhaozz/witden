@@ -221,11 +221,11 @@ describe("linked topics, shared sources and task iterations", () => {
     const source = (
       await w.api("POST", "/api/webhook-sources", {
         token: w.alice,
-        json: { name: "Bot platform", secret: SECRET, allowed_role_ids: [w.ids.dev] },
+        json: { name: "Bot platform", allowed_role_ids: [w.ids.dev] },
       })
     ).body;
     expect(source.token_hash).toBeUndefined();
-    expect(JSON.stringify(source)).not.toContain(SECRET);
+    expect(source.secret).toMatch(/^whsec_/);
     for (const [topicId, filter] of [
       [w.ids.topic, 'return request.body.action === "opened";'],
       [other, "return false;"],
@@ -236,8 +236,8 @@ describe("linked topics, shared sources and task iterations", () => {
       });
       expect(r.status, r.raw).toBe(200);
     }
-    const a = await acceptSourceWebhook(source.id, SECRET, rawRequest, "event-1");
-    const b = await acceptSourceWebhook(source.id, SECRET, rawRequest, "event-1");
+    const a = await acceptSourceWebhook(source.id, source.secret, rawRequest, "event-1");
+    const b = await acceptSourceWebhook(source.id, source.secret, rawRequest, "event-1");
     expect(b).toMatchObject({ id: a.id, duplicate: true });
     await processTriggerEvents();
     const receipts = await db().select().from(webhookReceipts);
@@ -249,14 +249,12 @@ describe("linked topics, shared sources and task iterations", () => {
   });
 
   it("stops queued shared-source deliveries after the source is disabled", async () => {
-    const source = (
-      await w.api("POST", "/api/webhook-sources", { token: w.alice, json: { name: "Source", secret: SECRET } })
-    ).body;
+    const source = (await w.api("POST", "/api/webhook-sources", { token: w.alice, json: { name: "Source" } })).body;
     await w.api("POST", `/api/topics/${w.ids.topic}/triggers`, {
       token: w.alice,
       json: { name: "Rule", kind: "webhook", role_id: w.ids.dev, source_id: source.id },
     });
-    await acceptSourceWebhook(source.id, SECRET, rawRequest, "disabled");
+    await acceptSourceWebhook(source.id, source.secret, rawRequest, "disabled");
     await w.api("PATCH", `/api/webhook-sources/${source.id}`, { token: w.alice, json: { enabled: false } });
     await processTriggerEvents();
     const [event] = await db().select().from(triggerEvents);
@@ -273,7 +271,7 @@ describe("linked topics, shared sources and task iterations", () => {
     const source = (
       await w.api("POST", "/api/webhook-sources", {
         token: w.alice,
-        json: { name: "Bot platform", secret: SECRET, allowed_role_ids: [w.ids.dev] },
+        json: { name: "Bot platform", allowed_role_ids: [w.ids.dev] },
       })
     ).body;
     await w.api("POST", `/api/topics/${w.ids.topic}/triggers`, {
@@ -286,10 +284,10 @@ describe("linked topics, shared sources and task iterations", () => {
         payload: '{"action":"opened"}',
       });
     expect((await post("wrong-secret-wrong-secret-wrong")).status).toBe(401);
-    const first = await post(SECRET);
+    const first = await post(source.secret);
     expect(first.status, first.raw).toBe(202);
     expect(Object.keys(first.body).sort()).toEqual(["duplicate", "id"]);
-    const again = await post(SECRET);
+    const again = await post(source.secret);
     expect(again.status).toBe(200);
     expect(again.body).toEqual({ id: first.body.id, duplicate: true });
     // clearing the topic's history erases the receipt too: the same key is taken again
@@ -300,33 +298,7 @@ describe("linked topics, shared sources and task iterations", () => {
     });
     expect(cleared.status, cleared.raw).toBe(200);
     expect(await db().select().from(webhookReceipts)).toEqual([]);
-    expect((await post(SECRET)).status).toBe(202);
-  });
-
-  it("does not let a role replace a trigger's own secret with a shared source", async () => {
-    const source = (
-      await w.api("POST", "/api/webhook-sources", {
-        token: w.alice,
-        json: { name: "Bot platform", secret: SECRET, allowed_role_ids: [w.ids.dev] },
-      })
-    ).body;
-    const own = (
-      await w.api("POST", `/api/topics/${w.ids.topic}/triggers`, {
-        token: w.alice,
-        json: { name: "Own", kind: "webhook", role_id: w.ids.dev, secret: "an-own-secret-long-enough-for-this" },
-      })
-    ).body;
-    const [dev] = await db().select().from(roles).where(eq(roles.id, w.ids.dev));
-    await db()
-      .update(roles)
-      .set({ allowedTools: [...dev.allowedTools, "automation"] })
-      .where(eq(roles.id, dev.id));
-    const task = await sender();
-    await expect(
-      transaction((tx) =>
-        manageAutomation(tx, task, { action: "update", id: own.id, config: { source_id: source.id } }),
-      ),
-    ).rejects.toThrow(/own secret/);
+    expect((await post(source.secret)).status).toBe(202);
   });
 
   it("continues a completed task in its original transcript and archives both results", async () => {
@@ -431,7 +403,7 @@ describe("linked topics, shared sources and task iterations", () => {
     const source = (
       await w.api("POST", "/api/webhook-sources", {
         token: w.alice,
-        json: { name: "Granted source", secret: SECRET, allowed_role_ids: [w.ids.dev] },
+        json: { name: "Granted source", allowed_role_ids: [w.ids.dev] },
       })
     ).body;
     const result: any = await transaction((tx) =>
@@ -443,7 +415,9 @@ describe("linked topics, shared sources and task iterations", () => {
       }),
     );
     expect(result.topic_id).toBe(other);
-    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain(source.secret);
+    const offered = await transaction((tx) => manageAutomation(tx, task, { action: "sources" }));
+    expect(offered).toEqual([{ id: source.id, name: "Granted source", enabled: true }]);
     expect(result.token_hash).toBeUndefined();
     expect((await db().select().from(topicTriggers).where(eq(topicTriggers.id, result.id)))[0].roleId).toBe(w.ids.dev);
     const paused: any = await transaction((tx) =>
@@ -451,7 +425,9 @@ describe("linked topics, shared sources and task iterations", () => {
     );
     expect(paused.enabled).toBe(false);
     await expect(
-      transaction((tx) => manageAutomation(tx, task, { action: "update", id: result.id, config: { secret: SECRET } })),
+      transaction((tx) =>
+        manageAutomation(tx, task, { action: "update", id: result.id, config: { secret: source.secret } }),
+      ),
     ).rejects.toThrow(/configuration/);
     await expect(
       transaction((tx) =>

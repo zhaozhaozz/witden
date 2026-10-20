@@ -177,7 +177,11 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       },
       { method: "DELETE", path: "/api/topics/:id/links/:link_id" },
       { method: "GET", path: "/api/automations", note: "optional role_id" },
-      { method: "GET", path: "/api/webhook-sources", note: "metadata only; humans enter source credentials" },
+      {
+        method: "GET",
+        path: "/api/webhook-sources",
+        note: "metadata only; a person adds sources and copies their generated secrets in the console",
+      },
       { method: "GET", path: "/api/topics/:id/triggers" },
       {
         method: "POST",

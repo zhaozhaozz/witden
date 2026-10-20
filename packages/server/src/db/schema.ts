@@ -341,7 +341,6 @@ export const topicTriggers = pgTable(
     enabled: boolean("enabled").notNull().default(true),
     roleId: text("role_id").notNull(),
     instructions: text("instructions").notNull().default(""),
-    tokenHash: text("token_hash"),
     filterCode: text("filter_code").notNull().default(""),
     sourceId: text("source_id").references(() => webhookSources.id, { onDelete: "restrict" }),
     cron: text("cron"),
@@ -943,7 +942,10 @@ export const topicLinks = pgTable(
   (t) => [uniqueIndex("ux_topic_link_pair").on(t.topicAId, t.topicBId), index("ix_topic_link_b").on(t.topicBId)],
 );
 
-/** One authenticated inbound source may feed several independent rules. No result callback is stored. */
+/**
+ * Every webhook trigger receives through one of these; one source may feed several independent rules. Only
+ * the hash of its server-generated secret is kept. No result callback is stored.
+ */
 export const webhookSources = pgTable("webhook_sources", {
   id: id(),
   name: text("name").notNull(),

@@ -1,7 +1,6 @@
-import { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import { copyToClipboard } from "../lib/clipboard";
 import { fmtTime } from "../lib/format";
 import { useResource } from "../lib/hooks";
 import { useDirectory } from "../lib/session";
@@ -16,16 +15,43 @@ export interface WebhookSource {
   allowed_role_ids: string[];
   rules: { id: string; topic_id: string; name: string; enabled: boolean }[];
 }
-const secretValue = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(32)), (n) => n.toString(16).padStart(2, "0")).join("");
 
+/** Where a topic's 触发器 tab sends people to add a source; the source's card leads back to that topic. */
+export const newSourceLink = (topicId: string) => `/connections?webhook_source=new&from_topic=${topicId}`;
+export const sourceLink = (sourceId: string) => `/connections?webhook_source=${sourceId}`;
+
+/**
+ * Every webhook trigger receives through one of these sources. The server generates each source's secret and
+ * keeps only its hash: the secret is on the card, ready to copy, right after it is created or regenerated, and
+ * cannot be shown again once this page is left.
+ */
 export function WebhookSourcesPanel() {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<WebhookSource | "new" | null>(null);
+  const [params, setParams] = useSearchParams();
+  const fromTopic = params.get("from_topic");
+  // ?webhook_source=new opens the add form, ?webhook_source=<id> points at that source's card.
+  const [focus] = useState(() => params.get("webhook_source"));
+  const [open, setOpen] = useState(!!focus);
+  const [editing, setEditing] = useState<WebhookSource | "new" | null>(focus === "new" ? "new" : null);
   const [history, setHistory] = useState<WebhookSource | null>(null);
+  const [highlight, setHighlight] = useState(focus === "new" ? null : focus);
+  const [created, setCreated] = useState<string | null>(null);
+  // Secrets generated while on this page, by source id. The API never returns them again.
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const sources = useResource(() => api.get<WebhookSource[]>("/api/webhook-sources"), [], open);
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
+  const showSecret = (id: string, secret: string) => setSecrets((prev) => ({ ...prev, [id]: secret }));
+
+  useEffect(() => {
+    if (!focus) return;
+    params.delete("webhook_source");
+    setParams(params, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (highlight && sources.data) document.getElementById(`whs-${highlight}`)?.scrollIntoView({ block: "center" });
+  }, [highlight, sources.data]);
+
   return (
     <Section
       title="Webhook 来源"
@@ -36,10 +62,17 @@ export function WebhookSourcesPanel() {
       }
     >
       <p className="small muted">
-        一个来源可以供多个话题的触发器使用。只接收事件，不回传工作结果；需要角色处理时，把触发器建在内部话题。
+        所有 Webhook
+        触发器都通过来源接收：来源提供地址和密钥，在话题的「触发器」中选择来源、指定处理角色。一个来源可以供多个话题的触发器使用，各自过滤和处理；来源只接收事件，不回传工作结果。
       </p>
       {open ? (
         <>
+          {fromTopic ? (
+            <p className="notice">
+              添加来源并把地址和密钥配置到发送方后，点来源卡片上的「回到话题添加触发器」继续。{" "}
+              <Link to={`/topics/${fromTopic}?panel=triggers`}>直接回到话题</Link>
+            </p>
+          ) : null}
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
             添加来源
           </button>
@@ -48,22 +81,57 @@ export function WebhookSourcesPanel() {
               rows.length ? (
                 <ul className="task-cards">
                   {rows.map((source) => (
-                    <li key={source.id} className="task-card">
+                    <li
+                      key={source.id}
+                      id={`whs-${source.id}`}
+                      className={`task-card${source.id === highlight ? " task-card-focus" : ""}`}
+                    >
                       <div className="task-card-head">
                         <strong>{source.name}</strong>
                         <Tag tone={source.enabled ? "ok" : "off"}>{source.enabled ? "启用" : "停用"}</Tag>
                       </div>
-                      <CopyText text={source.webhook_url} />
+                      {source.id === created ? (
+                        <p className="notice" role="status">
+                          来源已添加。把地址和密钥配置到发送方，密钥放在 Authorization: Bearer 或 X-Webhook-Token
+                          请求头中。
+                        </p>
+                      ) : null}
+                      <dl className="kv kv-compact">
+                        <div className="kv-row">
+                          <dt>地址</dt>
+                          <dd>
+                            <CopyText text={source.webhook_url} />
+                          </dd>
+                        </div>
+                        <div className="kv-row">
+                          <dt>密钥</dt>
+                          <dd>
+                            <SourceSecret
+                              source={source}
+                              secret={secrets[source.id]}
+                              onSecret={(secret) => showSecret(source.id, secret)}
+                            />
+                          </dd>
+                        </div>
+                      </dl>
                       <p className="small muted">
                         {source.rules.length} 个触发器使用这个来源；按来源去重，各触发器分别处理。
                       </p>
                       {source.rules.map((r) => (
                         <p className="small" key={r.id}>
-                          <Link to={`/topics/${r.topic_id}`}>{r.name}</Link>
+                          <Link to={`/topics/${r.topic_id}?panel=triggers`}>{r.name}</Link>
                           {r.enabled ? "" : "（停用）"}
                         </p>
                       ))}
                       <div className="btn-row">
+                        {fromTopic ? (
+                          <Link
+                            className="btn btn-xs btn-primary"
+                            to={`/topics/${fromTopic}?panel=triggers&webhook_source=${source.id}`}
+                          >
+                            回到话题添加触发器
+                          </Link>
+                        ) : null}
                         <button type="button" className="btn btn-xs" onClick={() => setEditing(source)}>
                           编辑
                         </button>
@@ -79,7 +147,7 @@ export function WebhookSourcesPanel() {
                               source.enabled &&
                               source.rules.length &&
                               !(await confirm({
-                                title: "停用共享来源？",
+                                title: "停用来源？",
                                 body: <p>使用这个来源的触发器都不再接收新事件。</p>,
                                 confirmLabel: "停用",
                                 cancelLabel: "返回",
@@ -100,6 +168,7 @@ export function WebhookSourcesPanel() {
                           type="button"
                           className="btn btn-xs btn-danger-ghost"
                           disabled={busy || source.rules.length > 0}
+                          title={source.rules.length ? "先删除使用这个来源的触发器" : undefined}
                           onClick={async () => {
                             if (
                               !(await confirm({
@@ -120,7 +189,10 @@ export function WebhookSourcesPanel() {
                   ))}
                 </ul>
               ) : (
-                <Empty title="还没有共享来源" hint="旧话题 Webhook 仍可使用；创建共享来源后，在话题触发器中选择它。" />
+                <Empty
+                  title="还没有 Webhook 来源"
+                  hint="添加来源后，把它的地址和密钥配置到发送方，再在话题的「触发器」中选择它。"
+                />
               )
             }
           </Loaded>
@@ -130,14 +202,69 @@ export function WebhookSourcesPanel() {
         <SourceEditor
           source={editing === "new" ? undefined : editing}
           onClose={() => setEditing(null)}
-          onSaved={() => {
+          onSaved={(saved) => {
             setEditing(null);
+            if (saved.secret) {
+              // A new source: show its card with the address and the secret ready to copy.
+              showSecret(saved.id, saved.secret);
+              setCreated(saved.id);
+              setHighlight(saved.id);
+            }
             void sources.reload();
           }}
         />
       ) : null}
       {history ? <SourceHistory source={history} onClose={() => setHistory(null)} /> : null}
     </Section>
+  );
+}
+
+/** A secret generated on this page is shown until the page is left; regenerating invalidates the old one. */
+function SourceSecret({
+  source,
+  secret,
+  onSecret,
+}: {
+  source: WebhookSource;
+  secret?: string;
+  onSecret: (secret: string) => void;
+}) {
+  const { run, busy } = useAction();
+  const { confirm } = useFeedback();
+  return (
+    <div>
+      <span className="inline-list">
+        {secret ? <CopyText text={secret} /> : <span className="muted">已设置（不可查看）</span>}
+        <button
+          type="button"
+          className="btn btn-xs"
+          disabled={busy}
+          onClick={async () => {
+            if (
+              !(await confirm({
+                title: "重新生成密钥？",
+                body: <p>旧密钥立即失效，所有往这个来源发送的一方都要换成新密钥。</p>,
+                confirmLabel: "重新生成",
+                cancelLabel: "返回",
+              }))
+            )
+              return;
+            const r = await run(
+              () => api.post<{ secret: string }>(`/api/webhook-sources/${source.id}/secret`),
+              "已生成新密钥",
+            );
+            if (r) onSecret(r.secret);
+          }}
+        >
+          重新生成
+        </button>
+      </span>
+      {secret ? (
+        <p className="small muted">
+          密钥只在这里显示，离开本页后无法再查看；请现在复制并保存到发送方，遗失时重新生成。
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -148,114 +275,37 @@ function SourceEditor({
 }: {
   source?: WebhookSource;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (saved: WebhookSource & { secret?: string }) => void;
 }) {
   const [name, setName] = useState(source?.name ?? "");
-  const [secret, setSecret] = useState(source ? "" : secretValue);
-  const [saved, setSaved] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
-  const [manualCopy, setManualCopy] = useState(false);
-  const secretInput = useRef<HTMLInputElement>(null);
   const [roleIds, setRoleIds] = useState(source?.allowed_role_ids ?? []);
   const dir = useDirectory();
   const { run, busy } = useAction();
-  const { toast } = useFeedback();
   return (
     <FormModal
       title={source ? "编辑 Webhook 来源" : "添加 Webhook 来源"}
       onClose={onClose}
       busy={busy}
-      disabled={!name.trim() || (!source && !secret) || (!!secret && (secret.length < 24 || !saved))}
-      submitLabel="保存来源"
+      disabled={!name.trim()}
+      submitLabel={source ? "保存来源" : "添加来源"}
       onSubmit={async () => {
-        const payload = { name, allowed_role_ids: roleIds, ...(secret ? { secret } : {}) };
-        if (
-          await run(
-            () =>
-              source
-                ? api.patch(`/api/webhook-sources/${source.id}`, payload)
-                : api.post("/api/webhook-sources", payload),
-            "来源已保存",
-          )
-        )
-          onSaved();
+        const payload = { name, allowed_role_ids: roleIds };
+        const saved = await run(
+          () =>
+            source
+              ? api.patch<WebhookSource>(`/api/webhook-sources/${source.id}`, payload)
+              : api.post<WebhookSource & { secret: string }>("/api/webhook-sources", payload),
+          source ? "来源已保存" : "来源已添加",
+        );
+        if (saved) onSaved(saved);
       }}
     >
-      <Field label="来源名称">
+      <Field label="来源名称" hint="例如发送事件的系统：GitHub Actions、监控告警。">
         <input value={name} maxLength={120} onChange={(e) => setName(e.target.value)} autoFocus />
       </Field>
-      <Field
-        label={source ? "更换密钥（留空保留）" : "密钥"}
-        hint="服务端只保存哈希。保存后无法读回；发送方使用 Authorization: Bearer 或 X-Webhook-Token。"
-      >
-        <input
-          ref={secretInput}
-          type={showSecret ? "text" : "password"}
-          autoComplete="new-password"
-          value={secret}
-          maxLength={256}
-          onChange={(e) => {
-            setSecret(e.target.value);
-            setSaved(false);
-            setManualCopy(false);
-          }}
-        />
-      </Field>
-      <div className="btn-row">
-        <button
-          type="button"
-          className="btn btn-xs"
-          onClick={() => {
-            setSecret(secretValue());
-            setSaved(false);
-            setManualCopy(false);
-          }}
-        >
-          生成新密钥
-        </button>
-        <button
-          type="button"
-          className="btn btn-xs"
-          disabled={!secret}
-          onClick={async () => {
-            const copied = await copyToClipboard(secret);
-            // The secret may have changed while the browser was asking for clipboard access.
-            if (secretInput.current?.value !== secret) return;
-            if (copied) {
-              setSaved(true);
-              setManualCopy(false);
-              toast("密钥已复制，请保存到发送方", "ok");
-            } else {
-              // As in the trigger editor: show it, select it, and let the person confirm it is saved.
-              setSaved(false);
-              setShowSecret(true);
-              setManualCopy(true);
-              requestAnimationFrame(() => {
-                if (secretInput.current?.value === secret) {
-                  secretInput.current.focus();
-                  secretInput.current.select();
-                }
-              });
-            }
-          }}
-        >
-          复制密钥
-        </button>
-        <button type="button" className="btn btn-xs" onClick={() => setShowSecret((v) => !v)}>
-          {showSecret ? "隐藏" : "显示"}
-        </button>
-      </div>
-      {manualCopy ? (
-        <p className="notice" role="status">
-          浏览器未允许自动复制，已显示密钥。请手动复制上方密钥，保存后勾选「已妥善保存密钥」。
-        </p>
-      ) : null}
-      {secret ? (
-        <label className="check">
-          <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
-          已妥善保存密钥
-        </label>
-      ) : null}
+      {source ? null : (
+        <p className="small muted">密钥由系统生成。添加后，地址和密钥显示在来源卡片上，可以直接复制。</p>
+      )}
       <Field
         label="允许自主订阅的角色"
         hint="角色还需要“自动化管理”权限，才能自己新建使用这个来源的触发器；它们拿不到密钥。管理员在控制台配置触发器时不受这个限制。"

@@ -6,14 +6,7 @@ import { enqueue } from "../agent/conversation.js";
 import { authorize, saveMessage } from "../agent/dispatch.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import {
-  type TopicTrigger,
-  type TriggerEvent,
-  type TriggerRequest,
-  topicTriggers,
-  triggerEvents,
-  users,
-} from "../db/schema.js";
+import { type TopicTrigger, type TriggerEvent, topicTriggers, triggerEvents, users } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
 import { hashToken } from "../security/crypto.js";
 import { isConsoleUser } from "../security/permissions.js";
@@ -46,10 +39,11 @@ export async function validateTriggerRole(db: Db, topicId: string, roleId: strin
   if (role.systemAdmin) throw new BadRequest("系统管理员角色只接受人的请求，不能作为自动触发的处理角色");
 }
 
-export function verifyTriggerToken(trigger: { tokenHash: string | null } | undefined, token: string) {
-  const expected = Buffer.from(trigger?.tokenHash ?? "0".repeat(64), "hex");
+/** Constant-time check of a webhook source's secret; unknown sources fail the same way as wrong secrets. */
+export function verifySourceToken(source: { tokenHash: string } | undefined, token: string) {
+  const expected = Buffer.from(source?.tokenHash ?? "0".repeat(64), "hex");
   const actual = Buffer.from(hashToken(token), "hex");
-  if (!token || expected.length !== actual.length || !timingSafeEqual(expected, actual) || !trigger)
+  if (!token || expected.length !== actual.length || !timingSafeEqual(expected, actual) || !source)
     throw new Unauthorized("webhook 凭据无效");
 }
 
@@ -61,41 +55,6 @@ function snapshot(trigger: TopicTrigger) {
     createdBy: trigger.createdBy,
     sourceId: trigger.sourceId,
   };
-}
-
-export async function acceptWebhook(id: string, token: string, request: TriggerRequest, eventKey: string | null) {
-  return transaction(async (db) => {
-    const [trigger] = await db.select().from(topicTriggers).where(eq(topicTriggers.id, id)).for("update");
-    verifyTriggerToken(trigger, token);
-    if (trigger.kind !== "webhook") throw new NotFound("webhook 不存在");
-    if (!trigger.enabled) throw new BadRequest("触发器已停用");
-    const topic = await getTopic(db, trigger.topicId);
-    if (topic.status !== "active") throw new BadRequest("话题已归档");
-    if (eventKey && eventKey.length > 200) throw new BadRequest("Idempotency-Key 不能超过 200 个字符");
-    const [event] = await db
-      .insert(triggerEvents)
-      .values({
-        id: newId("tev"),
-        topicId: trigger.topicId,
-        triggerId: trigger.id,
-        triggerName: trigger.name,
-        kind: "webhook",
-        eventKey,
-        config: snapshot(trigger),
-        request,
-      })
-      .onConflictDoNothing()
-      .returning();
-    if (!event) {
-      const [existing] = await db
-        .select()
-        .from(triggerEvents)
-        .where(and(eq(triggerEvents.triggerId, trigger.id), eq(triggerEvents.eventKey, eventKey!)));
-      return { id: existing.id, duplicate: true };
-    }
-    await changed(db, event);
-    return { id: event.id, duplicate: false };
-  });
 }
 
 /** Missed schedules coalesce into one receipt; the next instant is always later than this sweep. */

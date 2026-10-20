@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import type { AgentSession, Approval, Artifact, Task, Topic } from "../../api/types";
 import { fmtBytes, fmtRelative, fmtTime, fmtTokens, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
@@ -55,7 +55,9 @@ export function TopicSidePanel({
 }) {
   // A DM is always you and one role: its tab shows the role instead of a participant list.
   const dm = topic.kind === "dm";
-  const [tab, setTab] = useState("tasks");
+  // A link may name the tab to open, e.g. ?panel=triggers when coming back from adding a webhook source.
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(() => params.get("panel") ?? "tasks");
   const guard = useLeaveGuard();
   const hasComputers = topicComputers(topic).length > 0;
   // Maximised, the panel shows only the computer (the tab row is hidden).

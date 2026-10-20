@@ -878,3 +878,36 @@ describe("0038_external_one_role", () => {
     }
   });
 });
+
+describe("0040_webhook_sources_only", () => {
+  it("turns each trigger with its own secret into a source with the same id and secret hash", async () => {
+    const db = new PGlite();
+    try {
+      for (const file of fs
+        .readdirSync(DIR)
+        .filter((f) => f.endsWith(".sql") && f < "0040")
+        .sort())
+        await apply(db, file.replace(/\.sql$/, ""));
+      await db.exec(`
+        insert into topics (id, title) values ('top_1', 'Ops');
+        insert into webhook_sources (id, name, token_hash, created_by) values ('whs_1', 'Shared', 'aa', 'usr_1');
+        insert into topic_triggers (id, topic_id, name, kind, role_id, created_by, token_hash, source_id, cron) values
+          ('trg_own', 'top_1', 'Deploys', 'webhook', 'role_dev', 'usr_1', 'bb', null, null),
+          ('trg_shared', 'top_1', 'Alerts', 'webhook', 'role_dev', 'usr_1', null, 'whs_1', null),
+          ('trg_daily', 'top_1', 'Daily', 'schedule', 'role_dev', 'usr_1', null, null, '0 9 * * *');
+      `);
+      await apply(db, "0040_webhook_sources_only");
+      expect((await db.query("select id, name, token_hash, enabled from webhook_sources order by id")).rows).toEqual([
+        { id: "trg_own", name: "Deploys（Ops）", token_hash: "bb", enabled: true },
+        { id: "whs_1", name: "Shared", token_hash: "aa", enabled: true },
+      ]);
+      expect((await db.query("select id, source_id from topic_triggers order by id")).rows).toEqual([
+        { id: "trg_daily", source_id: null },
+        { id: "trg_own", source_id: "trg_own" },
+        { id: "trg_shared", source_id: "whs_1" },
+      ]);
+    } finally {
+      await db.close();
+    }
+  });
+});

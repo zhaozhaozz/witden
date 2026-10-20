@@ -2903,6 +2903,11 @@ img.avatar-role.avatar-colored {
   flex-direction: column;
   gap: 6px;
 }
+/* The card a link pointed at, e.g. a newly added webhook source. */
+.task-card-focus {
+  border-color: var(--harbor-2);
+  box-shadow: 0 0 0 2px var(--harbor-tint);
+}
 .task-card-head {
   display: flex;
   align-items: flex-start;

@@ -1,12 +1,9 @@
 import { eq } from "drizzle-orm";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { db as getDb } from "../db/client.js";
 import { newId } from "../db/ids.js";
-import { type TopicTrigger, type TriggerRequest, topicTriggers, triggerEvents } from "../db/schema.js";
+import { type TopicTrigger, topicTriggers, triggerEvents } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
-import { runtime } from "../runtime.js";
-import { hashToken } from "../security/crypto.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { publish } from "../services/events.js";
@@ -14,16 +11,7 @@ import { webhookBase } from "../services/public-url.js";
 import { addParticipant, getTopic, requireView } from "../services/topics.js";
 import { runFilter, validateFilter } from "../services/trigger-filter.js";
 import { nextTriggerTime } from "../services/trigger-schedule.js";
-import {
-  acceptWebhook,
-  getTrigger,
-  getTriggerEvent,
-  listTriggerEvents,
-  MAX_WEBHOOK_BYTES,
-  processTriggerEvents,
-  validateTriggerRole,
-  verifyTriggerToken,
-} from "../services/triggers.js";
+import { getTrigger, getTriggerEvent, listTriggerEvents, validateTriggerRole } from "../services/triggers.js";
 import { pruneWebhookReceipts, webhookSource } from "../services/webhook-sources.js";
 import { automationRoutes } from "./automations.js";
 import { authed, authedNoTx, body, type Ctx, params, query, row } from "./http.js";
@@ -37,12 +25,6 @@ const fields = z
     sourceId: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
     instructions: z.string().max(16_000).optional(),
-    secret: z
-      .string()
-      .min(24)
-      .max(256)
-      .regex(/^[A-Za-z0-9_-]+$/, "密钥只接受字母、数字、下划线和连字符")
-      .optional(),
     filterCode: z.string().max(16_000).optional(),
     cron: z.string().trim().min(1).max(200).optional(),
     timezone: z.string().trim().min(1).max(100).optional(),
@@ -57,13 +39,7 @@ async function admin(ctx: Ctx) {
 async function triggerOut(db: Ctx["db"], trigger: TopicTrigger) {
   return {
     ...row(trigger),
-    has_secret: !!trigger.tokenHash || !!trigger.sourceId,
-    webhook_url:
-      trigger.kind === "webhook"
-        ? trigger.sourceId
-          ? `${await webhookBase(db)}/api/hook-sources/${trigger.sourceId}`
-          : `${await webhookBase(db)}/api/hooks/${trigger.id}`
-        : null,
+    webhook_url: trigger.sourceId ? `${await webhookBase(db)}/api/hook-sources/${trigger.sourceId}` : null,
   };
 }
 
@@ -104,15 +80,13 @@ export async function triggerRoutes(app: FastifyInstance) {
         throw new BadRequest(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
       const b = parsed.data;
       await validateTriggerRole(ctx.db, topic.id, b.roleId);
-      if (b.kind === "webhook" && !b.secret && !b.sourceId)
-        throw new BadRequest("webhook 必须设置至少 24 个字符的密钥");
-      if (b.kind === "schedule" && (b.secret || b.filterCode || b.sourceId))
-        throw new BadRequest("定时触发不使用 webhook 密钥或过滤代码");
+      // Webhook addresses and secrets belong to sources (通讯接入 → Webhook 来源); a trigger only picks one.
+      if (b.kind === "webhook" && !b.sourceId)
+        throw new BadRequest("webhook 触发器需要选择一个 Webhook 来源，来源在“通讯接入 → Webhook 来源”中添加");
+      if (b.kind === "schedule" && (b.filterCode || b.sourceId))
+        throw new BadRequest("定时触发不使用 Webhook 来源或过滤代码");
       if (b.kind === "webhook" && (b.cron || b.timezone)) throw new BadRequest("webhook 不使用定时计划");
-      if (b.sourceId) {
-        await webhookSource(ctx.db, b.sourceId);
-        if (b.secret) throw new BadRequest("共享来源的密钥应在接入设置中管理");
-      }
+      if (b.sourceId) await webhookSource(ctx.db, b.sourceId);
       await validateFilter(b.filterCode ?? "");
       const next = b.kind === "schedule" ? nextTriggerTime(b.cron ?? "", b.timezone ?? "UTC") : null;
       // Work runs under its creator's authority; the normal revocation checks require topic membership.
@@ -129,7 +103,6 @@ export async function triggerRoutes(app: FastifyInstance) {
           instructions: b.instructions ?? "",
           enabled: b.enabled ?? true,
           createdBy: ctx.user.id,
-          tokenHash: b.secret ? hashToken(b.secret) : null,
           sourceId: b.sourceId ?? null,
           filterCode: b.filterCode ?? "",
           cron: b.cron ?? null,
@@ -150,17 +123,13 @@ export async function triggerRoutes(app: FastifyInstance) {
       const parsed = fields.omit({ kind: true }).partial().safeParse(body(ctx.req));
       if (!parsed.success)
         throw new BadRequest(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
-      const { secret, ...b } = parsed.data;
+      const b = parsed.data;
       if (b.roleId !== undefined) await validateTriggerRole(ctx.db, trigger.topicId, b.roleId);
-      if (
-        trigger.kind === "schedule" &&
-        (secret !== undefined || b.filterCode !== undefined || b.sourceId !== undefined)
-      )
-        throw new BadRequest("定时触发不使用 webhook 密钥或过滤代码");
+      if (trigger.kind === "schedule" && (b.filterCode !== undefined || b.sourceId !== undefined))
+        throw new BadRequest("定时触发不使用 Webhook 来源或过滤代码");
       if (trigger.kind === "webhook" && (b.cron !== undefined || b.timezone !== undefined))
         throw new BadRequest("webhook 不使用定时计划");
       if (b.sourceId) await webhookSource(ctx.db, b.sourceId);
-      if ((b.sourceId ?? trigger.sourceId) && secret) throw new BadRequest("共享来源的密钥应在接入设置中管理");
       if (b.filterCode !== undefined) await validateFilter(b.filterCode);
       const enabled = b.enabled ?? trigger.enabled;
       const scheduleChanged = b.cron !== undefined || b.timezone !== undefined || b.enabled !== undefined;
@@ -172,7 +141,6 @@ export async function triggerRoutes(app: FastifyInstance) {
         .update(topicTriggers)
         .set({
           ...b,
-          ...(secret ? { tokenHash: hashToken(secret) } : b.sourceId ? { tokenHash: null } : {}),
           nextRunAt: enabled ? next : null,
           updatedAt: new Date(),
         })
@@ -258,50 +226,9 @@ export async function triggerRoutes(app: FastifyInstance) {
   );
 }
 
-function hookToken(req: FastifyRequest) {
-  const header = req.headers.authorization ?? "";
-  return /^Bearer /i.test(header) ? header.slice(7).trim() : String(req.headers["x-webhook-token"] ?? "");
-}
-
 /** Encapsulation keeps arbitrary raw content (including malformed JSON) away from normal API parsers. */
 export async function triggerWebhookRoutes(app: FastifyInstance) {
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
   await sharedWebhookRoutes(app);
-  app.post(
-    "/api/hooks/:id",
-    {
-      bodyLimit: MAX_WEBHOOK_BYTES,
-      onRequest: async (req) => {
-        const [trigger] = await getDb()
-          .select()
-          .from(topicTriggers)
-          .where(eq(topicTriggers.id, params(req).id));
-        verifyTriggerToken(trigger, hookToken(req));
-      },
-    },
-    async (req, reply) => {
-      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const headers: TriggerRequest["headers"] = {};
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (value === undefined) continue;
-        headers[key] = /authorization|cookie|token|secret|api[-_]key|signature/i.test(key) ? "[REDACTED]" : value;
-      }
-      const result = await acceptWebhook(
-        params(req).id,
-        hookToken(req),
-        {
-          method: req.method,
-          path: req.url.split("?")[0],
-          query: (req.query ?? {}) as Record<string, unknown>,
-          headers,
-          body_base64: raw.toString("base64"),
-        },
-        typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null,
-      );
-      // Acknowledge only after the receipt is committed. The periodic sweep also picks it up after a crash.
-      void runtime().background("trigger.webhook", () => processTriggerEvents());
-      return reply.code(result.duplicate ? 200 : 202).send(result);
-    },
-  );
 }

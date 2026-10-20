@@ -175,9 +175,6 @@ export async function manageAutomation(db: Db, task: Task, args: Record<string, 
         throw new BadRequest("scheduled rules have no webhook source or filter");
       if (rule.kind === "webhook" && (b.cron !== undefined || b.timezone !== undefined))
         throw new BadRequest("webhooks have no schedule");
-      // Its own secret would be gone for good, and senders refused: only a person switches it, in the console.
-      if (b.source_id !== undefined && rule.tokenHash)
-        throw new BadRequest("this trigger has its own secret; a person switches it to a shared source in the console");
       if (b.source_id) await sourceGrant(db, b.source_id, role.id);
       if (b.filter_code !== undefined) await validateFilter(b.filter_code);
       const next =
@@ -190,7 +187,7 @@ export async function manageAutomation(db: Db, task: Task, args: Record<string, 
           ...(b.name !== undefined ? { name: b.name } : {}),
           ...(b.enabled !== undefined ? { enabled: b.enabled } : {}),
           ...(b.instructions !== undefined ? { instructions: b.instructions } : {}),
-          ...(b.source_id !== undefined ? { sourceId: b.source_id, tokenHash: null } : {}),
+          ...(b.source_id !== undefined ? { sourceId: b.source_id } : {}),
           ...(b.filter_code !== undefined ? { filterCode: b.filter_code } : {}),
           ...(b.cron !== undefined ? { cron: b.cron } : {}),
           ...(b.timezone !== undefined ? { timezone: b.timezone } : {}),

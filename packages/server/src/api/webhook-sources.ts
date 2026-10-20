@@ -6,23 +6,18 @@ import { newId } from "../db/ids.js";
 import { roles, topicTriggers, webhookReceipts, webhookSources } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { hashToken } from "../security/crypto.js";
+import { hashToken, newToken } from "../security/crypto.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { redactWebhookHeaders } from "../services/collaboration-policy.js";
 import { webhookBase } from "../services/public-url.js";
-import { MAX_WEBHOOK_BYTES, processTriggerEvents, verifyTriggerToken } from "../services/triggers.js";
+import { MAX_WEBHOOK_BYTES, processTriggerEvents, verifySourceToken } from "../services/triggers.js";
 import { acceptSourceWebhook, availableSources, sourceEventPage, webhookSource } from "../services/webhook-sources.js";
 import { authed, body, type Ctx, params, query, row } from "./http.js";
 
 const fields = z
   .object({
     name: z.string().trim().min(1).max(120),
-    secret: z
-      .string()
-      .min(24)
-      .max(256)
-      .regex(/^[A-Za-z0-9_-]+$/),
     enabled: z.boolean().optional(),
     allowedRoleIds: z.array(z.string().min(1)).max(200).optional(),
   })
@@ -36,6 +31,14 @@ async function validRoles(ctx: Ctx, ids: string[] = []) {
     if (!role || role.systemAdmin) throw new BadRequest("choose existing non-system-administrator roles");
   }
 }
+/**
+ * Senders put it in `Authorization: Bearer` or `X-Webhook-Token`. Only its hash is stored: the plain secret is
+ * in the one response that created it, shown on the source's card to copy, and cannot be read again.
+ */
+function newSecret() {
+  const secret = newToken("whsec_");
+  return { secret, tokenHash: hashToken(secret) };
+}
 async function sourceOut(ctx: Ctx, source: typeof webhookSources.$inferSelect) {
   const rules = await ctx.db
     .select({
@@ -48,7 +51,6 @@ async function sourceOut(ctx: Ctx, source: typeof webhookSources.$inferSelect) {
     .where(eq(topicTriggers.sourceId, source.id));
   return {
     ...row(source),
-    has_secret: true,
     webhook_url: `${await webhookBase(ctx.db)}/api/hook-sources/${source.id}`,
     rules: rules.map((r) => row(r)),
   };
@@ -67,17 +69,17 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
     authed(async (ctx) => {
       admin(ctx);
       const parsed = fields.safeParse(body(ctx.req));
-      if (!parsed.success)
-        throw new BadRequest("provide name, a 24..256 character secret, enabled and allowed_role_ids");
+      if (!parsed.success) throw new BadRequest("provide name, and optionally enabled and allowed_role_ids");
       await validRoles(ctx, parsed.data.allowedRoleIds);
-      const { secret, ...b } = parsed.data;
+      const b = parsed.data;
+      const { secret, ...credentials } = newSecret();
       const [source] = await ctx.db
         .insert(webhookSources)
         .values({
           id: newId("whs"),
           ...b,
           allowedRoleIds: [...new Set(b.allowedRoleIds ?? [])],
-          tokenHash: hashToken(secret),
+          ...credentials,
           createdBy: ctx.user.id,
         })
         .returning();
@@ -87,7 +89,7 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
         resourceType: "webhook_source",
         resourceId: source.id,
       });
-      return sourceOut(ctx, source);
+      return { ...(await sourceOut(ctx, source)), secret };
     }),
   );
   app.patch(
@@ -98,10 +100,9 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
       const parsed = fields.partial().safeParse(body(ctx.req));
       if (!parsed.success) throw new BadRequest("invalid webhook source fields");
       await validRoles(ctx, parsed.data.allowedRoleIds);
-      const { secret, ...b } = parsed.data;
       const [updated] = await ctx.db
         .update(webhookSources)
-        .set({ ...b, ...(secret ? { tokenHash: hashToken(secret) } : {}) })
+        .set(parsed.data)
         .where(eq(webhookSources.id, source.id))
         .returning();
       await audit(ctx.db, "webhook_source.update", {
@@ -109,9 +110,26 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
         actorId: ctx.user.id,
         resourceType: "webhook_source",
         resourceId: source.id,
-        detail: { fields: Object.keys(parsed.data).filter((k) => k !== "secret"), rotated_secret: !!secret },
+        detail: { fields: Object.keys(parsed.data) },
       });
       return sourceOut(ctx, updated);
+    }),
+  );
+  // A new secret, in this response only; the old one stops working. Not open to the system administrator role.
+  app.post(
+    "/api/webhook-sources/:id/secret",
+    authed(async (ctx) => {
+      admin(ctx);
+      const source = await webhookSource(ctx.db, params(ctx.req).id);
+      const { secret, ...credentials } = newSecret();
+      await ctx.db.update(webhookSources).set(credentials).where(eq(webhookSources.id, source.id));
+      await audit(ctx.db, "webhook_source.secret_rotate", {
+        actorType: "user",
+        actorId: ctx.user.id,
+        resourceType: "webhook_source",
+        resourceId: source.id,
+      });
+      return { secret };
     }),
   );
   app.delete(
@@ -173,37 +191,41 @@ const token = (req: FastifyRequest) => {
   return /^Bearer /i.test(auth) ? auth.slice(7).trim() : String(req.headers["x-webhook-token"] ?? "");
 };
 
-/** Registered inside the existing raw-parser webhook scope, on the public event listener only. */
+/**
+ * Registered inside the raw-parser webhook scope. `/api/hooks/:id` is the address triggers with their own
+ * secret had; migration 0040 turned each into a source with the trigger's id, so those senders keep working.
+ */
 export async function sharedWebhookRoutes(app: FastifyInstance) {
-  app.post(
-    "/api/hook-sources/:id",
-    {
-      bodyLimit: MAX_WEBHOOK_BYTES,
-      onRequest: async (req) => {
-        const [source] = await getDb()
-          .select()
-          .from(webhookSources)
-          .where(and(eq(webhookSources.id, params(req).id), isNull(webhookSources.deletedAt)));
-        verifyTriggerToken(source, token(req));
-      },
-    },
-    async (req, reply) => {
-      const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      const accepted = await acceptSourceWebhook(
-        params(req).id,
-        token(req),
-        {
-          method: req.method,
-          path: req.url.split("?")[0],
-          query: (req.query ?? {}) as Record<string, unknown>,
-          headers: redactWebhookHeaders(req.headers),
-          body_base64: raw.toString("base64"),
+  for (const path of ["/api/hook-sources/:id", "/api/hooks/:id"])
+    app.post(
+      path,
+      {
+        bodyLimit: MAX_WEBHOOK_BYTES,
+        onRequest: async (req) => {
+          const [source] = await getDb()
+            .select()
+            .from(webhookSources)
+            .where(and(eq(webhookSources.id, params(req).id), isNull(webhookSources.deletedAt)));
+          verifySourceToken(source, token(req));
         },
-        typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null,
-      );
-      void runtime().background("shared_webhook.accepted", () => processTriggerEvents());
-      // How many triggers take it stays inside: the sender learns only that it was received.
-      return reply.code(accepted.duplicate ? 200 : 202).send({ id: accepted.id, duplicate: accepted.duplicate });
-    },
-  );
+      },
+      async (req, reply) => {
+        const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const accepted = await acceptSourceWebhook(
+          params(req).id,
+          token(req),
+          {
+            method: req.method,
+            path: req.url.split("?")[0],
+            query: (req.query ?? {}) as Record<string, unknown>,
+            headers: redactWebhookHeaders(req.headers),
+            body_base64: raw.toString("base64"),
+          },
+          typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null,
+        );
+        void runtime().background("shared_webhook.accepted", () => processTriggerEvents());
+        // How many triggers take it stays inside: the sender learns only that it was received.
+        return reply.code(accepted.duplicate ? 200 : 202).send({ id: accepted.id, duplicate: accepted.duplicate });
+      },
+    );
 }

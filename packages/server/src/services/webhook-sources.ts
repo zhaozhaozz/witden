@@ -13,7 +13,7 @@ import {
 import { BadRequest, NotFound } from "../errors.js";
 import { redactWebhookHeaders } from "./collaboration-policy.js";
 import { publish } from "./events.js";
-import { verifyTriggerToken } from "./triggers.js";
+import { verifySourceToken } from "./triggers.js";
 
 /**
  * A shared source's receipts hold the raw requests and their dedupe keys. Once no topic's history refers to
@@ -37,7 +37,7 @@ export async function webhookSource(db: Db, id: string) {
 export async function acceptSourceWebhook(id: string, token: string, request: TriggerRequest, eventKey: string | null) {
   return transaction(async (db) => {
     const [source] = await db.select().from(webhookSources).where(eq(webhookSources.id, id)).for("update");
-    verifyTriggerToken(source?.deletedAt ? undefined : source, token);
+    verifySourceToken(source?.deletedAt ? undefined : source, token);
     if (!source.enabled) throw new BadRequest("webhook source is disabled");
     if (eventKey && eventKey.length > 200) throw new BadRequest("Idempotency-Key must be at most 200 characters");
     const clean = { ...request, headers: redactWebhookHeaders(request.headers) };

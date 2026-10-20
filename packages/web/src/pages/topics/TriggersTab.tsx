@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api/client";
 import type { Topic } from "../../api/types";
-import { copyToClipboard } from "../../lib/clipboard";
 import { fmtTime } from "../../lib/format";
-import { useResource } from "../../lib/hooks";
+import { type Resource, useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { CopyText, Empty, Field, FormModal, Loaded, Modal, Tag } from "../../ui/kit";
-import type { WebhookSource } from "../WebhookSourcesPanel";
+import { newSourceLink, sourceLink, type WebhookSource } from "../WebhookSourcesPanel";
 
 interface Trigger {
   id: string;
@@ -55,19 +54,20 @@ const STATUS: Record<string, string> = {
   failed: "处理失败",
   skipped: "已跳过",
 };
-const makeSecret = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(32)), (n) => n.toString(16).padStart(2, "0")).join("");
-
 export function TriggersTab({ topic, version }: { topic: Topic; version: number }) {
   const dir = useDirectory();
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
-  const [editing, setEditing] = useState<Trigger | "new" | null>(null);
+  // Back from 通讯接入 with a source chosen (?webhook_source=<id>): add a webhook trigger on it.
+  const [params, setParams] = useSearchParams();
+  const [preset] = useState(() => params.get("webhook_source"));
+  const [editing, setEditing] = useState<Trigger | "new" | null>(preset ? "new" : null);
   const [detail, setDetail] = useState<string | null>(null);
   const [before, setBefore] = useState<string | undefined>();
   const [kind, setKind] = useState("");
   const base = `/api/topics/${topic.id}`;
   const triggers = useResource(() => api.get<Trigger[]>(`${base}/triggers`), [topic.id]);
+  const sources = useResource(() => api.get<WebhookSource[]>("/api/webhook-sources"), []);
   const events = useResource(
     () => api.get<EventPage>(`${base}/trigger-events`, { before, kind }),
     [topic.id, before, kind],
@@ -76,6 +76,13 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
     void triggers.reload();
     void events.reload();
   }, [version]);
+  useEffect(() => {
+    if (!preset) return;
+    params.delete("webhook_source");
+    params.delete("panel");
+    setParams(params, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const reload = () => {
     void triggers.reload();
     void events.reload();
@@ -118,9 +125,17 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
                       <br />
                       下次：{trigger.next_run_at ? fmtTime(trigger.next_run_at) : "—"}（本地时间）
                     </p>
-                  ) : (
-                    <CopyText text={trigger.webhook_url ?? ""} />
-                  )}
+                  ) : trigger.source_id ? (
+                    <p className="small muted">
+                      来源：
+                      <Link to={sourceLink(trigger.source_id)}>
+                        {sources.data?.find((x) => x.id === trigger.source_id)?.name ?? "Webhook 来源"}
+                      </Link>
+                      （地址和密钥在来源上复制）
+                      <br />
+                      <CopyText text={trigger.webhook_url ?? ""} />
+                    </p>
+                  ) : null}
                   <div className="btn-row">
                     <button type="button" className="btn btn-xs" onClick={() => setEditing(trigger)}>
                       编辑
@@ -160,7 +175,10 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
               ))}
             </ul>
           ) : (
-            <Empty title="还没有触发器" hint="添加 webhook 接收外部事件，或用定时触发安排周期工作。" />
+            <Empty
+              title="还没有触发器"
+              hint="选择一个 Webhook 来源接收外部事件（来源在“通讯接入 → Webhook 来源”中添加），或用定时触发安排周期工作。"
+            />
           )
         }
       </Loaded>
@@ -263,6 +281,8 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
       {editing ? (
         <TriggerEditor
           topic={topic}
+          sources={sources}
+          preset={editing === "new" ? preset : null}
           trigger={editing === "new" ? undefined : editing}
           onClose={() => setEditing(null)}
           onSaved={() => {
@@ -278,32 +298,31 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
 
 function TriggerEditor({
   topic,
+  sources,
+  preset,
   trigger,
   onClose,
   onSaved,
 }: {
   topic: Topic;
+  sources: Resource<WebhookSource[]>;
+  /** A source picked in 通讯接入 for a new webhook trigger. */
+  preset: string | null;
   trigger?: Trigger;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const dir = useDirectory();
   const { run, busy } = useAction();
-  const { toast } = useFeedback();
   const roles = (topic.participants ?? []).filter(
     (p) => p.type === "role" && p.status === "active" && !dir.roleById.get(p.id)?.system_admin,
   );
   const [kind, setKind] = useState<Trigger["kind"]>(trigger?.kind ?? "webhook");
-  const sources = useResource(() => api.get<WebhookSource[]>("/api/webhook-sources"), []);
-  const [sourceId, setSourceId] = useState(trigger?.source_id ?? "");
+  const [sourceId, setSourceId] = useState(trigger?.source_id ?? preset ?? "");
+  const source = sources.data?.find((x) => x.id === sourceId);
   const [name, setName] = useState(trigger?.name ?? "");
   const [roleId, setRoleId] = useState(trigger?.role_id ?? roles[0]?.id ?? "");
   const [instructions, setInstructions] = useState(trigger?.instructions ?? "");
-  const [secret, setSecret] = useState(trigger ? "" : makeSecret);
-  const [copiedSecret, setCopiedSecret] = useState(false);
-  const [copyingSecret, setCopyingSecret] = useState(false);
-  const [manualCopy, setManualCopy] = useState(false);
-  const secretInput = useRef<HTMLInputElement>(null);
   const [code, setCode] = useState(trigger?.filter_code ?? "");
   const [cron, setCron] = useState(trigger?.cron ?? "0 9 * * 1-5");
   const [timezone, setTimezone] = useState(
@@ -318,22 +337,14 @@ function TriggerEditor({
       width={720}
       onClose={onClose}
       busy={busy}
-      disabled={
-        !name.trim() ||
-        !roleId ||
-        (kind === "webhook" &&
-          !sourceId &&
-          ((!trigger && !secret) || (!!secret && (secret.length < 24 || !copiedSecret))))
-      }
+      disabled={!name.trim() || !roleId || (kind === "webhook" && !sourceId)}
       submitLabel="保存触发器"
       onSubmit={async () => {
         const data = {
           name,
           role_id: roleId,
           instructions,
-          ...(kind === "webhook"
-            ? { filter_code: code, ...(sourceId ? { source_id: sourceId } : secret ? { secret } : {}) }
-            : { cron, timezone }),
+          ...(kind === "webhook" ? { filter_code: code, source_id: sourceId } : { cron, timezone }),
         };
         const result = await run(
           () => (trigger ? api.patch(`${base}/${trigger.id}`, data) : api.post(base, { ...data, kind })),
@@ -391,107 +402,39 @@ function TriggerEditor({
         </>
       ) : (
         <>
-          <Field label="Webhook 来源" hint="推荐复用共享来源；在“通讯接入 → Webhook 来源”中创建和管理密钥。">
+          <Field
+            label="Webhook 来源"
+            hint="地址和密钥属于来源，在“通讯接入 → Webhook 来源”中添加和复制；一个来源可以供多个话题的触发器使用。"
+          >
             <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
-              <option value="" disabled={!!trigger?.source_id}>
-                独立入口（兼容旧配置）
+              <option value="" disabled>
+                请选择
               </option>
-              {(sources.data ?? []).map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name}
-                  {source.enabled ? "" : "（停用）"}
+              {(sources.data ?? []).map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.name}
+                  {x.enabled ? "" : "（停用）"}
                 </option>
               ))}
             </select>
             {sources.error ? <p className="notice">来源列表加载失败，请在通讯接入中重试。</p> : null}
-            {trigger && !trigger.source_id && sourceId ? (
-              <p className="notice">
-                改用共享来源后，这个触发器自己的密钥和地址会作废，且不能改回；原来往这个地址发送的一方需要改用来源的地址和密钥。
-              </p>
-            ) : null}
           </Field>
-          {trigger?.webhook_url ? (
-            <CopyText text={trigger.webhook_url} />
-          ) : (
+          {sources.data && !sources.data.length ? (
+            <p className="notice">还没有 Webhook 来源。先到通讯接入添加一个，添加后可以直接复制它的地址和密钥。</p>
+          ) : null}
+          <p className="small">
+            <Link to={newSourceLink(topic.id)}>新建 Webhook 来源</Link>
+            <span className="muted">：会离开这个窗口，添加后从来源卡片回到这里继续。</span>
+          </p>
+          {source ? (
             <p className="small muted">
-              保存后显示 webhook 地址。公网事件地址应转发到事件端口（默认 8325），可在「公网地址」中设置。
+              发送方使用这个来源的地址和密钥：
+              <br />
+              <CopyText text={source.webhook_url} />
+              <br />
+              <Link to={sourceLink(source.id)}>到来源上复制密钥</Link>
             </p>
-          )}
-          {!sourceId ? (
-            <>
-              <Field
-                label={trigger ? "更换密钥（留空保留）" : "Webhook 密钥"}
-                hint="发送时用 Authorization: Bearer <密钥>，或 X-Webhook-Token 请求头。密钥保存后无法读回。"
-              >
-                <input
-                  ref={secretInput}
-                  type={manualCopy ? "text" : "password"}
-                  autoComplete="new-password"
-                  value={secret}
-                  onChange={(e) => {
-                    setSecret(e.target.value);
-                    setCopiedSecret(false);
-                  }}
-                  minLength={24}
-                  maxLength={256}
-                />
-                <div className="btn-row">
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    onClick={() => {
-                      setSecret(makeSecret());
-                      setCopiedSecret(false);
-                      setManualCopy(false);
-                    }}
-                  >
-                    生成新密钥
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    disabled={!secret || copyingSecret}
-                    onClick={async () => {
-                      setCopyingSecret(true);
-                      const copied = await copyToClipboard(secret);
-                      setCopyingSecret(false);
-                      // The input may have changed while the browser was waiting for clipboard permission.
-                      if (secretInput.current?.value !== secret) return;
-                      if (copied) {
-                        setCopiedSecret(true);
-                        setManualCopy(false);
-                        toast("密钥已复制，请保存到发送方", "ok");
-                      } else {
-                        setCopiedSecret(false);
-                        setManualCopy(true);
-                        requestAnimationFrame(() => {
-                          if (secretInput.current?.value === secret) {
-                            secretInput.current.focus();
-                            secretInput.current.select();
-                          }
-                        });
-                      }
-                    }}
-                  >
-                    {copyingSecret ? "复制中…" : "复制密钥"}
-                  </button>
-                </div>
-              </Field>
-              {manualCopy ? (
-                <p className="notice" role="status">
-                  浏览器未允许自动复制，已显示密钥。请手动复制上方密钥，保存后勾选「已妥善保存此密钥」。
-                </p>
-              ) : null}
-              {secret ? (
-                <label className="check">
-                  <input type="checkbox" checked={copiedSecret} onChange={(e) => setCopiedSecret(e.target.checked)} />
-                  已妥善保存此密钥
-                </label>
-              ) : null}
-            </>
-          ) : (
-            <p className="small muted">使用共享来源的地址和密钥，这个触发器不保存自己的密钥。</p>
-          )}
+          ) : null}
           <Field
             label="前置过滤（JavaScript）"
             hint="留空表示全部通过。填写函数体，使用 request.body 读取 JSON、request.raw_body 读取原文、request.headers 读取请求头。必须返回 true 或 false；不能联网或读文件，超时 / 出错时不交给角色。"
