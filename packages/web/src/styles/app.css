@@ -2574,23 +2574,6 @@ img.avatar-role.avatar-colored {
   gap: 10px;
   min-height: 4px;
 }
-.msg-actions {
-  position: absolute;
-  right: 16px;
-  top: 4px;
-  display: none;
-  gap: 2px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 2px;
-}
-.msg:hover .msg-actions {
-  display: flex;
-}
-.msg-edit textarea {
-  margin: 4px 0 6px;
-}
 
 /* People on the right as bubbles; roles on the left as plain text. */
 .msg-human {
@@ -2624,15 +2607,8 @@ img.avatar-role.avatar-colored {
 .msg-human .msg-text.muted {
   background: transparent;
 }
-.msg-human .msg-edit {
-  align-self: stretch;
-}
 .msg-human .msg-attachments {
   justify-content: flex-end;
-}
-.msg-human .msg-actions {
-  right: auto;
-  left: 16px;
 }
 
 /* A role at work: thinking dots, the tool in use, or the answer streaming in with a caret. */

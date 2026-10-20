@@ -6,7 +6,7 @@ import { connectionLabel, conversationKind, placeLabel } from "../../lib/convers
 import { PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
-import { useAction, useFeedback } from "../../ui/feedback";
+import { useFeedback } from "../../ui/feedback";
 import { ResizeGrips, useDraggable, useFloatingWindow } from "../../ui/floating";
 import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
@@ -22,8 +22,7 @@ const PANEL_KEY = "witden.topicPanel";
 export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopicUpdated: () => void }) {
   const { me } = useAuth();
   const dir = useDirectory();
-  const { toast, confirm } = useFeedback();
-  const { run } = useAction();
+  const { toast } = useFeedback();
   const topicRes = useResource(() => api.get<Topic>(`/api/topics/${topicId}`), [topicId]);
   const files = useResource(() => api.get<Artifact[]>(`/api/topics/${topicId}/files`), [topicId]);
   // One source for inline cards and the side panel, including decisions kept in message history.
@@ -401,31 +400,6 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                     mentionTokens={mentionTokens(m)}
                     compact={compact}
                     files={fileMap}
-                    canDelete
-                    onEdit={async (content) => {
-                      const out = await run(() => api.patch<Message>(`/api/messages/${m.id}`, { content }));
-                      if (out) setMessages((prev) => prev?.map((x) => (x.id === out.id ? out : x)) ?? prev);
-                      return !!out;
-                    }}
-                    onDelete={async () => {
-                      const ok = await confirm({
-                        title: "删除消息",
-                        body: <p>消息内容会被清空，由这条消息产生的记忆也会一并删除。</p>,
-                        confirmLabel: "删除",
-                        danger: true,
-                      });
-                      if (!ok) return;
-                      const out = await run(() => api.del<{ memories_deleted: number }>(`/api/messages/${m.id}`));
-                      if (out) {
-                        setMessages((prev) => prev?.filter((x) => x.id !== m.id) ?? prev);
-                        toast(
-                          out.memories_deleted
-                            ? `消息已删除，同时删除了 ${out.memories_deleted} 条相关记忆`
-                            : "消息已删除",
-                          "ok",
-                        );
-                      }
-                    }}
                   />
                 );
               })}

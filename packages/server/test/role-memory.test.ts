@@ -3,10 +3,12 @@
  * role works for everyone, so only work an administrator asked for may add to it.
  */
 
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { db } from "../src/db/client.js";
+import { db, transaction } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { type Task, users } from "../src/db/schema.js";
+import { messages, type Task, users } from "../src/db/schema.js";
+import { purgeMessage } from "../src/services/messages.js";
 import { roleMemoryRefusal } from "../src/services/role-memory.js";
 import { call, lastToolResult, reply } from "./support/harness.js";
 import { teamNote } from "./support/outside.js";
@@ -66,9 +68,10 @@ describe("role memory", () => {
     );
     expect(found).toContain(`${note.id} (your role memory) Release check [release, make check]: Run make check`);
 
-    // Deleting the message it came from deletes the note, like any note derived from a message.
-    const purged = await w.api("DELETE", `/api/messages/${asked.id}`, { token: w.alice });
-    expect(purged.status, purged.raw).toBe(200);
+    // Deleting the message it came from (a topic cleanup, or deleted in Slack) deletes the note, like any note
+    // derived from a message.
+    const [row] = await db().select().from(messages).where(eq(messages.id, asked.id));
+    expect((await transaction((tx) => purgeMessage(tx, row))).memories_deleted).toBe(1);
     expect(await roleNotes(w.ids.dev)).toEqual([]);
   });
 

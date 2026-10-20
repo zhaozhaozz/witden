@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { downloadFile } from "../../api/client";
 import type { Approval, Artifact, Message } from "../../api/types";
@@ -91,9 +91,6 @@ export function MessageItem({
   author,
   compact,
   files,
-  canDelete,
-  onEdit,
-  onDelete,
   mentionTokens,
   replyTo,
   approval,
@@ -115,13 +112,7 @@ export function MessageItem({
   files: Map<string, Artifact>;
   /** "@" tokens of the participants this message really mentions (highlighted; other "@…" are text). */
   mentionTokens?: string[];
-  canDelete: boolean;
-  onEdit: (content: string) => Promise<boolean>;
-  onDelete: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(msg.content);
-
   if (msg.author_type === "system") {
     if (msg.approval_id && !msg.deleted) {
       return (
@@ -162,7 +153,6 @@ export function MessageItem({
     );
   }
 
-  const canEdit = author.isMe && msg.author_type === "user" && !msg.deleted;
   // People's messages sit on the right as bubbles; roles' answers stay on the left as plain text.
   const human = author.kind === "user" || author.kind === "external";
 
@@ -221,26 +211,9 @@ export function MessageItem({
             {replyTo.excerpt ? `：${replyTo.excerpt}` : ""}
           </div>
         ) : null}
+        {/* Messages cannot be edited or deleted in the console; these marks come from Slack or a topic cleanup. */}
         {msg.deleted ? (
           <div className="msg-text muted">消息已删除</div>
-        ) : editing ? (
-          <div className="msg-edit">
-            <textarea rows={3} value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
-            <div className="btn-row">
-              <button type="button" className="btn btn-xs" onClick={() => setEditing(false)}>
-                取消
-              </button>
-              <button
-                type="button"
-                className="btn btn-xs btn-primary"
-                onClick={async () => {
-                  if (await onEdit(draft)) setEditing(false);
-                }}
-              >
-                保存
-              </button>
-            </div>
-          </div>
         ) : (
           <MessageText content={msg.content} mentions={mentionTokens} />
         )}
@@ -248,27 +221,6 @@ export function MessageItem({
         {/* How a reply came about is in the conversation's runs (the topic's work panel), not under each message. */}
         <div className="msg-foot">{msg.edited_at ? <span className="small muted">已编辑</span> : null}</div>
       </div>
-      {!msg.deleted && (canEdit || canDelete) ? (
-        <div className="msg-actions">
-          {canEdit ? (
-            <button
-              type="button"
-              className="btn btn-xs btn-ghost"
-              onClick={() => {
-                setDraft(msg.content);
-                setEditing(true);
-              }}
-            >
-              编辑
-            </button>
-          ) : null}
-          {canDelete ? (
-            <button type="button" className="btn btn-xs btn-ghost" onClick={onDelete}>
-              删除
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }

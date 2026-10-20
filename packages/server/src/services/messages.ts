@@ -6,7 +6,8 @@ import { agentSessions, type Message, memories, messages, taskSteps, tasks } fro
 import { erased } from "./memories.js";
 
 /**
- * Deleting a message removes its text everywhere we keep it: the message is blanked, memories derived from
+ * Deleting a message (a topic's data cleanup, or the message deleted where it was sent, e.g. in Slack; people
+ * cannot delete single messages in the console) removes its text everywhere we keep it: the message is blanked, memories derived from
  * it are deleted, tasks it started lose their transcript, title, progress and session notes, and verbatim
  * copies elsewhere in the topic's transcripts, progress and session notes are scrubbed. In a role's
  * conversation the turn that answered it leaves the context (a turn still under way stops first); one that

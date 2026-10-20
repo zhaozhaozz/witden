@@ -1,5 +1,9 @@
 /** End-to-end behaviour of AI roles, mapped to the product's acceptance scenarios. */
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { db, transaction } from "../src/db/client.js";
+import { messages } from "../src/db/schema.js";
+import { purgeMessage } from "../src/services/messages.js";
 import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -448,6 +452,7 @@ describe("sessions and data lifecycle", () => {
     expect(sessions.find((s: any) => s.topic.id === w.ids.topic).runs).toBe(2);
   });
 
+  // A topic cleanup, or the message deleted in Slack; people cannot delete single messages in the console.
   it("deleting a message removes derived memory and the work it started", async () => {
     w.scripts.dev = (_m, turn) =>
       turn === 0
@@ -457,7 +462,11 @@ describe("sessions and data lifecycle", () => {
     await w.drain();
     const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;
     expect(mems.some((m: any) => m.content.includes("4242"))).toBe(true);
-    const res = (await w.api("DELETE", `/api/messages/${posted.id}`, { token: w.alice })).body;
+    // the console offers no editing or deleting of single messages
+    for (const method of ["PATCH", "DELETE"])
+      expect((await w.api(method, `/api/messages/${posted.id}`, { token: w.alice, json: {} })).status).toBe(404);
+    const [row] = await db().select().from(messages).where(eq(messages.id, posted.id));
+    const res = await transaction((tx) => purgeMessage(tx, row));
     expect(res.memories_deleted).toBe(1);
     expect(res.transcript_steps_removed).toBeGreaterThan(0);
     expect((await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body).toEqual(

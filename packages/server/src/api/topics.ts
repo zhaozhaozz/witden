@@ -342,55 +342,6 @@ export async function topicRoutes(app: FastifyInstance) {
     }),
   );
 
-  app.patch(
-    "/api/messages/:id",
-    authed(async ({ db, user, req }) => {
-      const [msg] = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.id, params(req).id))
-        .limit(1);
-      if (!msg || msg.deletedAt) throw new NotFound("message not found");
-      if (msg.authorType !== "user" || msg.authorId !== user.id)
-        throw new Forbidden("you can only edit your own messages");
-      const [updated] = await db
-        .update(messages)
-        .set({ content: String(body(req).content ?? ""), editedAt: new Date() })
-        .where(eq(messages.id, msg.id))
-        .returning();
-      await audit(db, "message.edit", {
-        actorType: "user",
-        actorId: user.id,
-        topicId: msg.topicId,
-        detail: { message_id: msg.id },
-      });
-      return messageOut(updated);
-    }),
-  );
-
-  app.delete(
-    "/api/messages/:id",
-    authed(async ({ db, user, req }) => {
-      const [msg] = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.id, params(req).id))
-        .limit(1);
-      if (!msg || msg.deletedAt) throw new NotFound("message not found");
-      const topic = await svc.getTopic(db, msg.topicId);
-      if (!((msg.authorType === "user" && msg.authorId === user.id) || (await svc.canAdminister(db, user, topic))))
-        throw new Forbidden("you cannot delete this message");
-      const purged = await purgeMessage(db, msg);
-      await audit(db, "message.delete", {
-        actorType: "user",
-        actorId: user.id,
-        topicId: msg.topicId,
-        detail: { message_id: msg.id, ...purged },
-      });
-      return { ok: true, ...purged };
-    }),
-  );
-
   // --- files ---
   app.post("/api/topics/:id/files", async (req) => {
     const file = await req.file({ limits: { fileSize: MAX_UPLOAD + 1 } });
