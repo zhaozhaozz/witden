@@ -22,6 +22,7 @@
 | 命令 | 内容 |
 |---|---|
 | `npm test` | 快速测试：使用模拟的虚拟电脑（实现真实的执行代理协议）和内存中的嵌入式 PostgreSQL。 |
+| `npm run test:web` | Chromium 浏览器回归：对真实控制台页面模拟 API 与事件流，检查流式更新、图表保留、滚动位置、消息发送和窄屏布局；不连接业务数据。首次运行前用 `npx playwright install chromium` 准备浏览器，也可用 `PLAYWRIGHT_CHROMIUM_EXECUTABLE` 指定已有 Chromium。 |
 | `make test-docker` | 先构建虚拟电脑镜像，再运行包含真实 Docker 的测试，包括平台 → Docker Manager → 虚拟电脑 → 执行代理的端到端测试。 |
 | `make lint` | biome 检查（行宽 120）和各包的类型检查。 |
 

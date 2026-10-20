@@ -4,6 +4,7 @@ import type { Artifact, Mention, Participant, PostMessageResult } from "../../ap
 import { fmtBytes } from "../../lib/format";
 import { useAuth } from "../../lib/session";
 import { useFeedback } from "../../ui/feedback";
+import { Icon } from "../../ui/Icon";
 import { Avatar, ComputerBadge } from "../../ui/kit";
 
 interface Candidate {
@@ -34,12 +35,14 @@ export function Composer({
   topicId,
   participants,
   onSent,
-  placeholder = "输入消息（支持 Markdown、```mermaid 流程图）。输入 @ 后从列表里点选角色或成员才算 @；Enter 发送，Shift+Enter 换行",
+  placeholder = "描述你想完成的工作，输入 @ 选择角色…",
+  hint = "@ 后从列表选择，才会通知对应角色",
 }: {
   topicId: string;
   participants: Participant[];
   onSent: (msg: PostMessageResult) => void;
   placeholder?: string;
+  hint?: string;
 }) {
   const { me } = useAuth();
   const { toast } = useFeedback();
@@ -233,6 +236,8 @@ export function Composer({
           ref={area}
           rows={Math.min(8, Math.max(2, text.split("\n").length))}
           value={text}
+          aria-label="消息"
+          aria-describedby={`composer-hint-${topicId}`}
           placeholder={placeholder}
           onChange={(e) => {
             setText(e.target.value);
@@ -250,17 +255,25 @@ export function Composer({
             title="从你自己的电脑选择文件，上传到这个话题"
             onClick={() => fileInput.current?.click()}
           >
+            <Icon name="attach" size={16} />
             附件
           </button>
+          <span className="composer-format">支持 Markdown · 可上传文件</span>
           <button
-            className="btn btn-sm btn-primary"
+            className="btn btn-primary composer-send"
             type="button"
+            aria-label={sending ? "发送中" : "发送"}
+            title="发送消息"
             disabled={sending || uploading > 0 || (!text.trim() && !pending.length)}
             onClick={() => void send()}
           >
-            {sending ? "发送中…" : "发送"}
+            {sending ? <span className="spinner" aria-hidden /> : <Icon name="send" size={18} />}
           </button>
         </div>
+      </div>
+      <div className="composer-hint" id={`composer-hint-${topicId}`}>
+        <span>{hint}</span>
+        <span>Enter 发送 · Shift+Enter 换行</span>
       </div>
     </div>
   );

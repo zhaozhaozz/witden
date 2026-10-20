@@ -1,4 +1,4 @@
-import { type ReactNode, Suspense, useCallback, useEffect, useState } from "react";
+import { type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { Link, Navigate, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "./api/client";
 import { APPROVALS_EVENT } from "./api/events";
@@ -10,6 +10,7 @@ import { useAuth, useDirectory } from "./lib/session";
 import { isWebDm, useTopics } from "./lib/topics";
 import { PageErrorBoundary } from "./ui/ErrorBoundary";
 import { useAction } from "./ui/feedback";
+import { Icon, type IconName } from "./ui/Icon";
 import { Avatar, ComputerChip, Loading, RoleChip } from "./ui/kit";
 import { ResizeHandle } from "./ui/resize";
 
@@ -19,6 +20,7 @@ export const KILL_SWITCH_EVENT = "witden:kill-switch-changed";
 interface NavItem {
   to: string;
   label: string;
+  icon: IconName;
   any?: string[];
   badge?: number;
 }
@@ -98,34 +100,132 @@ export default function Layout() {
   const { me, can, logout } = useAuth();
   const location = useLocation();
   const dir = useDirectory();
+  const topics = useTopics();
+  const [navOpen, setNavOpen] = useState(false);
+  const sidebar = useRef<HTMLElement>(null);
+  const navButton = useRef<HTMLButtonElement>(null);
   const kills = useKillSwitches(can("emergency.stop"));
   const approvals = usePendingApprovals();
   useFirstRun();
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 760px)");
+    const changed = () => {
+      if (!media.matches) setNavOpen(false);
+    };
+    media.addEventListener("change", changed);
+    return () => media.removeEventListener("change", changed);
+  }, []);
+  useEffect(() => {
+    if (!navOpen) return;
+    sidebar.current?.querySelector<HTMLElement>("a, button")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setNavOpen(false);
+        navButton.current?.focus();
+      } else if (e.key === "Tab") {
+        const items = [...(sidebar.current?.querySelectorAll<HTMLElement>("a[href], button") ?? [])].filter(
+          (el) => el.getClientRects().length && !el.matches(":disabled"),
+        );
+        const target = e.shiftKey ? items.at(-1) : items[0];
+        if (document.activeElement === (e.shiftKey ? items[0] : items.at(-1))) {
+          e.preventDefault();
+          target?.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
 
-  const settings: NavItem[] = [
-    { to: "/computers", label: "虚拟电脑", any: COMPUTER_PERMS },
-    { to: "/roles", label: "角色管理", any: ["role.manage"] },
-    { to: "/models", label: "模型", any: ["secrets.manage"] },
-    { to: "/connections", label: "通讯接入", any: ["connection.manage"] },
-    { to: "/admin", label: "系统管理", any: ADMIN_PERMS },
-  ].filter((i) => !i.any || i.any.some(can));
+  const settings = (
+    [
+      { to: "/computers", label: "虚拟电脑", icon: "computer", any: COMPUTER_PERMS },
+      { to: "/roles", label: "角色管理", icon: "roles", any: ["role.manage"] },
+      { to: "/models", label: "模型", icon: "model", any: ["secrets.manage"] },
+      { to: "/connections", label: "通讯接入", icon: "connection", any: ["connection.manage"] },
+      { to: "/admin", label: "系统管理", icon: "settings", any: ADMIN_PERMS },
+    ] satisfies NavItem[]
+  ).filter((i) => i.any.some(can));
 
   const globalStop = kills.find((k) => k.scope === "global");
 
   return (
-    <div className="app">
+    <div className={`app${navOpen ? " nav-open" : ""}`}>
+      <div className="mobile-bar">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          ref={navButton}
+          aria-label="打开导航"
+          aria-expanded={navOpen}
+          aria-controls="workspace-navigation"
+          onClick={() => setNavOpen(true)}
+        >
+          <Icon name="menu" />
+        </button>
+        <span>witden</span>
+      </div>
+      {navOpen ? (
+        <button
+          type="button"
+          className="nav-backdrop"
+          aria-label="关闭导航"
+          tabIndex={-1}
+          onClick={() => {
+            setNavOpen(false);
+            navButton.current?.focus();
+          }}
+        />
+      ) : null}
       <ResizeHandle name="nav" side="start" min={150} max={360} />
-      <aside className="sidebar">
-        <Link to="/topics" className="brand">
-          <img src="/favicon.svg" alt="" width={22} height={22} />
-          <span>witden</span>
-        </Link>
-        <nav className="nav">
+      <aside
+        className="sidebar"
+        id="workspace-navigation"
+        ref={sidebar}
+        aria-label="工作区导航"
+        onClickCapture={(e) => {
+          if ((e.target as HTMLElement).closest("a[href], .side-main, .side-action, .sidebar-create"))
+            setNavOpen(false);
+        }}
+      >
+        <div className="sidebar-brand">
+          <Link to="/topics" className="brand">
+            <img src="/favicon.svg" alt="" width={26} height={26} />
+            <span>witden</span>
+          </Link>
+          <button
+            type="button"
+            className="btn btn-ghost sidebar-close"
+            aria-label="收起导航"
+            onClick={() => {
+              setNavOpen(false);
+              navButton.current?.focus();
+            }}
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+        <nav className="nav" aria-label="主导航">
+          {can("topic.create") ? (
+            <button type="button" className="sidebar-create" onClick={topics.newTopic}>
+              <Icon name="plus" />
+              新建话题
+            </button>
+          ) : null}
           <div className="nav-group">
+            <NavLink to="/topics" end className={navClass}>
+              <Icon name="chat" />
+              <span>全部会话</span>
+            </NavLink>
             <NavLink to="/tasks" className={navClass}>
+              <Icon name="tasks" />
               <span>任务</span>
             </NavLink>
             <NavLink to="/approvals" className={navClass}>
+              <Icon name="approval" />
               <span>审批</span>
               {approvals ? <span className="nav-badge">{approvals}</span> : null}
             </NavLink>
@@ -137,6 +237,7 @@ export default function Layout() {
             <SideSection id="settings" title="设置">
               {settings.map((i) => (
                 <NavLink key={i.to} to={i.to} className={navClass}>
+                  <Icon name={i.icon} />
                   <span>{i.label}</span>
                 </NavLink>
               ))}
@@ -162,7 +263,7 @@ export default function Layout() {
           </button>
         </div>
       </aside>
-      <div className="main">
+      <div className="main" inert={navOpen}>
         {kills.length ? (
           <div className={`killbar${globalStop ? " killbar-global" : ""}`} role="alert">
             <strong>紧急停止生效中</strong>

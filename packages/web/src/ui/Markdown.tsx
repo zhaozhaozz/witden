@@ -9,6 +9,7 @@
  * as links to open on purpose.
  */
 import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, defaultUrlTransform } from "react-markdown";
 import { Link } from "react-router-dom";
 import remarkBreaks from "remark-breaks";
@@ -98,10 +99,12 @@ function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: ()
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // Markdown images can live inside a paragraph. Mount the overlay outside that inline content.
+  return createPortal(
     <div className="lightbox" role="dialog" aria-label={alt || "图片"} onClick={onClose} onKeyDown={() => {}}>
       <img src={src} alt={alt} />
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -259,6 +262,11 @@ function components(streaming: boolean): Components {
   };
 }
 
+// React treats a new renderer function as a new component type. Keep these identities stable so live
+// status updates do not unmount diagrams, image previews, tables or the reader's text selection.
+const settledComponents = components(false);
+const streamingComponents = components(true);
+
 export function Markdown({
   content,
   streaming = false,
@@ -285,7 +293,11 @@ export function Markdown({
   );
   return (
     <div className={`msg-text md${streaming ? " md-streaming" : ""}`}>
-      <ReactMarkdown remarkPlugins={plugins} components={components(streaming)} urlTransform={urlTransform}>
+      <ReactMarkdown
+        remarkPlugins={plugins}
+        components={streaming ? streamingComponents : settledComponents}
+        urlTransform={urlTransform}
+      >
         {content}
       </ReactMarkdown>
       {trailing}

@@ -8,6 +8,7 @@ import { useAuth, useDirectory } from "../../lib/session";
 import { useTopics } from "../../lib/topics";
 import { useLeaveGuard, useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
+import { Icon } from "../../ui/Icon";
 import {
   Avatar,
   ComputerBadge,
@@ -41,6 +42,7 @@ export function TopicSidePanel({
   onDecided,
   computerMax = false,
   onToggleComputerMax,
+  onClose,
 }: {
   topic: Topic;
   onTopicChange: (t: Topic) => void;
@@ -52,6 +54,7 @@ export function TopicSidePanel({
   /** The computer tab is laid over the whole topic (tabs hidden). */
   computerMax?: boolean;
   onToggleComputerMax?: () => void;
+  onClose: () => void;
 }) {
   // A DM is always you and one role: its tab shows the role instead of a participant list.
   const dm = topic.kind === "dm";
@@ -81,6 +84,14 @@ export function TopicSidePanel({
 
   return (
     <aside className={`side-panel${computerMax ? " side-panel-max" : ""}`}>
+      {!computerMax ? (
+        <div className="side-panel-head">
+          <span>工作区</span>
+          <button type="button" className="btn btn-ghost btn-xs" aria-label="关闭工作区" onClick={onClose}>
+            <Icon name="close" size={16} />
+          </button>
+        </div>
+      ) : null}
       <Tabs
         value={tab}
         onChange={(k) => guard(() => setTab(k))}

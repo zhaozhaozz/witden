@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentSession, Task } from "../api/types";
@@ -19,9 +19,18 @@ export function SessionRuns({ session: s }: { session: AgentSession }) {
   const [limit, setLimit] = useState(RUNS_SHOWN);
   const res = useResource(
     () => api.get<Task[]>("/api/tasks", { session_id: s.id, kind: "conversation", limit }),
-    // A run that starts or ends shows at once.
-    [s.id, limit, s.runs, s.open_run?.id, s.open_run?.status],
+    [s.id],
   );
+  const refreshKey = `${s.id}:${limit}:${s.runs}:${s.open_run?.id}:${s.open_run?.status}`;
+  const previous = useRef(refreshKey);
+  const reload = res.reload;
+  useEffect(() => {
+    if (previous.current !== refreshKey) {
+      previous.current = refreshKey;
+      // Refresh the same conversation in place. Clearing data would replace its history with a spinner.
+      void reload();
+    }
+  }, [refreshKey, reload]);
   return (
     <Loaded res={res}>
       {(runs) =>

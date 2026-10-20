@@ -7,8 +7,10 @@ import { connectionLabel, conversationKind, placeLabel } from "../../lib/convers
 import { PLATFORM_LABEL, parseTime } from "../../lib/format";
 import { useDebounced, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
+import { useLeaveGuard } from "../../lib/unsaved";
 import { useFeedback } from "../../ui/feedback";
 import { ResizeGrips, useDraggable, useFloatingWindow } from "../../ui/floating";
+import { Icon } from "../../ui/Icon";
 import { ComputerBadge, Empty, ErrorNote, Loading, RoleBadge, Tag } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { Composer } from "./Composer";
@@ -24,6 +26,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const { me } = useAuth();
   const dir = useDirectory();
   const { toast } = useFeedback();
+  const guard = useLeaveGuard();
   const topicRes = useResource(() => api.get<Topic>(`/api/topics/${topicId}`), [topicId]);
   const files = useResource(() => api.get<Artifact[]>(`/api/topics/${topicId}/files`), [topicId]);
   // One source for inline cards and the side panel, including decisions kept in message history.
@@ -39,7 +42,11 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   const [version, setVersion] = useState(0);
   // A link naming a side-panel tab (?panel=…) opens the panel even if it was closed.
   const [params] = useSearchParams();
-  const [panel, setPanel] = useState(() => !!params.get("panel") || localStorage.getItem(PANEL_KEY) !== "0");
+  const [panel, setPanel] = useState(() => {
+    if (params.get("panel")) return true;
+    const saved = localStorage.getItem(PANEL_KEY);
+    return saved === null ? window.matchMedia("(min-width: 1240px)").matches : saved !== "0";
+  });
   // The side panel's virtual computer laid over the whole topic; the conversation then floats.
   const [computerMax, setComputerMax] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -54,7 +61,9 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     return { w: 420, h, x: window.innerWidth - 444, y: window.innerHeight - h - 96 };
   });
   const scroller = useRef<HTMLDivElement>(null);
+  const timelineContent = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const prependAnchor = useRef<number | null>(null);
 
   const loadMessages = useCallback(async () => {
@@ -140,6 +149,19 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     const el = scroller.current;
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight;
   }, []);
+  const jumpToLatest = () => {
+    stickToBottom.current = true;
+    setAwayFromBottom(false);
+    keepAtBottom();
+  };
+  // Images and diagrams can finish after React's layout pass. Follow their growth only while the reader
+  // is at the bottom; never pull someone away from an earlier message they chose to read.
+  useEffect(() => {
+    if (!timelineContent.current) return;
+    const observer = new ResizeObserver(keepAtBottom);
+    observer.observe(timelineContent.current);
+    return () => observer.disconnect();
+  }, [topicRes.data?.id, keepAtBottom]);
 
   const live = useLiveEvents({ topic_id: topicId }, (type, data) => {
     activityFeed.current?.(type, data);
@@ -247,10 +269,13 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
   };
 
   const togglePanel = () => {
-    setPanel((v) => {
-      localStorage.setItem(PANEL_KEY, v ? "0" : "1");
-      return !v;
-    });
+    const toggle = () =>
+      setPanel((v) => {
+        localStorage.setItem(PANEL_KEY, v ? "0" : "1");
+        return !v;
+      });
+    if (panel) guard(toggle);
+    else toggle();
   };
 
   if (!topic) {
@@ -329,91 +354,109 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
             <TopicCast participants={topic.participants ?? []} showRoles={!dm} />
           </div>
-          <button type="button" className="btn btn-sm" onClick={togglePanel} aria-pressed={panel}>
-            {panel ? "收起侧栏" : dm ? "任务与详情" : "任务与参与者"}
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost panel-toggle"
+            onClick={togglePanel}
+            aria-expanded={panel}
+          >
+            <Icon name="panel" size={17} />
+            {panel ? "收起工作区" : "打开工作区"}
           </button>
         </header>
 
-        <div
-          className="timeline"
-          ref={scroller}
-          onScroll={(e) => {
-            const el = e.currentTarget;
-            stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          }}
-        >
-          {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
-          {messages === null ? (
-            <Loading />
-          ) : (
-            <>
-              {hasMore ? (
-                <div className="timeline-more">
-                  <button
-                    type="button"
-                    className="btn btn-xs"
-                    disabled={loadingMore}
-                    onClick={() => void loadEarlier()}
-                  >
-                    {loadingMore ? "加载中…" : "加载更早的消息"}
-                  </button>
-                </div>
-              ) : messages.length ? (
-                <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
-              ) : null}
-              {!messages.length ? (
-                <Empty
-                  title={dm ? `开始和 ${heading} 私信` : "还没有消息"}
-                  hint={
-                    !topic.can_post
-                      ? undefined
-                      : dm
-                        ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
-                        : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
-                  }
-                />
-              ) : null}
-              {messages.map((m, i) => {
-                const prev = messages[i - 1];
-                const compact =
-                  !!prev &&
-                  prev.author_type === m.author_type &&
-                  prev.author_id === m.author_id &&
-                  m.author_type !== "system" &&
-                  (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) < 5 * 60_000;
-                const author = authorOf(m);
-                // a reply inside a Slack thread shows the thread's first message, as Slack does
-                const root = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
-                return (
-                  <MessageItem
-                    key={m.id}
-                    msg={m}
-                    approval={m.approval_id ? approvalMap.get(m.approval_id) : undefined}
-                    approvalError={approvals.error}
-                    approvalLoading={approvals.loading}
-                    onReloadApproval={approvals.reload}
-                    onDecided={onDecided}
-                    author={author}
-                    replyTo={
-                      m.reply_to_id
-                        ? { author: root ? authorOf(root).name : null, excerpt: root?.content.slice(0, 80) ?? null }
-                        : null
-                    }
-                    mentionTokens={mentionTokens(m)}
-                    compact={compact}
-                    files={fileMap}
+        <div className="conversation-feed">
+          <div
+            className="timeline"
+            ref={scroller}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              setAwayFromBottom(!stickToBottom.current);
+            }}
+          >
+            <div className="timeline-content" ref={timelineContent}>
+              {msgError ? <ErrorNote error={msgError} onRetry={loadMessages} /> : null}
+              {messages === null ? (
+                <Loading />
+              ) : (
+                <>
+                  {hasMore ? (
+                    <div className="timeline-more">
+                      <button
+                        type="button"
+                        className="btn btn-xs"
+                        disabled={loadingMore}
+                        onClick={() => void loadEarlier()}
+                      >
+                        {loadingMore ? "加载中…" : "加载更早的消息"}
+                      </button>
+                    </div>
+                  ) : messages.length ? (
+                    <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
+                  ) : null}
+                  {!messages.length ? (
+                    <Empty
+                      title={dm ? `开始和 ${heading} 私信` : "还没有消息"}
+                      hint={
+                        !topic.can_post
+                          ? undefined
+                          : dm
+                            ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
+                            : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
+                      }
+                    />
+                  ) : null}
+                  {messages.map((m, i) => {
+                    const prev = messages[i - 1];
+                    const compact =
+                      !!prev &&
+                      prev.author_type === m.author_type &&
+                      prev.author_id === m.author_id &&
+                      m.author_type !== "system" &&
+                      (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) <
+                        5 * 60_000;
+                    const author = authorOf(m);
+                    // a reply inside a Slack thread shows the thread's first message, as Slack does
+                    const root = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
+                    return (
+                      <MessageItem
+                        key={m.id}
+                        msg={m}
+                        approval={m.approval_id ? approvalMap.get(m.approval_id) : undefined}
+                        approvalError={approvals.error}
+                        approvalLoading={approvals.loading}
+                        onReloadApproval={approvals.reload}
+                        onDecided={onDecided}
+                        author={author}
+                        replyTo={
+                          m.reply_to_id
+                            ? { author: root ? authorOf(root).name : null, excerpt: root?.content.slice(0, 80) ?? null }
+                            : null
+                        }
+                        mentionTokens={mentionTokens(m)}
+                        compact={compact}
+                        files={fileMap}
+                      />
+                    );
+                  })}
+                  <RoleActivity
+                    topicId={topic.id}
+                    connected={live}
+                    feed={activityFeed}
+                    authorOf={roleAuthor}
+                    onGrow={keepAtBottom}
                   />
-                );
-              })}
-              <RoleActivity
-                topicId={topic.id}
-                connected={live}
-                feed={activityFeed}
-                authorOf={roleAuthor}
-                onGrow={keepAtBottom}
-              />
-            </>
-          )}
+                </>
+              )}
+            </div>
+          </div>
+          {awayFromBottom ? (
+            <button type="button" className="btn jump-latest" onClick={jumpToLatest}>
+              <Icon name="down" size={15} />
+              回到最新
+            </button>
+          ) : null}
         </div>
 
         {topic.can_post ? (
@@ -421,11 +464,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             topicId={topic.id}
             participants={topic.participants ?? []}
             onSent={onSent}
-            placeholder={
-              dm
-                ? `给 ${heading} 发消息（支持 Markdown、\`\`\`mermaid 流程图）；不需要 @。Enter 发送，Shift+Enter 换行`
-                : undefined
-            }
+            placeholder={dm ? `给 ${heading} 发消息…` : undefined}
+            hint={dm ? "直接发送即可开始对话，不需要 @" : undefined}
           />
         ) : (
           <div className="readonly-note">
@@ -472,6 +512,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           onDecided={onDecided}
           computerMax={computerMax}
           onToggleComputerMax={toggleComputerMax}
+          onClose={togglePanel}
           onTopicChange={(t) => {
             topicRes.setData(t);
             onTopicUpdated();

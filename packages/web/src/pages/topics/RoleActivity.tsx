@@ -18,7 +18,7 @@ interface Activity {
   text: string;
   /** Where the received text ends in the full answer (the server's ``offset``); a gap means we missed some. */
   end: number;
-  /** Text from the previous model call (written before a tool call), kept faded while the role carries on. */
+  /** Progress from earlier model calls, kept in place until a persisted message takes over. */
   note: string;
 }
 
@@ -50,10 +50,10 @@ function apply(prev: Activities, type: string, data: Record<string, unknown>): A
         text += delta.slice(end - offset); // drop any overlap
       }
       end = offset + delta.length;
-      m.set(id, { ...base, phase: "writing", text, end, note: "" });
+      m.set(id, { ...base, phase: "writing", text, end });
     } else {
-      // thinking or tool: the text written so far stays as a faded note
-      const note = base.phase === "writing" ? base.text : base.note;
+      // Keep the same Markdown body and height across tool/model transitions; collapsing it moves the reader.
+      const note = base.phase === "writing" ? [base.note, base.text].filter(Boolean).join("\n\n") : base.note;
       m.set(id, {
         ...base,
         phase: data.phase === "tool" ? "tool" : data.phase === "compacting" ? "compacting" : "thinking",
@@ -177,7 +177,10 @@ function ActivityItem({ activity: a, author }: { activity: Activity; author: Aut
         ? `正在${toolLabel(a.tool)}`
         : a.phase === "compacting"
           ? "对话较长，正在整理前面的内容"
-          : "正在思考";
+          : a.phase === "writing"
+            ? "正在生成回复"
+            : "正在思考";
+  const content = [a.note, a.text].filter(Boolean).join("\n\n");
   return (
     <div className="msg msg-role msg-live" aria-live="polite" aria-busy="true">
       <div className="msg-gutter">
@@ -197,26 +200,11 @@ function ActivityItem({ activity: a, author }: { activity: Activity; author: Aut
           {author.computer ? <ComputerBadge computer={author.computer} /> : null}
           <span className="ai-mark">AI 员工</span>
         </div>
-        {a.phase === "writing" ? (
-          <MessageText
-            content={a.text}
-            streaming
-            mentions={[]}
-            trailing={<span className="live-caret" aria-hidden />}
-          />
-        ) : (
-          <>
-            {a.note ? <div className="live-note">{a.note}</div> : null}
-            <div className={`live-status live-${a.phase}`}>
-              <span className="live-dots" aria-hidden>
-                <i />
-                <i />
-                <i />
-              </span>
-              {status}
-            </div>
-          </>
-        )}
+        {content ? <MessageText content={content} streaming mentions={[]} /> : null}
+        <div className={`live-status live-${a.phase}`} role="status">
+          <span className="live-indicator" aria-hidden />
+          {status}
+        </div>
       </div>
     </div>
   );
