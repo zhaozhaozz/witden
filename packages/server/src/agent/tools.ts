@@ -6,6 +6,7 @@
  * translated into runner operations and sent through the execution gateway, which binds them to the task's
  * computer; the worker never executes anything itself.
  */
+
 import type { PackagesResult, RunnerOp } from "@witden/shared";
 import { and, desc, eq, gte, ilike, isNull, lt, ne, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
@@ -30,6 +31,7 @@ import { externalContext } from "../integrations/links.js";
 import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../integrations/platform-tools.js";
 import { findCredential } from "../security/crypto.js";
 import { audit } from "../services/audit.js";
+import { manageAutomation } from "../services/automation-rules.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
@@ -43,8 +45,10 @@ import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
+import { submitTaskInput } from "./task-continuation.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
+import { sendLinkedMessage } from "./topic-messaging.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -54,7 +58,8 @@ export const TOOL_GROUPS: Record<string, string> = {
   browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
   system_software: "Have the platform install or remove system (Debian) packages in the virtual computer, as root",
   software_list: "Change the virtual computer's software list: packages installed whenever it starts",
-  collaborate: "Message and delegate to other roles (limited by contacts)",
+  collaborate: "Message linked topics and delegate to other roles (limited by contacts)",
+  automation: "Manage your own automation rules across topics (no access to secrets)",
   memory: "Remember and recall scoped notes on the platform",
   topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
   config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
@@ -65,12 +70,12 @@ export const TOOL_GROUPS: Record<string, string> = {
 export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 /**
  * Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub: there only the
- * bot's role works, so it brings in no other role (collaborate).
+ * bot's role works, so it brings in no other role (collaborate); configuration stays in the console (automation).
  */
-export const CONSOLE_ONLY_GROUPS = new Set(["profile", "collaborate"]);
+export const CONSOLE_ONLY_GROUPS = new Set(["profile", "collaborate", "automation"]);
 
 /** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
-export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
+export const DEFAULT_OFF_GROUPS = new Set(["topics", "automation"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
@@ -525,6 +530,26 @@ async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise
 
 /** Post in this topic now and keep working: a person answers in several messages, so may a role. */
 async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  if (args.topic_id && args.topic_id !== ctx.topicId) {
+    return transaction(async (db) => {
+      const { task, role } = await load(ctx, db);
+      const result = await sendLinkedMessage(
+        db,
+        task,
+        role,
+        {
+          topic_id: String(args.topic_id),
+          text: String(args.text ?? ""),
+          thread: args.thread,
+          role: args.role,
+          source_message_id: args.source_message_id,
+          task_id: args.task_id,
+        },
+        ctx.toolCallId,
+      );
+      return { content: JSON.stringify(result) };
+    });
+  }
   const text = String(args.text ?? "").trim();
   if (!text) throw new BadRequest("text is required");
   return transaction(async (db) => {
@@ -650,11 +675,11 @@ async function askHuman(ctx: ToolContext, args: Record<string, any>): Promise<To
       people.map((u) => u.id),
     );
     const names = people.map((u) => `@${u.name}`).join(" ");
-    const wait = { type: "human", user_ids: people.map((u) => u.id), tool_call_id: ctx.toolCallId };
     await deliver(db, task, role, topic, `${names} ${args.question ?? ""}`.trim(), {
       final: false,
       mentions: people.map((u) => ({ type: "user" as const, id: u.id })),
     });
+    const wait = { type: "human", user_ids: people.map((u) => u.id), tool_call_id: ctx.toolCallId };
     return {
       content: "question posted",
       control: "wait",
@@ -747,7 +772,15 @@ async function startTask(ctx: ToolContext, args: Record<string, any>): Promise<T
   if (!brief) throw new BadRequest("task is required");
   const child = await transaction(async (db) => {
     const { task, role } = await load(ctx, db);
-    return startOwnTask(db, task, role, brief, String(args.expected_output ?? ""), String(args.materials ?? ""));
+    return startOwnTask(
+      db,
+      task,
+      role,
+      brief,
+      String(args.expected_output ?? ""),
+      String(args.materials ?? ""),
+      args.source_message_id,
+    );
   });
   return {
     content: `started task ${child.id} in a separate context; its result comes back to you here as a new item. Continue, or end your turn.`,
@@ -1382,8 +1415,24 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "send_message",
       null,
-      "Post a message in this topic right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. It goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead.",
-      obj({ text: str, thread: { type: "string", description: "id of a message whose thread to post in" } }, ["text"]),
+      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
+      obj(
+        {
+          text: str,
+          topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
+          thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
+          source_message_id: {
+            type: "string",
+            description: "Relevant input message in this topic, for mixed requests",
+          },
+          task_id: {
+            type: "string",
+            description: "Optional independent task in this topic whose result/origin is being sent",
+          },
+          role: { type: "string", description: "Optional receiving role in an internal target topic" },
+        },
+        ["text"],
+      ),
       sendMessage,
     ),
     spec(
@@ -1426,11 +1475,82 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
         "start_task",
         null,
         "Start a separate task of your own for a bigger piece of work that can be done on its own (long research, a build, changes across many files). It runs in its own context with your tools and computer, and its result comes back to you here; nothing is posted for it. Give a self-contained brief: it does not see this conversation.",
-        obj({ task: str, expected_output: str, materials: str }, ["task"]),
+        obj({ task: str, expected_output: str, materials: str, source_message_id: str }, ["task"]),
         startTask,
       ),
       modes: ["conversation"] as WorkMode[],
     },
+    {
+      ...spec(
+        "continue_task",
+        null,
+        "Give more work to an independent task your conversation here started (start_task). A completed task starts a new iteration with the same transcript and computer, and its new result comes back to you; work still under way reads the instruction at its next step. Pauses and approvals stay in force; a failed or cancelled task is retried by a person.",
+        obj({ task_id: str, instruction: str, source_message_id: str }, ["task_id", "instruction"]),
+        async (ctx, args) =>
+          transaction(async (db) => {
+            const { task } = await load(ctx, db);
+            const sourceId = args.source_message_id ?? task.sourceMessageId;
+            if (sourceId) {
+              const [m] = await db
+                .select()
+                .from(messages)
+                .where(and(eq(messages.id, sourceId), eq(messages.topicId, task.topicId)));
+              if (!m || m.deletedAt) throw new BadRequest("source message must be in the current topic");
+            }
+            // Who asked is this run's requester, whatever message the model points at.
+            const updated = await submitTaskInput(db, String(args.task_id), String(args.instruction ?? ""), {
+              userId: task.requesterUserId,
+              caller: task,
+              sourceMessageId: sourceId,
+              idempotencyKey: `continue:${task.id}:${ctx.toolCallId}`,
+            });
+            return {
+              content: JSON.stringify({ task_id: updated.id, revision: updated.revision, status: updated.status }),
+            };
+          }),
+      ),
+      modes: ["conversation"] as WorkMode[],
+    },
+    spec(
+      "manage_automation",
+      "automation",
+      "Manage only rules assigned to you across topics you participate in. action: list, sources, get, events, test, create, update, delete. No secrets. For create give topic_id, kind and config; webhook config needs a granted source_id. Updates cannot change the owner or target topic.",
+      obj(
+        {
+          action: { type: "string", enum: ["list", "sources", "get", "events", "test", "create", "update", "delete"] },
+          id: str,
+          topic_id: str,
+          kind: { type: "string", enum: ["webhook", "schedule"] },
+          config: {
+            type: "object",
+            properties: {
+              name: str,
+              enabled: { type: "boolean" },
+              instructions: str,
+              source_id: str,
+              filter_code: str,
+              cron: str,
+              timezone: str,
+            },
+            additionalProperties: false,
+          },
+          filter_code: str,
+          raw_body: str,
+        },
+        ["action"],
+      ),
+      async (ctx, args) => {
+        // Filter preview runs outside transactions; it never mutates configuration.
+        if (args.action === "test") {
+          const { task } = await load(ctx, ctx.db());
+          return { content: JSON.stringify(await manageAutomation(ctx.db(), task, args)) };
+        }
+        return transaction(async (db) => {
+          const { task } = await load(ctx, db);
+          return { content: JSON.stringify(await manageAutomation(db, task, args)) };
+        });
+      },
+    ),
     ...ALL_FEISHU_TOOLS,
     ...GITHUB_TOOLS,
   ].map((t) => [t.name, t]),
@@ -1467,6 +1587,7 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
+  if (tool.name === "send_message" && args?.topic_id && required.has("collaborate")) return true;
   // A connection tool (Feishu, GitHub) asks when its connection's product asks (the connection comes from the call).
   if (isConnectionToolGroup(tool.group)) return grantNeedsApproval(envelope, tool.group!, args);
   return tool.group !== null && required.has(tool.group);

@@ -27,8 +27,9 @@ export async function roleMemoryRefusal(db: Db, task: Task): Promise<string | nu
   const [requester] = task.requesterUserId
     ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
     : [];
-  // Someone outside the console must not be able to change how the role works for everyone else.
-  if (!isConsoleUser(requester))
+  // Someone outside the console must not be able to change how the role works for everyone else, nor input
+  // from outside or from an automation that reaches a run a console account asked for.
+  if (!isConsoleUser(requester) || task.envelope?.automation_event || task.envelope?.untrusted_input)
     return "role memory changes how you work everywhere, so it can be added to, changed or deleted only while you work for a witden administrator (a console account); use scope 'topic' for a new note";
   return null;
 }

@@ -25,6 +25,7 @@ interface ControlTarget {
   title?: string;
   /** A run of a role's conversation: it can be stopped, not handed to another role or retried. */
   kind?: "conversation" | "task";
+  revision?: number;
 }
 
 /**
@@ -43,15 +44,24 @@ export function TaskControls({
   const { confirm } = useFeedback();
   const { run, busy } = useAction();
   const dir = useDirectory();
-  const [dialog, setDialog] = useState<null | "instruct" | "reassign">(null);
+  const [dialog, setDialog] = useState<null | "instruct" | "continue" | "reassign">(null);
   const [note, setNote] = useState("");
+  const [requestKey, setRequestKey] = useState("");
   const [target, setTarget] = useState("");
   const active = isActiveTask(task.status);
   const conversation = task.kind === "conversation";
   const cls = `btn btn-${size}`;
 
   const control = async (action: string, text = "", success?: string) => {
-    const out = await run(() => api.post<Task>(`/api/tasks/${task.id}/control`, { action, note: text }), success);
+    const out = await run(
+      () =>
+        api.post<Task>(`/api/tasks/${task.id}/control`, {
+          action,
+          note: text,
+          ...(action === "continue" ? { expected_revision: task.revision ?? 1, idempotency_key: requestKey } : {}),
+        }),
+      success,
+    );
     if (out) onChanged(out);
     return out;
   };
@@ -72,6 +82,23 @@ export function TaskControls({
       ) : null}
       {active ? (
         <button type="button" className={cls} disabled={busy} onClick={() => setDialog("instruct")}>
+          补充要求
+        </button>
+      ) : null}
+      {/* A finished task takes more requirements too: it starts working again and delivers once more. */}
+      {!conversation && task.status === "completed" ? (
+        <button
+          type="button"
+          className={cls}
+          disabled={busy}
+          onClick={() => {
+            // One key per dialog: a double submit starts one new iteration, not two.
+            setRequestKey(
+              Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, "0")).join(""),
+            );
+            setDialog("continue");
+          }}
+        >
           补充要求
         </button>
       ) : null}
@@ -119,7 +146,7 @@ export function TaskControls({
         </button>
       ) : null}
 
-      {dialog === "instruct" ? (
+      {dialog === "instruct" || dialog === "continue" ? (
         <FormModal
           title="补充要求"
           submitLabel="发送给角色"
@@ -127,7 +154,11 @@ export function TaskControls({
           disabled={!note.trim()}
           onClose={() => setDialog(null)}
           onSubmit={async () => {
-            const out = await control("instruct", note.trim(), "要求已送达，角色会在下一步读取");
+            const out = await control(
+              dialog === "continue" ? "continue" : "instruct",
+              note.trim(),
+              dialog === "continue" ? "已补充要求，任务重新开始工作" : "要求已送达，角色会在下一步读取",
+            );
             if (out) {
               setNote("");
               setDialog(null);
@@ -137,9 +168,11 @@ export function TaskControls({
           <Field
             label="新的要求"
             hint={
-              conversation
-                ? "角色会在下一步读到它（不打断正在执行的操作），和话题里的新消息一样。"
-                : "作为一条补充指令加入任务记录；如任务正在等待人工答复，会立即继续。"
+              dialog === "continue"
+                ? "这项任务已经完成。补充要求后，它在原来的执行记录和虚拟电脑上接着做，完成后再交付一次结果；之前交付的结果都保留。"
+                : conversation
+                  ? "角色会在下一步读到它（不打断正在执行的操作），和话题里的新消息一样。"
+                  : "作为一条补充指令加入任务记录；如任务正在等待人工答复，会立即继续。"
             }
           >
             <textarea rows={4} value={note} onChange={(e) => setNote(e.target.value)} autoFocus />

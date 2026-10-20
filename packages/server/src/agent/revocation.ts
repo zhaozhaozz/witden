@@ -1,4 +1,5 @@
 /** Permission changes and emergency stops take effect on work that is already queued or running. */
+
 import { eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
@@ -13,6 +14,7 @@ import {
 } from "../db/schema.js";
 import { externalRoleId } from "../integrations/links.js";
 import { hasPermission, Perm } from "../security/permissions.js";
+import { linkedRequestRefusal } from "../services/topic-links.js";
 import { participant } from "../services/topics.js";
 import { ACTIVE, cancelTree, pause } from "./control.js";
 
@@ -27,13 +29,20 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   const bound = await externalRoleId(db, topic.id);
   if (bound !== undefined && bound !== role.id)
     return `@${role.handle} does not work in this conversation: only the role its bot stands for does`;
+  // A task started from a linked request ends with the link. A conversation goes on with its other work:
+  // removing the link drops what has not reached it yet (services/topic-links.ts removeTopicLink).
+  const linkedRefusal = task.kind === "task" ? await linkedRequestRefusal(db, task) : null;
+  if (linkedRefusal) return linkedRefusal;
   if (task.requesterUserId) {
     const [user] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
     if (!user?.isActive) return "the requester is no longer an active member";
     // Work another role handed over is bounded by that role's contacts, not by whom the person may use.
     if (!task.requesterRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, role.id)))
       return `the requester may no longer use @${role.handle}`;
-    if (!(await participant(db, topic.id, "user", user.id))) return "the requester left the topic";
+    const linkedRequester = (task.envelope?.topic_routes ?? []).some(
+      (r: any) => r.origin?.requester_user_id === user.id,
+    );
+    if (!linkedRequester && !(await participant(db, topic.id, "user", user.id))) return "the requester left the topic";
   }
   return null;
 }
@@ -105,6 +114,9 @@ export async function activeKillSwitch(db: Db, task: Task): Promise<KillSwitch |
           (l) => l.connectionId,
         ),
       );
+      for (const route of task.envelope.topic_routes ?? []) {
+        if (route.origin?.connection_id) connections.add(route.origin.connection_id);
+      }
       if (ks.targetId && connections.has(ks.targetId)) return ks;
     }
   }
@@ -136,7 +148,11 @@ export async function applyKillSwitch(db: Db, ks: KillSwitch): Promise<number> {
         (l) => l.topicId,
       ),
     );
-    rows = rows.filter((t) => topicIds.has(t.topicId));
+    rows = rows.filter(
+      (t) =>
+        topicIds.has(t.topicId) ||
+        (t.envelope.topic_routes ?? []).some((r: any) => r.origin?.connection_id === ks.targetId),
+    );
   }
   for (const t of rows) await pause(db, t, `emergency stop: ${ks.reason || ks.scope}`, `kill:${ks.id}`);
   return rows.length;

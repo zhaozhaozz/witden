@@ -9,6 +9,7 @@
  * in what arrived meanwhile, it compacts the context when it reaches the model's threshold, and instead of
  * ending it carries on while something new is waiting.
  */
+
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { GatewayClient, RecoverResult } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
@@ -35,6 +36,7 @@ import { audit } from "../services/audit.js";
 import { contextLimits } from "../services/context-window.js";
 import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
+import { linkedTopicContext } from "../services/topic-links.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL } from "./control.js";
 import {
@@ -51,7 +53,9 @@ import { LiveFeed, type LiveTarget } from "./live.js";
 import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
 import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
+import { consumeTaskInputs, hasTaskInputs, lockTask } from "./task-continuation.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
+import { withTopicRules } from "./topic-messaging.js";
 import { appendStep, isConversation, loadTranscript } from "./transcript.js";
 
 interface Prepared {
@@ -191,7 +195,7 @@ export class TaskRunner {
 
   private gateOnly(taskId: string): Promise<boolean> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       return !!task && task.status === "running" && (await this.gate(tx, task));
     });
   }
@@ -228,7 +232,7 @@ export class TaskRunner {
         content = UNCERTAIN;
       }
       await transaction(async (tx) => {
-        const t = await getTask(tx, taskId);
+        const t = await lockTask(tx, taskId);
         if (t)
           await appendStep(tx, t, "tool", {
             tool_call_id: call.id,
@@ -243,7 +247,7 @@ export class TaskRunner {
 
   private takeRetry(taskId: string): Promise<ToolCall | null> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       const raw = task?.wait?.retry_call;
       if (!task || !raw) return null;
       const { retry_call: _r, ...rest } = task.wait ?? {};
@@ -259,7 +263,7 @@ export class TaskRunner {
 
   private prepare(taskId: string, mayCompact = true): Promise<Prepared | null> {
     return transaction(async (tx) => {
-      let task = await getTask(tx, taskId);
+      let task = await lockTask(tx, taskId);
       if (task?.status !== "running") return null;
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
@@ -288,7 +292,8 @@ export class TaskRunner {
       } catch (err) {
         return this.failIn(tx, task, (err as Error).message);
       }
-      const initial = await initialMessages(tx, task, role, topic);
+      let initial = await initialMessages(tx, task, role, topic);
+      initial[0].content = withTopicRules(String(initial[0].content), task.envelope);
       // A model that cannot call tools can still answer in text.
       const specs = cfg.capabilities?.tools === false ? [] : toolsFor(task.envelope);
       const tools = specs.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
@@ -307,7 +312,14 @@ export class TaskRunner {
           return { ...base, messages: [initial[0], ...transcript], showText: false, compact: true };
         }
         const injected = await inject(tx, task, topic, role);
-        task = (await getTask(tx, taskId))!;
+        task = (await lockTask(tx, taskId))!;
+        initial = await initialMessages(tx, task, role, topic);
+        initial[0].content = withTopicRules(String(initial[0].content), task.envelope);
+        base.tools = (cfg.capabilities?.tools === false ? [] : toolsFor(task.envelope)).map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        }));
         transcript = await loadTranscript(tx, task);
         const last = transcript[transcript.length - 1];
         if (!injected && (!last || (last.role === "assistant" && !last.tool_calls?.length)))
@@ -315,9 +327,15 @@ export class TaskRunner {
       } else {
         transcript = await loadTranscript(tx, task);
         if (!transcript.length) {
-          await appendStep(tx, task, "user", { content: initial[1].content });
+          await appendStep(tx, task, "user", {
+            content: `${initial[1].content}\n\n${await linkedTopicContext(tx, topic.id)}`,
+          });
           transcript = await loadTranscript(tx, task);
         }
+      }
+      if (!conversation) {
+        await consumeTaskInputs(tx, task);
+        transcript = await loadTranscript(tx, task);
       }
       // A conversation's budget counts per turn (each batch of new messages starts a new count).
       const budget = task.budget ?? {};
@@ -374,7 +392,7 @@ export class TaskRunner {
     if (!summary && overflow) summary = TOO_LONG;
     await feed.close();
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task?.status !== "running") return false;
       for (const r of calls) await this.recordUsage(tx, task, prepared.modelConfigId, r);
       if (!summary) {
@@ -409,7 +427,7 @@ export class TaskRunner {
 
   private record(taskId: string, prepared: Prepared, response: LLMResponse): Promise<ToolCall[] | null> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task?.status !== "running") return null; // cancelled or paused while the model was thinking
       await this.recordUsage(tx, task, prepared.modelConfigId, response);
       const spent = response.promptTokens + response.completionTokens;
@@ -444,7 +462,7 @@ export class TaskRunner {
   /** Run one tool call. Returns false when the task has to stop or wait. */
   private async execute(taskId: string, call: ToolCall): Promise<boolean> {
     const pre = await transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task?.status !== "running") return null;
       const spec = TOOLS.get(call.name);
       const allowed = new Set(toolsFor(task.envelope).map((t) => t.name));
@@ -520,7 +538,7 @@ export class TaskRunner {
       }
     }
     return transaction(async (tx) => {
-      const current = await getTask(tx, taskId);
+      const current = await lockTask(tx, taskId);
       if (!current) return false;
       const content = typeof result.content === "string" ? redact(result.content) : result.content;
       await audit(tx, `tool.${call.name}`, {
@@ -579,15 +597,18 @@ export class TaskRunner {
    */
   private finish(taskId: string, content: string): Promise<boolean> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task?.status !== "running") return false;
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
       const conversation = isConversation(task);
+      // A newer input arrived while the model answered: do not publish a stale final answer.
+      if (!conversation && (await hasTaskInputs(tx, task.id))) return true;
       const said = redact(content.trim());
       // Everything may already have been said with send_message: then the empty final answer posts nothing.
-      // A conversation looks only at what it posted since the latest messages reached it.
-      const since = conversation ? await this.lastInjection(tx, task) : null;
+      // A conversation looks only at what it posted since the latest messages reached it; a task only at this
+      // iteration (a continued task must not report what an earlier iteration said).
+      const since = conversation ? await this.lastInjection(tx, task) : task.startedAt;
       const [sent] = said
         ? []
         : await tx
@@ -638,7 +659,7 @@ export class TaskRunner {
   /** Nothing new and nothing left to do (the inbox was taken by an earlier pass): end without a model call. */
   private finishIdle(taskId: string): Promise<void> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task?.status !== "running") return;
       const done = await setStatus(tx, task, "completed", "nothing new", { result: task.result ?? "" });
       await noteRunEnd(tx, done);
@@ -660,7 +681,7 @@ export class TaskRunner {
 
   async fail(taskId: string, reason: string): Promise<void> {
     await transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (task && !TERMINAL.has(task.status)) await this.failIn(tx, task, reason);
     });
   }
@@ -693,7 +714,7 @@ export class TaskRunner {
   /** Computer unavailable or busy: wait (bounded) and retry the same call; never run it elsewhere. */
   private waitForInstance(taskId: string, call: ToolCall, reason: string): Promise<void> {
     return transaction(async (tx) => {
-      const task = await getTask(tx, taskId);
+      const task = await lockTask(tx, taskId);
       if (!task || TERMINAL.has(task.status)) return;
       await appendStep(tx, task, "event", { type: "instance_wait", reason, tool: call.name });
       const since = task.wait?.type === "instance" ? task.wait.since : null;

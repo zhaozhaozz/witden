@@ -103,6 +103,8 @@ export interface Message {
   task_id: string | null;
   approval_id?: string | null;
   attachments: string[];
+  /** Sent from a linked topic: the topic it came from. */
+  topic_delivery?: { source_topic_id: string } | null;
   source: string;
   round: number;
   created_at: string;
@@ -182,6 +184,15 @@ export interface TaskWait {
 
 export interface Task {
   id: string;
+  revision?: number;
+  iterations?: {
+    id: string;
+    revision: number;
+    status: string;
+    result: string | null;
+    error: string | null;
+    finished_at: string | null;
+  }[];
   topic_id: string;
   /**
    * conversation: one run of a role's conversation in the topic (its context is the session's);

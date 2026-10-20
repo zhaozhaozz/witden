@@ -33,6 +33,7 @@ import {
   Tag,
 } from "../../ui/kit";
 import { AssignmentTrace, type Stop, TraceRail } from "../../ui/trace";
+import { TaskIterations } from "./TaskIterations";
 import { TaskControls, TaskStatusChip } from "./taskParts";
 
 export default function TaskDetailPage() {
@@ -107,6 +108,7 @@ export default function TaskDetailPage() {
               </div>
             ) : null}
             <TaskSummary task={t} />
+            {!t.content_restricted ? <TaskIterations task={t} /> : null}
             <Tabs
               value={tab}
               onChange={setTab}

@@ -16,14 +16,14 @@ import { deleteArtifactData } from "../services/files.js";
 import { dispatchRoleMessage, saveMessage } from "./dispatch.js";
 
 /** A request asked inside a Slack thread is answered in that thread (messages there point at its root). */
-async function answeredThread(db: Db, task: Task): Promise<string | null> {
+async function answeredThread(db: Db, task: Task, topicId: string): Promise<string | null> {
   if (!task.sourceMessageId) return null;
   const [source] = await db
-    .select({ replyToId: messages.replyToId })
+    .select({ replyToId: messages.replyToId, topicId: messages.topicId })
     .from(messages)
     .where(eq(messages.id, task.sourceMessageId))
     .limit(1);
-  return source?.replyToId ?? null;
+  return source?.topicId === topicId ? source.replyToId : null;
 }
 
 export async function deliver(
@@ -48,7 +48,7 @@ export async function deliver(
     attachments: opts.attachments ?? [],
     round: opts.round ?? task.round + 1,
     taskId: task.id,
-    replyToId: opts.replyToId ?? (await answeredThread(db, task)),
+    replyToId: opts.replyToId ?? (await answeredThread(db, task, topic.id)),
   });
   await audit(db, "message.post", {
     actorType: "role",
@@ -83,7 +83,7 @@ export async function releaseApproved(
     attachments: detail.attachments ?? [],
     round: task.round + 1,
     taskId: task.id,
-    replyToId: detail.reply_to_id ?? (await answeredThread(db, task)),
+    replyToId: detail.reply_to_id ?? (await answeredThread(db, task, topic.id)),
   });
   await dispatchRoleMessage(db, topic, msg, role, task);
   return msg;

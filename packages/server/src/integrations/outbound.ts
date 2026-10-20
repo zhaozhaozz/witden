@@ -1,4 +1,5 @@
 /** Mirror internal messages into linked external threads, exactly once per destination. */
+
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -13,6 +14,7 @@ import {
 } from "../db/schema.js";
 import { wake } from "../services/events.js";
 import { CHANNEL } from "./base.js";
+import { sentThread } from "./message-refs.js";
 
 /**
  * Where a message goes in a channel topic: into the thread it replies to, or into the thread of the message
@@ -22,6 +24,7 @@ async function answerThread(
   db: Db,
   msg: Pick<Message, "replyToId" | "taskId">,
   conversation: string,
+  connectionId?: string,
 ): Promise<string | null> {
   const ref = (m: Message | undefined) =>
     m?.externalRef?.conversation === conversation ? (m.externalRef as { ts?: string; thread?: string }) : null;
@@ -29,6 +32,8 @@ async function answerThread(
     const [root] = await db.select().from(messages).where(eq(messages.id, msg.replyToId)).limit(1);
     const r = ref(root);
     if (r?.thread) return r.thread;
+    const published = await sentThread(db, root, conversation, connectionId);
+    if (published) return published;
   }
   if (msg.taskId) {
     const [task] = await db.select().from(tasks).where(eq(tasks.id, msg.taskId)).limit(1);
@@ -44,12 +49,12 @@ async function answerThread(
 /** The thread a message goes into in a linked conversation (null: the conversation itself, or a DM). */
 export async function threadIn(
   db: Db,
-  link: { threadKey: string },
+  link: { threadKey: string; connectionId?: string },
   conversation: string,
   msg: Pick<Message, "replyToId" | "taskId">,
 ): Promise<string | null> {
   if (link.threadKey === "__dm__") return null;
-  return link.threadKey === CHANNEL ? answerThread(db, msg, conversation) : link.threadKey;
+  return link.threadKey === CHANNEL ? answerThread(db, msg, conversation, link.connectionId) : link.threadKey;
 }
 
 export async function mirrorMessage(db: Db, msg: Message): Promise<number> {

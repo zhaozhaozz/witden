@@ -1,3 +1,4 @@
+import { topicLinkRoutes } from "./topic-links.js";
 import "@fastify/multipart";
 import fs from "node:fs";
 import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
@@ -31,6 +32,7 @@ import { erased } from "../services/memories.js";
 import { purgeMessage } from "../services/messages.js";
 import * as svc from "../services/topics.js";
 import { resolveToken } from "../services/users.js";
+import { pruneWebhookReceipts } from "../services/webhook-sources.js";
 import { authed, body, extractToken, params, query, row } from "./http.js";
 import { sessionOut } from "./sessions.js";
 
@@ -92,6 +94,7 @@ async function topicOut(
 }
 
 export async function topicRoutes(app: FastifyInstance) {
+  await topicLinkRoutes(app);
   app.get(
     "/api/topics",
     authed(async ({ db, user, req }) => {
@@ -454,7 +457,10 @@ export async function topicRoutes(app: FastifyInstance) {
         });
       const counts = { messages: 0, memories: 0, files: 0 };
       // Raw requests are another part of this topic's history, including receipts still in the queue.
-      if (b.triggerHistory !== false) await db.delete(triggerEvents).where(eq(triggerEvents.topicId, topic.id));
+      if (b.triggerHistory !== false) {
+        await db.delete(triggerEvents).where(eq(triggerEvents.topicId, topic.id));
+        await pruneWebhookReceipts(db);
+      }
       if (b.messages !== false) {
         for (const m of await db
           .select()

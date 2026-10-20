@@ -6,6 +6,7 @@
  * between acknowledging and processing loses nothing: queued or stalled events are picked up again.
  * Identity is the platform user id, never a display name.
  */
+
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { dispatchHumanMessage, saveMessage } from "../agent/dispatch.js";
@@ -34,6 +35,7 @@ import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
 import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
 import { integrationError } from "./diagnostics.js";
+import { sentMessageRoot } from "./message-refs.js";
 
 export interface InboundMessage {
   connectionId: string;
@@ -357,7 +359,7 @@ async function threadRoot(db: Db, topic: Topic, msg: InboundMessage): Promise<st
       ),
     )
     .limit(1);
-  return root?.id ?? null;
+  return root?.id ?? (await sentMessageRoot(db, topic.id, msg.connectionId, msg.conversationId, msg.threadKey));
 }
 
 /** Requests from bots in a topic's conversation since the last message a person wrote there. */
@@ -393,6 +395,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
     const [conn] = await db.select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);
     if (!conn) return { status: "unknown_connection" };
     if (conn.status !== "active") return { status: "connection_paused" };
+    if (conn.botUserId && msg.userId === conn.botUserId) return { status: "self_echo" };
     const conv = await upsertConversation(db, conn, msg);
     const adapter = await getAdapter(conn);
     if (adapter.syncMembers) {

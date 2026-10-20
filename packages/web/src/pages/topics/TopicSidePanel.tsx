@@ -28,6 +28,7 @@ import { MemoryList } from "../memoryParts";
 import { SessionRuns } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
+import { TopicLinksTab } from "./TopicLinksTab";
 import { TriggersTab } from "./TriggersTab";
 import { InviteDialog } from "./topicDialogs";
 
@@ -89,6 +90,7 @@ export function TopicSidePanel({
           { key: "role", label: "角色", hidden: !dm },
           { key: "files", label: "文件" },
           { key: "notes", label: "记忆" },
+          { key: "links", label: "关联话题" },
           { key: "triggers", label: "触发器", hidden: dm },
           { key: "settings", label: "设置" },
         ]}
@@ -131,6 +133,7 @@ export function TopicSidePanel({
         {shown === "role" ? <DmRoleTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} /> : null}
         {shown === "notes" ? <NotesTab topic={topic} /> : null}
+        {shown === "links" ? <TopicLinksTab key={topic.id} topic={topic} /> : null}
         {shown === "triggers" ? <TriggersTab key={topic.id} topic={topic} version={version} /> : null}
         {shown === "settings" ? (
           dm ? (

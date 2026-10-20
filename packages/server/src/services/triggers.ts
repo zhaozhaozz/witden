@@ -1,9 +1,10 @@
 /** Topic triggers: durable receipts, bounded filtering, and atomic delivery into a role's conversation. */
+
 import { timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { enqueue } from "../agent/conversation.js";
 import { authorize, saveMessage } from "../agent/dispatch.js";
-import { type Db, transaction } from "../db/client.js";
+import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
   type TopicTrigger,
@@ -20,6 +21,7 @@ import { publish } from "./events.js";
 import { getRole, getTopic, participant } from "./topics.js";
 import { runFilter } from "./trigger-filter.js";
 import { nextTriggerTime } from "./trigger-schedule.js";
+import { hydrateTriggerEvent, webhookSource } from "./webhook-sources.js";
 
 export const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const LEASE_MS = 60_000;
@@ -44,7 +46,7 @@ export async function validateTriggerRole(db: Db, topicId: string, roleId: strin
   if (role.systemAdmin) throw new BadRequest("系统管理员角色只接受人的请求，不能作为自动触发的处理角色");
 }
 
-export function verifyTriggerToken(trigger: TopicTrigger | undefined, token: string) {
+export function verifyTriggerToken(trigger: { tokenHash: string | null } | undefined, token: string) {
   const expected = Buffer.from(trigger?.tokenHash ?? "0".repeat(64), "hex");
   const actual = Buffer.from(hashToken(token), "hex");
   if (!token || expected.length !== actual.length || !timingSafeEqual(expected, actual) || !trigger)
@@ -57,6 +59,7 @@ function snapshot(trigger: TopicTrigger) {
     instructions: trigger.instructions,
     filterCode: trigger.filterCode,
     createdBy: trigger.createdBy,
+    sourceId: trigger.sourceId,
   };
 }
 
@@ -200,6 +203,7 @@ export async function processTriggerEvents(limit = 20): Promise<number> {
     let accepted = true;
     let filterError: string | null = null;
     try {
+      Object.assign(event, await hydrateTriggerEvent(getDb(), event));
       if (event.request) accepted = await runFilter(event.config.filterCode, event.request);
     } catch (error) {
       filterError = error instanceof BadRequest ? error.message : "过滤代码执行失败";
@@ -218,6 +222,10 @@ export async function processTriggerEvents(limit = 20): Promise<number> {
         const topic = await getTopic(db, event.topicId);
         if (!trigger?.enabled || topic.status !== "active")
           return finish(db, current, "skipped", "触发器已停用、删除，或话题已归档");
+        if (event.config.sourceId) {
+          const source = await webhookSource(db, event.config.sourceId).catch(() => null);
+          if (!source?.enabled) return finish(db, current, "skipped", "Webhook 来源已停用或删除");
+        }
         const [creator] = await db.select().from(users).where(eq(users.id, event.config.createdBy));
         const role = await getRole(db, event.config.roleId);
         if (
@@ -322,7 +330,7 @@ export async function getTriggerEvent(db: Db, topicId: string, id: string) {
     .from(triggerEvents)
     .where(and(eq(triggerEvents.id, id), eq(triggerEvents.topicId, topicId)));
   if (!event) throw new NotFound("这个话题中没有该触发记录");
-  return event;
+  return hydrateTriggerEvent(db, event);
 }
 
 /** Own-topic history only, even for roles with permission to read other topics' messages. */

@@ -18,6 +18,7 @@ export type LiveEventType =
   | "emergency.stop"
   | "topic.activity"
   | "trigger.changed"
+  | "topic.links_changed"
   | "config.changed";
 
 const EVENT_TYPES: LiveEventType[] = [
@@ -34,6 +35,7 @@ const EVENT_TYPES: LiveEventType[] = [
   "emergency.stop",
   "topic.activity",
   "trigger.changed",
+  "topic.links_changed",
   "config.changed",
 ];
 
