@@ -25,14 +25,36 @@ import { externalContext, externalRoleId } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
+import { relayFrom } from "../services/collaboration-policy.js";
 import { publish, wake } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import * as topicSvc from "../services/topics.js";
 import { setStatus } from "./control.js";
 import { enqueue, rolesAwaiting } from "./conversation.js";
+import { envelopeWithRelay } from "./topic-messaging.js";
 import { appendStep } from "./transcript.js";
 
 export const MENTION = /(?<![\w@/])@([A-Za-z0-9][A-Za-z0-9_.-]{0,63})/g;
+
+/** The topic a linked message came from (who asked there, and through which connection, stay on the server). */
+const sourceTopicOf = (msg: Message) => {
+  const relay = relayFrom(msg.externalRef);
+  return relay ? { source_topic_id: relay.source_topic_id } : null;
+};
+
+/** The role's settings a task works with: taken when it starts, and again when a finished task starts over. */
+export async function roleSnapshotFor(db: Db, role: Role) {
+  const found = await models.modelWithProvider(db, role.modelConfigId);
+  return {
+    config_version: role.configVersion,
+    model_config_id: role.modelConfigId,
+    model_name: found ? models.modelLabel(found.model, found.provider) : null,
+    system_prompt: role.systemPrompt,
+    model_params: role.modelParams,
+    reasoning_effort: role.reasoningEffort,
+    instance_id: role.instanceId,
+  };
+}
 
 export function messageOut(msg: Message) {
   return {
@@ -48,6 +70,7 @@ export function messageOut(msg: Message) {
     attachments: msg.attachments,
     source: msg.source,
     round: msg.round,
+    topic_delivery: msg.deletedAt ? null : sourceTopicOf(msg),
     created_at: msg.createdAt.toISOString(),
     edited_at: msg.editedAt?.toISOString() ?? null,
     deleted: !!msg.deletedAt,
@@ -154,6 +177,12 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
     env.spaces = env.spaces.filter((s: string) => (p.spaces ?? []).includes(s));
     env.approval_required = [...new Set([...env.approval_required, ...(p.approval_required ?? [])])].sort();
     env.inherited_from = parent.id;
+  }
+  if (parent) {
+    if (parent.envelope.untrusted_input) env.untrusted_input = true;
+    if (parent.envelope.outside) env.outside = true;
+    if (parent.envelope.automation_event) env.automation_event = true;
+    if (parent.envelope.topic_routes) env.topic_routes = parent.envelope.topic_routes;
   }
   return env;
 }
@@ -272,7 +301,6 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
   const { role, topic, parent = null } = o;
   const conversation = o.kind === "conversation";
   if (conversation && !o.session) throw new Error("a conversation run needs its session");
-  const found = await models.modelWithProvider(db, role.modelConfigId);
   const budget: Record<string, any> = {
     max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
     max_tokens: role.maxTokensPerTask,
@@ -296,32 +324,28 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
       instruction: o.instruction,
       requesterUserId: o.requesterUserId,
       requesterRoleId: o.requesterRoleId ?? null,
-      sourceMessageId: o.sourceMessage?.id ?? null,
+      sourceMessageId: o.sourceMessage?.id ?? parent?.sourceMessageId ?? null,
       ownerRoleId: role.id,
       instanceId: role.instanceId,
       parentTaskId: parent && o.waitsForResult ? parent.id : null,
       spawnedByTaskId: parent?.id ?? null,
       depth: parent ? parent.depth + 1 : 0,
       round: o.round ?? 0,
-      envelope: {
-        // The conversation's own permissions: a message from another role does not narrow them (its contacts
-        // decide whom it may ask); delegated tasks are narrowed to the delegator's.
-        ...buildEnvelope(role, conversation ? null : parent),
-        ...(conversation ? { mode: "conversation" } : {}),
-        ...(o.reportOnly ? { report_only: true } : {}),
-        ...(o.auto ? { auto: true } : {}),
-        // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered.
-        ...((await externalContext(db, topic.id)).conversationKind ? { outside: true } : {}),
-      },
-      roleSnapshot: {
-        config_version: role.configVersion,
-        model_config_id: role.modelConfigId,
-        model_name: found ? models.modelLabel(found.model, found.provider) : null,
-        system_prompt: role.systemPrompt,
-        model_params: role.modelParams,
-        reasoning_effort: role.reasoningEffort,
-        instance_id: role.instanceId,
-      },
+      envelope: envelopeWithRelay(
+        {
+          // The conversation's own permissions: a message from another role does not narrow them (its contacts
+          // decide whom it may ask); delegated tasks are narrowed to the delegator's.
+          ...buildEnvelope(role, conversation ? null : parent),
+          ...(conversation ? { mode: "conversation" } : {}),
+          ...(o.reportOnly ? { report_only: true } : {}),
+          ...(o.auto ? { auto: true } : {}),
+          // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered.
+          ...((await externalContext(db, topic.id)).conversationKind ? { outside: true } : {}),
+        },
+        o.sourceMessage?.source === "topic" ? relayFrom(o.sourceMessage.externalRef) : null,
+        ["webhook", "schedule"].includes(o.sourceMessage?.source ?? ""),
+      ),
+      roleSnapshot: await roleSnapshotFor(db, role),
       assignment: o.assignment ?? {},
       budget,
       usage: { steps: 0, tokens: 0 },
@@ -357,7 +381,11 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
 
 // --- dispatch --------------------------------------------------------------------------------------------
 
-/** A human reply answers tasks that asked this person (or anyone) a question here. */
+/**
+ * A human reply answers tasks that asked this person (or anyone) a question here. Where it threads does not
+ * decide which question it answers: every task it may answer gets it, and the model judges from its content
+ * whether it is the answer (several tasks waiting in one topic are told so).
+ */
 async function resumeWaiting(
   db: Db,
   topic: Topic,
@@ -370,15 +398,22 @@ async function resumeWaiting(
     .select()
     .from(tasks)
     .where(and(eq(tasks.topicId, topic.id), eq(tasks.status, "waiting_human")));
-  for (const task of waiting) {
+  const answering = waiting.filter((task) => {
+    const asked: string[] = task.wait?.user_ids ?? [];
+    if (asked.length && !asked.includes(user.id)) return false;
+    return !mentioned.size || mentioned.has(task.ownerRoleId);
+  });
+  const shared =
+    answering.length > 1
+      ? "\n\n(Other questions are waiting for an answer in this topic too: this reply may answer one of them. " +
+        "If it does not answer yours, ask again with ask_human.)"
+      : "";
+  for (const task of answering) {
     const wait = task.wait ?? {};
-    const asked: string[] = wait.user_ids ?? [];
-    if (asked.length && !asked.includes(user.id)) continue;
-    if (mentioned.size && !mentioned.has(task.ownerRoleId)) continue;
     await appendStep(db, task, "tool", {
       tool_call_id: wait.tool_call_id,
       name: "ask_human",
-      content: `${user.name} replied: ${msg.content}`,
+      content: `${user.name} replied: ${msg.content}${shared}`,
     });
     await setStatus(db, task, "pending", `answered by ${user.name}`, { wait: null });
     resumed.add(task.ownerRoleId);
@@ -638,20 +673,34 @@ export async function startOwnTask(
   brief: string,
   expectedOutput: string,
   materials: string,
+  sourceMessageId?: string,
 ): Promise<Task> {
   if (run.depth + 1 > settings().maxDelegationDepth) throw new Forbidden("task depth limit reached");
   await checkAutoRounds(run);
   const topic = await topicSvc.getTopic(db, run.topicId);
+  const sourceId = sourceMessageId ?? run.sourceMessageId;
+  const [sourceMessage] = sourceId
+    ? await db
+        .select()
+        .from(messages)
+        .where(and(eq(messages.id, sourceId), eq(messages.topicId, topic.id)))
+        .limit(1)
+    : [];
+  if (sourceMessageId && (!sourceMessage || sourceMessage.deletedAt))
+    throw new Forbidden("source message must be in this topic");
   let instruction = `Started by your conversation in this topic as a separate task.\n\nTask:\n${brief}`;
   if (expectedOutput) instruction += `\n\nExpected output:\n${expectedOutput}`;
   if (materials) instruction += `\n\nMaterials provided:\n${materials}`;
   return createTask(db, {
     topic,
     role,
+    // The message picked only says what the task is about; who asked stays this run's requester, so the model
+    // cannot attribute work to someone else.
     requesterUserId: run.requesterUserId,
     requesterRoleId: role.id,
     instruction,
     title: plainTitle(brief).slice(0, 120) || "task",
+    sourceMessage: sourceMessage ?? null,
     parent: run,
     assignment: { summary: `@${role.handle}: separate task of its conversation`, trace: [] },
     round: run.round + 1,

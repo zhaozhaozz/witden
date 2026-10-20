@@ -43,6 +43,7 @@ import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
 import { ConnectionToolPermissions, type FeishuGranted } from "./ConnectionToolPermissions";
 import { defaultPermissions, PermissionList } from "./PermissionList";
+import { RoleAutomations } from "./RoleAutomations";
 import { fieldLabel, ImpactView, translateWarning } from "./roleParts";
 
 interface Draft {
@@ -732,6 +733,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             ) : null}
             <RoleMemories role={role} />
             <RoleSessions role={role} />
+            {!role.system_admin ? <RoleAutomations roleId={role.id} /> : null}
           </aside>
         ) : null}
       </div>

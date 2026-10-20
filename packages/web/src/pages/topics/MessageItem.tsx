@@ -205,6 +205,12 @@ export function MessageItem({
             ) : null}
           </div>
         ) : null}
+        {/* Sent from a linked topic; how it was worked on there is in that topic's work panel. */}
+        {msg.topic_delivery && !msg.deleted ? (
+          <div className="msg-reply">
+            来自关联话题：<Link to={`/topics/${msg.topic_delivery.source_topic_id}`}>查看来源话题</Link>
+          </div>
+        ) : null}
         {replyTo ? (
           <div className="msg-reply" title="在 Slack 的 thread 中回复">
             ↳ 回复 {replyTo.author ?? "一条较早的消息"}

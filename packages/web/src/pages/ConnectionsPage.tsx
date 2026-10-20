@@ -45,6 +45,7 @@ import { GithubSetup, MANIFEST_KEY, type ManifestReturn } from "./GithubSetup";
 import { SlackAppDetail } from "./SlackApps";
 import { SlackInstall } from "./SlackInstall";
 import { SlackSetup } from "./SlackSetup";
+import { WebhookSourcesPanel } from "./WebhookSourcesPanel";
 
 type CapabilityMatrix = Record<string, Record<string, unknown>>;
 
@@ -251,6 +252,7 @@ export default function ConnectionsPage() {
           </>
         }
       />
+      <WebhookSourcesPanel />
       {showCaps ? (
         <Section title="各平台能力对照">
           <p className="small muted">

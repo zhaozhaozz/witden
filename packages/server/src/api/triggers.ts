@@ -24,13 +24,17 @@ import {
   validateTriggerRole,
   verifyTriggerToken,
 } from "../services/triggers.js";
+import { pruneWebhookReceipts, webhookSource } from "../services/webhook-sources.js";
+import { automationRoutes } from "./automations.js";
 import { authed, authedNoTx, body, type Ctx, params, query, row } from "./http.js";
+import { sharedWebhookRoutes, webhookSourceRoutes } from "./webhook-sources.js";
 
 const fields = z
   .object({
     name: z.string().trim().min(1).max(120),
     kind: z.enum(["webhook", "schedule"]),
     roleId: z.string().min(1),
+    sourceId: z.string().min(1).optional(),
     enabled: z.boolean().optional(),
     instructions: z.string().max(16_000).optional(),
     secret: z
@@ -53,8 +57,13 @@ async function admin(ctx: Ctx) {
 async function triggerOut(db: Ctx["db"], trigger: TopicTrigger) {
   return {
     ...row(trigger),
-    has_secret: !!trigger.tokenHash,
-    webhook_url: trigger.kind === "webhook" ? `${await webhookBase(db)}/api/hooks/${trigger.id}` : null,
+    has_secret: !!trigger.tokenHash || !!trigger.sourceId,
+    webhook_url:
+      trigger.kind === "webhook"
+        ? trigger.sourceId
+          ? `${await webhookBase(db)}/api/hook-sources/${trigger.sourceId}`
+          : `${await webhookBase(db)}/api/hooks/${trigger.id}`
+        : null,
   };
 }
 
@@ -71,6 +80,8 @@ async function configChanged(ctx: Ctx, id: string, action: string) {
 }
 
 export async function triggerRoutes(app: FastifyInstance) {
+  await webhookSourceRoutes(app);
+  await automationRoutes(app);
   app.get(
     "/api/topics/:id/triggers",
     authed(async (ctx) => {
@@ -93,10 +104,15 @@ export async function triggerRoutes(app: FastifyInstance) {
         throw new BadRequest(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
       const b = parsed.data;
       await validateTriggerRole(ctx.db, topic.id, b.roleId);
-      if (b.kind === "webhook" && !b.secret) throw new BadRequest("webhook 必须设置至少 24 个字符的密钥");
-      if (b.kind === "schedule" && (b.secret || b.filterCode))
+      if (b.kind === "webhook" && !b.secret && !b.sourceId)
+        throw new BadRequest("webhook 必须设置至少 24 个字符的密钥");
+      if (b.kind === "schedule" && (b.secret || b.filterCode || b.sourceId))
         throw new BadRequest("定时触发不使用 webhook 密钥或过滤代码");
       if (b.kind === "webhook" && (b.cron || b.timezone)) throw new BadRequest("webhook 不使用定时计划");
+      if (b.sourceId) {
+        await webhookSource(ctx.db, b.sourceId);
+        if (b.secret) throw new BadRequest("共享来源的密钥应在接入设置中管理");
+      }
       await validateFilter(b.filterCode ?? "");
       const next = b.kind === "schedule" ? nextTriggerTime(b.cron ?? "", b.timezone ?? "UTC") : null;
       // Work runs under its creator's authority; the normal revocation checks require topic membership.
@@ -114,6 +130,7 @@ export async function triggerRoutes(app: FastifyInstance) {
           enabled: b.enabled ?? true,
           createdBy: ctx.user.id,
           tokenHash: b.secret ? hashToken(b.secret) : null,
+          sourceId: b.sourceId ?? null,
           filterCode: b.filterCode ?? "",
           cron: b.cron ?? null,
           timezone: b.timezone ?? "UTC",
@@ -135,10 +152,15 @@ export async function triggerRoutes(app: FastifyInstance) {
         throw new BadRequest(parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; "));
       const { secret, ...b } = parsed.data;
       if (b.roleId !== undefined) await validateTriggerRole(ctx.db, trigger.topicId, b.roleId);
-      if (trigger.kind === "schedule" && (secret !== undefined || b.filterCode !== undefined))
+      if (
+        trigger.kind === "schedule" &&
+        (secret !== undefined || b.filterCode !== undefined || b.sourceId !== undefined)
+      )
         throw new BadRequest("定时触发不使用 webhook 密钥或过滤代码");
       if (trigger.kind === "webhook" && (b.cron !== undefined || b.timezone !== undefined))
         throw new BadRequest("webhook 不使用定时计划");
+      if (b.sourceId) await webhookSource(ctx.db, b.sourceId);
+      if ((b.sourceId ?? trigger.sourceId) && secret) throw new BadRequest("共享来源的密钥应在接入设置中管理");
       if (b.filterCode !== undefined) await validateFilter(b.filterCode);
       const enabled = b.enabled ?? trigger.enabled;
       const scheduleChanged = b.cron !== undefined || b.timezone !== undefined || b.enabled !== undefined;
@@ -150,7 +172,7 @@ export async function triggerRoutes(app: FastifyInstance) {
         .update(topicTriggers)
         .set({
           ...b,
-          ...(secret ? { tokenHash: hashToken(secret) } : {}),
+          ...(secret ? { tokenHash: hashToken(secret) } : b.sourceId ? { tokenHash: null } : {}),
           nextRunAt: enabled ? next : null,
           updatedAt: new Date(),
         })
@@ -229,6 +251,7 @@ export async function triggerRoutes(app: FastifyInstance) {
       const topic = await admin(ctx);
       if (body(ctx.req).confirm !== true) throw new BadRequest("清空历史不可撤销，需要 confirm=true");
       await ctx.db.delete(triggerEvents).where(eq(triggerEvents.topicId, topic.id));
+      await pruneWebhookReceipts(ctx.db);
       await configChanged(ctx, topic.id, "trigger.history_clear");
       return { ok: true };
     }),
@@ -244,6 +267,7 @@ function hookToken(req: FastifyRequest) {
 export async function triggerWebhookRoutes(app: FastifyInstance) {
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+  await sharedWebhookRoutes(app);
   app.post(
     "/api/hooks/:id",
     {

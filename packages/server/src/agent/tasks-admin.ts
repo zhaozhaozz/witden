@@ -1,4 +1,5 @@
 /** Human control over tasks: pause, resume, cancel, add instructions, retry, reassign. */
+
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { type Role, type Task, tasks, topics, type User } from "../db/schema.js";
@@ -10,7 +11,7 @@ import { ACTIVE, cancelTree, getTask, pause, resume, setStatus, TERMINAL } from 
 import { enqueue, openRun } from "./conversation.js";
 import { authorize, buildEnvelope, createTask, systemMessage } from "./dispatch.js";
 import { activeKillSwitch } from "./revocation.js";
-import { appendStep } from "./transcript.js";
+import { submitTaskInput } from "./task-continuation.js";
 
 /** Console accounts steer every task (they are all administrators). */
 export async function canControl(db: Db, user: User, task: Task, _action = "pause"): Promise<boolean> {
@@ -24,8 +25,18 @@ async function requireControl(db: Db, user: User, task: Task, action: string) {
   }
 }
 
-export async function control(db: Db, user: User, task: Task, action: string, note = ""): Promise<Task> {
+export async function control(
+  db: Db,
+  user: User,
+  task: Task,
+  action: string,
+  note = "",
+  opts: { expectedRevision?: number; idempotencyKey?: string } = {},
+): Promise<Task> {
   await requireControl(db, user, task, action);
+  // An independent task takes new requirements as queued input; that records its own audit entry.
+  if (action === "continue" || (action === "instruct" && task.kind === "task" && !TERMINAL.has(task.status)))
+    return submitTaskInput(db, task.id, note, { userId: user.id, ...opts });
   if (action === "pause") await pause(db, task, `paused by ${user.name}`);
   else if (action === "resume") {
     if (task.status !== "paused") throw new BadRequest("task is not paused");
@@ -36,22 +47,16 @@ export async function control(db: Db, user: User, task: Task, action: string, no
   } else if (action === "instruct") {
     if (TERMINAL.has(task.status)) throw new BadRequest("task already finished; post a new message instead");
     if (!note.trim()) throw new BadRequest("instruction text is required");
-    if (task.kind === "conversation") {
-      // Into the conversation's inbox: shown at its next step, between tool calls, never inside one.
-      const topic = await topicSvc.getTopic(db, task.topicId);
-      const role = await topicSvc.getRole(db, task.ownerRoleId);
-      if (role)
-        await enqueue(db, {
-          topic,
-          role,
-          item: { kind: "instruction", note, by: user.name },
-          requesterUserId: user.id,
-        });
-    } else {
-      // Extra requirements are delivered at the next step (as a user turn in the transcript).
-      await appendStep(db, task, "user", { content: `Additional instruction from ${user.name}: ${note}` });
-      if (task.status === "waiting_human") await setStatus(db, task, "pending", "new instruction", { wait: null });
-    }
+    // A conversation's inbox: shown at its next step, between tool calls, never inside one.
+    const topic = await topicSvc.getTopic(db, task.topicId);
+    const role = await topicSvc.getRole(db, task.ownerRoleId);
+    if (role)
+      await enqueue(db, {
+        topic,
+        role,
+        item: { kind: "instruction", note, by: user.name },
+        requesterUserId: user.id,
+      });
   } else if (action === "retry") {
     if (!["failed", "cancelled"].includes(task.status))
       throw new BadRequest("only failed or cancelled tasks can be retried");
@@ -60,12 +65,17 @@ export async function control(db: Db, user: User, task: Task, action: string, no
       throw new BadRequest("this conversation is already working again");
     const [reset] = await db
       .update(tasks)
-      .set({ status: "pending", finishedAt: null, error: null })
+      .set({
+        status: "pending",
+        finishedAt: null,
+        error: null,
+        ...(task.kind === "task" ? { revision: task.revision + 1, usage: { steps: 0, tokens: 0 }, result: null } : {}),
+      })
       .where(eq(tasks.id, task.id))
       .returning();
     await setStatus(db, reset, "pending", `retried by ${user.name}`);
   } else {
-    throw new BadRequest("action must be pause, resume, cancel, instruct or retry");
+    throw new BadRequest("action must be pause, resume, cancel, instruct, continue or retry");
   }
   await audit(db, `task.${action}`, {
     actorType: "user",

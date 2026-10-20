@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import * as approvalSvc from "../agent/approvals.js";
+import { listTaskIterations } from "../agent/task-continuation.js";
 import * as admin from "../agent/tasks-admin.js";
 import { taskLog } from "../agent/transcript.js";
 import type { Db } from "../db/client.js";
@@ -61,6 +62,9 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
   data.topic = topic ? { id: topic.id, title: topic.title, kind: topic.kind } : null;
   data.requester = requester ? { id: requester.id, name: requester.name } : null;
   if (opts.detail) {
+    data.iterations = (await contentVisible(db, opts.viewer ?? null, task))
+      ? (await listTaskIterations(db, task.id)).map((i) => row(i))
+      : [];
     // Work it waits for (delegated by a task) or that it started and gets the result of (a conversation).
     data.children = [];
     for (const c of await db
@@ -187,7 +191,17 @@ export async function taskRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       const task = await load(db, user, params(req).id);
       const b = body(req);
-      const updated = await admin.control(db, user, task, String(b.action ?? ""), String(b.note ?? ""));
+      if (b.expectedRevision !== undefined && (!Number.isInteger(b.expectedRevision) || b.expectedRevision < 1))
+        throw new BadRequest("expected_revision must be a positive integer");
+      if (
+        b.idempotencyKey !== undefined &&
+        (typeof b.idempotencyKey !== "string" || !b.idempotencyKey || b.idempotencyKey.length > 200)
+      )
+        throw new BadRequest("idempotency_key must contain 1..200 characters");
+      const updated = await admin.control(db, user, task, String(b.action ?? ""), String(b.note ?? ""), {
+        expectedRevision: b.expectedRevision,
+        idempotencyKey: b.idempotencyKey,
+      });
       return taskOut(db, updated, { detail: true, viewer: user });
     }),
   );

@@ -1,7 +1,10 @@
 /** Delivers queued outbound messages through the platform adapters, with bounded retries. */
+
 import { and, asc, eq, lt } from "drizzle-orm";
 import { db as getDb } from "../db/client.js";
-import { connections, messages, outboundMessages } from "../db/schema.js";
+import { connections, messages, outboundMessages, topics } from "../db/schema.js";
+import { relayFrom } from "../services/collaboration-policy.js";
+import { findTopicLink } from "../services/topic-links.js";
 import { getAdapter } from "./base.js";
 
 const MAX_ATTEMPTS = 5;
@@ -45,6 +48,16 @@ export async function deliverOne(id: string): Promise<boolean> {
   if (!msg || msg.deletedAt) {
     await update({ status: "failed", lastError: "message no longer exists" });
     return false;
+  }
+  if (msg.source === "topic") {
+    const relay = relayFrom(msg.externalRef);
+    const link = relay ? await findTopicLink(db, relay.source_topic_id, msg.topicId) : null;
+    const [source] = relay ? await db.select().from(topics).where(eq(topics.id, relay.source_topic_id)) : [];
+    const [target] = await db.select().from(topics).where(eq(topics.id, msg.topicId));
+    if (!relay || !link || link.id !== relay.link_id || source?.status !== "active" || target?.status !== "active") {
+      await update({ status: "blocked", lastError: "topic link removed or a topic archived before publication" });
+      return false;
+    }
   }
   const attempts = out.attempts + 1;
   try {

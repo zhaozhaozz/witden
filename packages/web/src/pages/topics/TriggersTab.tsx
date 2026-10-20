@@ -8,6 +8,7 @@ import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { CopyText, Empty, Field, FormModal, Loaded, Modal, Tag } from "../../ui/kit";
+import type { WebhookSource } from "../WebhookSourcesPanel";
 
 interface Trigger {
   id: string;
@@ -15,6 +16,7 @@ interface Trigger {
   kind: "webhook" | "schedule";
   enabled: boolean;
   role_id: string;
+  source_id?: string | null;
   instructions: string;
   filter_code: string;
   cron: string | null;
@@ -48,7 +50,7 @@ interface EventPage {
 const STATUS: Record<string, string> = {
   queued: "等待处理",
   processing: "过滤 / 处理中",
-  dispatched: "已交给角色",
+  dispatched: "已投递到话题",
   filtered: "已过滤",
   failed: "处理失败",
   skipped: "已跳过",
@@ -83,7 +85,9 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
     <div className="settings">
       <p className="small muted">
         收到事件或到达计划时间后，交给指定角色处理。先在「设置 → 工作说明」中写清工作用途。
-        {topic.channel ? "处理结果会同步到已关联的外部频道。" : "外部频道可使用其对应话题的同一套触发器。"}
+        {topic.channel
+          ? "这个话题对应外部频道：处理角色就是机器人代表的角色，处理结果同步到频道。"
+          : "需要同步到其他话题时，由角色用关联话题发送。"}
       </p>
       {topic.status === "archived" ? <p className="notice">话题已归档，触发器暂停接收和发起工作。</p> : null}
       <button
@@ -290,6 +294,8 @@ function TriggerEditor({
     (p) => p.type === "role" && p.status === "active" && !dir.roleById.get(p.id)?.system_admin,
   );
   const [kind, setKind] = useState<Trigger["kind"]>(trigger?.kind ?? "webhook");
+  const sources = useResource(() => api.get<WebhookSource[]>("/api/webhook-sources"), []);
+  const [sourceId, setSourceId] = useState(trigger?.source_id ?? "");
   const [name, setName] = useState(trigger?.name ?? "");
   const [roleId, setRoleId] = useState(trigger?.role_id ?? roles[0]?.id ?? "");
   const [instructions, setInstructions] = useState(trigger?.instructions ?? "");
@@ -315,7 +321,9 @@ function TriggerEditor({
       disabled={
         !name.trim() ||
         !roleId ||
-        (kind === "webhook" && ((!trigger && !secret) || (!!secret && (secret.length < 24 || !copiedSecret))))
+        (kind === "webhook" &&
+          !sourceId &&
+          ((!trigger && !secret) || (!!secret && (secret.length < 24 || !copiedSecret))))
       }
       submitLabel="保存触发器"
       onSubmit={async () => {
@@ -323,7 +331,9 @@ function TriggerEditor({
           name,
           role_id: roleId,
           instructions,
-          ...(kind === "webhook" ? { filter_code: code, ...(secret ? { secret } : {}) } : { cron, timezone }),
+          ...(kind === "webhook"
+            ? { filter_code: code, ...(sourceId ? { source_id: sourceId } : secret ? { secret } : {}) }
+            : { cron, timezone }),
         };
         const result = await run(
           () => (trigger ? api.patch(`${base}/${trigger.id}`, data) : api.post(base, { ...data, kind })),
@@ -347,7 +357,7 @@ function TriggerEditor({
           <option value="schedule">定时</option>
         </select>
       </Field>
-      <Field label="处理角色" hint="只交给这个角色，不受话题的「主动 @ / 自动」模式影响。">
+      <Field label="处理角色" hint="交给这个角色处理，不受话题的「主动 @ / 自动」模式影响。">
         <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
           <option value="">请选择</option>
           {roles.map((r) => (
@@ -381,6 +391,25 @@ function TriggerEditor({
         </>
       ) : (
         <>
+          <Field label="Webhook 来源" hint="推荐复用共享来源；在“通讯接入 → Webhook 来源”中创建和管理密钥。">
+            <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+              <option value="" disabled={!!trigger?.source_id}>
+                独立入口（兼容旧配置）
+              </option>
+              {(sources.data ?? []).map((source) => (
+                <option key={source.id} value={source.id}>
+                  {source.name}
+                  {source.enabled ? "" : "（停用）"}
+                </option>
+              ))}
+            </select>
+            {sources.error ? <p className="notice">来源列表加载失败，请在通讯接入中重试。</p> : null}
+            {trigger && !trigger.source_id && sourceId ? (
+              <p className="notice">
+                改用共享来源后，这个触发器自己的密钥和地址会作废，且不能改回；原来往这个地址发送的一方需要改用来源的地址和密钥。
+              </p>
+            ) : null}
+          </Field>
           {trigger?.webhook_url ? (
             <CopyText text={trigger.webhook_url} />
           ) : (
@@ -388,75 +417,81 @@ function TriggerEditor({
               保存后显示 webhook 地址。公网事件地址应转发到事件端口（默认 8325），可在「公网地址」中设置。
             </p>
           )}
-          <Field
-            label={trigger ? "更换密钥（留空保留）" : "Webhook 密钥"}
-            hint="发送时用 Authorization: Bearer <密钥>，或 X-Webhook-Token 请求头。密钥保存后无法读回。"
-          >
-            <input
-              ref={secretInput}
-              type={manualCopy ? "text" : "password"}
-              autoComplete="new-password"
-              value={secret}
-              onChange={(e) => {
-                setSecret(e.target.value);
-                setCopiedSecret(false);
-              }}
-              minLength={24}
-              maxLength={256}
-            />
-            <div className="btn-row">
-              <button
-                type="button"
-                className="btn btn-xs"
-                onClick={() => {
-                  setSecret(makeSecret());
-                  setCopiedSecret(false);
-                  setManualCopy(false);
-                }}
+          {!sourceId ? (
+            <>
+              <Field
+                label={trigger ? "更换密钥（留空保留）" : "Webhook 密钥"}
+                hint="发送时用 Authorization: Bearer <密钥>，或 X-Webhook-Token 请求头。密钥保存后无法读回。"
               >
-                生成新密钥
-              </button>
-              <button
-                type="button"
-                className="btn btn-xs"
-                disabled={!secret || copyingSecret}
-                onClick={async () => {
-                  setCopyingSecret(true);
-                  const copied = await copyToClipboard(secret);
-                  setCopyingSecret(false);
-                  // The input may have changed while the browser was waiting for clipboard permission.
-                  if (secretInput.current?.value !== secret) return;
-                  if (copied) {
-                    setCopiedSecret(true);
-                    setManualCopy(false);
-                    toast("密钥已复制，请保存到发送方", "ok");
-                  } else {
+                <input
+                  ref={secretInput}
+                  type={manualCopy ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={secret}
+                  onChange={(e) => {
+                    setSecret(e.target.value);
                     setCopiedSecret(false);
-                    setManualCopy(true);
-                    requestAnimationFrame(() => {
-                      if (secretInput.current?.value === secret) {
-                        secretInput.current.focus();
-                        secretInput.current.select();
+                  }}
+                  minLength={24}
+                  maxLength={256}
+                />
+                <div className="btn-row">
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    onClick={() => {
+                      setSecret(makeSecret());
+                      setCopiedSecret(false);
+                      setManualCopy(false);
+                    }}
+                  >
+                    生成新密钥
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={!secret || copyingSecret}
+                    onClick={async () => {
+                      setCopyingSecret(true);
+                      const copied = await copyToClipboard(secret);
+                      setCopyingSecret(false);
+                      // The input may have changed while the browser was waiting for clipboard permission.
+                      if (secretInput.current?.value !== secret) return;
+                      if (copied) {
+                        setCopiedSecret(true);
+                        setManualCopy(false);
+                        toast("密钥已复制，请保存到发送方", "ok");
+                      } else {
+                        setCopiedSecret(false);
+                        setManualCopy(true);
+                        requestAnimationFrame(() => {
+                          if (secretInput.current?.value === secret) {
+                            secretInput.current.focus();
+                            secretInput.current.select();
+                          }
+                        });
                       }
-                    });
-                  }
-                }}
-              >
-                {copyingSecret ? "复制中…" : "复制密钥"}
-              </button>
-            </div>
-          </Field>
-          {manualCopy ? (
-            <p className="notice" role="status">
-              浏览器未允许自动复制，已显示密钥。请手动复制上方密钥，保存后勾选「已妥善保存此密钥」。
-            </p>
-          ) : null}
-          {secret ? (
-            <label className="check">
-              <input type="checkbox" checked={copiedSecret} onChange={(e) => setCopiedSecret(e.target.checked)} />
-              已妥善保存此密钥
-            </label>
-          ) : null}
+                    }}
+                  >
+                    {copyingSecret ? "复制中…" : "复制密钥"}
+                  </button>
+                </div>
+              </Field>
+              {manualCopy ? (
+                <p className="notice" role="status">
+                  浏览器未允许自动复制，已显示密钥。请手动复制上方密钥，保存后勾选「已妥善保存此密钥」。
+                </p>
+              ) : null}
+              {secret ? (
+                <label className="check">
+                  <input type="checkbox" checked={copiedSecret} onChange={(e) => setCopiedSecret(e.target.checked)} />
+                  已妥善保存此密钥
+                </label>
+              ) : null}
+            </>
+          ) : (
+            <p className="small muted">使用共享来源的地址和密钥，这个触发器不保存自己的密钥。</p>
+          )}
           <Field
             label="前置过滤（JavaScript）"
             hint="留空表示全部通过。填写函数体，使用 request.body 读取 JSON、request.raw_body 读取原文、request.headers 读取请求头。必须返回 true 或 false；不能联网或读文件，超时 / 出错时不交给角色。"

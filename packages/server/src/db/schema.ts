@@ -343,6 +343,7 @@ export const topicTriggers = pgTable(
     instructions: text("instructions").notNull().default(""),
     tokenHash: text("token_hash"),
     filterCode: text("filter_code").notNull().default(""),
+    sourceId: text("source_id").references(() => webhookSources.id, { onDelete: "restrict" }),
     cron: text("cron"),
     timezone: text("timezone").notNull().default("UTC"),
     nextRunAt: ts("next_run_at"),
@@ -372,10 +373,17 @@ export const triggerEvents = pgTable(
       .references(() => topics.id, { onDelete: "cascade" }),
     // Kept after deleting a trigger, along with its name and the configuration used for this receipt.
     triggerId: text("trigger_id").notNull(),
+    webhookReceiptId: text("webhook_receipt_id").references(() => webhookReceipts.id, { onDelete: "restrict" }),
     triggerName: text("trigger_name").notNull(),
     kind: text("kind").notNull(),
     eventKey: text("event_key"),
-    config: json<{ roleId: string; instructions: string; filterCode: string; createdBy: string }>("config").notNull(),
+    config: json<{
+      roleId: string;
+      instructions: string;
+      filterCode: string;
+      createdBy: string;
+      sourceId?: string | null;
+    }>("config").notNull(),
     request: json<TriggerRequest | null>("request"),
     scheduledAt: ts("scheduled_at"),
     status: text("status").notNull().default("queued"), // queued | processing | dispatched | filtered | failed | skipped
@@ -392,6 +400,7 @@ export const triggerEvents = pgTable(
     uniqueIndex("ux_trigger_event_key").on(t.triggerId, t.eventKey),
     index("ix_trigger_events_topic").on(t.topicId, t.createdAt, t.id),
     index("ix_trigger_events_queue").on(t.status, t.claimedAt),
+    index("ix_trigger_events_receipt").on(t.webhookReceiptId),
   ],
 );
 
@@ -495,6 +504,9 @@ export interface InboxItem {
   auto?: boolean;
   /** result: a task this conversation started or delegated finished. */
   task_id?: string;
+  revision?: number;
+  /** Server-generated linked-message origin, never accepted from platform payload text. */
+  topic_delivery?: import("../services/collaboration-policy.js").TopicDelivery;
   /** timer: the role's own follow-up (shown once ``due`` has passed); instruction: a console note. */
   note?: string;
   due?: string;
@@ -526,6 +538,8 @@ export const tasks = pgTable(
     sessionId: text("session_id"),
     /** An independent task reports its outcome to this conversation (agent session) when it ends. */
     reportSessionId: text("report_session_id"),
+    /** Each continuation keeps the task identity and transcript, and starts a new delivery revision. */
+    revision: integer("revision").notNull().default(1),
     title: text("title").notNull(),
     instruction: text("instruction").notNull().default(""),
     // pending | running | waiting_human | waiting_approval | waiting_children | waiting_resource | waiting_timer
@@ -911,3 +925,89 @@ export const platformSettings = pgTable("platform_settings", {
   updatedBy: text("updated_by"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
+
+/** Explicit, bidirectional topic-message links. Linking does not grant history access. */
+export const topicLinks = pgTable(
+  "topic_links",
+  {
+    id: id(),
+    topicAId: text("topic_a_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    topicBId: text("topic_b_id")
+      .notNull()
+      .references(() => topics.id, { onDelete: "cascade" }),
+    createdBy: text("created_by").notNull(),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_topic_link_pair").on(t.topicAId, t.topicBId), index("ix_topic_link_b").on(t.topicBId)],
+);
+
+/** One authenticated inbound source may feed several independent rules. No result callback is stored. */
+export const webhookSources = pgTable("webhook_sources", {
+  id: id(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  allowedRoleIds: json<string[]>("allowed_role_ids").notNull().default([]),
+  createdBy: text("created_by").notNull(),
+  createdAt: created(),
+  updatedAt: updated(),
+  deletedAt: ts("deleted_at"),
+});
+
+/** Canonical raw receipt; each rule has its own trigger_events delivery, without duplicating this body. */
+export const webhookReceipts = pgTable(
+  "webhook_receipts",
+  {
+    id: id(),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => webhookSources.id, { onDelete: "restrict" }),
+    eventKey: text("event_key"),
+    request: json<TriggerRequest>("request").notNull(),
+    createdAt: created(),
+  },
+  (t) => [
+    uniqueIndex("ux_source_receipt_key").on(t.sourceId, t.eventKey),
+    index("ix_source_receipt_time").on(t.sourceId, t.createdAt, t.id),
+  ],
+);
+
+/** Work input is queued under the task row lock and consumed between tool/model steps. */
+export const taskInputs = pgTable(
+  "task_inputs",
+  {
+    id: id(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    content: text("content").notNull(),
+    requesterUserId: text("requester_user_id"),
+    sourceMessageId: text("source_message_id"),
+    idempotencyKey: text("idempotency_key").unique(),
+    createdAt: created(),
+    consumedAt: ts("consumed_at"),
+  },
+  (t) => [index("ix_task_inputs_pending").on(t.taskId, t.consumedAt)],
+);
+
+/** Completed iterations stay available when a task resumes; results are delivered by task + revision. */
+export const taskIterations = pgTable(
+  "task_iterations",
+  {
+    id: id(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    status: text("status").notNull(),
+    result: text("result"),
+    error: text("error"),
+    usage: json<Json>("usage").notNull().default({}),
+    finishedAt: ts("finished_at"),
+    createdAt: created(),
+  },
+  (t) => [uniqueIndex("ux_task_iteration").on(t.taskId, t.revision)],
+);

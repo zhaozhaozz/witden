@@ -167,6 +167,28 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
     ],
   },
   {
+    title: "Topic links and automation configuration",
+    endpoints: [
+      { method: "GET", path: "/api/topics/:id/links" },
+      {
+        method: "POST",
+        path: "/api/topics/:id/links",
+        note: "topic_id; confirm_private: true explicitly permits linking a DM",
+      },
+      { method: "DELETE", path: "/api/topics/:id/links/:link_id" },
+      { method: "GET", path: "/api/automations", note: "optional role_id" },
+      { method: "GET", path: "/api/webhook-sources", note: "metadata only; humans enter source credentials" },
+      { method: "GET", path: "/api/topics/:id/triggers" },
+      {
+        method: "POST",
+        path: "/api/topics/:id/triggers",
+        note: "name, kind, role_id, source_id or cron/timezone, instructions, filter_code; no secrets",
+      },
+      { method: "PATCH", path: "/api/topics/:id/triggers/:trigger_id" },
+      { method: "DELETE", path: "/api/topics/:id/triggers/:trigger_id" },
+    ],
+  },
+  {
     title: "Operations (read only)",
     endpoints: [
       { method: "GET", path: "/api/kill-switches", note: "emergency stops" },

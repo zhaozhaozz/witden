@@ -13,6 +13,7 @@
  * Long conversations are compacted: the model summarises its context and the summary becomes the new start
  * (contextFrom). The system prompt and tool definitions are rebuilt for every call and never compacted.
  */
+
 import { and, count, desc, eq, gt, inArray, isNull, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import {
@@ -25,14 +26,19 @@ import {
   roles,
   type Task,
   type Topic,
+  taskIterations,
   taskSteps,
   tasks,
 } from "../db/schema.js";
+import { relayFrom } from "../services/collaboration-policy.js";
+import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
 import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES, triggerContext } from "./context.js";
 import { ACTIVE } from "./control.js";
 import { createTask, plainTitle, sessionFor } from "./dispatch.js";
+import { recordTaskIteration } from "./task-continuation.js";
 import { authorName } from "./tools.js";
+import { envelopeWithRelay } from "./topic-messaging.js";
 import { appendStep, nextSessionSeq } from "./transcript.js";
 
 /** Shown inbox items kept so a repeated delivery (a retried event, a late dispatcher) is recognised. */
@@ -98,7 +104,9 @@ export interface Delivery {
 }
 
 const sameItem = (a: Omit<InboxItem, "at">, b: InboxItem) =>
-  a.kind === b.kind && ((!!a.message_id && a.message_id === b.message_id) || (!!a.task_id && a.task_id === b.task_id));
+  a.kind === b.kind &&
+  ((!!a.message_id && a.message_id === b.message_id) ||
+    (!!a.task_id && a.task_id === b.task_id && (a.revision ?? 1) === (b.revision ?? 1)));
 
 /** Hand something to the role's conversation in the topic. Returns the run that takes it (null: not yet). */
 export async function enqueue(db: Db, d: Delivery): Promise<Task | null> {
@@ -107,6 +115,9 @@ export async function enqueue(db: Db, d: Delivery): Promise<Task | null> {
   if (s.inbox.some((i) => sameItem(d.item, i))) return (await openRun(db, s.id)) ?? null;
   const item: InboxItem = {
     ...d.item,
+    ...(d.sourceMessage?.source === "topic"
+      ? { topic_delivery: relayFrom(d.sourceMessage.externalRef) ?? undefined }
+      : {}),
     at: new Date().toISOString(),
     ...(d.requesterUserId ? { user_id: d.requesterUserId } : {}),
   };
@@ -205,6 +216,7 @@ export async function dropReady(db: Db, sessionId: string): Promise<void> {
  * started or delegated by a conversation reports its outcome to it.
  */
 export async function afterEnd(db: Db, task: Task): Promise<void> {
+  await recordTaskIteration(db, task);
   if (task.kind === "conversation" && task.sessionId && task.status === "cancelled")
     await dropReady(db, task.sessionId);
   if (!task.reportSessionId) return;
@@ -216,7 +228,7 @@ export async function afterEnd(db: Db, task: Task): Promise<void> {
   await enqueue(db, {
     topic,
     role,
-    item: { kind: "result", task_id: task.id },
+    item: { kind: "result", task_id: task.id, revision: task.revision },
     requesterUserId: task.requesterUserId,
     title: `Result of ${task.title}`.slice(0, 200),
   });
@@ -260,7 +272,7 @@ async function line(db: Db, m: Message, forYou: boolean): Promise<string> {
   const text =
     m.content.length > limit ? `${m.content.slice(0, limit)}… [cut; topic_history shows it whole]` : m.content;
   const thread = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
-  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${triggerContext(m)}`;
+  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${triggerContext(m)}${relayDescription(m.externalRef)}`;
 }
 
 /**
@@ -281,12 +293,21 @@ async function resultText(db: Db, item: InboxItem, role: Role): Promise<{ text: 
   if (!t) return { text: `A task you started (${item.task_id}) no longer exists.`, round: 0 };
   const [owner] = await db.select().from(roles).where(eq(roles.id, t.ownerRoleId)).limit(1);
   const whose = t.ownerRoleId === role.id ? "Your task" : `@${owner?.handle ?? "?"}'s task`;
+  const [iteration] = await db
+    .select()
+    .from(taskIterations)
+    .where(and(eq(taskIterations.taskId, t.id), eq(taskIterations.revision, item.revision ?? 1)))
+    .limit(1);
+  const delivered = iteration ?? t;
   const outcome =
-    t.status === "completed"
-      ? (t.result ?? "").slice(0, RESULT_LIMIT) || "(no result)"
-      : `${t.status}: ${t.statusReason ?? t.error ?? ""}`;
+    delivered.status === "completed"
+      ? (delivered.result ?? "").slice(0, RESULT_LIMIT) || "(no result)"
+      : `${delivered.status}: ${delivered.error ?? t.statusReason ?? ""}`;
   const posted = t.envelope?.report_only ? "" : " (its answer was also posted in the topic)";
-  return { text: `${whose} ${t.id} «${t.title}» ended${posted}:\n${outcome}`, round: t.round };
+  return {
+    text: `${whose} ${t.id} «${t.title}» iteration ${item.revision ?? 1} ended${posted}:\n${outcome}`,
+    round: t.round,
+  };
 }
 
 /**
@@ -322,7 +343,7 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
         .from(messages)
         .where(and(inArray(messages.id, [...forYouIds]), isNull(messages.deletedAt)))
     : [];
-  const parts: string[] = [];
+  const parts: string[] = [await linkedTopicContext(db, topic.id)];
 
   if (fresh && s.notes.length) {
     const notes = s.notes.slice(-SESSION_NOTES);
@@ -400,6 +421,14 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
     // The step budget counts per turn: each batch of new messages starts a fresh count.
     usage: { ...(run.usage ?? {}), turn_steps: 0, turn_tokens: 0 },
   };
+  let restrictedEnvelope = run.envelope;
+  for (const message of forYou)
+    restrictedEnvelope = envelopeWithRelay(
+      restrictedEnvelope,
+      message.source === "topic" ? relayFrom(message.externalRef) : null,
+      ["webhook", "schedule"].includes(message.source),
+    );
+  update.envelope = restrictedEnvelope;
   if (latest) {
     update.sourceMessageId = latest.id;
     update.round = latest.round;
@@ -476,7 +505,7 @@ Keep:
 - who is in this topic, who asked you what (with message ids), what you answered, and what is still open: unanswered requests, questions you asked and are waiting for, promises and follow-ups;
 - the work in progress: its goal, what is done, what remains and the exact next step; decisions and why;
 - facts you will need again: file paths, commands, URLs, ids of messages, threads and tasks, errors and how they were solved, important tool results;
-- what people told you to do or not to do.
+- what people told you to do or not to do; each active task ID, its revision, original requester, source topic/message/thread IDs, and any promise to send a result there. Never merge origins of different tasks.
 Leave out small talk and finished details that will not matter again. Your system prompt and the tool descriptions stay as they are: do not repeat them. Write plain text, at most about 1500 words.`;
 
 export const SUMMARY_HEADER =
