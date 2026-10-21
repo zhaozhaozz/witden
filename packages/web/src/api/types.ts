@@ -715,6 +715,8 @@ export interface RemoteModel {
   added: boolean;
   /** The context window the service reports, if it does. */
   context_window: number | null;
+  /** Its largest answer in tokens, if the service reports it (Anthropic). */
+  max_output_tokens: number | null;
 }
 
 export interface TraceStep {

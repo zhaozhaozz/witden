@@ -212,6 +212,7 @@ export async function modelRoutes(app: FastifyInstance) {
           name: m.name,
           added: have.has(m.id),
           context_window: m.contextWindow ?? null,
+          max_output_tokens: m.maxOutput ?? null,
         })),
       };
     }),

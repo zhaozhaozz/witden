@@ -2,13 +2,22 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { plainTitle } from "../src/agent/dispatch.js";
-import { AnthropicModel, type ChatMessage, imagePart, OpenAICompatibleModel, setFetch } from "../src/agent/llm.js";
+import {
+  ANTHROPIC_DEFAULT_MAX_TOKENS,
+  AnthropicModel,
+  type ChatMessage,
+  imagePart,
+  listModels,
+  OpenAICompatibleModel,
+  setFetch,
+} from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { connections, modelProviders, topicParticipants, topics } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
 import { findCredential, hashPassword, redact, SecretBox, verifyPassword } from "../src/security/crypto.js";
 import { hasPermission, Perm } from "../src/security/permissions.js";
+import { maxOutputTokens } from "../src/services/context-window.js";
 import { setModelFactory } from "../src/services/model-configs.js";
 import { createUser } from "../src/services/users.js";
 import { type Harness, reply, startHarness } from "./support/harness.js";
@@ -157,18 +166,29 @@ describe("with a database", () => {
         expect(new Headers(init?.headers).get("x-api-key")).toBe("sk-secret-value-123456");
         return url.searchParams.get("after_id")
           ? Response.json({
-              data: [{ id: "model-b", display_name: "Model B", max_input_tokens: 1_000_000 }],
+              data: [{ id: "model-b", display_name: "Model B", max_input_tokens: 1_000_000, max_tokens: 128_000 }],
               has_more: false,
             })
           : Response.json({ data: [{ id: "model-a", display_name: "Model A" }], has_more: true, last_id: "model-a" });
       });
       const remote = (await admin("GET", `/api/model-providers/${p.id}/remote-models`)).body;
-      // The context window when the service reports it (Anthropic: max_input_tokens).
+      // The context window and the largest answer when the service reports them (max_input_tokens, max_tokens).
       expect(remote.models).toEqual([
-        { id: "model-a", name: "Model A", added: false, context_window: null },
-        { id: "model-b", name: "Model B", added: false, context_window: 1_000_000 },
+        { id: "model-a", name: "Model A", added: false, context_window: null, max_output_tokens: null },
+        { id: "model-b", name: "Model B", added: false, context_window: 1_000_000, max_output_tokens: 128_000 },
       ]);
       expect(urls).toEqual(["/v1/models?limit=1000", "/v1/models?limit=1000&after_id=model-a"]);
+      // Picked from that list, the model keeps what the service said.
+      const added = await admin("POST", `/api/model-providers/${p.id}/models`, {
+        models: [{ model: "model-b", context_window: 1_000_000, max_output_tokens: 128_000 }],
+        source: "api",
+      });
+      expect(added.status, added.raw).toBe(200);
+      const models = (await admin("GET", "/api/model-providers")).body.find((x: any) => x.id === p.id).models;
+      expect(models.find((m: any) => m.model === "model-b").capabilities).toEqual({
+        context_window: 1_000_000,
+        max_output_tokens: 128_000,
+      });
       setFetch(async () => new Response("invalid x-api-key", { status: 401 }));
       const failed = await admin("GET", `/api/model-providers/${p.id}/remote-models`);
       expect(failed.status).toBe(503);
@@ -347,6 +367,59 @@ describe("model protocols", () => {
     // Not asked with cache_control again.
     await model.complete([{ role: "user", content: "again" }]);
     expect(bodies).toHaveLength(3);
+  });
+
+  it("Anthropic: max_tokens is the model's largest answer, a generous default, or what its parameters say", async () => {
+    const bodies: any[] = [];
+    let accepts = Number.POSITIVE_INFINITY;
+    setFetch(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      bodies.push(body);
+      if (body.max_tokens > accepts)
+        return new Response(
+          JSON.stringify({
+            type: "error",
+            error: {
+              type: "invalid_request_error",
+              message: `max_tokens: ${body.max_tokens} > ${accepts}, which is the maximum allowed number of output tokens for claude-x`,
+            },
+          }),
+          { status: 400 },
+        );
+      return Response.json({ content: [{ type: "text", text: "ok" }], usage: { input_tokens: 1, output_tokens: 1 } });
+    });
+    const ask = (model: AnthropicModel) => model.complete([{ role: "user", content: "hi" }]);
+    await ask(new AnthropicModel("https://api.anthropic.com", "claude-x", "k", {}));
+    await ask(new AnthropicModel("https://api.anthropic.com", "claude-x", "k", {}, 128_000));
+    await ask(new AnthropicModel("https://api.anthropic.com", "claude-x", "k", { max_tokens: 1000 }, 128_000));
+    expect(bodies.map((b) => b.max_tokens)).toEqual([ANTHROPIC_DEFAULT_MAX_TOKENS, 128_000, 1000]);
+    expect(ANTHROPIC_DEFAULT_MAX_TOKENS).toBe(32_000);
+
+    // A compatible service that takes fewer: asked again with what it names, and from then on.
+    bodies.length = 0;
+    accepts = 8192;
+    const gateway = new AnthropicModel("https://gw.example", "claude-x", null, {});
+    expect((await ask(gateway)).content).toBe("ok");
+    await ask(gateway);
+    expect(bodies.map((b) => b.max_tokens)).toEqual([32_000, 8192, 8192]);
+    // What the model's parameters set is sent as it is, and a refusal is the error it is.
+    await expect(ask(new AnthropicModel("https://gw.example", "claude-x", null, { max_tokens: 9000 }))).rejects.toThrow(
+      "max_tokens: 9000 > 8192",
+    );
+
+    // The largest answer: what the service reports, else the model catalog.
+    setFetch(async () =>
+      Response.json({
+        data: [{ id: "claude-x", display_name: "Claude X", max_input_tokens: 1_000_000, max_tokens: 128_000 }],
+        has_more: false,
+      }),
+    );
+    const [listed] = await listModels("anthropic", "https://api.anthropic.com", "k");
+    expect(listed).toMatchObject({ id: "claude-x", contextWindow: 1_000_000, maxOutput: 128_000 });
+    const catalog = { output: 64_000 } as any;
+    expect(maxOutputTokens({ capabilities: { max_output_tokens: 128_000 }, catalog })).toBe(128_000);
+    expect(maxOutputTokens({ capabilities: {}, catalog })).toBe(64_000);
+    expect(maxOutputTokens({ capabilities: {}, catalog: null })).toBeNull();
   });
 
   it("OpenAI-compatible: cached prompt tokens from prompt_tokens_details or DeepSeek's field", async () => {

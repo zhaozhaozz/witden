@@ -22,7 +22,7 @@ import {
 import { BadRequest, Conflict, type ModelError, NotFound } from "../errors.js";
 import { secretBox } from "../security/crypto.js";
 import { audit } from "./audit.js";
-import { contextLimits } from "./context-window.js";
+import { contextLimits, maxOutputTokens } from "./context-window.js";
 import { type EffortInfo, withEffort } from "./effort.js";
 import { matchProviderModels } from "./model-catalog.js";
 import { DISPATCHER, type DispatcherSetting, getSetting, LAYA_BOOTSTRAP, putSetting } from "./platform-settings.js";
@@ -35,7 +35,7 @@ export let modelFactory: (model: ModelConfig, provider: ModelProvider, apiKey: s
   model,
   provider,
   key,
-) => buildModel(provider.protocol, provider.baseUrl, model.model, key, model.params);
+) => buildModel(provider.protocol, provider.baseUrl, model.model, key, model.params, maxOutputTokens(model));
 export function setModelFactory(fn: typeof modelFactory): void {
   modelFactory = fn;
 }
@@ -191,7 +191,10 @@ export async function getModel(db: Db, id: string): Promise<ModelConfig> {
   return m;
 }
 
-/** Add models to a provider; ones it already has are skipped. Accepts ids or {model, name, context_window}. */
+/**
+ * Add models to a provider; ones it already has are skipped. Accepts ids or {model, name, context_window,
+ * max_output_tokens}.
+ */
 export async function addModels(
   db: Db,
   p: ModelProvider,
@@ -200,19 +203,24 @@ export async function addModels(
   createdBy: string | null,
 ): Promise<ModelConfig[]> {
   if (!Array.isArray(items) || !items.length) throw new BadRequest("models must be a non-empty list");
-  const wanted = new Map<string, { name: string; window: number | null }>();
+  const wanted = new Map<string, { name: string; reported: Record<string, number> }>();
+  const positive = (v: unknown) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
   for (const item of items) {
     const raw = typeof item === "string" ? { model: item } : (item as Record<string, unknown>);
     const model = String(raw?.model ?? "").trim();
     if (!MODEL_ID.test(model)) throw new BadRequest(`invalid model id ${JSON.stringify(raw?.model ?? item)}`);
     const name = String(raw?.name ?? "").trim() || model;
-    // The window the provider's list reported (picked from that list), kept as what the provider says.
-    const window = Number(raw?.context_window ?? raw?.contextWindow);
+    // What the provider's list reported (picked from that list), kept as what the provider says.
+    const window = positive(raw?.context_window ?? raw?.contextWindow);
+    const output = positive(raw?.max_output_tokens);
     if (!wanted.has(model))
-      wanted.set(model, { name: name.slice(0, 200), window: Number.isInteger(window) && window > 0 ? window : null });
+      wanted.set(model, {
+        name: name.slice(0, 200),
+        reported: { ...(window ? { context_window: window } : {}), ...(output ? { max_output_tokens: output } : {}) },
+      });
   }
   const added: ModelConfig[] = [];
-  for (const [model, { name, window }] of wanted) {
+  for (const [model, { name, reported }] of wanted) {
     const rows = await db
       .insert(modelConfigs)
       .values({
@@ -222,7 +230,7 @@ export async function addModels(
         name,
         source,
         createdBy,
-        capabilities: window ? { context_window: window } : {},
+        capabilities: reported,
       })
       .onConflictDoNothing()
       .returning();
@@ -342,6 +350,7 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
     const remote = await reported(provider, m);
     caps.effort = remote.effort;
     if (remote.contextWindow) caps.context_window = remote.contextWindow;
+    if (remote.maxOutput) caps.max_output_tokens = remote.maxOutput;
   }
   const [row] = await db
     .update(modelConfigs)
@@ -352,13 +361,13 @@ export async function checkModel(db: Db, m: ModelConfig): Promise<ModelConfig> {
 }
 
 /**
- * The effort levels and context window the service reports for this model (null effort: it reports none;
- * when it cannot be asked now, what was recorded before).
+ * The effort levels, context window and largest answer the service reports for this model (null effort: it
+ * reports none; when it cannot be asked now, what was recorded before).
  */
 async function reported(
   provider: ModelProvider,
   m: ModelConfig,
-): Promise<{ effort: EffortInfo | null; contextWindow: number | null }> {
+): Promise<{ effort: EffortInfo | null; contextWindow: number | null; maxOutput: number | null }> {
   try {
     const remote = (await listModels(provider.protocol, provider.baseUrl, apiKeyOf(provider))).find(
       (r) => r.id === m.model,
@@ -366,11 +375,13 @@ async function reported(
     return {
       effort: remote?.effort ?? null,
       contextWindow: remote?.contextWindow ?? m.capabilities?.context_window ?? null,
+      maxOutput: remote?.maxOutput ?? m.capabilities?.max_output_tokens ?? null,
     };
   } catch {
     return {
       effort: (m.capabilities?.effort as EffortInfo | undefined) ?? null,
       contextWindow: m.capabilities?.context_window ?? null,
+      maxOutput: m.capabilities?.max_output_tokens ?? null,
     };
   }
 }

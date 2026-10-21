@@ -257,18 +257,41 @@ export class OpenAICompatibleModel implements ChatModel {
   }
 }
 
+/**
+ * max_tokens when neither the model's parameters, its service nor the model catalog give one. The Anthropic API
+ * requires the field and cuts the answer there, so it should not be what ends an answer: 32000 is the most every
+ * Claude model still served accepts (Claude Opus 4 and 4.1 stop there; current models take 64000 or 128000). A
+ * larger max_tokens costs nothing by itself: output rate limits count the tokens produced, not this value. A
+ * compatible service that takes fewer says so, and the request is repeated with what it names (allowedMaxTokens).
+ */
+export const ANTHROPIC_DEFAULT_MAX_TOKENS = 32_000;
+
+/**
+ * The max_tokens a refusal names as the highest allowed ("max_tokens: 64001 > 64000, which is the maximum ...",
+ * "the valid range of max_tokens is [1, 8192]"): the largest number below what was asked, else the 4096 every
+ * Anthropic-compatible service has taken.
+ */
+export function allowedMaxTokens(message: string, asked: number): number {
+  const below = (message.match(/\d+/g) ?? []).map(Number).filter((n) => n >= 1024 && n < asked);
+  return below.length ? Math.max(...below) : 4096;
+}
+
 /** Anthropic Messages API (also used by compatible gateways). */
 export class AnthropicModel implements ChatModel {
   private readonly url: string;
   private readonly headers: Record<string, string>;
-  private readonly params: Record<string, any>;
+  private params: Record<string, any>;
+  /** max_tokens was chosen here, not set in the model's parameters: lowered once if the service refuses it. */
+  private chosenMaxTokens: boolean;
   streaming = true;
 
+  /** ``maxOutput``: the model's largest answer in tokens, as its service or the model catalog reports it. */
   constructor(
     baseUrl: string,
     private readonly model: string,
     apiKey: string | null,
     params: Record<string, any>,
+    maxOutput: number | null = null,
     private readonly timeoutMs = 180_000,
   ) {
     this.url = `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
@@ -277,7 +300,8 @@ export class AnthropicModel implements ChatModel {
       "anthropic-version": "2023-06-01",
       ...(apiKey ? { "x-api-key": apiKey } : {}),
     };
-    this.params = { max_tokens: 4096, ...params };
+    this.chosenMaxTokens = params.max_tokens === undefined;
+    this.params = { max_tokens: maxOutput ?? ANTHROPIC_DEFAULT_MAX_TOKENS, ...params };
   }
 
   private static content(content: string | ContentPart[]): any {
@@ -355,18 +379,28 @@ export class AnthropicModel implements ChatModel {
         body.tools = tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
       return body;
     };
-    let res: Response;
-    try {
-      res = await postMaybeStreaming(this, this.url, this.headers, build(), { stream: true }, this.timeoutMs, onDelta);
-    } catch (err) {
-      const rejected =
-        this.caching &&
-        err instanceof ModelError &&
-        err.detail.upstream_status === 400 &&
-        /cache_control/i.test(err.message);
-      if (!rejected) throw err;
-      this.caching = false;
-      res = await postMaybeStreaming(this, this.url, this.headers, build(), { stream: true }, this.timeoutMs, onDelta);
+    let res: Response | undefined;
+    // A gateway that rejects cache_control, or a service that takes fewer output tokens than chosen, is asked again
+    // without them (and not offered them again by this model).
+    for (let retries = 2; !res; retries--) {
+      try {
+        res = await postMaybeStreaming(
+          this,
+          this.url,
+          this.headers,
+          build(),
+          { stream: true },
+          this.timeoutMs,
+          onDelta,
+        );
+      } catch (err) {
+        const refused = retries > 0 && err instanceof ModelError && err.detail.upstream_status === 400;
+        if (refused && this.caching && /cache_control/i.test(err.message)) this.caching = false;
+        else if (refused && this.chosenMaxTokens && /max_tokens/i.test(err.message)) {
+          this.params = { ...this.params, max_tokens: allowedMaxTokens(err.message, this.params.max_tokens) };
+          this.chosenMaxTokens = false;
+        } else throw err;
+      }
     }
     if (!isEventStream(res)) return AnthropicModel.parse(await parseJson(res));
     // Streamed: content blocks open, grow by deltas (text or partial tool-input JSON), then close.
@@ -415,15 +449,17 @@ export class AnthropicModel implements ChatModel {
   }
 }
 
+/** ``maxOutput``: the model's largest answer in tokens when known (the Anthropic protocol must send one). */
 export function buildModel(
   provider: string,
   baseUrl: string,
   model: string,
   apiKey: string | null,
   params: Record<string, any>,
+  maxOutput: number | null = null,
 ): ChatModel {
   return provider === "anthropic"
-    ? new AnthropicModel(baseUrl, model, apiKey, params)
+    ? new AnthropicModel(baseUrl, model, apiKey, params, maxOutput)
     : new OpenAICompatibleModel(baseUrl, model, apiKey, params);
 }
 
@@ -437,6 +473,8 @@ export interface RemoteModel {
   effort?: EffortInfo;
   /** Context window in tokens, when the provider reports it. */
   contextWindow?: number;
+  /** Largest answer in tokens, when the provider reports it (Anthropic's max_tokens). */
+  maxOutput?: number;
 }
 
 /** The context window a model list entry reports (Anthropic, OpenRouter, vLLM and others name it differently). */
@@ -486,6 +524,7 @@ export async function listModels(protocol: string, baseUrl: string, apiKey: stri
             name: m.display_name ? String(m.display_name) : null,
             effort: anthropicEffort(m),
             contextWindow: listedContextWindow(m),
+            ...(Number.isInteger(m.max_tokens) && m.max_tokens > 0 ? { maxOutput: m.max_tokens } : {}),
           });
       }
       if (!data?.has_more || !data.last_id) break;

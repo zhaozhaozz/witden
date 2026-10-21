@@ -206,6 +206,8 @@ export interface ModelChoice {
   fromList: boolean;
   /** The context window the service's list reported for it. */
   contextWindow?: number;
+  /** Its largest answer in tokens, as the service's list reported it. */
+  maxOutput?: number;
 }
 
 function typedModels(text: string): ModelChoice[] {
@@ -250,6 +252,7 @@ export function ModelPicker({
       model: id,
       ...(byId.get(id)?.name ? { name: byId.get(id)!.name! } : {}),
       ...(byId.get(id)?.context_window ? { contextWindow: byId.get(id)!.context_window! } : {}),
+      ...(byId.get(id)?.max_output_tokens ? { maxOutput: byId.get(id)!.max_output_tokens! } : {}),
       fromList: true,
     }));
     const typedOnes = typedModels(text).filter((t) => !ids.includes(t.model));
@@ -342,10 +345,11 @@ export function ModelPicker({
 
 /** Add the chosen models to the service (ones it has are skipped) and return them as configured. */
 export async function addModels(provider: ModelProvider, choices: ModelChoice[]): Promise<ModelConfig[]> {
-  const strip = ({ model, name, contextWindow }: ModelChoice) => ({
+  const strip = ({ model, name, contextWindow, maxOutput }: ModelChoice) => ({
     model,
     ...(name ? { name } : {}),
     ...(contextWindow ? { context_window: contextWindow } : {}),
+    ...(maxOutput ? { max_output_tokens: maxOutput } : {}),
   });
   const listed = choices.filter((c) => c.fromList).map(strip);
   const typed = choices.filter((c) => !c.fromList).map(strip);

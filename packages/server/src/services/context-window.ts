@@ -25,6 +25,16 @@ export function catalogWindow(catalog: CatalogMatch | null | undefined): number 
   return catalog ? (catalog.input ?? catalog.context) : null;
 }
 
+/**
+ * The model's largest answer in tokens: what its service reports (Anthropic's model list), else the model catalog;
+ * null when neither knows. The Anthropic protocol sends it as max_tokens unless the model's parameters set one.
+ */
+export function maxOutputTokens(m: Pick<ModelConfig, "capabilities" | "catalog">): number | null {
+  const reported = Number(m.capabilities?.max_output_tokens);
+  if (Number.isInteger(reported) && reported > 0) return reported;
+  return (m.catalog as CatalogMatch | null)?.output ?? null;
+}
+
 export function contextLimits(
   m: Pick<ModelConfig, "contextWindow" | "compactTokens" | "capabilities" | "catalog">,
 ): ContextLimits {
