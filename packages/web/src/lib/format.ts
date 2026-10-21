@@ -211,7 +211,7 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   browser: "浏览器",
   system_software: "系统软件",
   software_list: "软件清单",
-  collaborate: "协作委托与话题通信",
+  collaborate: "委托话题外的角色",
   automation: "自动化管理",
   memory: "记忆",
   topics: "读取其他话题",
@@ -233,7 +233,7 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
   {
     key: "collaborate",
     label: "协作",
-    hint: "把工作交给其他角色，给关联的话题发消息，管理自己负责的触发器",
+    hint: "把工作交给话题外的角色，管理自己负责的触发器",
     groups: ["collaborate", "automation"],
   },
   { key: "knowledge", label: "资料", hint: "平台上的记忆和知识空间，以及其他话题", groups: ["memory", "topics"] },
@@ -271,7 +271,7 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
     "请平台在虚拟电脑里安装或卸载系统软件包（apt）。角色自己没有 root 权限，由平台以 root 执行固定的安装命令；镜像自带的软件不能卸载。不在软件清单里的软件，重置虚拟电脑后会消失",
   software_list: "修改虚拟电脑的软件清单：清单里的软件包在虚拟电脑每次启动时自动安装，重置后也会装回",
   collaborate:
-    "把任务委托给其他角色、给已关联的话题发消息，受话题关联和“可以委托、跨话题联系的角色”限制；同一话题内 @ 其他角色不需要这项权限",
+    "把任务委托给不在当前话题中的角色：群组话题中会把它邀请进来，私信中这项任务在提问人与它的私信里进行。同一话题内的 @ 和委托、关联话题之间的消息和委托都不需要这项权限",
   automation:
     "在它参与的话题里新建和修改自己负责的触发器；不能读取密钥，也不能扩大 Webhook 来源的授权。只在控制台账号请求的工作中可用",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",

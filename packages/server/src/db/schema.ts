@@ -263,6 +263,7 @@ export const roles = pgTable(
     reasoningEffort: text("reasoning_effort"),
     instanceId: text("instance_id").references(() => computerInstances.id),
     allowedTools: json<string[]>("allowed_tools").notNull().default([]),
+    // No longer used: roles reach each other through topics and topic links (design D99).
     allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
     knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
     approvalRequired: json<string[]>("approval_required").notNull().default([]),

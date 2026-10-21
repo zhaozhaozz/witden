@@ -48,7 +48,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       {
         method: "POST",
         path: "/api/roles",
-        note: 'name, handle, description, system_prompt, model_config_id, reasoning_effort (one of the levels in the model\'s capabilities.effort, or null for its default), model_params, instance_id, allowed_tools (groups), approval_required (groups or tools), allowed_contacts (role ids or "*"), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color',
+        note: "name, handle, description, system_prompt, model_config_id, reasoning_effort (one of the levels in the model's capabilities.effort, or null for its default), model_params, instance_id, allowed_tools (groups), approval_required (groups or tools), knowledge_space_ids, max_steps, max_tokens_per_task, daily_token_limit, color",
       },
       { method: "PATCH", path: "/api/roles/:id", note: "any of the fields above" },
       { method: "POST", path: "/api/roles/:id/copy", note: "name, handle" },

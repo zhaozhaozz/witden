@@ -501,7 +501,9 @@ export class TaskRunner {
         return { skip: true as const };
       }
       const approved = (task.envelope.approved_calls ?? []).includes(call.id) || hasRunToolApproval(task, call.name);
-      if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
+      const asks =
+        needsApproval(task.envelope, spec, call.arguments) || !!(await spec.asks?.(tx, task, call.arguments));
+      if (asks && !approved) {
         // A call that would be refused anyway is not put to a person: the role learns why at once.
         const refused = await spec.refusal?.(tx, task, call.arguments);
         if (refused) {

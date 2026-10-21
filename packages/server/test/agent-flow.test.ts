@@ -205,7 +205,7 @@ describe("permissions and isolation", () => {
   });
 
   it("roles of a topic @ each other without a permission; a mention brings in no one", async () => {
-    // test may not delegate or reach other topics; an older per-tool approval of message_role no longer applies.
+    // test has no permission to delegate outside the topic; an older per-tool approval of message_role no longer applies.
     const limited = await w.api("PATCH", `/api/roles/${w.ids.test}`, {
       token: w.adminToken,
       json: { allowed_tools: ["shell"], approval_required: ["shell", "message_role"], allowed_contacts: [] },
@@ -227,7 +227,8 @@ describe("permissions and isolation", () => {
     await w.post(w.alice, w.ids.topic, "@test ask dev for a review");
     await w.drain();
     expect(offered).toContain("message_role");
-    expect(offered).not.toContain("delegate_task");
+    // Delegating within the topic needs no permission either.
+    expect(offered).toContain("delegate_task");
     const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
     expect(texts).toContain("@dev please review");
     expect(texts).toContain("reviewed");

@@ -16,19 +16,21 @@ import {
   type Task,
   type Topic,
   tasks,
+  type topicLinks,
   topics,
   type User,
   users,
 } from "../db/schema.js";
-import { Forbidden } from "../errors.js";
+import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext, externalRoleId } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
-import { relayFrom } from "../services/collaboration-policy.js";
+import { relayFrom, type TopicDelivery } from "../services/collaboration-policy.js";
 import { publish, wake } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import { participantChangeOf, type RoleParticipantChange } from "../services/participant-notices.js";
+import { findTopicLink } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
 import { setStatus } from "./control.js";
 import { enqueue, rolesAwaiting } from "./conversation.js";
@@ -162,17 +164,9 @@ export function systemMessage(
 
 // --- authorization -------------------------------------------------------------------------------------
 
-/** Intersection where "*" means "anything". */
-function meet(a: string[], b: string[]): string[] {
-  if (a.includes("*")) return [...b];
-  if (b.includes("*")) return [...a];
-  return a.filter((x) => b.includes(x)).sort();
-}
-
 export function buildEnvelope(role: Role, parent: Task | null): Record<string, any> {
   const env: Record<string, any> = {
     tools: [...new Set(role.allowedTools)].sort(),
-    contacts: [...role.allowedContacts],
     spaces: [...new Set(role.knowledgeSpaceIds)].sort(),
     approval_required: [...role.approvalRequired],
     // The configuration tools are open only to a system administrator's own work, never delegated.
@@ -182,7 +176,6 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
     const p = parent.envelope ?? {};
     // Delegated work can never do more than the delegating task could.
     env.tools = env.tools.filter((t: string) => (p.tools ?? []).includes(t));
-    env.contacts = meet(env.contacts, p.contacts ?? []);
     env.spaces = env.spaces.filter((s: string) => (p.spaces ?? []).includes(s));
     env.approval_required = [...new Set([...env.approval_required, ...(p.approval_required ?? [])])].sort();
     env.inherited_from = parent.id;
@@ -612,6 +605,63 @@ export async function dispatchRoleMessage(
   return out;
 }
 
+/** Where delegated work goes. Only "outside" needs the delegating role's own permission (collaborate). */
+export interface DelegationPlan {
+  target: Role;
+  /** The topic the delegate works in (for a delegation out of a DM: the asking person's DM with the delegate). */
+  topic: Topic;
+  /** "topic": a role of this topic; "linked": a role of a directly linked topic; "outside": anyone else. */
+  place: "topic" | "linked" | "outside";
+  link?: typeof topicLinks.$inferSelect;
+  /** Delegating out of a DM: the work goes to this person's DM with the delegate, created when it starts. */
+  dmOf?: User;
+}
+
+/**
+ * Who may get delegated work: roles of this topic and of a directly linked internal topic, without any permission
+ * (the topics decide); other roles only with the delegating role's permission. Throws the reason it may not.
+ */
+export async function planDelegation(
+  db: Db,
+  parent: Task,
+  sender: Role,
+  targetHandle: string,
+  topicId?: string | null,
+): Promise<DelegationPlan> {
+  if (sender.systemAdmin) throw new Forbidden("the system administrator does not hand work to other roles");
+  const [target] = await db
+    .select()
+    .from(roles)
+    .where(eq(roles.handle, targetHandle.replace(/^@/, "")))
+    .limit(1);
+  if (!target) throw new Forbidden(`no role @${targetHandle}`);
+  if (parent.depth + 1 > settings().maxDelegationDepth) throw new Forbidden("delegation depth limit reached");
+  const here = await topicSvc.getTopic(db, parent.topicId);
+  if (topicId && topicId !== here.id) {
+    const there = await topicSvc.getTopic(db, topicId).catch(() => null);
+    if (there?.status !== "active") throw new BadRequest("the target topic does not exist or is archived");
+    const link = await findTopicLink(db, here.id, there.id);
+    if (!link) throw new Forbidden("work may only be delegated to directly linked topics");
+    if ((await externalContext(db, there.id)).conversationKind)
+      throw new Forbidden("an external topic only gets messages published; use send_message for it");
+    if (!(await topicSvc.participant(db, there.id, "role", target.id)))
+      throw new Forbidden(`@${target.handle} is not a role of the linked topic`);
+    return { target, topic: there, place: "linked", link };
+  }
+  if (await topicSvc.participant(db, here.id, "role", target.id)) return { target, topic: here, place: "topic" };
+  if (!parent.envelope.tools?.includes("collaborate") || !sender.allowedTools.includes("collaborate"))
+    throw new Forbidden(
+      `@${target.handle} is not in this topic; delegating to roles outside it needs the permission to delegate to other roles`,
+    );
+  if (here.kind !== "dm") return { target, topic: here, place: "outside" };
+  // Never into this private conversation: the work goes to the asking person's own DM with that role.
+  const [user] = parent.requesterUserId
+    ? await db.select().from(users).where(eq(users.id, parent.requesterUserId)).limit(1)
+    : [];
+  if (!user?.isActive) throw new Forbidden("delegating out of a DM needs the person who asked");
+  return { target, topic: here, place: "outside", dmOf: user };
+}
+
 /**
  * Explicit hand-off: only the brief and listed materials travel, never the whole context. A task waits for
  * the result; a conversation goes on and gets the result as a new item when the delegate is done.
@@ -624,28 +674,21 @@ export async function delegate(
   instruction: string,
   expectedOutput: string,
   materials: string,
+  topicId?: string | null,
 ): Promise<Task> {
   const fromConversation = parent.kind === "conversation";
   if (fromConversation) await checkAutoRounds(parent);
-  const [target] = await db
-    .select()
-    .from(roles)
-    .where(eq(roles.handle, targetHandle.replace(/^@/, "")))
-    .limit(1);
-  if (!target) throw new Forbidden(`no role @${targetHandle}`);
-  const contacts: string[] = parent.envelope.contacts ?? [];
-  if (!contacts.includes("*") && !contacts.includes(target.id))
-    throw new Forbidden(`you are not allowed to delegate to @${target.handle}`);
-  if (parent.depth + 1 > settings().maxDelegationDepth) throw new Forbidden("delegation depth limit reached");
-  const topic = await topicSvc.getTopic(db, parent.topicId);
-  if (!(await topicSvc.participant(db, topic.id, "role", target.id)))
-    await topicSvc.inviteRole(db, null, topic, target.id, { byRole: sender });
+  const plan = await planDelegation(db, parent, sender, targetHandle, topicId);
+  const { target } = plan;
+  let topic = plan.topic;
+  if (plan.dmOf) topic = await topicSvc.getOrCreateDm(db, plan.dmOf, target);
+  else if (plan.place === "outside") await topicSvc.inviteRole(db, null, topic, target.id, { byRole: sender });
   const { allowed, refusals } = await authorize(db, topic, parent.requesterUserId, [target.id], sender.id);
   if (!allowed.length) throw new Forbidden(`delegation refused: ${refusals.join("; ")}`);
   let brief = `Delegated by @${sender.handle}.\n\nTask:\n${instruction}`;
   if (expectedOutput) brief += `\n\nExpected output:\n${expectedOutput}`;
   if (materials) brief += `\n\nMaterials provided:\n${materials}`;
-  return createTask(db, {
+  const child = await createTask(db, {
     topic,
     role: target,
     requesterUserId: parent.requesterUserId,
@@ -658,6 +701,34 @@ export async function delegate(
     waitsForResult: !fromConversation,
     reportSessionId: fromConversation ? parent.sessionId : null,
   });
+  if (topic.id === parent.topicId) return child;
+  // Work in another topic refers to no message there; work from a linked topic ends with the link, like a linked
+  // message (services/topic-links.ts linkedRequestRefusal).
+  const update: Partial<Task> = { sourceMessageId: null };
+  if (plan.place === "linked" && plan.link) {
+    const ext = await externalContext(db, parent.topicId);
+    const inherited = (parent.envelope.topic_routes ?? [])[0] as TopicDelivery | undefined;
+    const relay: TopicDelivery = {
+      link_id: plan.link.id,
+      source_topic_id: parent.topicId,
+      source_message_id: parent.sourceMessageId ?? null,
+      sender_role_id: sender.id,
+      source_task_id: parent.id,
+      related_task_id: null,
+      origin: inherited?.origin ?? {
+        topic_id: parent.topicId,
+        message_id: parent.sourceMessageId ?? null,
+        requester_user_id: parent.requesterUserId,
+        outside: !!ext.conversationKind || !!parent.envelope.outside,
+        connection_id: ext.connectionId ?? null,
+        automated: !!parent.envelope.automation_event,
+      },
+      round: parent.round + 1,
+    };
+    update.envelope = envelopeWithRelay(child.envelope, relay, !!parent.envelope.automation_event);
+  }
+  const [moved] = await db.update(tasks).set(update).where(eq(tasks.id, child.id)).returning();
+  return moved;
 }
 
 /**

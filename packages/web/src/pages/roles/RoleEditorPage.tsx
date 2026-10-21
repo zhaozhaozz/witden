@@ -35,7 +35,6 @@ import {
   RoleBadge,
   Section,
   StatusChip,
-  Toggle,
 } from "../../ui/kit";
 import { ResizeHandle } from "../../ui/resize";
 import { MemoryList } from "../memoryParts";
@@ -59,8 +58,6 @@ interface Draft {
   reasoning_effort: string;
   instance_id: string;
   allowed_tools: string[];
-  any_contact: boolean;
-  allowed_contacts: string[];
   knowledge_space_ids: string[];
   approval_required: string[];
   max_steps: string;
@@ -81,8 +78,6 @@ function toDraft(r: Role | null): Draft {
     reasoning_effort: r?.reasoning_effort ?? "",
     instance_id: r?.instance_id ?? "",
     allowed_tools: r?.allowed_tools ?? [],
-    any_contact: (r?.allowed_contacts ?? []).includes("*"),
-    allowed_contacts: (r?.allowed_contacts ?? []).filter((c) => c !== "*"),
     knowledge_space_ids: r?.knowledge_space_ids ?? [],
     approval_required: r?.approval_required ?? [],
     max_steps: r?.max_steps?.toString() ?? "",
@@ -117,7 +112,6 @@ function toBody(d: Draft): Record<string, unknown> {
     instance_id: d.instance_id || null,
     // Sorted (as the server stores them) so toggling back and forth does not count as a change.
     allowed_tools: [...d.allowed_tools].sort(),
-    allowed_contacts: d.any_contact ? ["*"] : d.allowed_contacts,
     knowledge_space_ids: d.knowledge_space_ids,
     approval_required: [...d.approval_required].sort(),
     max_steps: num(d.max_steps),
@@ -590,23 +584,6 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                     setDraft((d) => ({ ...d, allowed_tools: allowed, approval_required: approval }))
                   }
                   details={{
-                    collaborate: (
-                      <>
-                        <div className="perm-detail-label">可以委托、跨话题联系的角色</div>
-                        <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
-                        {!draft.any_contact ? (
-                          <MultiPick
-                            columns={3}
-                            options={dir.roles
-                              .filter((r) => r.id !== role?.id)
-                              .map((r) => ({ value: r.id, label: `${r.name} @${r.handle}` }))}
-                            value={draft.allowed_contacts}
-                            onChange={(v) => set("allowed_contacts", v)}
-                            empty="没有其他角色"
-                          />
-                        ) : null}
-                      </>
-                    ),
                     memory: (
                       <>
                         <div className="perm-detail-label">可读取的知识空间</div>
@@ -771,7 +748,6 @@ const ALL_FIELD_ZH: Record<string, string> = {
   avatar_url: "头像",
   color: "颜色",
   description: "职责说明",
-  allowed_contacts: "可联系角色",
   knowledge_space_ids: "知识空间",
   approval_required: "询问设置",
   max_steps: "步数上限",

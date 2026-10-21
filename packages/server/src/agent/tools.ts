@@ -43,12 +43,12 @@ import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../se
 import { topicPlace } from "./context.js";
 import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
-import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
+import { checkAutoRounds, delegate, planDelegation, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
-import { linkedSendRefusal, sendLinkedMessage } from "./topic-messaging.js";
+import { sendLinkedMessage } from "./topic-messaging.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -58,7 +58,8 @@ export const TOOL_GROUPS: Record<string, string> = {
   browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
   system_software: "Have the platform install or remove system (Debian) packages in the virtual computer, as root",
   software_list: "Change the virtual computer's software list: packages installed whenever it starts",
-  collaborate: "Message linked topics and delegate to other roles (limited by contacts)",
+  collaborate:
+    "Delegate work to roles outside this topic (roles of this topic and of linked topics need no permission)",
   automation: "Manage your own automation rules across topics (no access to secrets)",
   memory: "Remember and recall scoped notes on the platform",
   topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
@@ -123,6 +124,8 @@ export interface ToolSpec {
   conversation?: string;
   /** Why this call would be refused anyway (or null): checked before a person is asked to approve it. */
   refusal?: (db: Db, task: Task, args: Record<string, any>) => Promise<string | null>;
+  /** Whether this call asks a person, when that depends on more than the envelope (see needsApproval). */
+  asks?: (db: Db, task: Task, args: Record<string, any>) => Promise<boolean>;
 }
 
 /** The mode of the work an envelope belongs to. */
@@ -625,6 +628,24 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
   };
 }
 
+/** Whether a delegation would be refused (and why), and whether it goes to a role outside the topic. */
+async function delegationCheck(db: Db, task: Task, args: Record<string, any>) {
+  const [sender] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
+  if (!sender) return { refusal: "your role no longer exists", outside: false };
+  try {
+    const plan = await planDelegation(
+      db,
+      task,
+      sender,
+      String(args.role ?? ""),
+      args.topic_id ? String(args.topic_id) : null,
+    );
+    return { refusal: null, outside: plan.place === "outside" };
+  } catch (err) {
+    return { refusal: (err as Error).message, outside: false };
+  }
+}
+
 async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   if (ctx.mode === "conversation") {
     // The conversation goes on; the delegate's result arrives here as a new item when it is done.
@@ -638,10 +659,11 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
         String(args.task ?? ""),
         String(args.expected_output ?? ""),
         String(args.materials ?? ""),
+        args.topic_id ? String(args.topic_id) : null,
       );
     });
     return {
-      content: `delegated to @${String(args.role ?? "").replace(/^@/, "")} as task ${child.id}; it posts its answer in this topic and the result also comes back to you here. Continue, or end your turn.`,
+      content: `delegated to @${String(args.role ?? "").replace(/^@/, "")} as task ${child.id}${child.topicId !== ctx.topicId ? ` (it works in topic ${child.topicId})` : ""}; it posts its answer there and the result also comes back to you here. Continue, or end your turn.`,
     };
   }
   const childId = await transaction(async (db) => {
@@ -654,6 +676,7 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
       String(args.task ?? ""),
       String(args.expected_output ?? ""),
       String(args.materials ?? ""),
+      args.topic_id ? String(args.topic_id) : null,
     );
     return child.id;
   });
@@ -1307,7 +1330,7 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ add: { type: "array", items: str }, remove: { type: "array", items: str } }),
       editList,
     ),
-    // Roles of one topic @ each other without a permission; delegating and other topics stay under collaborate.
+    // Roles of one topic @ each other without a permission.
     spec(
       "message_role",
       null,
@@ -1315,16 +1338,34 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ role: str, message: str }, ["role", "message"]),
       messageRole,
     ),
+    // A role of this topic or of a linked internal topic needs nothing; anyone else needs the role's permission
+    // (collaborate), which may ask a person first.
     {
       ...spec(
         "delegate_task",
-        "collaborate",
-        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back.",
-        obj({ role: str, task: str, expected_output: str, materials: str }, ["role", "task", "expected_output"]),
+        null,
+        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back. A role of this topic needs no topic_id; give topic_id to hand it to a role of a directly linked internal topic (it works there).",
+        obj(
+          {
+            role: str,
+            task: str,
+            expected_output: str,
+            materials: str,
+            topic_id: {
+              type: "string",
+              description: "Omit for this topic; otherwise a directly linked internal topic ID",
+            },
+          },
+          ["role", "task", "expected_output"],
+        ),
         delegateTask,
       ),
       conversation:
-        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in this topic; its result also comes back to you here, so you can go on or end your turn meanwhile.",
+        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in the topic it works in; its result also comes back to you here, so you can go on or end your turn meanwhile. A role of this topic needs no topic_id; give topic_id to hand it to a role of a directly linked internal topic (it works there).",
+      refusal: async (db: Db, task: Task, args: Record<string, any>) => (await delegationCheck(db, task, args)).refusal,
+      asks: async (db: Db, task: Task, args: Record<string, any>) =>
+        (await delegationCheck(db, task, args)).outside &&
+        (task.envelope.approval_required ?? []).includes("collaborate"),
     },
     spec(
       "remember",
@@ -1415,39 +1456,29 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       conversation:
         "Ask people in this topic a question (clarification, a decision, a login or approval); it @-mentions them (default: whoever asked you). Then end your turn: their answer arrives here as a new message, even without an @-mention.",
     },
-    {
-      ...spec(
-        "send_message",
-        null,
-        "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
-        obj(
-          {
-            text: str,
-            topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
-            thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
-            source_message_id: {
-              type: "string",
-              description: "Relevant input message in this topic, for mixed requests",
-            },
-            task_id: {
-              type: "string",
-              description: "Optional independent task in this topic whose result/origin is being sent",
-            },
-            role: { type: "string", description: "Optional receiving role in an internal target topic" },
+    spec(
+      "send_message",
+      null,
+      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
+      obj(
+        {
+          text: str,
+          topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
+          thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
+          source_message_id: {
+            type: "string",
+            description: "Relevant input message in this topic, for mixed requests",
           },
-          ["text"],
-        ),
-        sendMessage,
+          task_id: {
+            type: "string",
+            description: "Optional independent task in this topic whose result/origin is being sent",
+          },
+          role: { type: "string", description: "Optional receiving role in an internal target topic" },
+        },
+        ["text"],
       ),
-      // Only a message to another topic asks for approval (collaborate), and only it can be refused up front.
-      refusal: async (db: Db, task: Task, args: Record<string, any>) => {
-        if (!args.topic_id || args.topic_id === task.topicId) return null;
-        const [sender] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
-        return sender
-          ? linkedSendRefusal(db, task, sender, { topic_id: String(args.topic_id), role: args.role })
-          : null;
-      },
-    },
+      sendMessage,
+    ),
     spec(
       "topic_history",
       null,
@@ -1594,17 +1625,17 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         // Some only where the conversation stays in the console; outside it only the bot's role works, so there
         // is no other role to @ either.
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
-        (t.name !== "message_role" || !envelope.outside),
+        (!["message_role", "delegate_task"].includes(t.name) || !envelope.outside),
     )
     .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
-  // @-mentioning a role of the same topic is never a permission (an older per-tool setting is ignored).
-  if (tool.name === "message_role") return false;
+  // @-mentions, delegation within the topic and anything between linked topics need no permission (an older
+  // per-tool setting is ignored); delegating to a role outside the topic asks through delegate_task's own check.
+  if (tool.name === "message_role" || tool.name === "delegate_task") return false;
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
-  if (tool.name === "send_message" && args?.topic_id && required.has("collaborate")) return true;
   // A connection tool (Feishu, GitHub) asks when its connection's product asks (the connection comes from the call).
   if (isConnectionToolGroup(tool.group)) return grantNeedsApproval(envelope, tool.group!, args);
   return tool.group !== null && required.has(tool.group);

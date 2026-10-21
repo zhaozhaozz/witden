@@ -30,7 +30,7 @@ import { manageAutomation } from "../src/services/automation-rules.js";
 import { getRole, getTopic } from "../src/services/topics.js";
 import { processTriggerEvents } from "../src/services/triggers.js";
 import { acceptSourceWebhook } from "../src/services/webhook-sources.js";
-import { call, lastToolResult, reply } from "./support/harness.js";
+import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -105,50 +105,138 @@ describe("linked topics, shared sources and task iterations", () => {
     await expect(send(task, { topic_id: c, text: "Work" })).rejects.toThrow(/linked/);
   });
 
-  it("asks for approval only when the message to another topic can go through", async () => {
+  it("linked topics message and delegate to each other without a role permission or approval", async () => {
     const target = (
       await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Review", role_ids: [w.ids.test] } })
     ).body.id as string;
     await connect(w.ids.topic, target);
-    const configure = async (json: Record<string, unknown>) =>
-      expect((await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json })).status).toBe(200);
-    w.scripts.dev = (m, turn) =>
-      turn === 0
-        ? reply("", [call("send_message", { topic_id: target, role: "test", text: "please review" })])
-        : reply(`result: ${lastToolResult(m)}`);
-    w.scripts.test = () => reply("reviewed");
-    const attempt = async () => {
-      await w.post(w.alice, w.ids.topic, "@dev ask test over there");
-      await w.drain();
-      return (await w.messages(w.ids.topic)).at(-1).content as string;
+    // dev has no permission to delegate outside its topic, and an older setting still lists it as asking.
+    const limited = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
+      token: w.adminToken,
+      json: { allowed_tools: ["shell", "files", "memory", "terminal"], approval_required: ["collaborate"] },
+    });
+    expect(limited.status, limited.raw).toBe(200);
+    let step = 0;
+    let gotResult = "";
+    w.scripts.dev = (m) => {
+      const last = lastUser(m);
+      if (last.includes("'s task") && last.includes(" ended")) {
+        gotResult = last;
+        return reply("noted");
+      }
+      step++;
+      if (step === 1)
+        return reply("", [call("send_message", { topic_id: target, role: "test", text: "please review" })]);
+      if (step === 2)
+        return reply("", [
+          call("delegate_task", {
+            role: "test",
+            topic_id: target,
+            task: "check the build",
+            expected_output: "a verdict",
+          }),
+        ]);
+      return reply("handed over");
     };
-    const pending = async () =>
-      (await w.api("GET", "/api/approvals", { token: w.bob })).body.filter((a: any) => a.topic_id === w.ids.topic);
-    // The permission is off, though "collaborate" is still listed as asking: refused at once, nobody is asked.
-    await configure({
-      allowed_tools: ["shell", "files", "memory", "terminal", "browser", "desktop"],
-      approval_required: ["collaborate"],
-    });
-    expect(await attempt()).toContain("collaboration permission is required");
-    expect(await pending()).toEqual([]);
-    // Permitted, but the role there is not among its contacts.
-    await configure({
-      allowed_tools: ["shell", "files", "collaborate", "memory", "terminal", "browser", "desktop"],
-      allowed_contacts: [],
-    });
-    expect(await attempt()).toContain("may contact");
-    expect(await pending()).toEqual([]);
-    // Now it can go through: a person approves, and the role there gets it.
-    await configure({ allowed_contacts: ["*"] });
-    await w.post(w.alice, w.ids.topic, "@dev ask test over there");
+    w.scripts.test = (m) => reply(lastUser(m).includes("check the build") ? "verdict: green" : "reviewed");
+    await w.post(w.alice, w.ids.topic, "@dev get test over there to review and check the build");
     await w.drain();
-    const [approval] = await pending();
-    expect(approval?.action).toBe("send_message");
-    await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } });
-    await w.drain();
+    expect((await w.api("GET", "/api/approvals", { token: w.bob })).body).toEqual([]);
     const there = (await w.messages(target)).map((m: any) => m.content);
     expect(there).toContain("please review");
     expect(there).toContain("reviewed");
+    expect(there).toContain("verdict: green");
+    const [delegated] = await db()
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.topicId, target), eq(tasks.kind, "task")));
+    expect(delegated).toMatchObject({ ownerRoleId: w.ids.test, requesterRoleId: w.ids.dev, sourceMessageId: null });
+    expect(delegated.envelope.topic_routes?.[0]?.source_topic_id).toBe(w.ids.topic);
+    // The result comes back to dev's conversation in the source topic.
+    expect(gotResult).toContain("verdict: green");
+    // A topic that is not linked gets nothing.
+    const other = (
+      await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Other", role_ids: [w.ids.test] } })
+    ).body.id as string;
+    const task = await sender();
+    await expect(send(task, { topic_id: other, text: "Work" })).rejects.toThrow(/linked/);
+  });
+
+  it("delegates within the topic freely; to a role outside it only with the role's permission", async () => {
+    const outsider = (
+      await w.api("POST", "/api/roles", {
+        token: w.adminToken,
+        json: { name: "Outsider", handle: "outsider", model_config_id: w.ids.model, instance_id: w.ids.instance },
+      })
+    ).body.id as string;
+    const configure = async (json: Record<string, unknown>) =>
+      expect((await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json })).status).toBe(200);
+    let target = "test";
+    // A result coming back is a new turn too: answer it instead of delegating again.
+    w.scripts.dev = (m, turn) =>
+      lastUser(m).includes(" ended")
+        ? reply("thanks")
+        : turn === 0
+          ? reply("", [call("delegate_task", { role: target, task: "do a part", expected_output: "done" })])
+          : reply(`result: ${lastToolResult(m)}`);
+    w.scripts.test = () => reply("part done");
+    w.scripts.outsider = () => reply("outside part done");
+    const pending = async () =>
+      (await w.api("GET", "/api/approvals", { token: w.bob })).body.filter((a: any) => a.topic_id === w.ids.topic);
+    const ownerTasks = async (roleId: string) =>
+      (await db().select().from(tasks).where(eq(tasks.ownerRoleId, roleId))).filter((t) => t.kind === "task");
+    // No permission at all: a role of the topic still gets the work, nobody is asked.
+    await configure({ allowed_tools: ["shell"], approval_required: ["collaborate", "delegate_task"] });
+    await w.post(w.alice, w.ids.topic, "@dev split it");
+    await w.drain();
+    expect(await pending()).toEqual([]);
+    expect(await ownerTasks(w.ids.test)).toHaveLength(1);
+    // A role outside the topic: refused at once without the permission.
+    target = "outsider";
+    await w.post(w.alice, w.ids.topic, "@dev split it again");
+    await w.drain();
+    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("not in this topic");
+    expect(await pending()).toEqual([]);
+    expect(await ownerTasks(outsider)).toHaveLength(0);
+    // With the permission set to ask: a person approves, and the role is brought into the topic.
+    await configure({ allowed_tools: ["shell", "collaborate"], approval_required: ["collaborate"] });
+    await w.post(w.alice, w.ids.topic, "@dev split it once more");
+    await w.drain();
+    const [approval] = await pending();
+    expect(approval?.action).toBe("delegate_task");
+    await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } });
+    await w.drain();
+    expect((await ownerTasks(outsider)).map((t) => t.status)).toEqual(["completed"]);
+    const roles = (await w.api("GET", `/api/topics/${w.ids.topic}`, { token: w.alice })).body.participants ?? [];
+    expect(JSON.stringify(roles)).toContain(outsider);
+  });
+
+  it("from a DM, delegated work goes to the asking person's DM with that role", async () => {
+    await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
+      token: w.adminToken,
+      json: { allowed_tools: ["shell", "collaborate"], approval_required: [] },
+    });
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body.id as string;
+    w.scripts.dev = (m, turn) =>
+      lastUser(m).includes(" ended")
+        ? reply("test says it is fine")
+        : turn === 0
+          ? reply("", [call("delegate_task", { role: "test", task: "look at this", expected_output: "an opinion" })])
+          : reply("asked test");
+    w.scripts.test = () => reply("fine by me");
+    await w.post(w.alice, dm, "ask test what it thinks");
+    await w.drain();
+    const [work] = (await db().select().from(tasks).where(eq(tasks.ownerRoleId, w.ids.test))).filter(
+      (t) => t.kind === "task",
+    );
+    expect(work.topicId).not.toBe(dm);
+    const [place] = await db().select().from(topicsTable).where(eq(topicsTable.id, work.topicId));
+    expect(place.kind).toBe("dm");
+    expect((await w.messages(work.topicId)).map((m: any) => m.content)).toContain("fine by me");
+    // The DM with dev keeps its one role and gets dev's answer.
+    const here = (await w.messages(dm)).map((m: any) => m.content);
+    expect(here).toContain("test says it is fine");
+    expect(here).not.toContain("fine by me");
   });
 
   it("dispatches the same role in another topic without creating a second source execution", async () => {

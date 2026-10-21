@@ -29,10 +29,6 @@ export function messageDisposition(external: boolean, receivedFromPlatform: bool
   return external && !receivedFromPlatform ? "publish" : "dispatch";
 }
 
-export function contactAllowed(contacts: string[], sender: string, recipient: string): boolean {
-  return sender === recipient || contacts.includes("*") || contacts.includes(recipient);
-}
-
 export function assertNextRound(current: number, limit: number): number {
   if (!Number.isInteger(current) || current < 0 || !Number.isInteger(limit) || limit < 0 || current + 1 > limit)
     throw new Error("automatic collaboration round limit reached; ask a person before sending more work");

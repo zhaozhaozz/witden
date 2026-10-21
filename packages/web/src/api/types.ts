@@ -542,7 +542,6 @@ export interface Role {
   model_params?: Dict;
   instance_id: string | null;
   allowed_tools: string[];
-  allowed_contacts?: string[];
   knowledge_space_ids?: string[];
   approval_required?: string[];
   max_steps: number | null;

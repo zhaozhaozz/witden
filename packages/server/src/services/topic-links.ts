@@ -137,7 +137,7 @@ export async function linkedTopicContext(db: Db, topicId: string): Promise<strin
   const links = await linkedTopics(db, topicId);
   if (!links.length) return "Linked topics: none. send_message may only post here.";
   return (
-    "Directly linked topics (send_message with topic_id; links do not grant history access):\n" +
+    "Directly linked topics (send_message or delegate_task with topic_id; links do not grant history access):\n" +
     links
       .map(
         (l) =>
@@ -175,13 +175,6 @@ export async function linkedRequestRefusal(db: Db, task: Task): Promise<string |
     const sender = await topicSvc.getRole(db, route.sender_role_id);
     if (sender?.status !== "active" || !(await topicSvc.participant(db, source.id, "role", sender.id)))
       return "the sending role no longer participates in the source topic";
-    if (!sender.allowedTools.includes("collaborate")) return "the sender's collaboration permission was revoked";
-    if (
-      sender.id !== task.ownerRoleId &&
-      !sender.allowedContacts.includes("*") &&
-      !sender.allowedContacts.includes(task.ownerRoleId)
-    )
-      return "the sender may no longer contact the receiving role";
     const uid = route.origin.requester_user_id;
     if (uid) {
       const [u] = await db.select().from(users).where(eq(users.id, uid));

@@ -75,16 +75,11 @@ async function roleOut(db: Db, role: Role, full: boolean) {
       }
     : null;
   data.warnings = roleWarnings(role, inst, cfg, found?.provider);
+  // Whom a role may contact is decided by topics now; the old list is neither shown nor used.
+  delete data.allowed_contacts;
   if (!full) {
     // Members who can merely use a role see its public identity, not its prompt or wiring.
-    for (const k of [
-      "system_prompt",
-      "model_params",
-      "allowed_contacts",
-      "knowledge_space_ids",
-      "approval_required",
-      "created_by",
-    ])
+    for (const k of ["system_prompt", "model_params", "knowledge_space_ids", "approval_required", "created_by"])
       delete data[k];
   } else {
     data.tokens_today = await tokensToday(db, { roleId: role.id });

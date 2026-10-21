@@ -288,7 +288,12 @@ function freshConditions(s: AgentSession, role: Role, since: Date | null, fresh:
   return conds;
 }
 
-async function resultText(db: Db, item: InboxItem, role: Role): Promise<{ text: string; round: number }> {
+async function resultText(
+  db: Db,
+  item: InboxItem,
+  role: Role,
+  topicId: string,
+): Promise<{ text: string; round: number }> {
   const [t] = item.task_id ? await db.select().from(tasks).where(eq(tasks.id, item.task_id)).limit(1) : [];
   if (!t) return { text: `A task you started (${item.task_id}) no longer exists.`, round: 0 };
   const [owner] = await db.select().from(roles).where(eq(roles.id, t.ownerRoleId)).limit(1);
@@ -303,7 +308,8 @@ async function resultText(db: Db, item: InboxItem, role: Role): Promise<{ text: 
     delivered.status === "completed"
       ? (delivered.result ?? "").slice(0, RESULT_LIMIT) || "(no result)"
       : `${delivered.status}: ${delivered.error ?? t.statusReason ?? ""}`;
-  const posted = t.envelope?.report_only ? "" : " (its answer was also posted in the topic)";
+  const where = t.topicId === topicId ? "this topic" : `topic ${t.topicId}`;
+  const posted = t.envelope?.report_only ? "" : ` (its answer was also posted in ${where})`;
   return {
     text: `${whose} ${t.id} «${t.title}» iteration ${item.revision ?? 1} ended${posted}:\n${outcome}`,
     round: t.round,
@@ -392,7 +398,7 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   let resultRound = 0;
   for (const item of ready) {
     if (item.kind === "result") {
-      const r = await resultText(db, item, role);
+      const r = await resultText(db, item, role, topic.id);
       parts.push(r.text);
       resultRound = Math.max(resultRound, r.round);
     } else if (item.kind === "timer") {

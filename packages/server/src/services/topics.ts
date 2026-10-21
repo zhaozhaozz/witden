@@ -114,12 +114,6 @@ export async function inviteRole(
   const bound = await externalRoleId(db, topic.id);
   if (bound !== undefined && bound !== role.id)
     throw new BadRequest("only the role its bot stands for works in a Slack, Feishu or GitHub conversation");
-  if (opts.byRole) {
-    const contacts = opts.byRole.allowedContacts;
-    if (!contacts.includes("*") && !contacts.includes(role.id)) {
-      throw new Forbidden(`role ${opts.byRole.handle} may not bring in ${role.handle}`);
-    }
-  }
   if (user) await requirePerm(db, user, Perm.ROLE_INVITE, role.id);
   return addParticipant(db, topic, "role", role.id, { invitedBy: user?.id ?? opts.byRole?.id ?? null });
 }

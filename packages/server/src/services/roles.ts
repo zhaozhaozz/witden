@@ -149,15 +149,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     if (unknown.length) throw new BadRequest(`unknown tools ${unknown.join(", ")}`);
     out.approvalRequired = [...new Set<string>(data.approvalRequired)].sort();
   }
-  if ("allowedContacts" in data) {
-    const contacts = [...new Set<string>(data.allowedContacts ?? [])];
-    for (const rid of contacts) {
-      if (rid !== "*" && !(await db.select({ id: roles.id }).from(roles).where(eq(roles.id, rid)).limit(1)).length) {
-        throw new NotFound(`contact role ${rid} not found`);
-      }
-    }
-    out.allowedContacts = contacts;
-  }
   if ("knowledgeSpaceIds" in data) {
     const ids = [...new Set<string>(data.knowledgeSpaceIds ?? [])];
     for (const sid of ids) {
@@ -281,7 +272,6 @@ export async function copyRole(
     reasoningEffort: role.reasoningEffort,
     instanceId,
     allowedTools: role.allowedTools,
-    allowedContacts: role.allowedContacts,
     knowledgeSpaceIds: role.knowledgeSpaceIds,
     approvalRequired: role.approvalRequired,
     maxSteps: role.maxSteps,
