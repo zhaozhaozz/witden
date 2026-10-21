@@ -82,6 +82,7 @@ export async function boundOutput(ctx: ToolContext, name: string, output: string
   if (output.length <= limit) return output;
   // The file holds no more than the model would have been shown: masked like every tool result (agent/runner.ts).
   const text = redact(output);
+  if (text.length <= limit) return text;
   let why: string | null;
   try {
     why = await cannotKeep(ctx);
