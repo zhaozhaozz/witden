@@ -444,6 +444,11 @@ function PairList() {
           </NavLink>
         );
       })}
+      {pairs.length > MAX_TOPICS ? (
+        <Link to="/topics" className="nav-item side-item side-more">
+          查看全部 {pairs.length} 个对话
+        </Link>
+      ) : null}
     </SideSection>
   );
 }

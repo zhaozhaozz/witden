@@ -83,22 +83,81 @@ async function participantsOut(db: Db, topic: Topic) {
   return out;
 }
 
-async function topicOut(
-  db: Db,
-  topic: Topic,
-  user: User,
-  detail = false,
-  channels?: Map<string, ChannelInfo>,
-  roleIds?: Map<string, string[]>,
-) {
+/** What a list needs about each topic, looked up once for a batch of topics rather than topic by topic. */
+interface ListFacts {
+  channels: Map<string, ChannelInfo>;
+  /** The roles taking part in each topic. */
+  roleIds: Map<string, string[]>;
+  /** Topics the person takes part in. */
+  joined: Set<string>;
+  /** Status of the roles of DMs. */
+  roleStatus: Map<string, string>;
+}
+
+/** Topics per batch of list lookups: a query takes at most 65535 parameters. */
+const LIST_BATCH = 1000;
+
+/** Topics as lists show them (no participants), each batch's facts asked for in a few queries. */
+async function listOut(db: Db, rows: Topic[], user: User) {
+  const out = [];
+  for (let i = 0; i < rows.length; i += LIST_BATCH) {
+    const batch = rows.slice(i, i + LIST_BATCH);
+    const ids = batch.map((t) => t.id);
+    const facts: ListFacts = {
+      channels: await channelsOf(db, ids),
+      roleIds: new Map(),
+      joined: new Set(),
+      roleStatus: new Map(),
+    };
+    for (const p of await db
+      .select({
+        topicId: topicParticipants.topicId,
+        type: topicParticipants.participantType,
+        id: topicParticipants.participantId,
+      })
+      .from(topicParticipants)
+      .where(
+        and(
+          inArray(topicParticipants.topicId, ids),
+          isNull(topicParticipants.removedAt),
+          or(
+            eq(topicParticipants.participantType, "role"),
+            and(eq(topicParticipants.participantType, "user"), eq(topicParticipants.participantId, user.id)),
+          ),
+        ),
+      )) {
+      if (p.type === "role") facts.roleIds.set(p.topicId, [...(facts.roleIds.get(p.topicId) ?? []), p.id]);
+      else facts.joined.add(p.topicId);
+    }
+    const dmRoles = new Set(batch.flatMap((t) => (t.kind === "dm" ? (facts.roleIds.get(t.id) ?? []).slice(0, 1) : [])));
+    if (dmRoles.size)
+      for (const r of await db
+        .select({ id: roles.id, status: roles.status })
+        .from(roles)
+        .where(inArray(roles.id, [...dmRoles])))
+        facts.roleStatus.set(r.id, r.status);
+    for (const t of batch) out.push(await topicOut(db, t, user, false, facts));
+  }
+  return out;
+}
+
+async function topicOut(db: Db, topic: Topic, user: User, detail = false, facts?: ListFacts) {
   const data: Record<string, any> = row(topic);
   // The roles taking part, for lists (e.g. which roles a connection's conversations involve).
-  if (roleIds) data.role_ids = roleIds.get(topic.id) ?? [];
+  if (facts) data.role_ids = facts.roleIds.get(topic.id) ?? [];
   // Where it lives outside the console (Slack channel, GitHub issue ...), or null.
-  data.channel = (channels ?? (await channelsOf(db, [topic.id]))).get(topic.id) ?? null;
-  data.can_post = await svc.canPost(db, user, topic);
+  data.channel = (facts?.channels ?? (await channelsOf(db, [topic.id]))).get(topic.id) ?? null;
   // A DM is "the conversation with this role" in sidebars.
-  if (topic.kind === "dm") data.dm_role_id = (await svc.participants(db, topic.id, "role"))[0]?.participantId ?? null;
+  const dmRoleId =
+    topic.kind !== "dm"
+      ? undefined
+      : facts
+        ? facts.roleIds.get(topic.id)?.[0]
+        : (await svc.participants(db, topic.id, "role"))[0]?.participantId;
+  data.can_post = facts
+    ? svc.postable(topic, facts.joined.has(topic.id), dmRoleId ? facts.roleStatus.get(dmRoleId) : undefined)
+    : await svc.canPost(db, user, topic);
+  if (topic.kind === "dm") data.dm_role_id = dmRoleId ?? null;
   if (detail) {
     data.participants = await participantsOut(db, topic);
   }
@@ -125,35 +184,14 @@ export async function topicRoutes(app: FastifyInstance) {
       const conds: (SQL | undefined)[] = isConsoleUser(user) ? [] : [inArray(topics.id, mine)];
       if (q.include_archived !== "true") conds.push(eq(topics.status, "active"));
       if (q.q) conds.push(or(ilike(topics.title, `%${q.q}%`), ilike(topics.goal, `%${q.q}%`)));
+      // All of them, most recent activity first: the console's sidebar shows the latest of each kind and its
+      // "all conversations" page the rest.
       const rows = await db
         .select()
         .from(topics)
         .where(and(...conds))
-        .orderBy(desc(topics.lastMessageAt), desc(topics.createdAt))
-        .limit(300);
-      const out = [];
-      const channels = await channelsOf(
-        db,
-        rows.map((t) => t.id),
-      );
-      const roleIds = new Map<string, string[]>();
-      if (rows.length)
-        for (const p of await db
-          .select({ topicId: topicParticipants.topicId, roleId: topicParticipants.participantId })
-          .from(topicParticipants)
-          .where(
-            and(
-              inArray(
-                topicParticipants.topicId,
-                rows.map((t) => t.id),
-              ),
-              eq(topicParticipants.participantType, "role"),
-              isNull(topicParticipants.removedAt),
-            ),
-          ))
-          roleIds.set(p.topicId, [...(roleIds.get(p.topicId) ?? []), p.roleId]);
-      for (const t of rows) out.push(await topicOut(db, t, user, false, channels, roleIds));
-      return out;
+        .orderBy(desc(topics.lastMessageAt), desc(topics.createdAt));
+      return listOut(db, rows, user);
     }),
   );
 

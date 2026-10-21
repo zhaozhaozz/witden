@@ -49,13 +49,21 @@ export async function requireView(db: Db, user: User, topic: Topic): Promise<voi
 }
 
 export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean> {
+  if (topic.kind === "pair" || topic.status !== "active") return false;
+  const joined = !!(await participant(db, topic.id, "user", user.id));
+  if (!joined || topic.kind !== "dm") return postable(topic, joined, undefined);
+  const [p] = await participants(db, topic.id, "role");
+  return postable(topic, joined, (p ? await getRole(db, p.participantId) : undefined)?.status);
+}
+
+/** canPost from what is known: whether the person takes part, and for a DM the status of its role. */
+export function postable(topic: Topic, joined: boolean, dmRoleStatus: string | undefined): boolean {
   // A conversation between two roles has no people: it is read, never written to, in the console.
   if (topic.kind === "pair") return false;
-  if (topic.status !== "active" || !(await participant(db, topic.id, "user", user.id))) return false;
+  if (topic.status !== "active" || !joined) return false;
   if (topic.kind !== "dm") return true;
   // A DM whose role was disabled keeps its history, read-only; enabling the role opens it again.
-  const [p] = await participants(db, topic.id, "role");
-  return (p ? await getRole(db, p.participantId) : undefined)?.status === "active";
+  return dmRoleStatus === "active";
 }
 
 /** Settings, members, cleanup and other management: any console account (all are administrators). */
