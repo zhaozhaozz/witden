@@ -357,6 +357,7 @@ export const TOOL_LABEL: Record<string, string> = {
   continue_task: "给自己拆出的任务补充要求",
   manage_automation: "管理负责的自动化",
   send_message: "向话题发送消息",
+  linked_topic_status: "查看关联话题的工作状态",
   remember: "记录记忆",
   recall: "检索记忆",
   update_memory: "修改记忆",

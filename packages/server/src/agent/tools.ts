@@ -36,6 +36,7 @@ import { sourceLimits } from "../services/collaboration-policy.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
+import { linkedTopicStatus } from "../services/linked-status.js";
 import { erased, memoryFields, memoryLine, memoryScore } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
@@ -1440,6 +1441,18 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ),
       sendMessage,
     ),
+    // The link is the permission: an external conversation's role sees linked internal topics' work, not messages.
+    spec(
+      "linked_topic_status",
+      null,
+      "Check on an internal topic linked to this conversation instead of asking it again: its work in progress (tasks and role conversations: owner, state, what they wait for, progress), recently finished tasks with a short result, and what became of the requests you sent there (taken up by whom, still running or done, messages sent back here). Without topic_id: one line per linked internal topic. Status only: never that topic's messages or files. Tell the people here what matters in your own words.",
+      obj({ topic_id: { type: "string", description: "A directly linked internal topic ID; omit for all of them" } }),
+      async (ctx, args) => {
+        const db = ctx.db();
+        const { task } = await load(ctx, db);
+        return { content: await linkedTopicStatus(db, task, args.topic_id) };
+      },
+    ),
     spec(
       "topic_history",
       null,
@@ -1587,7 +1600,9 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
         // In a Slack, Feishu or GitHub conversation only the bot's role works: there is no other role to @ or hand
         // work to. A request relayed from there into a console topic may still involve that topic's roles.
-        (!["message_role", "delegate_task"].includes(t.name) || !envelope.external_topic),
+        (!["message_role", "delegate_task"].includes(t.name) || !envelope.external_topic) &&
+        // Only that role reports on the linked internal topics; an internal topic has no use for an external one's.
+        (t.name !== "linked_topic_status" || !!envelope.external_topic),
     )
     .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
 }

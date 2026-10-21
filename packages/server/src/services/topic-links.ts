@@ -147,6 +147,10 @@ async function notifyLinks(db: Db, a: string, b: string) {
 export async function linkedTopicContext(db: Db, topicId: string): Promise<string> {
   const links = await linkedTopics(db, topicId);
   if (!links.length) return "Linked topics: none. send_message may only post here.";
+  // Only an external conversation links internal topics: its role can check on their work.
+  const status = links.some((l) => !l.external)
+    ? "\nCheck an internal topic's work and what became of your requests there with linked_topic_status(topic_id) before asking it again."
+    : "";
   return (
     "Directly linked topics (send_message with topic_id; links do not grant history access):\n" +
     links
@@ -155,7 +159,8 @@ export async function linkedTopicContext(db: Db, topicId: string): Promise<strin
           `- ${l.topic_id} «${l.title}» [${l.external ? "external: publishes your text there, runs no agent" : "internal: its roles take the request on there"}; ${l.status}]` +
           ` ${l.goal.slice(0, 300)}; roles: ${l.roles.map((r) => `@${r.handle}`).join(", ") || "none"}`,
       )
-      .join("\n")
+      .join("\n") +
+    status
   );
 }
 
