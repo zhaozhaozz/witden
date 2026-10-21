@@ -24,6 +24,7 @@ import {
   type Task,
   taskInputs,
   tasks,
+  topics,
 } from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
 import { audit } from "../services/audit.js";
@@ -105,6 +106,8 @@ export async function contactRole(
     throw new Forbidden((err as Error).message);
   }
   const topic = await topicSvc.getOrCreatePairTopic(db, sender, target);
+  // The pair's row before the receiver's session (lockPair).
+  await db.select({ id: topics.id }).from(topics).where(eq(topics.id, topic.id)).for("update");
   // The receiver must be able to work: enabled, a usable model, a computer (an @-mention's checks).
   const { allowed: ok, refusals } = await authorize(db, topic, task.requesterUserId, [target.id], sender.id);
   if (!ok.length) throw new Forbidden(`@${target.handle} cannot take it now: ${[...new Set(refusals)].join("; ")}`);
@@ -147,11 +150,25 @@ export async function contactRole(
   return { messageId: msg.id, topicId: topic.id, status: "sent" };
 }
 
+/**
+ * Lock order wherever the sessions of a pair topic are locked: the run, then the pair topic's row, then sessions.
+ * Both roles of a pair may end a turn at the same moment, each answering a message of the other: each transaction
+ * holds its own session (settle) and then needs the other's (sendBack), which would deadlock. With the topic row
+ * taken first they wait for one another instead. Posting there already takes it first (saveMessage updates the
+ * row), and so does contactRole before it queues the message.
+ */
+export async function lockPair(db: Db, run: Task): Promise<void> {
+  if (!run.envelope?.pair_topic) return;
+  await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, run.id)).for("update");
+  await db.select({ id: topics.id }).from(topics).where(eq(topics.id, run.topicId)).for("update");
+}
+
 /** A message from another role the run was shown and has not answered yet. */
 const owed = (i: InboxItem) => i.kind === "message" && !!i.contact && !!i.done && !i.answered;
 
 async function settleOwed(db: Db, run: Task): Promise<InboxItem[]> {
   if (run.kind !== "conversation" || !run.sessionId || !run.envelope?.pair_topic) return [];
+  await lockPair(db, run);
   const s = await lockSession(db, run.sessionId);
   const items = s.inbox.filter(owed);
   if (!items.length) return [];

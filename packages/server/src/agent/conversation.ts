@@ -34,7 +34,7 @@ import {
 import { relayFrom, type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
 import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
-import { answerContacts, replyText, unansweredContacts } from "./contacts.js";
+import { answerContacts, lockPair, replyText, unansweredContacts } from "./contacts.js";
 import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES, triggerContext } from "./context.js";
 import { ACTIVE } from "./control.js";
 import { createTask, plainTitle, sessionFor } from "./dispatch.js";
@@ -196,6 +196,8 @@ export async function wakeDue(db: Db, sessionId: string): Promise<Task | null> {
 
 /** Whether the run should go on instead of ending: something new is waiting for it. */
 export async function settle(db: Db, run: Task): Promise<boolean> {
+  // In a pair topic its row comes between the run and the session (agent/contacts.ts lockPair).
+  await lockPair(db, run);
   const s = await lockRun(db, run);
   // The turn is over: its answer goes back to the roles that wrote to it here (agent/contacts.ts).
   await answerContacts(db, run);
@@ -228,6 +230,7 @@ export async function dropReady(db: Db, sessionId: string): Promise<void> {
  */
 export async function afterEnd(db: Db, task: Task): Promise<void> {
   await recordTaskIteration(db, task);
+  await lockPair(db, task);
   if (task.kind === "conversation" && task.sessionId && task.status === "cancelled")
     await dropReady(db, task.sessionId);
   // Another role's messages it did not get to answer: their senders hear so (agent/contacts.ts).

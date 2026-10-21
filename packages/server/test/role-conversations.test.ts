@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTask, sessionFor } from "../src/agent/dispatch.js";
-import { TOOLS } from "../src/agent/tools.js";
+import { requestHandover, transferStartedTask } from "../src/agent/task-handoff.js";
+import { TOOLS, toolsFor } from "../src/agent/tools.js";
 import { db, transaction } from "../src/db/client.js";
 import { agentSessions, taskInputs, tasks, topicParticipants, topics } from "../src/db/schema.js";
 import { ModelError } from "../src/errors.js";
@@ -327,6 +328,44 @@ describe("direct conversations between AI employees", () => {
     );
     // the history is open to console accounts
     expect((await w.api("GET", `${base}/messages`, { token: w.bob })).status).toBe(200);
+  });
+
+  it("no task in a pair changes hands, whether a person or a role hands it over", async () => {
+    const pair = await transaction(async (tx) =>
+      getOrCreatePairTopic(tx, (await getRole(tx, w.ids.dev))!, (await getRole(tx, w.ids.analyst))!),
+    );
+    // @analyst's conversation in the pair, and a task it started there
+    const [run, task] = await transaction(async (tx) => {
+      const topic = await getTopic(tx, pair.id);
+      const role = (await getRole(tx, w.ids.analyst))!;
+      const session = await sessionFor(tx, role.id, topic.id);
+      const base = { topic, role, requesterUserId: w.ids.alice, requesterRoleId: w.ids.dev };
+      const run = await createTask(tx, { ...base, kind: "conversation", session, instruction: "a question" });
+      const task = await createTask(tx, { ...base, instruction: "the work", reportSessionId: session.id });
+      await tx.update(tasks).set({ status: "running" }).where(eq(tasks.id, run.id));
+      await tx.update(tasks).set({ status: "running" }).where(eq(tasks.id, task.id));
+      return [
+        { ...run, status: "running" },
+        { ...task, status: "running" },
+      ];
+    });
+    expect(task.envelope.pair_topic).toBe(true);
+    expect(toolsFor(task.envelope).map((t) => t.name)).not.toContain("transfer_task");
+    expect(toolsFor(run.envelope).map((t) => t.name)).not.toContain("transfer_task");
+    const analyst = (await getRole(db(), w.ids.analyst))!;
+    await expect(transaction((tx) => requestHandover(tx, task.id, w.ids.analyst, "call-1", "@dev"))).rejects.toThrow(
+      /conversation between two AI employees cannot be handed/,
+    );
+    await db().update(tasks).set({ status: "completed" }).where(eq(tasks.id, task.id));
+    await expect(
+      transaction((tx) => transferStartedTask(tx, run, analyst, task.id, "@dev", "please finish")),
+    ).rejects.toThrow(/conversation between two AI employees cannot be handed/);
+    const byPerson = await w.api("POST", `/api/tasks/${task.id}/reassign`, {
+      token: w.alice,
+      json: { role_id: w.ids.dev },
+    });
+    expect(byPerson.status).toBe(400);
+    expect(byPerson.body.error.message).toMatch(/conversation between two AI employees/);
   });
 
   it("validates whom a role may write to", async () => {
