@@ -2954,7 +2954,17 @@ img.avatar-role.avatar-colored {
   gap: 8px;
   margin-bottom: 10px;
 }
-/* The topic panel's work tab: the roles' conversations, then independent tasks. */
+/* The work tab puts pending decisions before conversations and independent tasks. */
+.work-approval-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wait);
+  flex-shrink: 0;
+}
+.work-approvals > .work-section-title {
+  color: var(--wait);
+}
 .work-section + .work-section {
   margin-top: 18px;
 }

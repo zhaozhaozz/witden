@@ -62,6 +62,7 @@ export function TopicSidePanel({
   const [params] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const panel = params.get("panel") ?? "tasks";
+    if (panel === "approvals") return "tasks";
     // Keep links to the former standalone tabs useful after consolidating them into settings.
     return ["people", "role", "links"].includes(panel) ? "settings" : panel;
   });
@@ -100,8 +101,23 @@ export function TopicSidePanel({
         value={tab}
         onChange={(k) => guard(() => setTab(k))}
         tabs={[
-          { key: "tasks", label: "工作", badge: activeCount },
-          { key: "approvals", label: "审批", badge: pendingApprovals?.length },
+          {
+            key: "tasks",
+            label: (
+              <>
+                工作
+                {pendingApprovals?.length ? (
+                  <span
+                    className="work-approval-indicator"
+                    role="img"
+                    aria-label={`${pendingApprovals.length} 项待审批`}
+                    title={`${pendingApprovals.length} 项待审批`}
+                  />
+                ) : null}
+              </>
+            ),
+            badge: activeCount,
+          },
           { key: "computer", label: "虚拟电脑", hidden: !hasComputers },
           { key: "files", label: "文件" },
           { key: "notes", label: "记忆" },
@@ -112,33 +128,32 @@ export function TopicSidePanel({
       <div className="side-body">
         {shown === "tasks" ? (
           <>
+            <Loaded res={{ ...approvals, data: pendingApprovals }}>
+              {(rows) =>
+                rows.length ? (
+                  <section className="work-section work-approvals" aria-label="待审批">
+                    <h4 className="work-section-title">待审批 · {rows.length}</h4>
+                    <div className="approval-list">
+                      {rows.map((a) => (
+                        <ApprovalCard
+                          key={a.id}
+                          approval={a}
+                          showContext={false}
+                          onDecided={(next) => {
+                            onDecided(next);
+                            void sessions.reload();
+                            void tasks.reload();
+                          }}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ) : null
+              }
+            </Loaded>
             <ConversationsBlock res={sessions} dm={dm} />
             <TasksTab res={tasks} dm={dm} />
           </>
-        ) : null}
-        {shown === "approvals" ? (
-          <Loaded res={{ ...approvals, data: pendingApprovals }}>
-            {(rows) =>
-              rows.length ? (
-                <div className="approval-list">
-                  {rows.map((a) => (
-                    <ApprovalCard
-                      key={a.id}
-                      approval={a}
-                      showContext={false}
-                      onDecided={(next) => {
-                        onDecided(next);
-                        void sessions.reload();
-                        void tasks.reload();
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <Empty title="没有待处理的审批" hint="角色需要确认才能继续时，会在这里出现。" />
-              )
-            }
-          </Loaded>
         ) : null}
         {shown === "computer" ? (
           <TopicComputer topic={topic} maximized={computerMax} onToggleMax={() => onToggleComputerMax?.()} />

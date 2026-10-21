@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { Memory } from "../src/api/types";
+import type { Approval, Memory } from "../src/api/types";
 
 const now = "2026-10-20T12:00:00Z";
 const computer = { id: "computer-1", name: "workspace", status: "running", color: "#527568" };
@@ -60,6 +60,9 @@ export async function workspace(
   const state = {
     runStatus: "running",
     runDelay: 0,
+    approvalDelay: 0,
+    approvals: [] as Approval[],
+    decisions: [] as { id: string; approve: boolean; note: string }[],
     memoryDelay: 0,
     memoryRequests: [] as string[],
     topicUpdates: [] as Record<string, unknown>[],
@@ -262,7 +265,25 @@ export async function workspace(
                   requester: user,
                 },
               ];
-      } else if (["/api/approvals", "/api/kill-switches", "/api/topics/topic-1/files"].includes(path)) json = [];
+      } else if (path === "/api/approvals") {
+        await new Promise((r) => setTimeout(r, state.approvalDelay));
+        json = state.approvals.filter((a) => url.searchParams.get("status") === "all" || a.status === "pending");
+      } else if (path.startsWith("/api/approvals/") && path.endsWith("/decide")) {
+        const id = path.split("/")[3];
+        const body = req.postDataJSON();
+        state.decisions.push({ id, ...body });
+        state.approvals = state.approvals.map((a) =>
+          a.id === id
+            ? {
+                ...a,
+                status: body.approve ? "approved" : "rejected",
+                decided_by: user.id,
+                decided_at: now,
+              }
+            : a,
+        );
+        json = state.approvals.find((a) => a.id === id);
+      } else if (["/api/kill-switches", "/api/topics/topic-1/files"].includes(path)) json = [];
       else {
         errors.push(`Unexpected API request: ${req.method()} ${path}`);
         return route.fulfill({ status: 404, json: { error: { message: path } } });
