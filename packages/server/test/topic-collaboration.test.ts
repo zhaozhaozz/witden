@@ -322,9 +322,17 @@ describe("linked topics, shared sources and task iterations", () => {
       finishedAt: new Date(),
       result: `All 120 tests passed. ${"More detail. ".repeat(40)}TAIL-MARKER`,
     });
-    // People talking in the internal topic: never part of its status.
+    // A person's request in the internal topic: the conversation run it starts (waiting for an approval) shows
+    // its state only, never the person's text.
+    await w.api("PATCH", `/api/roles/${w.ids.analyst}`, {
+      token: w.adminToken,
+      json: { approval_required: ["memory"] },
+    });
+    w.scripts.analyst = (_m, turn) =>
+      turn === 0 ? reply("", [call("remember", { title: "a note", content: "a note" })]) : reply("noted");
+    await w.post(w.bob, w.ids.topic, "@analyst between us: the codename is BLUEBIRD");
     await transaction(async (tx) =>
-      saveMessage(tx, await getTopic(tx, w.ids.topic), "user", w.ids.bob, "between us: the codename is BLUEBIRD", {
+      saveMessage(tx, await getTopic(tx, w.ids.topic), "user", w.ids.bob, "and the launch is on Friday", {
         mentions: [],
       }),
     );
@@ -370,16 +378,20 @@ describe("linked topics, shared sources and task iterations", () => {
     // The request this conversation relayed there: who took it up, and that an answer came back.
     expect(checked).toMatch(/«please review the release»: being handled by @test/);
     expect(checked).toContain("1 message(s) sent back here");
-    // Status, not the topic's messages.
-    expect(checked).not.toContain("BLUEBIRD");
-    expect(checked).not.toContain("Which build should I review?");
+    // Status, not the topic's messages: a conversation started by a person there shows no text of theirs.
+    expect(checked).toMatch(
+      /对话（@analyst）, waiting_approval \(waits for an approval\), updated [\d-]+ [\d:]+ UTC\n/,
+    );
+    for (const text of ["BLUEBIRD", "between us", "launch is on Friday", "Which build should I review?"])
+      expect(checked).not.toContain(text);
     const [run] = await db()
       .select()
       .from(tasks)
       .where(and(eq(tasks.topicId, group), eq(tasks.kind, "conversation")));
     const brief = await status(run);
     expect(brief).toContain(`${w.ids.topic} «Release 1.0»`);
-    expect(brief).toMatch(/in progress \(1 waiting\)/);
+    expect(brief).toMatch(/3 in progress \(2 waiting\)/);
+    expect(brief).not.toContain("BLUEBIRD");
     expect(brief).toContain("your requests: 1 open of the latest 1");
     // Unlinked and unknown topics are refused alike; an internal topic does not report on its external one.
     const other = await newTopic("Other work");
@@ -410,7 +422,10 @@ describe("linked topics, shared sources and task iterations", () => {
     expect(inDm).toContain("private DM");
     expect(inDm).toMatch(/«please summarise the meeting notes»: (being handled|received)/);
     expect(inDm).not.toContain("salary");
+    // A conversation run its own relayed request started may show that request.
+    await send(rep, { topic_id: w.ids.topic, text: "please ship the hotfix" }, "send-2");
     const internal = await status(rep, { topic_id: w.ids.topic });
+    expect(internal).toMatch(/对话（@dev）, pending .*: started by your request «please ship the hotfix»/);
     expect(internal).toContain("Deploy to staging");
     expect(internal).not.toContain("sk-A1b2");
     expect(internal).toContain("[REDAC");

@@ -160,6 +160,9 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
             </Field>
           )}
         </Loaded>
+        <p className="small muted">
+          关联后，外部会话中机器人代表的角色可以把请求交给内部话题，并查看内部话题的工作状态（进行中的工作和结果摘录），外部会话中的人可能因此看到这些内容。
+        </p>
         <button
           type="button"
           className="btn btn-sm btn-primary"

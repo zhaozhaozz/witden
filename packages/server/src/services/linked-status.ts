@@ -1,6 +1,7 @@
 /**
  * What the role of an external conversation (Slack, Feishu, GitHub) may learn about the internal topics linked to
- * it: the state of their work and of the requests it sent there, never their messages, transcripts or files. The
+ * it: the state of their work and of the requests it sent there, never their messages, transcripts or files (a
+ * conversation run shows no chat text unless this conversation's own request started it). The
  * link is the grant, as for send_message (00 的 D82, D99): no permission and no approval. Like an answer relayed
  * from the internal topic, what this returns may be told to the external conversation's people; the boundaries
  * that remain after D68 still hold: a console DM's own work stays private (D58), the system administrator's
@@ -93,8 +94,38 @@ const finishedTasks = (db: Db, topicId: string, limit: number) =>
     .orderBy(sql`${tasks.finishedAt} desc nulls last`)
     .limit(limit);
 
-function openLine({ task: t, handle }: { task: Task; handle: string }): string {
+/**
+ * The requests ``here`` relayed that started some of these conversation runs (message id → excerpt): a run's
+ * title, progress and status reason come from that topic's chat, so only such a request of its own is shown.
+ */
+async function ownRequests(db: Db, here: string, rows: { task: Task }[]): Promise<Map<string, string>> {
+  const ids = rows.filter(({ task }) => task.kind === "conversation" && task.sourceMessageId);
+  if (!ids.length) return new Map();
+  const found = await db
+    .select()
+    .from(messages)
+    .where(
+      inArray(
+        messages.id,
+        ids.map(({ task }) => task.sourceMessageId!),
+      ),
+    );
+  return new Map(
+    found
+      .filter((m) => !m.deletedAt && m.source === "topic" && relayFrom(m.externalRef)?.source_topic_id === here)
+      .map((m) => [m.id, excerpt(m.content, 120)]),
+  );
+}
+
+function openLine({ task: t, handle }: { task: Task; handle: string }, own: Map<string, string>): string {
   const waits = waitingFor(t);
+  if (t.kind === "conversation") {
+    const request = t.sourceMessageId ? own.get(t.sourceMessageId) : undefined;
+    return (
+      `- ${t.id} 对话（@${handle}）, ${t.status}${waits ? ` (waits for ${waits})` : ""}, updated ${at(t.updatedAt)}` +
+      (request ? `: started by your request «${request}»` : "")
+    );
+  }
   const reason = t.statusReason ? `: ${excerpt(t.statusReason, 160)}` : "";
   return (
     `- ${t.id} ${kindOf(t)} of @${handle}, ${t.status}${waits ? ` (waits for ${waits}${reason})` : ""}, ` +
@@ -246,8 +277,11 @@ async function full(db: Db, here: string, l: Linked): Promise<string> {
     out.push("This is a private DM: its own work is not shown, only what became of the requests you sent there.");
   } else {
     const open = await openWork(db, l.topic_id, OPEN_LIMIT);
+    const own = await ownRequests(db, here, open);
     out.push(
-      open.length ? `Work in progress, latest first:\n${open.map(openLine).join("\n")}` : "Work in progress: none",
+      open.length
+        ? `Work in progress, latest first:\n${open.map((row) => openLine(row, own)).join("\n")}`
+        : "Work in progress: none",
     );
     const done = await finishedTasks(db, l.topic_id, FINISHED_LIMIT);
     out.push(
