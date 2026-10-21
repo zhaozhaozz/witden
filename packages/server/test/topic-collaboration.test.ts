@@ -105,6 +105,52 @@ describe("linked topics, shared sources and task iterations", () => {
     await expect(send(task, { topic_id: c, text: "Work" })).rejects.toThrow(/linked/);
   });
 
+  it("asks for approval only when the message to another topic can go through", async () => {
+    const target = (
+      await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Review", role_ids: [w.ids.test] } })
+    ).body.id as string;
+    await connect(w.ids.topic, target);
+    const configure = async (json: Record<string, unknown>) =>
+      expect((await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json })).status).toBe(200);
+    w.scripts.dev = (m, turn) =>
+      turn === 0
+        ? reply("", [call("send_message", { topic_id: target, role: "test", text: "please review" })])
+        : reply(`result: ${lastToolResult(m)}`);
+    w.scripts.test = () => reply("reviewed");
+    const attempt = async () => {
+      await w.post(w.alice, w.ids.topic, "@dev ask test over there");
+      await w.drain();
+      return (await w.messages(w.ids.topic)).at(-1).content as string;
+    };
+    const pending = async () =>
+      (await w.api("GET", "/api/approvals", { token: w.bob })).body.filter((a: any) => a.topic_id === w.ids.topic);
+    // The permission is off, though "collaborate" is still listed as asking: refused at once, nobody is asked.
+    await configure({
+      allowed_tools: ["shell", "files", "memory", "terminal", "browser", "desktop"],
+      approval_required: ["collaborate"],
+    });
+    expect(await attempt()).toContain("collaboration permission is required");
+    expect(await pending()).toEqual([]);
+    // Permitted, but the role there is not among its contacts.
+    await configure({
+      allowed_tools: ["shell", "files", "collaborate", "memory", "terminal", "browser", "desktop"],
+      allowed_contacts: [],
+    });
+    expect(await attempt()).toContain("may contact");
+    expect(await pending()).toEqual([]);
+    // Now it can go through: a person approves, and the role there gets it.
+    await configure({ allowed_contacts: ["*"] });
+    await w.post(w.alice, w.ids.topic, "@dev ask test over there");
+    await w.drain();
+    const [approval] = await pending();
+    expect(approval?.action).toBe("send_message");
+    await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } });
+    await w.drain();
+    const there = (await w.messages(target)).map((m: any) => m.content);
+    expect(there).toContain("please review");
+    expect(there).toContain("reviewed");
+  });
+
   it("dispatches the same role in another topic without creating a second source execution", async () => {
     const target = await newTopic();
     await connect(w.ids.topic, target);

@@ -502,6 +502,20 @@ export class TaskRunner {
       }
       const approved = (task.envelope.approved_calls ?? []).includes(call.id) || hasRunToolApproval(task, call.name);
       if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
+        // A call that would be refused anyway is not put to a person: the role learns why at once.
+        const refused = await spec.refusal?.(tx, task, call.arguments);
+        if (refused) {
+          await audit(tx, "tool.denied", {
+            actorType: "role",
+            actorId: task.ownerRoleId,
+            outcome: "denied",
+            taskId,
+            topicId: task.topicId,
+            detail: { tool: call.name, reason: refused },
+          });
+          await appendStep(tx, task, "tool", { tool_call_id: call.id, name: call.name, content: `error: ${refused}` });
+          return { skip: true as const };
+        }
         await this.requestApproval(tx, task, call);
         return null;
       }

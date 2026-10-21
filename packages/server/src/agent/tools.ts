@@ -48,7 +48,7 @@ import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
-import { sendLinkedMessage } from "./topic-messaging.js";
+import { linkedSendRefusal, sendLinkedMessage } from "./topic-messaging.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -121,6 +121,8 @@ export interface ToolSpec {
   modes?: WorkMode[];
   /** What the tool does in a conversation, when that differs from a task. */
   conversation?: string;
+  /** Why this call would be refused anyway (or null): checked before a person is asked to approve it. */
+  refusal?: (db: Db, task: Task, args: Record<string, any>) => Promise<string | null>;
 }
 
 /** The mode of the work an envelope belongs to. */
@@ -1413,29 +1415,39 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       conversation:
         "Ask people in this topic a question (clarification, a decision, a login or approval); it @-mentions them (default: whoever asked you). Then end your turn: their answer arrives here as a new message, even without an @-mention.",
     },
-    spec(
-      "send_message",
-      null,
-      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
-      obj(
-        {
-          text: str,
-          topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
-          thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
-          source_message_id: {
-            type: "string",
-            description: "Relevant input message in this topic, for mixed requests",
+    {
+      ...spec(
+        "send_message",
+        null,
+        "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
+        obj(
+          {
+            text: str,
+            topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
+            thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
+            source_message_id: {
+              type: "string",
+              description: "Relevant input message in this topic, for mixed requests",
+            },
+            task_id: {
+              type: "string",
+              description: "Optional independent task in this topic whose result/origin is being sent",
+            },
+            role: { type: "string", description: "Optional receiving role in an internal target topic" },
           },
-          task_id: {
-            type: "string",
-            description: "Optional independent task in this topic whose result/origin is being sent",
-          },
-          role: { type: "string", description: "Optional receiving role in an internal target topic" },
-        },
-        ["text"],
+          ["text"],
+        ),
+        sendMessage,
       ),
-      sendMessage,
-    ),
+      // Only a message to another topic asks for approval (collaborate), and only it can be refused up front.
+      refusal: async (db: Db, task: Task, args: Record<string, any>) => {
+        if (!args.topic_id || args.topic_id === task.topicId) return null;
+        const [sender] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
+        return sender
+          ? linkedSendRefusal(db, task, sender, { topic_id: String(args.topic_id), role: args.role })
+          : null;
+      },
+    },
     spec(
       "topic_history",
       null,

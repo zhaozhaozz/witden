@@ -2,7 +2,16 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
-import { type Message, messageRoutes, messages, type Role, type Task, type Topic, tasks } from "../db/schema.js";
+import {
+  type Message,
+  messageRoutes,
+  messages,
+  type Role,
+  type Task,
+  type Topic,
+  tasks,
+  topics,
+} from "../db/schema.js";
 import { BadRequest, Forbidden } from "../errors.js";
 import { externalContext } from "../integrations/links.js";
 import { audit } from "../services/audit.js";
@@ -93,6 +102,41 @@ export interface LinkedSend {
   /** Select the relevant input when a run is handling several requests. */
   source_message_id?: string;
   task_id?: string;
+}
+
+/**
+ * Why a message to another topic cannot go through: no permission, no link, or no role there it may contact.
+ * Also checked before a person is asked to approve the call, so nobody approves what would be refused anyway.
+ */
+export async function linkedSendRefusal(
+  db: Db,
+  task: Task,
+  sender: Role,
+  args: { topic_id: string; role?: string },
+): Promise<string | null> {
+  if (!task.envelope.tools?.includes("collaborate") || !sender.allowedTools.includes("collaborate"))
+    return "collaboration permission is required to send to another topic";
+  if (sender.systemAdmin) return "the system administrator does not send work between topics";
+  const [target] = await db.select().from(topics).where(eq(topics.id, args.topic_id)).limit(1);
+  if (!target || target.status !== "active") return "the target topic does not exist or is archived";
+  if (!(await findTopicLink(db, task.topicId, target.id))) return "messages may only be sent to directly linked topics";
+  // An external topic only gets the message published; no role there receives it.
+  if ((await externalContext(db, target.id)).conversationKind) return null;
+  const reachable: Role[] = [];
+  for (const id of await activeRoleIds(db, target)) {
+    if (
+      !contactAllowed(task.envelope.contacts ?? [], sender.id, id) ||
+      !contactAllowed(sender.allowedContacts, sender.id, id)
+    )
+      continue;
+    const role = await topicSvc.getRole(db, id);
+    if (role && !role.systemAdmin) reachable.push(role);
+  }
+  const wanted = args.role ? String(args.role).replace(/^@/, "") : "";
+  if (wanted && !reachable.some((r) => r.id === wanted || r.handle === wanted))
+    return `@${wanted} is not a role in the target topic that you may contact (see your contacts)`;
+  if (!reachable.length) return "no role in the target topic is one you may contact (see your contacts)";
+  return null;
 }
 
 export async function sendLinkedMessage(db: Db, task: Task, sender: Role, args: LinkedSend, callId: string) {
