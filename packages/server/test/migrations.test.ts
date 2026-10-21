@@ -1009,3 +1009,78 @@ describe("0043_topic_name_and_goal", () => {
     }
   });
 });
+
+describe("0044_collaboration_scope", () => {
+  it("keeps only links between an external and an internal topic and drops the delegation permission", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0044")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    const linked = (link: string, done?: string) =>
+      JSON.stringify({
+        kind: "message",
+        at: "2026-10-20T00:00:00.000Z",
+        message_id: `msg_${link}`,
+        done,
+        topic_delivery: { link_id: link },
+      });
+    await db.exec(`
+      insert into roles (id, name, handle, allowed_tools, approval_required) values
+        ('role_dev', 'Dev', 'dev', '["collaborate", "memory", "shell"]', '["collaborate", "memory"]'),
+        ('role_lead', 'Lead', 'lead', '["shell"]', '["profile"]');
+      insert into connections (id, platform, name, settings) values ('conn_f', 'feishu', 'Feishu', '{"role_id": "role_lead"}');
+      insert into external_conversations (id, connection_id, external_id, kind) values
+        ('ecv_group', 'conn_f', 'oc_group', 'private'), ('ecv_other', 'conn_f', 'oc_other', 'private'),
+        ('ecv_im', 'conn_f', 'oc_im', 'im');
+      insert into topics (id, title, kind) values
+        ('top_group', '#group', 'group'), ('top_other', '#other', 'group'), ('top_im', 'im', 'dm'),
+        ('top_work', 'work', 'group'), ('top_review', 'review', 'group'), ('top_dm', 'console dm', 'dm');
+      insert into external_thread_links (id, connection_id, conversation_id, thread_key, topic_id) values
+        ('lnk_1', 'conn_f', 'ecv_group', '__channel__', 'top_group'),
+        ('lnk_2', 'conn_f', 'ecv_other', '__channel__', 'top_other'),
+        ('lnk_3', 'conn_f', 'ecv_im', '__dm__', 'top_im');
+      insert into topic_links (id, topic_a_id, topic_b_id, created_by) values
+        ('tln_ext_int', 'top_group', 'top_work', 'usr_admin'),
+        ('tln_im_dm', 'top_dm', 'top_im', 'usr_admin'),
+        ('tln_int_int', 'top_review', 'top_work', 'usr_admin'),
+        ('tln_dm_int', 'top_dm', 'top_review', 'usr_admin'),
+        ('tln_ext_ext', 'top_group', 'top_other', 'usr_admin');
+      insert into agent_sessions (id, role_id, topic_id, inbox) values
+        ('ses_work', 'role_dev', 'top_work', '[${linked("tln_int_int")}, ${linked("tln_ext_int")}, ${linked("tln_int_int", "2026-10-20T01:00:00.000Z")}, {"kind": "timer", "at": "2026-10-20T00:00:00.000Z"}]'),
+        ('ses_review', 'role_dev', 'top_review', '[${linked("tln_ext_int")}]');
+      insert into tasks (id, topic_id, title, owner_role_id, envelope) values
+        ('task_group', 'top_group', 'in Feishu', 'role_lead', '{"outside": true, "tools": ["shell"]}'),
+        ('task_relayed', 'top_work', 'relayed from Feishu', 'role_dev', '{"outside": true, "untrusted_input": true}');
+    `);
+    await apply(db, "0044_collaboration_scope");
+    expect((await db.query("select id from topic_links order by id")).rows).toEqual([
+      { id: "tln_ext_int" },
+      { id: "tln_im_dm" },
+    ]);
+    // an unread message from a removed link is dropped, as when a person unlinks; the rest stays as it was
+    const inbox = (await db.query<{ inbox: any[] }>("select inbox from agent_sessions where id = 'ses_work'")).rows[0]
+      .inbox;
+    expect(inbox.map((i) => [i.topic_delivery?.link_id ?? i.kind, !!i.done])).toEqual([
+      ["tln_int_int", true],
+      ["tln_ext_int", false],
+      ["tln_int_int", true],
+      ["timer", false],
+    ]);
+    expect(inbox[2].done).toBe("2026-10-20T01:00:00.000Z");
+    expect((await db.query("select inbox from agent_sessions where id = 'ses_review'")).rows).toEqual([
+      { inbox: [JSON.parse(linked("tln_ext_int"))] },
+    ]);
+    expect((await db.query("select id, allowed_tools, approval_required from roles order by id")).rows).toEqual([
+      { id: "role_dev", allowed_tools: ["memory", "shell"], approval_required: ["memory"] },
+      { id: "role_lead", allowed_tools: ["shell"], approval_required: ["profile"] },
+    ]);
+    // only work in the external conversation itself is marked as such
+    expect((await db.query("select id, envelope from tasks order by id")).rows).toEqual([
+      { id: "task_group", envelope: { outside: true, tools: ["shell"], external_topic: true } },
+      { id: "task_relayed", envelope: { outside: true, untrusted_input: true } },
+    ]);
+    await db.close();
+  });
+});

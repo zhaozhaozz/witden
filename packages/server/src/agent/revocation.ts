@@ -37,7 +37,7 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   if (task.requesterUserId) {
     const [user] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
     if (!user?.isActive) return "the requester is no longer an active member";
-    // Work another role handed over is bounded by that role's contacts, not by whom the person may use.
+    // Work another role of the topic handed over is bounded by that role's run, not by whom the person may use.
     if (!task.requesterRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, role.id)))
       return `the requester may no longer use @${role.handle}`;
     const linkedRequester = (task.envelope?.topic_routes ?? []).some(

@@ -216,7 +216,6 @@ export interface Task {
   requester_role_id: string | null;
   source_message_id: string | null;
   owner_role_id: string;
-  collaborator_role_ids: string[];
   instance_id: string | null;
   /** Parent that waits for this task's result (delegation). */
   parent_task_id: string | null;

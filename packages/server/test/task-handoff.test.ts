@@ -159,6 +159,18 @@ describe("handing a task to another role", () => {
     expect((await move(finished.id, admin.id)).status).toBe(403);
   });
 
+  it("a task in a DM stays with the DM's one role", async () => {
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body.id as string;
+    const done = await taskOf(w.ids.dev, "completed");
+    await db().update(tasks).set({ topicId: dm }).where(eq(tasks.id, done.id));
+    const res = await move(done.id, w.ids.test);
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toContain("a DM has only its one role");
+    expect((await fresh(done.id)).ownerRoleId).toBe(w.ids.dev);
+    const people = (await w.api("GET", `/api/topics/${dm}`, { token: w.alice })).body.participants;
+    expect(people.filter((p: any) => p.type === "role").map((p: any) => p.id)).toEqual([w.ids.dev]);
+  });
+
   it("neither tasks nor conversation runs are paused by hand", async () => {
     const t = await taskOf(w.ids.dev, "pending");
     const run = (await w.post(w.alice, w.ids.topic, "@dev hello")).tasks[0].id;

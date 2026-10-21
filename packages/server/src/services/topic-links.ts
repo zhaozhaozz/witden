@@ -1,4 +1,8 @@
-/** Explicit bidirectional message permissions. Links never mirror histories or grant topic readership. */
+/**
+ * Explicit bidirectional message permissions between an external conversation (Slack, Feishu, GitHub) and an internal
+ * topic: the external topic's bot role asks the internal topic for help, which reports back. Links never mirror
+ * histories or grant topic readership, and never hand work to a role of the other topic directly.
+ */
 import { and, eq, inArray, or } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -76,6 +80,13 @@ export async function addTopicLink(
   const t1 = await topicSvc.getTopic(db, left);
   const t2 = await topicSvc.getTopic(db, right);
   if (t1.status !== "active" || t2.status !== "active") throw new BadRequest("archived topics cannot be linked");
+  // A console DM is internal; a Slack or Feishu DM with the bot is external.
+  const external1 = !!(await externalContext(db, left)).conversationKind;
+  const external2 = !!(await externalContext(db, right)).conversationKind;
+  if (external1 === external2)
+    throw new BadRequest(
+      `two ${external1 ? "external conversations" : "internal topics"} cannot be linked: a link joins an external conversation (Slack, Feishu, GitHub) and an internal topic`,
+    );
   if ((t1.kind === "dm" || t2.kind === "dm") && !confirmPrivate)
     throw new BadRequest("linking a DM may share selected messages with another topic; confirm_private is required");
   const existing = await findTopicLink(db, a, b);
@@ -137,11 +148,11 @@ export async function linkedTopicContext(db: Db, topicId: string): Promise<strin
   const links = await linkedTopics(db, topicId);
   if (!links.length) return "Linked topics: none. send_message may only post here.";
   return (
-    "Directly linked topics (send_message or delegate_task with topic_id; links do not grant history access):\n" +
+    "Directly linked topics (send_message with topic_id; links do not grant history access):\n" +
     links
       .map(
         (l) =>
-          `- ${l.topic_id} «${l.title}» [${l.external ? "external: publishes, does not run an agent" : "internal: dispatches to an agent"}; ${l.status}]` +
+          `- ${l.topic_id} «${l.title}» [${l.external ? "external: publishes your text there, runs no agent" : "internal: its roles take the request on there"}; ${l.status}]` +
           ` ${l.goal.slice(0, 300)}; roles: ${l.roles.map((r) => `@${r.handle}`).join(", ") || "none"}`,
       )
       .join("\n")

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
 import type { Topic } from "../../api/types";
+import { PLATFORM_LABEL } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, Field, Loaded, Tag } from "../../ui/kit";
@@ -30,7 +31,12 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
   const { run, busy } = useAction();
   const { confirm } = useFeedback();
   const existing = new Set((links.data ?? []).map((l) => l.topic_id));
-  const options = (choices.data ?? []).filter((t) => t.id !== topic.id && !existing.has(t.id));
+  // A link joins an external conversation (Slack, Feishu, GitHub) and an internal topic: only the other kind is
+  // offered. A console DM is internal.
+  const external = !!topic.channel;
+  const options = (choices.data ?? []).filter(
+    (t) => t.id !== topic.id && !existing.has(t.id) && !!t.channel !== external,
+  );
   const add = async () => {
     const target = options.find((t) => t.id === selected);
     if (!target) return;
@@ -61,7 +67,7 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
   return (
     <div className="settings">
       <p className="small muted">
-        关联的话题可以互相发送消息。角色根据工作需要主动发送，普通聊天不会自动转发，双方上下文不会合并。
+        关联只能建立在外部会话（Slack、飞书、GitHub）和内部话题之间：外部会话的机器人代表的角色把需要处理的工作发给关联的内部话题，由那里的角色完成，再把进展和结果发回外部会话。角色根据工作需要主动发送，普通聊天不会自动转发，双方上下文不会合并。
       </p>
       <Loaded res={links}>
         {(rows) =>
@@ -115,7 +121,14 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
               ))}
             </ul>
           ) : (
-            <Empty title="尚未关联其他话题" hint="选择一个内部话题、群聊或私信，建立双向消息通道。" />
+            <Empty
+              title="尚未关联其他话题"
+              hint={
+                external
+                  ? "选择一个内部话题或控制台私信，建立双向消息通道。"
+                  : "选择一个 Slack、飞书或 GitHub 会话，建立双向消息通道。"
+              }
+            />
           )
         }
       </Loaded>
@@ -133,14 +146,14 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
         </Field>
         <Loaded res={choices}>
           {() => (
-            <Field label="目标话题">
+            <Field label="目标话题" hint={external ? "只列出内部话题" : "只列出外部会话"}>
               <select value={selected} onChange={(e) => setSelected(e.target.value)}>
                 <option value="">请选择</option>
                 {options.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.title}
                     {t.kind === "dm" ? "（私信）" : ""}
-                    {t.channel ? " · 外部" : ""}
+                    {t.channel ? ` · ${PLATFORM_LABEL[t.channel.platform] ?? t.channel.platform}` : ""}
                   </option>
                 ))}
               </select>

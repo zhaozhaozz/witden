@@ -28,7 +28,7 @@ const devRole = async () => (await w.api("GET", `/api/roles/${w.ids.dev}`, { tok
 const setTools = (approval: string[]) =>
   w.api("PATCH", `/api/roles/${w.ids.dev}`, {
     token: w.adminToken,
-    json: { allowed_tools: ["shell", "collaborate", "profile"], approval_required: approval },
+    json: { allowed_tools: ["shell", "profile"], approval_required: approval },
   });
 
 describe("update_my_description", () => {

@@ -505,6 +505,8 @@ export interface InboxItem {
   revision?: number;
   /** Server-generated linked-message origin, never accepted from platform payload text. */
   topic_delivery?: import("../services/collaboration-policy.js").TopicDelivery;
+  /** The limits of the input behind it (another role's @-mention, a result, a follow-up): the run keeps them. */
+  limits?: import("../services/collaboration-policy.js").SourceLimits;
   /** timer: the role's own follow-up (shown once ``due`` has passed); instruction: a console note. */
   note?: string;
   due?: string;

@@ -50,10 +50,55 @@ export function narrowEnvelope(original: Record<string, any>, current: Record<st
   return {
     ...original,
     tools: meet(original.tools, current.tools),
-    contacts: meet(original.contacts, current.contacts),
     spaces: meet(original.spaces, current.spaces),
     approval_required: [...new Set([...(original.approval_required ?? []), ...(current.approval_required ?? [])])],
   };
+}
+
+/** One linked request, however many times it reaches a run. */
+export const sameRoute = (a: TopicDelivery, b: TopicDelivery) =>
+  a.link_id === b.link_id &&
+  a.source_message_id === b.source_message_id &&
+  a.origin.requester_user_id === b.origin.requester_user_id;
+
+/**
+ * What a run's input brings with it, whichever role works on it next: input from outside the console (`outside`,
+ * `untrusted_input`), from an automation (`automation_event`) and the linked requests it answers (`topic_routes`).
+ * An @-mention hands them to the colleague's run; a delegated task inherits them from its parent (buildEnvelope).
+ */
+export interface SourceLimits {
+  outside?: true;
+  untrusted_input?: true;
+  automation_event?: true;
+  topic_routes?: TopicDelivery[];
+}
+
+export function sourceLimits(envelope: Record<string, any> | null | undefined): SourceLimits | null {
+  const limits: SourceLimits = {};
+  if (envelope?.outside) limits.outside = true;
+  if (envelope?.untrusted_input) limits.untrusted_input = true;
+  if (envelope?.automation_event) limits.automation_event = true;
+  if (envelope?.topic_routes?.length) limits.topic_routes = envelope.topic_routes;
+  return Object.keys(limits).length ? limits : null;
+}
+
+/** The envelope with these limits added: such work never changes configuration (config, profile, automation). */
+export function withSourceLimits(
+  envelope: Record<string, any>,
+  limits: SourceLimits | null | undefined,
+): Record<string, any> {
+  if (!limits) return envelope;
+  const routes: TopicDelivery[] = [...(envelope.topic_routes ?? [])];
+  for (const route of limits.topic_routes ?? []) if (!routes.some((r) => sameRoute(r, route))) routes.push(route);
+  const out: Record<string, any> = {
+    ...envelope,
+    ...(limits.outside ? { outside: true } : {}),
+    ...(limits.untrusted_input ? { untrusted_input: true } : {}),
+    ...(limits.automation_event ? { automation_event: true } : {}),
+    ...(routes.length ? { topic_routes: routes } : {}),
+  };
+  out.tools = (out.tools ?? []).filter((t: string) => !["config", "profile", "automation"].includes(t));
+  return out;
 }
 
 export function relayFrom(ref: Record<string, any> | null | undefined): TopicDelivery | null {

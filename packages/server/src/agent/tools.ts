@@ -32,6 +32,7 @@ import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../inte
 import { findCredential } from "../security/crypto.js";
 import { audit } from "../services/audit.js";
 import { manageAutomation } from "../services/automation-rules.js";
+import { sourceLimits } from "../services/collaboration-policy.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
@@ -43,7 +44,7 @@ import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../se
 import { topicPlace } from "./context.js";
 import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
-import { checkAutoRounds, delegate, planDelegation, startOwnTask } from "./dispatch.js";
+import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
@@ -58,8 +59,6 @@ export const TOOL_GROUPS: Record<string, string> = {
   browser: "Drive a browser in the virtual computer (the visible desktop browser or a background one)",
   system_software: "Have the platform install or remove system (Debian) packages in the virtual computer, as root",
   software_list: "Change the virtual computer's software list: packages installed whenever it starts",
-  collaborate:
-    "Delegate work to roles outside this topic (roles of this topic and of linked topics need no permission)",
   automation: "Manage your own automation rules across topics (no access to secrets)",
   memory: "Remember and recall scoped notes on the platform",
   topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
@@ -70,25 +69,25 @@ export const TOOL_GROUPS: Record<string, string> = {
 /** Groups only system administrator roles may have. */
 export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 /**
- * Groups offered only in console conversations, never in ones linked to Slack, Feishu or GitHub: there only the
- * bot's role works, so it brings in no other role (collaborate); configuration stays in the console (automation).
+ * Groups offered only for work a console account asked for in the console: not in conversations linked to Slack,
+ * Feishu or GitHub, nor for requests relayed from them; changing the role or its automation stays in the console.
  */
-export const CONSOLE_ONLY_GROUPS = new Set(["profile", "collaborate", "automation"]);
+export const CONSOLE_ONLY_GROUPS = new Set(["profile", "automation"]);
 
 /** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
 export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
- * into the topic, is always allowed; reaching other roles or platform memory and changing its own description
- * or automation rules ask a person first; reading other topics is off.
+ * into the topic, is always allowed; platform memory and changing its own description or automation rules ask
+ * a person first; reading other topics is off. Working with the other roles of a topic needs no permission.
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter(
   (g) => !ADMIN_TOOL_GROUPS.has(g) && !DEFAULT_OFF_GROUPS.has(g),
 );
 /** A new system administrator: the configuration tools; it needs no computer. */
 export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
-export const DEFAULT_APPROVAL_REQUIRED: string[] = ["automation", "collaborate", "memory", "profile"];
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["automation", "memory", "profile"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
@@ -124,8 +123,6 @@ export interface ToolSpec {
   conversation?: string;
   /** Why this call would be refused anyway (or null): checked before a person is asked to approve it. */
   refusal?: (db: Db, task: Task, args: Record<string, any>) => Promise<string | null>;
-  /** Whether this call asks a person, when that depends on more than the envelope (see needsApproval). */
-  asks?: (db: Db, task: Task, args: Record<string, any>) => Promise<boolean>;
 }
 
 /** The mode of the work an envelope belongs to. */
@@ -522,7 +519,7 @@ async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise
     const { task, role, topic } = await load(ctx, db);
     const [targetRole] = await db.select().from(roles).where(eq(roles.handle, handle)).limit(1);
     if (!targetRole) throw new BadRequest(`no role @${handle}`);
-    // A mention stays within the topic: it brings in no one (a person invites roles; delegating needs collaborate).
+    // A mention stays within the topic: it brings in no one (a person invites roles).
     if (!(await topicSvc.participant(db, topic.id, "role", targetRole.id)))
       throw new BadRequest(`@${handle} is not in this topic; ask a person to invite it`);
     await deliver(db, task, role, topic, `@${targetRole.handle} ${args.message ?? ""}`, {
@@ -628,24 +625,6 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
   };
 }
 
-/** Whether a delegation would be refused (and why), and whether it goes to a role outside the topic. */
-async function delegationCheck(db: Db, task: Task, args: Record<string, any>) {
-  const [sender] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
-  if (!sender) return { refusal: "your role no longer exists", outside: false };
-  try {
-    const plan = await planDelegation(
-      db,
-      task,
-      sender,
-      String(args.role ?? ""),
-      args.topic_id ? String(args.topic_id) : null,
-    );
-    return { refusal: null, outside: plan.place === "outside" };
-  } catch (err) {
-    return { refusal: (err as Error).message, outside: false };
-  }
-}
-
 async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   if (ctx.mode === "conversation") {
     // The conversation goes on; the delegate's result arrives here as a new item when it is done.
@@ -659,11 +638,10 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
         String(args.task ?? ""),
         String(args.expected_output ?? ""),
         String(args.materials ?? ""),
-        args.topic_id ? String(args.topic_id) : null,
       );
     });
     return {
-      content: `delegated to @${String(args.role ?? "").replace(/^@/, "")} as task ${child.id}${child.topicId !== ctx.topicId ? ` (it works in topic ${child.topicId})` : ""}; it posts its answer there and the result also comes back to you here. Continue, or end your turn.`,
+      content: `delegated to @${String(args.role ?? "").replace(/^@/, "")} as task ${child.id}; it posts its answer in this topic and the result also comes back to you here. Continue, or end your turn.`,
     };
   }
   const childId = await transaction(async (db) => {
@@ -676,7 +654,6 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
       String(args.task ?? ""),
       String(args.expected_output ?? ""),
       String(args.materials ?? ""),
-      args.topic_id ? String(args.topic_id) : null,
     );
     return child.id;
   });
@@ -832,6 +809,7 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
           ...(task.sourceMessageId ? { reply_to: task.sourceMessageId } : {}),
         },
         requesterUserId: task.requesterUserId,
+        limits: sourceLimits(task.envelope),
       });
     });
     return {
@@ -1338,34 +1316,17 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ role: str, message: str }, ["role", "message"]),
       messageRole,
     ),
-    // A role of this topic or of a linked internal topic needs nothing; anyone else needs the role's permission
-    // (collaborate), which may ask a person first.
+    // Like an @-mention: only to a role of this topic, without a permission; work never leaves the topic.
     {
       ...spec(
         "delegate_task",
         null,
-        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back. A role of this topic needs no topic_id; give topic_id to hand it to a role of a directly linked internal topic (it works there).",
-        obj(
-          {
-            role: str,
-            task: str,
-            expected_output: str,
-            materials: str,
-            topic_id: {
-              type: "string",
-              description: "Omit for this topic; otherwise a directly linked internal topic ID",
-            },
-          },
-          ["role", "task", "expected_output"],
-        ),
+        "Hand a piece of work to another role taking part in this topic. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back. Roles outside this topic cannot be given work.",
+        obj({ role: str, task: str, expected_output: str, materials: str }, ["role", "task", "expected_output"]),
         delegateTask,
       ),
       conversation:
-        "Hand a piece of work to another role. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in the topic it works in; its result also comes back to you here, so you can go on or end your turn meanwhile. A role of this topic needs no topic_id; give topic_id to hand it to a role of a directly linked internal topic (it works there).",
-      refusal: async (db: Db, task: Task, args: Record<string, any>) => (await delegationCheck(db, task, args)).refusal,
-      asks: async (db: Db, task: Task, args: Record<string, any>) =>
-        (await delegationCheck(db, task, args)).outside &&
-        (task.envelope.approval_required ?? []).includes("collaborate"),
+        "Hand a piece of work to another role taking part in this topic. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in this topic; its result also comes back to you here, so you can go on or end your turn meanwhile. Roles outside this topic cannot be given work.",
     },
     spec(
       "remember",
@@ -1459,7 +1420,7 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "send_message",
       null,
-      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic: an internal topic hands the message to a role there, an external one (Slack, Feishu, GitHub) only gets it published; sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
+      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic. A link joins an external conversation (Slack, Feishu, GitHub) and an internal topic: sent to the internal topic, the message goes to a role there; sent to the external one, it is only published there. Sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
       obj(
         {
           text: str,
@@ -1622,17 +1583,17 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         (t.name !== "stay_silent" || mode === "conversation" || !!envelope.auto) &&
         // The configuration tools only for a system administrator's own work.
         (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
-        // Some only where the conversation stays in the console; outside it only the bot's role works, so there
-        // is no other role to @ either.
+        // Some only for work that stays in the console (not in, nor relayed from, an external conversation).
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
-        (!["message_role", "delegate_task"].includes(t.name) || !envelope.outside),
+        // In a Slack, Feishu or GitHub conversation only the bot's role works: there is no other role to @ or hand
+        // work to. A request relayed from there into a console topic may still involve that topic's roles.
+        (!["message_role", "delegate_task"].includes(t.name) || !envelope.external_topic),
     )
     .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
-  // @-mentions, delegation within the topic and anything between linked topics need no permission (an older
-  // per-tool setting is ignored); delegating to a role outside the topic asks through delegate_task's own check.
+  // @-mentions and delegation stay within the topic and need no permission (an older per-tool setting is ignored).
   if (tool.name === "message_role" || tool.name === "delegate_task") return false;
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;

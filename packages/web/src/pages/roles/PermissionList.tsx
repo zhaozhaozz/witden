@@ -100,9 +100,9 @@ export interface ExtraSection {
 }
 
 /**
- * The role's permissions, by kind (``PERMISSION_SECTIONS``): its virtual computer, collaboration, material on the
- * platform, itself. ``details`` adds the settings that belong to a tool group under its row (which roles it may
- * contact, which knowledge spaces it may read); ``extra`` adds sections of their own.
+ * The role's permissions, by kind (``PERMISSION_SECTIONS``): its virtual computer, automation, material on the
+ * platform, itself. ``details`` adds the settings that belong to a tool group under its row (which knowledge
+ * spaces it may read); ``extra`` adds sections of their own.
  */
 export function PermissionList({
   groups,

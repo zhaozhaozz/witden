@@ -273,12 +273,6 @@ function TaskSummary({ task: t }: { task: Task }) {
               ),
             ],
             [
-              "协作角色",
-              t.collaborator_role_ids?.length
-                ? t.collaborator_role_ids.map((id) => dir.roleLabel(id)).join("、")
-                : null,
-            ],
-            [
               "上级任务",
               t.parent_task_id ? (
                 <Link to={`/tasks/${t.parent_task_id}`}>查看上级任务（第 {t.depth} 层委托）</Link>
@@ -534,7 +528,6 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
   const uncertain = (steps ?? []).filter(isUncertainStep);
   const env = (trace.envelope ?? {}) as {
     tools?: string[];
-    contacts?: string[];
     spaces?: string[];
     approval_required?: string[];
     inherited_from?: string;
@@ -678,18 +671,6 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
                   </span>
                 ) : (
                   <span className="muted">仅对话</span>
-                ),
-              ],
-              [
-                "可联系角色",
-                env.contacts?.length ? (
-                  env.contacts.includes("*") ? (
-                    "任意角色"
-                  ) : (
-                    env.contacts.map((id) => dir.roleLabel(id)).join("、")
-                  )
-                ) : (
-                  <span className="muted">无</span>
                 ),
               ],
               [

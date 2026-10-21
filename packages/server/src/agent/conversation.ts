@@ -30,7 +30,7 @@ import {
   taskSteps,
   tasks,
 } from "../db/schema.js";
-import { relayFrom } from "../services/collaboration-policy.js";
+import { relayFrom, type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
 import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
 import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES, triggerContext } from "./context.js";
@@ -101,6 +101,8 @@ export interface Delivery {
   round?: number;
   /** Title of the run, when this starts one. */
   title?: string;
+  /** The limits of the input behind it (sourceLimits): another role's @-mention, a result, a follow-up. */
+  limits?: SourceLimits | null;
 }
 
 const sameItem = (a: Omit<InboxItem, "at">, b: InboxItem) =>
@@ -120,6 +122,7 @@ export async function enqueue(db: Db, d: Delivery): Promise<Task | null> {
       : {}),
     at: new Date().toISOString(),
     ...(d.requesterUserId ? { user_id: d.requesterUserId } : {}),
+    ...(d.limits ? { limits: d.limits } : {}),
   };
   const inbox = pruned([...s.inbox, item]);
   await db
@@ -137,6 +140,7 @@ export async function enqueue(db: Db, d: Delivery): Promise<Task | null> {
     assignment: d.assignment,
     round: d.round,
     title: d.title,
+    limits: d.limits,
   });
 }
 
@@ -147,6 +151,7 @@ interface RunStart {
   assignment?: Record<string, any>;
   round?: number;
   title?: string;
+  limits?: SourceLimits | null;
 }
 
 async function startRun(db: Db, s: AgentSession, topic: Topic, role: Role, o: RunStart): Promise<Task> {
@@ -163,6 +168,7 @@ async function startRun(db: Db, s: AgentSession, topic: Topic, role: Role, o: Ru
     sourceMessage: o.sourceMessage ?? null,
     assignment: o.assignment,
     round: o.round,
+    limits: o.limits,
   });
 }
 
@@ -182,6 +188,7 @@ export async function wakeDue(db: Db, sessionId: string): Promise<Task | null> {
   return startRun(db, s, topic, role, {
     requesterUserId: first.user_id ?? null,
     title: first.kind === "timer" ? `Follow-up: ${first.note ?? ""}`.slice(0, 200) : undefined,
+    limits: first.limits,
   });
 }
 
@@ -231,6 +238,8 @@ export async function afterEnd(db: Db, task: Task): Promise<void> {
     item: { kind: "result", task_id: task.id, revision: task.revision },
     requesterUserId: task.requesterUserId,
     title: `Result of ${task.title}`.slice(0, 200),
+    // Work on outside input reports into a run that keeps its limits.
+    limits: sourceLimits(task.envelope),
   });
 }
 
@@ -434,6 +443,8 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
       message.source === "topic" ? relayFrom(message.externalRef) : null,
       ["webhook", "schedule"].includes(message.source),
     );
+  // What came from work on outside input (an @-mention, a result, a follow-up) keeps those limits here too.
+  for (const item of ready) restrictedEnvelope = withSourceLimits(restrictedEnvelope, item.limits);
   update.envelope = restrictedEnvelope;
   if (latest) {
     update.sourceMessageId = latest.id;

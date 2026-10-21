@@ -83,15 +83,14 @@ export async function buildWorld(): Promise<World> {
             allowed_tools: tools,
             // Tests opt into approvals explicitly; new roles otherwise ask before reaching outside their computer.
             approval_required: [],
-            allowed_contacts: ["*"],
             ...extra,
           },
         }),
       )
     ).id as string;
-  ids.dev = await role("dev", ["shell", "files", "collaborate", "memory", "topics", "terminal", "browser", "desktop"]);
-  ids.test = await role("test", ["shell", "collaborate"]);
-  ids.analyst = await role("analyst", ["collaborate", "memory"]);
+  ids.dev = await role("dev", ["shell", "files", "memory", "topics", "terminal", "browser", "desktop"]);
+  ids.test = await role("test", ["shell"]);
+  ids.analyst = await role("analyst", ["memory"]);
   const aliceToken = await h.login("alice@example.com", "alice-pass-1");
   const bobToken = await h.login("bob@example.com", "bob-pass-12");
   const topic = await must(

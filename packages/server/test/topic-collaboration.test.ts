@@ -27,6 +27,7 @@ import {
 import { deliverOne } from "../src/integrations/delivery.js";
 import { sentMessageRoot } from "../src/integrations/message-refs.js";
 import { manageAutomation } from "../src/services/automation-rules.js";
+import { roleMemoryRefusal } from "../src/services/role-memory.js";
 import { getRole, getTopic } from "../src/services/topics.js";
 import { processTriggerEvents } from "../src/services/triggers.js";
 import { acceptSourceWebhook } from "../src/services/webhook-sources.js";
@@ -60,8 +61,19 @@ describe("linked topics, shared sources and task iterations", () => {
     expect(r.status, r.raw).toBe(200);
     return r.body.id as string;
   };
+  /** A topic linked to a Slack channel: only @dev, the role its bot stands for, works there. */
+  const externalTopic = async (name = "Partners") => {
+    const id = await newTopic(name);
+    await linkChannel(w, id, ["UCAROL"], name.toLowerCase());
+    return id;
+  };
+  const link = (a: string, b: string, confirmPrivate?: boolean) =>
+    w.api("POST", `/api/topics/${a}/links`, {
+      token: w.alice,
+      json: { topic_id: b, ...(confirmPrivate ? { confirm_private: true } : {}) },
+    });
   const connect = async (a: string, b: string) => {
-    const r = await w.api("POST", `/api/topics/${a}/links`, { token: w.alice, json: { topic_id: b } });
+    const r = await link(a, b);
     expect(r.status, r.raw).toBe(200);
     return r.body;
   };
@@ -94,7 +106,7 @@ describe("linked topics, shared sources and task iterations", () => {
 
   it("requires direct links and treats the pair as bidirectional and unique", async () => {
     const a = w.ids.topic,
-      b = await newTopic(),
+      b = await externalTopic(),
       c = await newTopic("Other");
     const task = await sender();
     await expect(send(task, { topic_id: b, text: "Work" })).rejects.toThrow(/linked/);
@@ -105,72 +117,63 @@ describe("linked topics, shared sources and task iterations", () => {
     await expect(send(task, { topic_id: c, text: "Work" })).rejects.toThrow(/linked/);
   });
 
-  it("linked topics message and delegate to each other without a role permission or approval", async () => {
-    const target = (
-      await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Review", role_ids: [w.ids.test] } })
-    ).body.id as string;
-    await connect(w.ids.topic, target);
-    // dev has no permission to delegate outside its topic, and an older setting still lists it as asking.
-    const limited = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
-      token: w.adminToken,
-      json: { allowed_tools: ["shell", "files", "memory", "terminal"], approval_required: ["collaborate"] },
-    });
-    expect(limited.status, limited.raw).toBe(200);
-    let step = 0;
-    let gotResult = "";
-    w.scripts.dev = (m) => {
-      const last = lastUser(m);
-      if (last.includes("'s task") && last.includes(" ended")) {
-        gotResult = last;
-        return reply("noted");
-      }
-      step++;
-      if (step === 1)
-        return reply("", [call("send_message", { topic_id: target, role: "test", text: "please review" })]);
-      if (step === 2)
-        return reply("", [
-          call("delegate_task", {
-            role: "test",
-            topic_id: target,
-            task: "check the build",
-            expected_output: "a verdict",
-          }),
-        ]);
-      return reply("handed over");
-    };
-    w.scripts.test = (m) => reply(lastUser(m).includes("check the build") ? "verdict: green" : "reviewed");
-    await w.post(w.alice, w.ids.topic, "@dev get test over there to review and check the build");
-    await w.drain();
-    expect((await w.api("GET", "/api/approvals", { token: w.bob })).body).toEqual([]);
-    const there = (await w.messages(target)).map((m: any) => m.content);
-    expect(there).toContain("please review");
-    expect(there).toContain("reviewed");
-    expect(there).toContain("verdict: green");
-    const [delegated] = await db()
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.topicId, target), eq(tasks.kind, "task")));
-    expect(delegated).toMatchObject({ ownerRoleId: w.ids.test, requesterRoleId: w.ids.dev, sourceMessageId: null });
-    expect(delegated.envelope.topic_routes?.[0]?.source_topic_id).toBe(w.ids.topic);
-    // The result comes back to dev's conversation in the source topic.
-    expect(gotResult).toContain("verdict: green");
-    // A topic that is not linked gets nothing.
-    const other = (
-      await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Other", role_ids: [w.ids.test] } })
-    ).body.id as string;
-    const task = await sender();
-    await expect(send(task, { topic_id: other, text: "Work" })).rejects.toThrow(/linked/);
+  it("links an external conversation only with an internal topic; a console DM is internal", async () => {
+    const work = await newTopic("Work");
+    const group = await externalTopic("Group");
+    const other = await externalTopic("Other group");
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body.id as string;
+    const inside = await link(w.ids.topic, work);
+    expect(inside.status).toBe(400);
+    expect(inside.body.error.message).toMatch(/two internal topics cannot be linked/);
+    const dmInside = await link(dm, work, true);
+    expect(dmInside.status).toBe(400);
+    expect(dmInside.body.error.message).toMatch(/two internal topics cannot be linked/);
+    const outside = await link(group, other);
+    expect(outside.status).toBe(400);
+    expect(outside.body.error.message).toMatch(/two external conversations cannot be linked/);
+    expect(await db().select().from(topicLinks)).toEqual([]);
+    await connect(group, work);
+    expect((await link(dm, other, true)).status).toBe(200);
+    expect(await db().select().from(topicLinks)).toHaveLength(2);
   });
 
-  it("delegates within the topic freely; to a role outside it only with the role's permission", async () => {
+  it("an external conversation and its linked internal topic message each other without a permission or approval", async () => {
+    const group = await externalTopic();
+    await connect(group, w.ids.topic);
+    w.scripts.dev = (_m, turn) =>
+      turn === 0
+        ? reply("", [call("send_message", { topic_id: w.ids.topic, role: "test", text: "please review the release" })])
+        : reply("asked the team");
+    w.scripts.test = (_m, turn) =>
+      turn === 0
+        ? reply("", [call("send_message", { topic_id: group, text: "review done: all good" })])
+        : reply("reviewed");
+    await w.post(w.alice, group, "@dev can the team review the release?");
+    await w.drain();
+    expect((await w.api("GET", "/api/approvals", { token: w.bob })).body).toEqual([]);
+    const here = (await w.messages(w.ids.topic)).map((m: any) => m.content);
+    expect(here).toEqual(expect.arrayContaining(["please review the release", "reviewed"]));
+    // The answer is published in the external conversation; no role runs there for it.
+    expect((await w.messages(group)).map((m: any) => m.content)).toContain("review done: all good");
+    const runs = await db().select().from(tasks).where(eq(tasks.topicId, group));
+    expect(runs.map((t) => t.ownerRoleId)).toEqual([w.ids.dev]);
+  });
+
+  it("delegates to roles of the topic without a permission; a role outside it is refused before any approval", async () => {
     const outsider = (
       await w.api("POST", "/api/roles", {
         token: w.adminToken,
         json: { name: "Outsider", handle: "outsider", model_config_id: w.ids.model, instance_id: w.ids.instance },
       })
     ).body.id as string;
-    const configure = async (json: Record<string, unknown>) =>
-      expect((await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json })).status).toBe(200);
+    // alice has a DM with it: that is no place for work delegated from this topic either.
+    await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: outsider } });
+    // No permission at all, and an older setting still lists the tool as asking.
+    const limited = await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
+      token: w.adminToken,
+      json: { allowed_tools: ["shell"], approval_required: ["delegate_task"] },
+    });
+    expect(limited.status, limited.raw).toBe(200);
     let target = "test";
     // A result coming back is a new turn too: answer it instead of delegating again.
     w.scripts.dev = (m, turn) =>
@@ -181,39 +184,21 @@ describe("linked topics, shared sources and task iterations", () => {
           : reply(`result: ${lastToolResult(m)}`);
     w.scripts.test = () => reply("part done");
     w.scripts.outsider = () => reply("outside part done");
-    const pending = async () =>
-      (await w.api("GET", "/api/approvals", { token: w.bob })).body.filter((a: any) => a.topic_id === w.ids.topic);
+    const pending = async () => (await w.api("GET", "/api/approvals", { token: w.bob })).body;
     const ownerTasks = async (roleId: string) =>
       (await db().select().from(tasks).where(eq(tasks.ownerRoleId, roleId))).filter((t) => t.kind === "task");
-    // No permission at all: a role of the topic still gets the work, nobody is asked.
-    await configure({ allowed_tools: ["shell"], approval_required: ["collaborate", "delegate_task"] });
     await w.post(w.alice, w.ids.topic, "@dev split it");
     await w.drain();
     expect(await pending()).toEqual([]);
     expect(await ownerTasks(w.ids.test)).toHaveLength(1);
-    // A role outside the topic: refused at once without the permission.
     target = "outsider";
     await w.post(w.alice, w.ids.topic, "@dev split it again");
     await w.drain();
-    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("not in this topic");
+    const refused = (await w.messages(w.ids.topic)).at(-1).content;
+    expect(refused).toContain("@outsider is not in this topic");
+    expect(refused).toContain("hand work only to roles of this topic");
     expect(await pending()).toEqual([]);
     expect(await ownerTasks(outsider)).toHaveLength(0);
-    // With the permission, but alice has no DM with it: still refused at once; nobody joins the topic.
-    await configure({ allowed_tools: ["shell", "collaborate"], approval_required: ["collaborate"] });
-    await w.post(w.alice, w.ids.topic, "@dev split it once more");
-    await w.drain();
-    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("has no DM with it");
-    expect(await pending()).toEqual([]);
-    // Once alice has a DM with it, a person approves and the work goes there; the topic keeps its members.
-    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: outsider } })).body.id as string;
-    await w.post(w.alice, w.ids.topic, "@dev split it a last time");
-    await w.drain();
-    const [approval] = await pending();
-    expect(approval?.action).toBe("delegate_task");
-    await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } });
-    await w.drain();
-    const [work] = await ownerTasks(outsider);
-    expect(work).toMatchObject({ status: "completed", topicId: dm });
     const members = await db()
       .select()
       .from(topicParticipants)
@@ -221,50 +206,86 @@ describe("linked topics, shared sources and task iterations", () => {
     expect(members).toEqual([]);
   });
 
-  it("from a DM, delegated work goes to the asking person's existing DM with that role", async () => {
-    await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
-      token: w.adminToken,
-      json: { allowed_tools: ["shell", "collaborate"], approval_required: [] },
-    });
+  it("from a DM, work goes to no other role, even one the person has a DM with", async () => {
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body.id as string;
-    // No DM with test yet: refused, and none is opened for it.
+    await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.test } });
     const dmCount = async () => (await db().select().from(topicsTable).where(eq(topicsTable.kind, "dm"))).length;
     const before = await dmCount();
     w.scripts.dev = (m, turn) =>
       turn === 0
         ? reply("", [call("delegate_task", { role: "test", task: "look at this", expected_output: "an opinion" })])
         : reply(`result: ${lastToolResult(m)}`);
-    await w.post(w.alice, dm, "ask test what it thinks");
-    await w.drain();
-    expect((await w.messages(dm)).at(-1).content).toContain("has no DM with it");
-    expect(await dmCount()).toBe(before);
-    await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.test } });
-    w.scripts.dev = (m, turn) =>
-      lastUser(m).includes(" ended")
-        ? reply("test says it is fine")
-        : turn === 0
-          ? reply("", [call("delegate_task", { role: "test", task: "look at this", expected_output: "an opinion" })])
-          : reply("asked test");
     w.scripts.test = () => reply("fine by me");
     await w.post(w.alice, dm, "ask test what it thinks");
     await w.drain();
-    const [work] = (await db().select().from(tasks).where(eq(tasks.ownerRoleId, w.ids.test))).filter(
+    expect((await w.messages(dm)).at(-1).content).toContain("@test is not in this topic");
+    expect(await dmCount()).toBe(before);
+    const work = (await db().select().from(tasks).where(eq(tasks.ownerRoleId, w.ids.test))).filter(
       (t) => t.kind === "task",
     );
-    expect(work.topicId).not.toBe(dm);
-    const [place] = await db().select().from(topicsTable).where(eq(topicsTable.id, work.topicId));
-    expect(place.kind).toBe("dm");
-    expect((await w.messages(work.topicId)).map((m: any) => m.content)).toContain("fine by me");
-    // The DM with dev keeps its one role and gets dev's answer.
-    const here = (await w.messages(dm)).map((m: any) => m.content);
-    expect(here).toContain("test says it is fine");
-    expect(here).not.toContain("fine by me");
+    expect(work).toEqual([]);
+  });
+
+  it("a request relayed from an external conversation: the internal topic's roles @ and delegate to each other, keeping its limits", async () => {
+    const group = await externalTopic();
+    await connect(group, w.ids.topic);
+    // Work from a conversation goes on while its connection is active (tests deliver nothing to Slack).
+    await db().update(connections).set({ status: "active" });
+    await w.api("POST", "/api/roles", {
+      token: w.adminToken,
+      json: { name: "Outsider", handle: "outsider", model_config_id: w.ids.model, instance_id: w.ids.instance },
+    });
+    let offered: string[] = [];
+    let refused = "";
+    w.scripts.dev = (m, turn) => {
+      if (lastUser(m).includes("Delegated by @test")) return reply("build passed");
+      return turn === 0
+        ? reply("", [call("send_message", { topic_id: w.ids.topic, role: "test", text: "please build and review it" })])
+        : reply("asked the team");
+    };
+    w.scripts.test = (m, turn, tools) => {
+      if (lastUser(m).includes("@dev's task")) return reply("built; analyst reviews");
+      if (turn === 0) {
+        offered = (tools ?? []).map((t) => t.name);
+        return reply("", [call("message_role", { role: "analyst", message: "please review" })]);
+      }
+      if (turn === 1)
+        return reply("", [
+          call("delegate_task", { role: "dev", task: "run the build", expected_output: "pass or fail" }),
+        ]);
+      if (turn === 2)
+        return reply("", [call("delegate_task", { role: "outsider", task: "deploy it", expected_output: "done" })]);
+      refused = lastToolResult(m);
+      return reply("working on it");
+    };
+    w.scripts.analyst = () => reply("reviewed");
+    await w.post(w.alice, group, "@dev please get the release built and reviewed");
+    await w.drain();
+    expect(offered).toEqual(expect.arrayContaining(["message_role", "delegate_task"]));
+    const here = (await w.messages(w.ids.topic)).map((m: any) => m.content);
+    expect(here).toEqual(expect.arrayContaining(["@analyst please review", "reviewed", "build passed"]));
+    expect(refused).toContain("@outsider is not in this topic");
+    expect((await w.api("GET", "/api/approvals", { token: w.bob })).body).toEqual([]);
+    // The colleague's run and the delegated task keep the limits of the outside request.
+    const inTopic = await db().select().from(tasks).where(eq(tasks.topicId, w.ids.topic));
+    const analystRun = inTopic.find((t) => t.ownerRoleId === w.ids.analyst && t.kind === "conversation")!;
+    const devTask = inTopic.find((t) => t.ownerRoleId === w.ids.dev && t.kind === "task")!;
+    for (const work of [analystRun, devTask]) {
+      expect(work.envelope).toMatchObject({ outside: true, untrusted_input: true });
+      expect(work.envelope.external_topic).toBeUndefined();
+      expect(work.envelope.topic_routes?.[0]?.source_topic_id).toBe(group);
+      expect(await roleMemoryRefusal(db(), work)).toMatch(/role memory/);
+    }
+    // When the link row is gone (unlinked, or removed by a migration), work started from it ends.
+    await db().delete(topicLinks);
+    expect(await stillAllowed(db(), devTask)).toMatch(/link.*removed/);
   });
 
   it("dispatches the same role in another topic without creating a second source execution", async () => {
+    const source = await externalTopic();
     const target = await newTopic();
-    await connect(w.ids.topic, target);
-    const task = await sender();
+    await connect(source, target);
+    const task = await sender(source);
     const r = JSON.parse((await send(task, { topic_id: target, text: "Implement login" })).content as string);
     expect(r.status).toBe("queued_for_agent");
     const runs = await db().select().from(tasks).where(eq(tasks.topicId, target));
@@ -272,14 +293,15 @@ describe("linked topics, shared sources and task iterations", () => {
     expect(runs[0].ownerRoleId).toBe(w.ids.dev);
     expect(runs[0].requesterRoleId).toBe(w.ids.dev);
     const [stored] = await db().select().from(messages).where(eq(messages.id, r.message_id));
-    expect(stored.externalRef?.topic_delivery.source_topic_id).toBe(w.ids.topic);
+    expect(stored.externalRef?.topic_delivery.source_topic_id).toBe(source);
     expect(stored.externalRef?.topic_delivery.origin.requester_user_id).toBe(w.ids.alice);
   });
 
   it("deduplicates retries of one cross-topic tool call", async () => {
+    const source = await externalTopic();
     const target = await newTopic();
-    await connect(w.ids.topic, target);
-    const task = await sender();
+    await connect(source, target);
+    const task = await sender(source);
     await send(task, { topic_id: target, text: "Implement login" });
     const retry = JSON.parse((await send(task, { topic_id: target, text: "Implement login" })).content as string);
     expect(retry.status).toBe("already_accepted");
@@ -303,9 +325,10 @@ describe("linked topics, shared sources and task iterations", () => {
   });
 
   it("validates threads in the destination, not the source topic", async () => {
+    const source = await externalTopic();
     const target = await newTopic();
-    await connect(w.ids.topic, target);
-    const task = await sender();
+    await connect(source, target);
+    const task = await sender(source);
     await expect(send(task, { topic_id: target, text: "Update", thread: task.sourceMessageId })).rejects.toThrow(
       /selected topic/,
     );
@@ -313,9 +336,10 @@ describe("linked topics, shared sources and task iterations", () => {
   });
 
   it("does not enroll the requester as a reader of an internal destination", async () => {
+    const source = await externalTopic();
     const target = await newTopic("Bob's work", w.bob);
-    await connect(w.ids.topic, target);
-    const task = await sender();
+    await connect(source, target);
+    const task = await sender(source);
     await send(task, { topic_id: target, text: "Implement login" });
     const [run] = await db().select().from(tasks).where(eq(tasks.topicId, target));
     expect(await stillAllowed(db(), run)).toBeNull();
@@ -334,9 +358,10 @@ describe("linked topics, shared sources and task iterations", () => {
   });
 
   it("removing the link drops linked work not read yet, and ends tasks started from it", async () => {
+    const source = await externalTopic();
     const target = await newTopic();
-    const links = await connect(w.ids.topic, target);
-    const task = await sender();
+    const links = await connect(source, target);
+    const task = await sender(source);
     await send(task, { topic_id: target, text: "Work" });
     const [run] = await db().select().from(tasks).where(eq(tasks.topicId, target));
     const [linkedTask] = await db()
@@ -348,7 +373,7 @@ describe("linked topics, shared sources and task iterations", () => {
       .update(tasks)
       .set({ envelope: { ...linkedTask.envelope, topic_routes: run.envelope.topic_routes } })
       .where(eq(tasks.id, linkedTask.id));
-    await w.api("DELETE", `/api/topics/${w.ids.topic}/links/${links[0].id}`, { token: w.alice });
+    await w.api("DELETE", `/api/topics/${source}/links/${links[0].id}`, { token: w.alice });
     // the receiving conversation goes on with other work; the linked message it had not read is gone
     expect(await stillAllowed(db(), run)).toBeNull();
     const [session] = await db().select().from(agentSessions).where(eq(agentSessions.id, run.sessionId!));
@@ -359,15 +384,11 @@ describe("linked topics, shared sources and task iterations", () => {
 
   it("requires explicit consent before linking a DM and never auto-forwards its history", async () => {
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body;
-    const refused = await w.api("POST", `/api/topics/${w.ids.topic}/links`, {
-      token: w.alice,
-      json: { topic_id: dm.id },
-    });
+    const group = await externalTopic();
+    const refused = await link(group, dm.id);
     expect(refused.status).toBe(400);
-    const accepted = await w.api("POST", `/api/topics/${w.ids.topic}/links`, {
-      token: w.alice,
-      json: { topic_id: dm.id, confirm_private: true },
-    });
+    expect(refused.body.error.message).toMatch(/confirm_private/);
+    const accepted = await link(group, dm.id, true);
     expect(accepted.status).toBe(200);
     expect(await w.messages(dm.id)).toHaveLength(0);
   });

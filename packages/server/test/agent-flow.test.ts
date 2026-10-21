@@ -205,10 +205,10 @@ describe("permissions and isolation", () => {
   });
 
   it("roles of a topic @ each other without a permission; a mention brings in no one", async () => {
-    // test has no permission to delegate outside the topic; an older per-tool approval of message_role no longer applies.
+    // An older per-tool approval of message_role no longer applies.
     const limited = await w.api("PATCH", `/api/roles/${w.ids.test}`, {
       token: w.adminToken,
-      json: { allowed_tools: ["shell"], approval_required: ["shell", "message_role"], allowed_contacts: [] },
+      json: { allowed_tools: ["shell"], approval_required: ["shell", "message_role"] },
     });
     expect(limited.status, limited.raw).toBe(200);
     const outsider = await w.api("POST", "/api/roles", {
@@ -269,7 +269,6 @@ describe("permissions and isolation", () => {
     expect(created.body.allowed_tools).toEqual([
       "automation",
       "browser",
-      "collaborate",
       "desktop",
       "files",
       "memory",
@@ -279,7 +278,7 @@ describe("permissions and isolation", () => {
       "system_software",
       "terminal",
     ]);
-    expect(created.body.approval_required).toEqual(["automation", "collaborate", "memory", "profile"]);
+    expect(created.body.approval_required).toEqual(["automation", "memory", "profile"]);
     const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
     const files = groups.find((g: any) => g.group === "files");
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);

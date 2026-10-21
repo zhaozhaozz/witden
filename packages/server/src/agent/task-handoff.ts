@@ -23,7 +23,15 @@ import { appendStep } from "./transcript.js";
 export const TRANSFERABLE = new Set(["pending", "waiting_resource", "waiting_role", "completed", "failed"]);
 
 /** Where the work came from and how its answer travels stay with it; the permissions are the new role's. */
-const CARRIED = ["report_only", "auto", "outside", "untrusted_input", "automation_event", "topic_routes"];
+const CARRIED = [
+  "report_only",
+  "auto",
+  "outside",
+  "external_topic",
+  "untrusted_input",
+  "automation_event",
+  "topic_routes",
+];
 
 function envelopeFor(task: Task, target: Role, parent: Task | null): Record<string, any> {
   const env = buildEnvelope(target, parent);
@@ -45,6 +53,10 @@ export async function transferTask(db: Db, user: User, id: string, target: Role,
   const task = await lockTask(db, id);
   if (!task) throw new NotFound("task not found");
   if (task.kind !== "task") throw new BadRequest("a role's conversation cannot be reassigned; only tasks can");
+  const topic = await topicSvc.getTopic(db, task.topicId);
+  // A DM is the conversation between one person and one role: no other role can take its work over.
+  if (topic.kind === "dm")
+    throw new BadRequest("a task in a DM cannot be handed to another role: a DM has only its one role");
   if (!TRANSFERABLE.has(task.status)) throw new BadRequest(refusal(task.status));
   // A run that just stopped may still be finishing its last call; the worker releases the claim when it exits.
   if (task.claimedBy && task.leaseUntil && task.leaseUntil > new Date())
@@ -66,7 +78,6 @@ export async function transferTask(db: Db, user: User, id: string, target: Role,
     .limit(1);
   if (child) throw new BadRequest("work this task delegated is still under way; wait for it or cancel it");
 
-  const topic = await topicSvc.getTopic(db, task.topicId);
   if (topic.status !== "active") throw new Forbidden("cannot reassign work in an archived topic");
   if (!(await topicSvc.participant(db, topic.id, "role", target.id)))
     await topicSvc.inviteRole(db, user, topic, target.id);

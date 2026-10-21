@@ -309,6 +309,13 @@
       "when": 1792571271456,
       "tag": "0043_topic_name_and_goal",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1792573103125,
+      "tag": "0044_collaboration_scope",
+      "breakpoints": true
     }
   ]
 }

@@ -211,7 +211,6 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   browser: "浏览器",
   system_software: "系统软件",
   software_list: "软件清单",
-  collaborate: "委托话题外的角色",
   automation: "自动化管理",
   memory: "记忆",
   topics: "读取其他话题",
@@ -220,8 +219,9 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
 };
 
 /**
- * How permissions are ordered and grouped wherever a role's are shown: where the role works, whom it works
- * with, what it reads, and the role itself. Groups not listed (none yet) go last.
+ * How permissions are ordered and grouped wherever a role's are shown: where the role works, what it automates,
+ * what it reads, and the role itself. Working with the roles of a topic needs no permission. Groups not listed
+ * (none yet) go last.
  */
 export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; groups: string[] }[] = [
   {
@@ -230,12 +230,7 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
     hint: "在角色自己的虚拟电脑里工作",
     groups: ["shell", "terminal", "files", "browser", "desktop", "system_software", "software_list"],
   },
-  {
-    key: "collaborate",
-    label: "协作",
-    hint: "把工作交给话题外的角色，管理自己负责的触发器",
-    groups: ["collaborate", "automation"],
-  },
+  { key: "automation", label: "自动化", hint: "在参与的话题里管理自己负责的触发器", groups: ["automation"] },
   { key: "knowledge", label: "资料", hint: "平台上的记忆和知识空间，以及其他话题", groups: ["memory", "topics"] },
   { key: "self", label: "角色与平台", hint: "角色自己的介绍，以及 witden 本身的配置", groups: ["profile", "config"] },
 ];
@@ -270,8 +265,6 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   system_software:
     "请平台在虚拟电脑里安装或卸载系统软件包（apt）。角色自己没有 root 权限，由平台以 root 执行固定的安装命令；镜像自带的软件不能卸载。不在软件清单里的软件，重置虚拟电脑后会消失",
   software_list: "修改虚拟电脑的软件清单：清单里的软件包在虚拟电脑每次启动时自动安装，重置后也会装回",
-  collaborate:
-    "把任务委托给不在当前话题中的角色：任务在提问人与它已有的私信里进行，不会让它加入当前话题，也不会新建私信。同一话题内的 @ 和委托、关联话题之间的消息和委托都不需要这项权限",
   automation:
     "在它参与的话题里新建和修改自己负责的触发器；不能读取密钥，也不能扩大 Webhook 来源的授权。只在控制台账号请求的工作中可用",
   memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",

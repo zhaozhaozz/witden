@@ -22,6 +22,25 @@ const topic = {
     { ...user, type: "user", joined_at: now },
   ],
 };
+/** A Slack channel: the only kind of topic a console topic or DM may be linked with. */
+const designChannel = {
+  ...topic,
+  id: "topic-2",
+  title: "设计讨论",
+  source: "slack",
+  channel: {
+    connection_id: "conn-1",
+    connection_name: "Acme Slack",
+    platform: "slack",
+    conversation_id: "conv-1",
+    conversation_kind: "public",
+    conversation_name: "design",
+    thread_key: "__channel__",
+    thread_kind: "channel",
+    url: null,
+    role_id: role.id,
+  },
+};
 const message = (id: string, content: string, author = "role") => ({
   id,
   content,
@@ -168,7 +187,7 @@ export async function workspace(
       else if (path === "/api/setup") json = { needed: false };
       else if (path === "/api/instances/computer-1")
         json = { ...computer, status: "stopped", spec: { kind: "desktop" }, operator: null };
-      else if (path === "/api/topics") json = [currentTopic, { ...topic, id: "topic-2", title: "设计讨论" }];
+      else if (path === "/api/topics") json = [currentTopic, designChannel];
       else if (path === "/api/topics/topic-1") {
         if (req.method() === "PATCH") {
           const body = req.postDataJSON();
@@ -187,6 +206,7 @@ export async function workspace(
             title: "设计讨论",
             kind: "group",
             status: "active",
+            external: true,
             roles: [role],
           };
           state.links.push(link);

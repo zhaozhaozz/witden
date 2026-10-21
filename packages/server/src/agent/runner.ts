@@ -498,9 +498,7 @@ export class TaskRunner {
         return { skip: true as const };
       }
       const approved = (task.envelope.approved_calls ?? []).includes(call.id) || hasRunToolApproval(task, call.name);
-      const asks =
-        needsApproval(task.envelope, spec, call.arguments) || !!(await spec.asks?.(tx, task, call.arguments));
-      if (asks && !approved) {
+      if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
         // A call that would be refused anyway is not put to a person: the role learns why at once.
         const refused = await spec.refusal?.(tx, task, call.arguments);
         if (refused) {
@@ -809,7 +807,7 @@ function describeRecovered(outcome: RecoverResult, why: string): string {
 function opBacked(name: string): boolean {
   return (
     TOOLS.get(name)?.group !== null &&
-    !["collaborate", "memory", "topics"].includes(TOOLS.get(name)?.group ?? "") &&
+    !["memory", "topics"].includes(TOOLS.get(name)?.group ?? "") &&
     name !== "share_file" &&
     name !== "release_desktop"
   );

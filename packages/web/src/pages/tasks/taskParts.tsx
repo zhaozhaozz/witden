@@ -26,6 +26,8 @@ interface ControlTarget {
   /** A run of a role's conversation: it can be stopped, not handed to another role or retried. */
   kind?: "conversation" | "task";
   revision?: number;
+  /** A task in a DM stays with the DM's one role: it is not handed over. */
+  topic?: { kind: string } | null;
 }
 
 /** A task changes hands only while nothing runs it and nothing waits for the previous role (server: task-handoff.ts). */
@@ -103,9 +105,15 @@ export function TaskControls({
         </button>
       ) : null}
       {!conversation && TRANSFERABLE.includes(task.status) ? (
-        <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
-          转交
-        </button>
+        task.topic?.kind === "dm" ? (
+          <button type="button" className={cls} disabled title="私信中只有一个角色，任务不能转交给其他角色">
+            转交
+          </button>
+        ) : (
+          <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
+            转交
+          </button>
+        )
       ) : null}
       {!conversation && (task.status === "failed" || task.status === "cancelled") ? (
         <button type="button" className={cls} disabled={busy} onClick={() => control("retry", "", "已重新排队")}>
