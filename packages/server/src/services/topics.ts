@@ -169,15 +169,22 @@ export async function createTopic(
   return topic;
 }
 
-export async function getOrCreateDm(db: Db, user: User, role: Role, source = "internal"): Promise<Topic> {
-  await requirePerm(db, user, Perm.ROLE_USE, role.id);
+/** The person's active DM with the role, if there is one (nothing is created). */
+export async function findDm(db: Db, userId: string, roleId: string, source = "internal"): Promise<Topic | undefined> {
   const dms = await db
     .select()
     .from(topics)
     .where(and(eq(topics.kind, "dm"), eq(topics.source, source), eq(topics.status, "active")));
   for (const t of dms) {
-    if ((await participant(db, t.id, "user", user.id)) && (await participant(db, t.id, "role", role.id))) return t;
+    if ((await participant(db, t.id, "user", userId)) && (await participant(db, t.id, "role", roleId))) return t;
   }
+  return undefined;
+}
+
+export async function getOrCreateDm(db: Db, user: User, role: Role, source = "internal"): Promise<Topic> {
+  await requirePerm(db, user, Perm.ROLE_USE, role.id);
+  const existing = await findDm(db, user.id, role.id, source);
+  if (existing) return existing;
   const [topic] = await db
     .insert(topics)
     .values({

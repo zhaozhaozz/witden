@@ -610,11 +610,12 @@ export interface DelegationPlan {
   target: Role;
   /** The topic the delegate works in (for a delegation out of a DM: the asking person's DM with the delegate). */
   topic: Topic;
-  /** "topic": a role of this topic; "linked": a role of a directly linked topic; "outside": anyone else. */
+  /**
+   * "topic": a role of this topic; "linked": a role of a directly linked topic; "outside": anyone else, whose
+   * work goes to the asking person's existing DM with it.
+   */
   place: "topic" | "linked" | "outside";
   link?: typeof topicLinks.$inferSelect;
-  /** Delegating out of a DM: the work goes to this person's DM with the delegate, created when it starts. */
-  dmOf?: User;
 }
 
 /**
@@ -653,13 +654,18 @@ export async function planDelegation(
     throw new Forbidden(
       `@${target.handle} is not in this topic; delegating to roles outside it needs the permission to delegate to other roles`,
     );
-  if (here.kind !== "dm") return { target, topic: here, place: "outside" };
-  // Never into this private conversation: the work goes to the asking person's own DM with that role.
+  // Delegating never adds a role to a topic, nor opens a DM: the work goes to the asking person's own DM with
+  // that role, where both already are (not into this topic, and never into another private conversation).
   const [user] = parent.requesterUserId
     ? await db.select().from(users).where(eq(users.id, parent.requesterUserId)).limit(1)
     : [];
-  if (!user?.isActive) throw new Forbidden("delegating out of a DM needs the person who asked");
-  return { target, topic: here, place: "outside", dmOf: user };
+  if (!user?.isActive) throw new Forbidden(`@${target.handle} is not in this topic; ask a person to invite it`);
+  const dm = await topicSvc.findDm(db, user.id, target.id);
+  if (!dm)
+    throw new Forbidden(
+      `@${target.handle} is not in this topic and ${user.name} has no DM with it; ask a person to invite it into this topic`,
+    );
+  return { target, topic: dm, place: "outside" };
 }
 
 /**
@@ -679,10 +685,7 @@ export async function delegate(
   const fromConversation = parent.kind === "conversation";
   if (fromConversation) await checkAutoRounds(parent);
   const plan = await planDelegation(db, parent, sender, targetHandle, topicId);
-  const { target } = plan;
-  let topic = plan.topic;
-  if (plan.dmOf) topic = await topicSvc.getOrCreateDm(db, plan.dmOf, target);
-  else if (plan.place === "outside") await topicSvc.inviteRole(db, null, topic, target.id, { byRole: sender });
+  const { target, topic } = plan;
   const { allowed, refusals } = await authorize(db, topic, parent.requesterUserId, [target.id], sender.id);
   if (!allowed.length) throw new Forbidden(`delegation refused: ${refusals.join("; ")}`);
   let brief = `Delegated by @${sender.handle}.\n\nTask:\n${instruction}`;

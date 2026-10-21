@@ -198,25 +198,47 @@ describe("linked topics, shared sources and task iterations", () => {
     expect((await w.messages(w.ids.topic)).at(-1).content).toContain("not in this topic");
     expect(await pending()).toEqual([]);
     expect(await ownerTasks(outsider)).toHaveLength(0);
-    // With the permission set to ask: a person approves, and the role is brought into the topic.
+    // With the permission, but alice has no DM with it: still refused at once; nobody joins the topic.
     await configure({ allowed_tools: ["shell", "collaborate"], approval_required: ["collaborate"] });
     await w.post(w.alice, w.ids.topic, "@dev split it once more");
+    await w.drain();
+    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("has no DM with it");
+    expect(await pending()).toEqual([]);
+    // Once alice has a DM with it, a person approves and the work goes there; the topic keeps its members.
+    const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: outsider } })).body.id as string;
+    await w.post(w.alice, w.ids.topic, "@dev split it a last time");
     await w.drain();
     const [approval] = await pending();
     expect(approval?.action).toBe("delegate_task");
     await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.bob, json: { approve: true } });
     await w.drain();
-    expect((await ownerTasks(outsider)).map((t) => t.status)).toEqual(["completed"]);
-    const roles = (await w.api("GET", `/api/topics/${w.ids.topic}`, { token: w.alice })).body.participants ?? [];
-    expect(JSON.stringify(roles)).toContain(outsider);
+    const [work] = await ownerTasks(outsider);
+    expect(work).toMatchObject({ status: "completed", topicId: dm });
+    const members = await db()
+      .select()
+      .from(topicParticipants)
+      .where(and(eq(topicParticipants.topicId, w.ids.topic), eq(topicParticipants.participantId, outsider)));
+    expect(members).toEqual([]);
   });
 
-  it("from a DM, delegated work goes to the asking person's DM with that role", async () => {
+  it("from a DM, delegated work goes to the asking person's existing DM with that role", async () => {
     await w.api("PATCH", `/api/roles/${w.ids.dev}`, {
       token: w.adminToken,
       json: { allowed_tools: ["shell", "collaborate"], approval_required: [] },
     });
     const dm = (await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.dev } })).body.id as string;
+    // No DM with test yet: refused, and none is opened for it.
+    const dmCount = async () => (await db().select().from(topicsTable).where(eq(topicsTable.kind, "dm"))).length;
+    const before = await dmCount();
+    w.scripts.dev = (m, turn) =>
+      turn === 0
+        ? reply("", [call("delegate_task", { role: "test", task: "look at this", expected_output: "an opinion" })])
+        : reply(`result: ${lastToolResult(m)}`);
+    await w.post(w.alice, dm, "ask test what it thinks");
+    await w.drain();
+    expect((await w.messages(dm)).at(-1).content).toContain("has no DM with it");
+    expect(await dmCount()).toBe(before);
+    await w.api("POST", "/api/dms", { token: w.alice, json: { role_id: w.ids.test } });
     w.scripts.dev = (m, turn) =>
       lastUser(m).includes(" ended")
         ? reply("test says it is fine")
