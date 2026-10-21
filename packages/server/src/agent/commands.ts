@@ -215,6 +215,23 @@ export async function wakeForCommands(db: Db, task: Task): Promise<boolean> {
   return true;
 }
 
+/** Tasks waiting on a timer that have an ended background command not told yet (the worker wakes them). */
+export async function waitingOnEndedCommands(db: Db): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ id: backgroundCommands.taskId })
+    .from(backgroundCommands)
+    .innerJoin(tasks, eq(tasks.id, backgroundCommands.taskId))
+    .where(
+      and(
+        isNull(backgroundCommands.notifiedAt),
+        inArray(backgroundCommands.status, ENDED),
+        announced(),
+        eq(tasks.status, "waiting_timer"),
+      ),
+    );
+  return rows.map((r) => r.id);
+}
+
 /** command_wait ran out of time: which of its commands still run. */
 export async function commandWaitTimedOut(db: Db, task: Task): Promise<string> {
   const live = await db

@@ -46,6 +46,19 @@ describe("terminal", () => {
     expect(listed.find((s) => s.sessionId === sessionId)).toMatchObject({ command: "cd sub && export FOO=bar" });
   });
 
+  it("returns the latest maxChars characters of a read (64 KiB by default)", async () => {
+    const { sessionId } = ok(await hub.request("terminal.create", {}));
+    ok(await hub.request("terminal.input", { sessionId, text: "seq 1 2000" }));
+    await outputContains(sessionId, "2000");
+    const cut = ok(await hub.request("terminal.read", { sessionId, lines: 3000, maxChars: 100 }));
+    expect(cut.output.startsWith("...[earlier output truncated]")).toBe(true);
+    expect(cut.output.length).toBeLessThan(140);
+    const whole = ok(await hub.request("terminal.read", { sessionId, lines: 3000, maxChars: 1_000_000 }));
+    expect(whole.output).toContain("\n1\n");
+    expect(whole.output).not.toContain("earlier output truncated");
+    ok(await hub.request("terminal.kill", { sessionId }));
+  });
+
   it("reports a running foreground command, interrupts it and kills the session", async () => {
     const { sessionId } = ok(await hub.request("terminal.create", {}));
     ok(await hub.request("terminal.input", { sessionId, text: "sleep 30" }));

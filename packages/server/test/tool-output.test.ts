@@ -46,6 +46,25 @@ describe("long tool results", () => {
     expect(shown).toContain(`The whole output is in ${path}: read it with read_file (offset and limit, in lines)`);
   });
 
+  it("terminal_read is cut once: the runner sends the lines asked for, a long read is kept whole", async () => {
+    const pc = w.manager.computer(w.ids.instance);
+    const screen = numbered(3000);
+    pc.terminalOutput = screen;
+    const seen: string[] = [];
+    const read = call("terminal_read", { session: "wd-1", lines: 3000 });
+    record([read], seen);
+    await w.post(w.alice, w.ids.topic, "@dev read the terminal");
+    await w.drain();
+    expect(pc.terminalReads[0]).toMatchObject({ sessionId: "wd-1", lines: 3000 });
+    expect(Number(pc.terminalReads[0].maxChars)).toBeGreaterThan(screen.length);
+    const path = `/home/witden/.witden/tool-output/${read.id}.txt`;
+    expect(pc.files.get(path)?.toString("utf8")).toBe(screen);
+    expect(seen[0]).toContain("[session wd-1: idle (command finished), foreground=bash]");
+    expect(seen[0]).toContain("line 3000 ");
+    expect(seen[0]).toContain(`The whole output is in ${path}`);
+    expect(seen[0].length).toBeLessThan(w.settings.toolOutputLimit + 500);
+  });
+
   it("read_file pages through a long file instead of keeping another copy", async () => {
     const pc = w.manager.computer(w.ids.instance);
     pc.files.set("/home/witden/big.log", Buffer.from(`${numbered(3000)}\n`));

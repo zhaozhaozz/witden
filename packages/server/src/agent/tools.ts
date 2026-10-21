@@ -137,10 +137,6 @@ const obj = (properties: Record<string, any>, required: string[] = []) => ({ typ
 const str = { type: "string" };
 const int = { type: "integer" };
 
-function clip(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, limit / 2)}\n...[truncated]...\n${text.slice(-limit / 2)}`;
-}
-
 function op(ctx: ToolContext, name: RunnerOp, params: Record<string, unknown>, timeoutMs = 60_000) {
   return ctx.gateway.execute({
     taskId: ctx.taskId,
@@ -161,21 +157,25 @@ async function load(ctx: ToolContext, db: Db) {
 
 // --- computer: shell, terminals, files ------------------------------------------------------------------
 
+/** What terminal_read takes from the runner: a guard far above what a read of its lines can hold. */
+const TERMINAL_READ_CHARS = 8 * 1024 * 1024;
+
 async function terminalStart(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const r = await op(ctx, "terminal.create", { command: String(args.command ?? ""), cwd: args.workdir }, 30_000);
   return { content: `started terminal session ${r.sessionId}; use terminal_read to see output` };
 }
 
+/** The lines asked for, cut once: a long read is kept whole in a file (boundOutput), not cut by the runner too. */
 async function terminalRead(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const r = await op(
     ctx,
     "terminal.read",
-    { sessionId: String(args.session ?? ""), lines: Number(args.lines ?? 200) },
+    { sessionId: String(args.session ?? ""), lines: Number(args.lines ?? 200), maxChars: TERMINAL_READ_CHARS },
     30_000,
   );
   const state = r.running ? "still running" : "idle (command finished)";
   return {
-    content: `[session ${r.sessionId}: ${state}, foreground=${r.foreground}]\n${clip(r.output, settings().toolOutputLimit)}`,
+    content: `[session ${r.sessionId}: ${state}, foreground=${r.foreground}]\n${await boundOutput(ctx, "terminal_read", r.output)}`,
   };
 }
 

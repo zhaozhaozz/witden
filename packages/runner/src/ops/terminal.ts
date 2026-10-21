@@ -11,7 +11,9 @@ import { randomHex, resolveUserPath } from "../util.js";
 const SESSION_ID = /^wd-[A-Za-z0-9_-]{1,64}$/;
 const KEY_NAME = /^[A-Za-z0-9][A-Za-z0-9_+-]{0,31}$/;
 const SHELLS = new Set(["bash", "sh", "zsh", "dash", "fish", "ash", "ksh", "tmux"]);
+/** Default cut of terminal.read (the platform asks for more and keeps long output whole itself). */
 const MAX_READ_CHARS = 64 * 1024;
+const MAX_READ_LIMIT = 16 * 1024 * 1024;
 
 /**
  * tmux treats an argv element ending in ";" as a command separator; "\;" yields a literal ";". Every
@@ -138,6 +140,7 @@ export class Terminals {
   async read(params: Record<string, unknown>, ctx: OpContext): Promise<TerminalReadResult> {
     const sessionId = checkId(reqString(params, "sessionId", 100));
     const lines = optInt(params, "lines", 1, 50_000) ?? 200;
+    const maxChars = optInt(params, "maxChars", 1, MAX_READ_LIMIT) ?? MAX_READ_CHARS;
     const out = await this.checked(
       ["capture-pane", "-p", "-J", "-t", target(sessionId), "-S", `-${lines}`],
       ctx,
@@ -151,7 +154,7 @@ export class Terminals {
     const [pid, dead, current] = info.trim().split("\t");
     const { running, foreground } = foregroundOf(Number(pid), dead === "1", current ?? "");
     let output = out.replace(/\s+$/, "");
-    if (output.length > MAX_READ_CHARS) output = `...[earlier output truncated]\n${output.slice(-MAX_READ_CHARS)}`;
+    if (output.length > maxChars) output = `...[earlier output truncated]\n${output.slice(-maxChars)}`;
     return { sessionId, output, running, foreground };
   }
 

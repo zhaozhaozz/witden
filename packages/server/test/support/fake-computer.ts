@@ -74,6 +74,9 @@ export class FakeComputer {
   };
   /** False: the runner has gone quiet (its connection looks open but nothing answers). */
   answersPings = true;
+  /** What terminal_read reads in any session, and the parameters it was asked with. */
+  terminalOutput = "$ done";
+  terminalReads: Record<string, unknown>[] = [];
   /** False: a runner from before background commands (exec.run only); takes effect at the next connect. */
   commandOps = true;
   /** Commands started with command.start, by id. */
@@ -289,7 +292,8 @@ export class FakeComputer {
         this.commands.push(`terminal: ${p.command}`);
         return { sessionId: `wd-${++this.sessions}` };
       case "terminal.read":
-        return { sessionId: p.sessionId, output: "$ done", running: false, foreground: "bash" };
+        this.terminalReads.push(p);
+        return { sessionId: p.sessionId, output: this.terminalOutput, running: false, foreground: "bash" };
       case "terminal.input":
       case "terminal.key":
         return {};

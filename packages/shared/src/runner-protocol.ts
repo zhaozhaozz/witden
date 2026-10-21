@@ -327,6 +327,8 @@ export interface TerminalKeyParams {
 export interface TerminalReadParams {
   sessionId: string;
   lines?: number;
+  /** Characters returned at most, the latest kept (default 64 KiB; older runners always cut there). */
+  maxChars?: number;
 }
 export interface TerminalReadResult {
   sessionId: string;

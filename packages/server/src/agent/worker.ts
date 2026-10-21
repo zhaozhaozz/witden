@@ -11,7 +11,7 @@ import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
 import { agentSessions, computerInstances, messageRoutes, tasks } from "../db/schema.js";
 import { WAKE_CHANNEL } from "../services/events.js";
-import { commandWaitTimedOut, wakeForCommands } from "./commands.js";
+import { commandWaitTimedOut, waitingOnEndedCommands, wakeForCommands } from "./commands.js";
 import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./control.js";
 import { wakeDue } from "./conversation.js";
 import { claimRoutes, routeMessage } from "./router.js";
@@ -164,9 +164,17 @@ export class Worker {
     for (const t of await db.select().from(tasks).where(eq(tasks.status, "waiting_children"))) {
       await transaction((tx) => collectChildren(tx, t));
     }
-    for (const t of await db.select().from(tasks).where(eq(tasks.status, "waiting_timer"))) {
+    // Timers that came due (looked at without a lock), and tasks whose background commands ended (agent/commands.ts):
+    // only those are locked.
+    const now = Date.now();
+    const timers = await db
+      .select({ id: tasks.id, wait: tasks.wait })
+      .from(tasks)
+      .where(eq(tasks.status, "waiting_timer"));
+    const due = timers.filter((t) => new Date(t.wait?.until ?? 0).getTime() <= now).map((t) => t.id);
+    for (const id of new Set([...(await waitingOnEndedCommands(db)), ...due])) {
       await transaction(async (tx) => {
-        const fresh = await lockTask(tx, t.id);
+        const fresh = await lockTask(tx, id);
         if (fresh?.status !== "waiting_timer") return;
         // One of its background commands ended (agent/commands.ts): it goes on before its time.
         if (await wakeForCommands(tx, fresh)) return;
