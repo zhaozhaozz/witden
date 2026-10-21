@@ -346,14 +346,10 @@ export class TaskRunner {
         await consumeTaskInputs(tx, task);
         transcript = await loadTranscript(tx, task);
       }
-      // A conversation's budget counts per turn (each batch of new messages starts a new count).
+      // A conversation's token budget counts per turn (each batch of new messages starts a new count).
       const budget = task.budget ?? {};
       const usage = task.usage ?? {};
-      const s = settings();
-      const steps = conversation ? (usage.turn_steps ?? 0) : (usage.steps ?? 0);
       const tokens = conversation ? (usage.turn_tokens ?? 0) : (usage.tokens ?? 0);
-      if (steps >= (budget.max_steps ?? s.maxTaskSteps))
-        return this.failIn(tx, task, "step budget exhausted before the work was finished");
       if (budget.max_tokens && tokens >= budget.max_tokens)
         return this.failIn(tx, task, "token budget exhausted before the work was finished");
       return { ...base, messages: [initial[0], ...transcript], showText: true };
@@ -445,7 +441,6 @@ export class TaskRunner {
       usage.tokens = (usage.tokens ?? 0) + spent;
       usage.cached_tokens = (usage.cached_tokens ?? 0) + (response.cachedTokens ?? 0);
       if (prepared.conversation) {
-        usage.turn_steps = (usage.turn_steps ?? 0) + 1;
         usage.turn_tokens = (usage.turn_tokens ?? 0) + spent;
         // How big the context is now: the next call decides on compaction by it. A service that reports no
         // usage gets an estimate, or its conversations would never be compacted.

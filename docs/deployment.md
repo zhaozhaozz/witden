@@ -200,7 +200,6 @@ server {
 | `WITDEN_WORKER_CONCURRENCY` | `4` | 每个 Worker 进程同时运行的任务数。 |
 | `WITDEN_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` / `_NAME` | — / — / `admin` | 首次启动时创建的管理员。 |
 | `WITDEN_SESSION_TTL_HOURS` | `168` | 登录会话有效期（小时）。 |
-| `WITDEN_MAX_TASK_STEPS` | `60` | 单个任务的最大步数上限。 |
 | `WITDEN_MAX_DELEGATION_DEPTH` | `3` | AI 员工之间委托的最大层数。 |
 | `WITDEN_MAX_AUTO_ROUNDS` | `8` | AI 员工之间自动讨论的最大轮次（互相 @、发往关联话题的消息、直接对话、对话自己定下的跟进），对所有话题相同；任务的拆出、委托、转交和续做不计入；也是飞书接入开启“其他机器人 @ 这个机器人时，也交给 AI 员工处理”后，连续接受机器人请求的次数上限。 |
 | `WITDEN_INSTANCE_WAIT_SECONDS` | `300` | 虚拟电脑不可用时任务的最长等待时间。 |

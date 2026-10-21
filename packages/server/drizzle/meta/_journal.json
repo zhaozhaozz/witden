@@ -330,6 +330,13 @@
       "when": 1792592451714,
       "tag": "0046_drop_read_topic",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1792599562055,
+      "tag": "0047_drop_role_max_steps",
+      "breakpoints": true
     }
   ]
 }

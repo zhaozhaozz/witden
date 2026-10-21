@@ -270,7 +270,6 @@ export const roles = pgTable(
     allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
     knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
     approvalRequired: json<string[]>("approval_required").notNull().default([]),
-    maxSteps: integer("max_steps"),
     maxTokensPerTask: integer("max_tokens_per_task"),
     dailyTokenLimit: integer("daily_token_limit"),
     /**

@@ -294,13 +294,12 @@ export interface CreateTaskOptions {
   limits?: SourceLimits | null;
 }
 
-/** The role's limits for one task; a delegate cannot spend more than what the delegator had left. */
+/**
+ * The role's token limit for one task; a delegate cannot spend more than what the delegator had left. There is
+ * no step limit: work is bounded by tokens (per run, per day, per model), emergency stops and cancellation.
+ */
 export function taskBudget(role: Role, parent: Task | null): Record<string, any> {
-  const s = settings();
-  const budget: Record<string, any> = {
-    max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
-    max_tokens: role.maxTokensPerTask,
-  };
+  const budget: Record<string, any> = { max_tokens: role.maxTokensPerTask };
   if (parent?.budget?.max_tokens) {
     const left = parent.budget.max_tokens - (parent.usage?.tokens ?? 0);
     budget.max_tokens = Math.max(0, Math.min(budget.max_tokens ?? left, left));

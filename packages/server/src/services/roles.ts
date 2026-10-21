@@ -62,7 +62,6 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     "name",
     "description",
     "systemPrompt",
-    "maxSteps",
     "maxTokensPerTask",
     "dailyTokenLimit",
     "modelParams",
@@ -298,7 +297,6 @@ export async function copyRole(
     allowedContacts: role.allowedContacts,
     knowledgeSpaceIds: role.knowledgeSpaceIds,
     approvalRequired: role.approvalRequired,
-    maxSteps: role.maxSteps,
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,
   });

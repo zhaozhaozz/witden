@@ -229,7 +229,7 @@ function TaskSummary({ task: t }: { task: Task }) {
   const { can } = useAuth();
   const usage = (t.usage ?? {}) as { steps?: number; tokens?: number; cached_tokens?: number };
   const conversation = t.kind === "conversation";
-  const budget = (t.budget ?? {}) as { max_steps?: number; max_tokens?: number };
+  const budget = (t.budget ?? {}) as { max_tokens?: number };
   return (
     <div className="grid-2">
       <Section title="概要">
@@ -302,7 +302,7 @@ function TaskSummary({ task: t }: { task: Task }) {
             ],
             [
               "用量",
-              `${fmtNumber(usage.steps ?? 0)} 步${budget.max_steps ? ` / ${conversation ? "每轮" : ""}上限 ${budget.max_steps}` : ""}，${fmtNumber(usage.tokens ?? 0)} tokens${
+              `${fmtNumber(usage.steps ?? 0)} 步，${fmtNumber(usage.tokens ?? 0)} tokens${
                 budget.max_tokens ? ` / ${conversation ? "每轮" : ""}上限 ${fmtNumber(budget.max_tokens)}` : ""
               }${usage.cached_tokens ? `，其中 ${fmtNumber(usage.cached_tokens)} 命中服务的提示缓存` : ""}`,
             ],

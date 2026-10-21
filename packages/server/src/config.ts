@@ -47,7 +47,6 @@ export interface Settings {
   bootstrapAdminEmail: string | null;
   bootstrapAdminPassword: string | null;
   bootstrapAdminName: string;
-  maxTaskSteps: number;
   maxDelegationDepth: number;
   maxAutoRounds: number;
   instanceWaitSeconds: number;
@@ -111,7 +110,6 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     bootstrapAdminEmail: env("BOOTSTRAP_ADMIN_EMAIL") ?? null,
     bootstrapAdminPassword: env("BOOTSTRAP_ADMIN_PASSWORD") ?? null,
     bootstrapAdminName: env("BOOTSTRAP_ADMIN_NAME") ?? "admin",
-    maxTaskSteps: int("MAX_TASK_STEPS", 60),
     maxDelegationDepth: int("MAX_DELEGATION_DEPTH", 3),
     maxAutoRounds: int("MAX_AUTO_ROUNDS", 8),
     instanceWaitSeconds: int("INSTANCE_WAIT_SECONDS", 300),

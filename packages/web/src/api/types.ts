@@ -544,7 +544,6 @@ export interface Role {
   allowed_contacts?: string[];
   knowledge_space_ids?: string[];
   approval_required?: string[];
-  max_steps: number | null;
   max_tokens_per_task: number | null;
   daily_token_limit: number | null;
   /** How much the model thinks (null: the model's default). */

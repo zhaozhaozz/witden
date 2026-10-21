@@ -61,7 +61,6 @@ interface Draft {
   allowed_contacts: string[];
   knowledge_space_ids: string[];
   approval_required: string[];
-  max_steps: string;
   max_tokens_per_task: string;
   daily_token_limit: string;
 }
@@ -82,7 +81,6 @@ function toDraft(r: Role | null): Draft {
     allowed_contacts: r?.allowed_contacts ?? [],
     knowledge_space_ids: r?.knowledge_space_ids ?? [],
     approval_required: r?.approval_required ?? [],
-    max_steps: r?.max_steps?.toString() ?? "",
     max_tokens_per_task: r?.max_tokens_per_task?.toString() ?? "",
     daily_token_limit: r?.daily_token_limit?.toString() ?? "",
   };
@@ -117,7 +115,6 @@ function toBody(d: Draft): Record<string, unknown> {
     allowed_contacts: [...d.allowed_contacts].sort(),
     knowledge_space_ids: d.knowledge_space_ids,
     approval_required: [...d.approval_required].sort(),
-    max_steps: num(d.max_steps),
     max_tokens_per_task: num(d.max_tokens_per_task),
     daily_token_limit: num(d.daily_token_limit),
   };
@@ -699,15 +696,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
           <Section title="限额">
             <div className="form-row">
-              <Field label="每轮最多步数" hint="对话的每一轮、每个任务各算各的；留空用系统上限">
-                <input
-                  type="number"
-                  min={1}
-                  value={draft.max_steps}
-                  onChange={(e) => set("max_steps", e.target.value)}
-                />
-              </Field>
-              <Field label="每轮 token 上限" hint="同上；留空不限">
+              <Field label="每轮 token 上限" hint="对话的每一轮、每个任务各算各的；留空不限">
                 <input
                   type="number"
                   min={1}
@@ -794,7 +783,6 @@ const ALL_FIELD_ZH: Record<string, string> = {
   knowledge_space_ids: "知识空间",
   allowed_contacts: "可以主动对话的 AI 员工",
   approval_required: "询问设置",
-  max_steps: "步数上限",
   max_tokens_per_task: "每轮 token 上限",
   daily_token_limit: "每日 token 上限",
 };

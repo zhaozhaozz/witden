@@ -230,7 +230,7 @@ async function apply(
       roleSnapshot: await roleSnapshotFor(db, target),
       envelope: prepared.next.envelope,
       budget: taskBudget(target, prepared.parent),
-      // The new role has its own step budget; what the previous one used stays in the log and usage records.
+      // The new role has its own token budget; what the previous one used stays in the log and usage records.
       usage: { steps: 0, tokens: 0 },
       assignment: {
         ...assignment,

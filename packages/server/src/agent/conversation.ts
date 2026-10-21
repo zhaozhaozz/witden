@@ -446,8 +446,8 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   const latestItem = latest ? forYouItems.find((i) => i.message_id === latest.id) : undefined;
   const replyTo = [...ready].reverse().find((i) => i.reply_to)?.reply_to;
   const update: Partial<Task> = {
-    // The step budget counts per turn: each batch of new messages starts a fresh count.
-    usage: { ...(run.usage ?? {}), turn_steps: 0, turn_tokens: 0 },
+    // The token budget counts per turn: each batch of new messages starts a fresh count.
+    usage: { ...(run.usage ?? {}), turn_tokens: 0 },
   };
   let restrictedEnvelope = run.envelope;
   for (const message of forYou)
