@@ -51,6 +51,11 @@ export class FakeComputer {
     { status: number; headers: Record<string, string>; chunks: Buffer[]; done: (error?: string) => void }
   >();
   private proxySeq = 0;
+  /** What browser_snapshot reads on any page. */
+  page: { text: string; elements: { ref: string; role: string; name: string }[]; moreElements?: boolean } = {
+    text: "Quarterly data",
+    elements: [{ ref: "e1", role: "link", name: "Download CSV" }],
+  };
   /** False: the runner has gone quiet (its connection looks open but nothing answers). */
   answersPings = true;
   private transport: HubTransport | null = null;
@@ -100,8 +105,9 @@ export class FakeComputer {
     this.transport = null;
   }
 
-  /** Resolved against the working directory, as the runner does (``..`` included). */
+  /** Resolved against the working directory, or the home directory for ``~``, as the runner does. */
   private path(p: string): string {
+    if (p === "~" || p.startsWith("~/")) return posix.join("/home/witden", p.slice(1));
     return posix.resolve(this.spec.workdir, p);
   }
 
@@ -231,9 +237,13 @@ export class FakeComputer {
         return { path: this.path(p.path), size: data.length };
       }
       case "file.list":
-        return [...this.files.keys()]
-          .filter((k) => k.startsWith(this.path(p.path)))
-          .map((k) => ({ name: k, type: "file", size: 1, mtime: new Date().toISOString() }));
+        return {
+          path: this.path(p.path),
+          entries: [...this.files.keys()]
+            .filter((k) => k.startsWith(this.path(p.path)))
+            .map((k) => ({ name: k, type: "file", size: 1, mtime: new Date().toISOString() })),
+          truncated: false,
+        };
       case "file.move": {
         const data = this.files.get(this.path(p.from));
         if (!data) throw Object.assign(new Error("no such file"), { code: "not_found" });
@@ -256,8 +266,7 @@ export class FakeComputer {
           mode: "desktop",
           url: "https://example.test",
           title: "Example",
-          text: "Quarterly data",
-          elements: [{ ref: "e1", role: "link", name: "Download CSV" }],
+          ...this.page,
         };
       case "browser.click":
       case "browser.type":

@@ -49,6 +49,7 @@ import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { requestHandover, transferStartedTask } from "./task-handoff.js";
+import { boundOutput } from "./tool-output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
 import { sendLinkedMessage } from "./topic-messaging.js";
@@ -214,13 +215,50 @@ async function terminalControl(ctx: ToolContext, args: Record<string, any>): Pro
   throw new BadRequest("action must be interrupt or kill");
 }
 
+/** Largest file read_file pages through; bigger ones are for shell tools (grep, sed, tail). */
+const READ_FILE_MAX_BYTES = 32 * 1024 * 1024;
+
+/**
+ * A text file, a page at a time: ``offset`` is the first line (from 1), ``limit`` how many lines at most. A page
+ * stops at the tool output limit, at a line end, and says where to go on; a whole file that fits comes as it is.
+ * Never kept in a file by boundOutput: reading that file would make another.
+ */
 async function readFile(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  const r = await op(ctx, "file.read", { path: String(args.path ?? ""), maxBytes: 5_000_000 }, 60_000);
+  const offset = args.offset === undefined || args.offset === null ? 1 : Number(args.offset);
+  const max = args.limit === undefined || args.limit === null ? Number.POSITIVE_INFINITY : Number(args.limit);
+  if (!Number.isInteger(offset) || offset < 1) throw new BadRequest("offset is a line number, from 1");
+  if (max !== Number.POSITIVE_INFINITY && (!Number.isInteger(max) || max < 1))
+    throw new BadRequest("limit is a number of lines, at least 1");
+  const r = await op(ctx, "file.read", { path: String(args.path ?? ""), maxBytes: READ_FILE_MAX_BYTES }, 60_000);
   const data = Buffer.from(r.contentBase64, "base64");
   const text = data.toString("utf8");
   if (text.includes("�") && data.includes(0))
     return { content: `binary file (${data.length} bytes); use run_command to inspect it` };
-  return { content: clip(text, Math.min(Number(args.max_chars ?? settings().toolOutputLimit), 100_000)) };
+  const budget = settings().toolOutputLimit;
+  if (offset === 1 && max === Number.POSITIVE_INFINITY && text.length <= budget) return { content: text };
+  const lines = text.split("\n");
+  if (text.endsWith("\n")) lines.pop();
+  const total = lines.length;
+  if (offset > total) return { content: `${r.path} has ${total} lines; there is nothing from line ${offset} on.` };
+  const page: string[] = [];
+  let used = 0;
+  let cut = "";
+  for (let i = offset - 1; i < total && page.length < max; i++) {
+    const line = lines[i];
+    if (used + line.length + 1 > budget) {
+      // A single line longer than the whole limit: its start, and how to read the rest.
+      if (!page.length) {
+        page.push(line.slice(0, budget));
+        cut = ` Line ${i + 1} has ${line.length} characters; only its first ${budget} are shown (read the rest with run_command, e.g. cut -c${budget + 1}- or fold).`;
+      }
+      break;
+    }
+    page.push(line);
+    used += line.length + 1;
+  }
+  const last = offset + page.length - 1;
+  const more = last < total ? ` To go on, call read_file with offset=${last + 1}.` : "";
+  return { content: `[${r.path}: lines ${offset}-${last} of ${total}.${more}${cut}]\n${page.join("\n")}` };
 }
 
 async function writeFile(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -235,11 +273,15 @@ async function writeFile(ctx: ToolContext, args: Record<string, any>): Promise<T
 }
 
 async function listDirectory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  const entries: any[] = await op(ctx, "file.list", { path: String(args.path || ".") }, 30_000);
+  const r = await op(ctx, "file.list", { path: String(args.path || ".") }, 30_000);
+  const entries: any[] = r.entries ?? [];
   const lines = entries.map(
     (e) => `${e.type === "dir" ? "d" : "-"} ${String(e.size).padStart(10)} ${e.mtime.slice(0, 16)} ${e.name}`,
   );
-  return { content: clip(lines.join("\n") || "(empty)", settings().toolOutputLimit) };
+  // The runner lists at most 5000 entries of one directory.
+  if (r.truncated)
+    lines.push(`(only the first ${entries.length} entries; use run_command with ls or find for the rest)`);
+  return { content: await boundOutput(ctx, "list_directory", lines.join("\n") || "(empty)") };
 }
 
 async function moveFile(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -366,13 +408,11 @@ async function browserOpen(ctx: ToolContext, args: Record<string, any>): Promise
 
 async function browserSnapshot(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const r = await op(ctx, "browser.snapshot", { sessionId: String(args.session ?? "") }, 60_000);
-  const elements = (r.elements ?? []).slice(0, 200).map((e: any) => `[${e.ref}] ${e.role}: ${e.name}`);
-  return {
-    content: clip(
-      `${browserInfo(r)}\n\n${r.text}\n\nInteractive elements:\n${elements.join("\n")}`,
-      settings().toolOutputLimit,
-    ),
-  };
+  // Every element the runner gave a ref; it stops tagging at its own cap and says so.
+  const elements = (r.elements ?? []).map((e: any) => `[${e.ref}] ${e.role}: ${e.name}`);
+  if (r.moreElements) elements.push("(more interactive elements have no ref: use a selector or their visible text)");
+  const text = `${browserInfo(r)}\n\n${r.text}\n\nInteractive elements:\n${elements.join("\n")}`;
+  return { content: await boundOutput(ctx, "browser_snapshot", text) };
 }
 
 const target = (args: Record<string, any>) => ({
@@ -432,7 +472,7 @@ function packageLines(r: PackagesResult): string[] {
   const lines = Object.entries(r.installed).map(([p, on]) =>
     r.refused[p] ? `${p}: not removed (${r.refused[p]})` : `${p}: ${on ? "installed" : "not installed"}`,
   );
-  if (!r.ok) lines.push(`apt failed:\n${clip(r.output, 4000)}`);
+  if (!r.ok) lines.push(`apt failed:\n${r.output}`);
   return lines;
 }
 
@@ -452,7 +492,7 @@ async function installPackages(ctx: ToolContext, args: Record<string, any>): Pro
         "only for this job, leave the list as it is.",
     );
   }
-  return { content: lines.join("\n") };
+  return { content: await boundOutput(ctx, "install_packages", lines.join("\n")) };
 }
 
 async function uninstallPackages(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -469,7 +509,7 @@ async function uninstallPackages(ctx: ToolContext, args: Record<string, any>): P
         "computer starts; remove them with edit_software_list if they should not come back.",
     );
   }
-  return { content: lines.join("\n") };
+  return { content: await boundOutput(ctx, "uninstall_packages", lines.join("\n")) };
 }
 
 async function showSoftwareList(ctx: ToolContext): Promise<ToolResult> {
@@ -635,9 +675,8 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
       .from(messages)
       .where(and(...conds))
   )[0].n;
-  return {
-    content: `${Number(total)} matching message(s) in this topic, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`,
-  };
+  const text = `${Number(total)} matching message(s) in this topic, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`;
+  return { content: await boundOutput(ctx, "topic_history", text) };
 }
 
 async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -979,7 +1018,8 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
         .map(([r]) => r)
     : rows.sort((a, b) => b[1].createdAt.getTime() - a[1].createdAt.getTime());
   const hits = ranked.slice(0, 8);
-  return { content: hits.map(([src, m]) => memoryLine(m, src)).join("\n") || "nothing relevant remembered" };
+  const text = hits.map(([src, m]) => memoryLine(m, src)).join("\n") || "nothing relevant remembered";
+  return { content: await boundOutput(ctx, "recall", text) };
 }
 
 async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -994,17 +1034,21 @@ async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): 
       limit: Math.min(Number(args.limit ?? 20), 50),
     });
     return {
-      content: JSON.stringify({
-        items: events.map((e) => ({
-          id: e.id,
-          trigger_id: e.triggerId,
-          name: e.triggerName,
-          status: e.status,
-          error: e.error,
-          received_at: e.createdAt,
-        })),
-        next_cursor: events.at(-1)?.id ?? null,
-      }),
+      content: await boundOutput(
+        ctx,
+        "read_webhook_history",
+        JSON.stringify({
+          items: events.map((e) => ({
+            id: e.id,
+            trigger_id: e.triggerId,
+            name: e.triggerName,
+            status: e.status,
+            error: e.error,
+            received_at: e.createdAt,
+          })),
+          next_cursor: events.at(-1)?.id ?? null,
+        }),
+      ),
     };
   }
   const event = await getTriggerEvent(db, ctx.topicId, String(args.id));
@@ -1015,18 +1059,22 @@ async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): 
     throw new BadRequest("offset must be nonnegative; limit must be 1..16000 characters");
   const raw = Buffer.from(event.request.body_base64, "base64").toString("utf8");
   return {
-    content: JSON.stringify({
-      id: event.id,
-      status: event.status,
-      received_at: event.createdAt,
-      method: event.request.method,
-      path: event.request.path,
-      query: event.request.query,
-      headers: event.request.headers,
-      raw_body: raw.slice(offset, offset + limit),
-      total_characters: raw.length,
-      next_offset: offset + limit < raw.length ? offset + limit : null,
-    }),
+    content: await boundOutput(
+      ctx,
+      "read_webhook_history",
+      JSON.stringify({
+        id: event.id,
+        status: event.status,
+        received_at: event.createdAt,
+        method: event.request.method,
+        path: event.request.path,
+        query: event.request.query,
+        headers: event.request.headers,
+        raw_body: raw.slice(offset, offset + limit),
+        total_characters: raw.length,
+        next_offset: offset + limit < raw.length ? offset + limit : null,
+      }),
+    ),
   };
 }
 
@@ -1074,8 +1122,6 @@ async function updateMyDescription(ctx: ToolContext, args: Record<string, any>):
 
 // --- witden's configuration (system administrators) -----------------------------------------------------
 
-const CONFIG_RESULT_LIMIT = 30_000;
-
 /** One call to witden's own API, run by the API process as the person who asked (services/config-access.ts). */
 async function configCall(ctx: ToolContext, method: string, path: string, body?: unknown): Promise<ToolResult> {
   let res: { status: number; body: unknown };
@@ -1090,7 +1136,7 @@ async function configCall(ctx: ToolContext, method: string, path: string, body?:
     throw err;
   }
   const text = typeof res.body === "string" ? res.body : JSON.stringify(res.body);
-  return { content: clip(`HTTP ${res.status}\n${text}`, CONFIG_RESULT_LIMIT) };
+  return { content: await boundOutput(ctx, "witden API", `HTTP ${res.status}\n${text}`) };
 }
 
 async function readConfig(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -1168,8 +1214,15 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "read_file",
       "files",
-      "Read a text file from your computer.",
-      obj({ path: str, max_chars: int }, ["path"]),
+      "Read a text file from your computer. A file longer than the output limit comes a page at a time: offset is the first line to read (from 1), limit the most lines to return; each page says where the next one starts.",
+      obj(
+        {
+          path: str,
+          offset: { type: "integer", description: "first line, from 1 (default 1)" },
+          limit: { type: "integer", description: "most lines to return (default: as many as fit)" },
+        },
+        ["path"],
+      ),
       readFile,
     ),
     spec(
@@ -1461,7 +1514,9 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       async (ctx, args) => {
         const db = ctx.db();
         const { task } = await load(ctx, db);
-        return { content: await linkedTopicStatus(db, task, args.topic_id) };
+        return {
+          content: await boundOutput(ctx, "linked_topic_status", await linkedTopicStatus(db, task, args.topic_id)),
+        };
       },
     ),
     spec(
@@ -1570,14 +1625,17 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ),
       async (ctx, args) => {
         // Filter preview runs outside transactions; it never mutates configuration.
+        let out: unknown;
         if (args.action === "test") {
           const { task } = await load(ctx, ctx.db());
-          return { content: JSON.stringify(await manageAutomation(ctx.db(), task, args)) };
-        }
-        return transaction(async (db) => {
-          const { task } = await load(ctx, db);
-          return { content: JSON.stringify(await manageAutomation(db, task, args)) };
-        });
+          out = await manageAutomation(ctx.db(), task, args);
+        } else
+          out = await transaction(async (db) => {
+            const { task } = await load(ctx, db);
+            return manageAutomation(db, task, args);
+          });
+        // Bounded outside the transaction: keeping the output goes through the gateway.
+        return { content: await boundOutput(ctx, "manage_automation", JSON.stringify(out)) };
       },
     ),
     ...ALL_FEISHU_TOOLS,

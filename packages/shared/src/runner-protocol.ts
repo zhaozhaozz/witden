@@ -350,10 +350,12 @@ export interface BrowserSessionInfo {
   title: string;
 }
 export interface BrowserSnapshotResult extends BrowserSessionInfo {
-  /** Visible text, truncated. */
+  /** Visible text (cut only past a guard far above any real page). */
   text: string;
   /** Interactive elements with stable refs usable in click/type for this snapshot. */
   elements: { ref: string; role: string; name: string }[];
+  /** More visible interactive elements than the runner gives refs to. */
+  moreElements?: boolean;
 }
 export interface BrowserTargetParams {
   sessionId: string;

@@ -18,8 +18,13 @@ const MODES = ["desktop", "background"] as const;
 const SESSION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const REF = /^e\d{1,6}$/;
 const REF_ATTR = "data-witden-ref";
-const MAX_TEXT = 8000;
-const MAX_ELEMENTS = 300;
+/**
+ * The server bounds what the model reads (and keeps the whole snapshot in a file), so a snapshot is not cut here:
+ * the text only past a guard far above any real page (the connection's message limit), and refs are given to the
+ * first MAX_ELEMENTS interactive elements, the one cap on elements.
+ */
+const MAX_TEXT = 2_000_000;
+const MAX_ELEMENTS = 1000;
 const BLANK_URLS = new Set(["about:blank", "chrome://newtab/", "chrome://new-tab-page/"]);
 
 /**
@@ -79,16 +84,20 @@ const SNAPSHOT_SCRIPT = `((opts) => {
   };
   const elements = [];
   let n = 0;
+  let more = false;
   for (const el of document.querySelectorAll(selector)) {
-    if (elements.length >= opts.maxElements) break;
     if (!visible(el) || el.closest("[aria-hidden=true]")) continue;
+    if (elements.length >= opts.maxElements) {
+      more = true;
+      break;
+    }
     const ref = "e" + ++n;
     el.setAttribute(ATTR, ref);
     elements.push({ ref, role: el.getAttribute("role") || implicitRole(el), name: nameOf(el) });
   }
   const full = (document.body && document.body.innerText) || "";
   const text = full.length > opts.maxText ? full.slice(0, opts.maxText) + "\\n...[text truncated]" : full;
-  return { text, elements };
+  return { text, elements, moreElements: more };
 })`;
 
 interface Session {
@@ -393,8 +402,8 @@ export class Browsers {
     const session = this.session(params);
     const data = (await session.page.evaluate(
       `${SNAPSHOT_SCRIPT}(${JSON.stringify({ maxText: MAX_TEXT, maxElements: MAX_ELEMENTS })})`,
-    )) as Pick<BrowserSnapshotResult, "text" | "elements">;
-    return { ...(await this.info(session)), text: data.text, elements: data.elements };
+    )) as Pick<BrowserSnapshotResult, "text" | "elements" | "moreElements">;
+    return { ...(await this.info(session)), text: data.text, elements: data.elements, moreElements: data.moreElements };
   }
 
   async click(params: Record<string, unknown>, ctx: OpContext): Promise<BrowserSessionInfo> {

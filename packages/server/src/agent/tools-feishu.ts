@@ -4,7 +4,6 @@
  * product and mode for at least one app, and ``app`` picks which when there are several.
  */
 import { and, eq, ne } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
   connections,
@@ -30,6 +29,7 @@ import {
 import { explainFeishuError, FEISHU_PRODUCTS, type FeishuMode, feishuApi } from "../integrations/feishu-tools.js";
 import { threadIn } from "../integrations/outbound.js";
 import { connectionFor, grantedApps, parseGrant } from "../integrations/platform-tools.js";
+import { boundOutput } from "./tool-output.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
 const str = { type: "string" };
@@ -42,11 +42,6 @@ const timeArg = (what: string) => ({
   type: "string",
   description: `${what}, ISO 8601 with offset, e.g. 2026-10-20T10:00:00+08:00`,
 });
-
-function clip(text: string): string {
-  const limit = settings().toolOutputLimit;
-  return text.length <= limit ? text : `${text.slice(0, limit)}\n...[truncated]`;
-}
 
 async function envelopeTools(db: Db, taskId: string): Promise<string[]> {
   const [task] = await db.select({ envelope: tasks.envelope }).from(tasks).where(eq(tasks.id, taskId)).limit(1);
@@ -91,7 +86,7 @@ function feishuTool(
       const conn = await connectionFor(db, await envelopeTools(db, ctx.taskId), "feishu", product, mode, args.app);
       try {
         const out = await run(conn, args, { db, taskId: ctx.taskId });
-        return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
+        return { content: await boundOutput(ctx, name, typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
       } catch (err) {
         if (err instanceof BadRequest) throw err;
         return { content: `error: ${explainFeishuError(err as Error)}` };

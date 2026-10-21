@@ -4,13 +4,13 @@
  * several are open.
  */
 import { eq } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { type Connection, connections, tasks } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { GithubAdapter } from "../integrations/github.js";
 import { explainGithubError, GITHUB_PRODUCTS, githubClient, repoName } from "../integrations/github-tools.js";
 import { connectionFor, grantedApps, parseGrant, type ToolMode } from "../integrations/platform-tools.js";
+import { boundOutput } from "./tool-output.js";
 import type { ToolContext, ToolResult, ToolSpec } from "./tools.js";
 
 const str = { type: "string" };
@@ -22,10 +22,6 @@ const appArg = {
   description: "GitHub connection id to use; needed only when several are open to you (see github_apps)",
 };
 const repoArg = { type: "string", description: "owner/repo" };
-
-function clip(text: string, limit = settings().toolOutputLimit): string {
-  return text.length <= limit ? text : `${text.slice(0, limit)}\n...[truncated]`;
-}
 
 async function envelopeTools(db: Db, taskId: string): Promise<string[]> {
   const [task] = await db.select({ envelope: tasks.envelope }).from(tasks).where(eq(tasks.id, taskId)).limit(1);
@@ -69,7 +65,7 @@ function githubTool(
       }
       try {
         const out = await run(conn, repo, args);
-        return { content: clip(typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
+        return { content: await boundOutput(ctx, name, typeof out === "string" ? out : JSON.stringify(out, null, 1)) };
       } catch (err) {
         if (err instanceof BadRequest) throw err;
         return { content: `error: ${explainGithubError(err as Error)}` };
@@ -136,7 +132,7 @@ export const GITHUB_TOOLS: ToolSpec[] = [
       const conn = await connOf(ctx, "repo", "read", args.app);
       try {
         const repos = await new GithubAdapter().repositories(conn);
-        return { content: clip(JSON.stringify(repos, null, 1)) };
+        return { content: await boundOutput(ctx, "github_repos", JSON.stringify(repos, null, 1)) };
       } catch (err) {
         return { content: `error: ${explainGithubError(err as Error)}` };
       }
@@ -345,7 +341,7 @@ export const GITHUB_TOOLS: ToolSpec[] = [
           status: f.status,
           additions: f.additions,
           deletions: f.deletions,
-          patch: f.patch ? clip(String(f.patch), 2000) : undefined,
+          patch: f.patch ?? undefined,
         })),
       };
     },

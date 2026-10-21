@@ -13,7 +13,6 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { GatewayClient, RecoverResult } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
-import { settings } from "../config.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
@@ -56,6 +55,7 @@ import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { consumeTaskInputs, hasTaskInputs, lockTask } from "./task-continuation.js";
 import { handoverDue } from "./task-handoff.js";
+import { truncateOutput } from "./tool-output.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
 import { withTopicRules } from "./topic-messaging.js";
 import { appendStep, isConversation, loadTranscript } from "./transcript.js";
@@ -801,7 +801,7 @@ const UNCERTAIN =
 /** What the model is told about an interrupted operation, from the runner's journal. */
 function describeRecovered(outcome: RecoverResult, why: string): string {
   if (outcome.state === "completed")
-    return `recovered result (${why}; the computer had finished it): ${JSON.stringify(outcome.result).slice(0, settings().toolOutputLimit)}`;
+    return `recovered result (${why}; the computer had finished it): ${truncateOutput("recovered", JSON.stringify(outcome.result), "The rest was not kept.")}`;
   if (outcome.state === "failed") return `error: ${outcome.error?.message ?? "the operation failed"}`;
   if (outcome.state === "running") return `${UNCERTAIN} The operation is still running in the computer (${why}).`;
   return `${UNCERTAIN} (${why})`;
