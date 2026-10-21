@@ -15,11 +15,12 @@ import type { ChatMessage } from "./llm.js";
 
 const TRANSCRIPT_KINDS = ["user", "assistant", "tool"];
 
-function preview(payload: Record<string, any>): Record<string, any> {
+export function stepPreview(payload: Record<string, any>, full = false): Record<string, any> {
   const out = { ...payload };
   if (Array.isArray(out.content))
     out.content = out.content.map((p: any) => (p.type === "text" ? p : { type: "image" }));
-  else if (typeof out.content === "string" && out.content.length > 4000) out.content = `${out.content.slice(0, 4000)}…`;
+  else if (!full && typeof out.content === "string" && out.content.length > 4000)
+    out.content = `${out.content.slice(0, 4000)}…`;
   return out;
 }
 
@@ -49,9 +50,11 @@ export async function appendStep(db: Db, task: Task, kind: string, payload: Reco
   await publish(
     db,
     "task.step",
-    { task_id: task.id, seq, kind, payload: redactDeep(preview(payload)) },
+    { task_id: task.id, seq, kind, payload: redactDeep(stepPreview(payload)) },
     `task:${task.id}`,
   );
+  // Topic watchers fetch authorized details on demand; this invalidation never carries transcript content.
+  await publish(db, "task.progress", { task_id: task.id, seq }, `topic:${task.topicId}`);
   return seq;
 }
 
@@ -141,7 +144,7 @@ export async function taskLog(db: Db, task: Task, limit = 500) {
   return steps.map((s) => ({
     seq: s.seq,
     kind: s.kind,
-    payload: redactDeep(preview(s.payload)),
+    payload: redactDeep(stepPreview(s.payload)),
     created_at: s.createdAt.toISOString(),
   }));
 }

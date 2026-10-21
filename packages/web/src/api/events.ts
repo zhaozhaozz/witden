@@ -11,6 +11,7 @@ export type LiveEventType =
   | "task.status"
   | "task.step"
   | "task.live"
+  | "task.progress"
   | "instance.status"
   | "instance.operator"
   | "instance.runner"
@@ -28,6 +29,7 @@ const EVENT_TYPES: LiveEventType[] = [
   "task.status",
   "task.step",
   "task.live",
+  "task.progress",
   "instance.status",
   "instance.operator",
   "instance.runner",

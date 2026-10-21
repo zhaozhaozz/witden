@@ -165,7 +165,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
 
   const live = useLiveEvents({ topic_id: topicId }, (type, data) => {
     activityFeed.current?.(type, data);
-    if (type === "task.live") return;
+    if (type === "task.live" || type === "task.progress") return;
     if (type === "approval.changed") {
       reloadApprovals();
       bumpTasks();

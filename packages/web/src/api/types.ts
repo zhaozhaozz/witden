@@ -254,6 +254,20 @@ export interface TaskStep {
   kind: "system" | "user" | "assistant" | "tool" | "event";
   payload: Dict;
   created_at?: string;
+  /** Tool request on an earlier page, attached to a standalone result row. */
+  request?: { id: string; function?: { name?: string; arguments?: unknown } };
+}
+
+export interface TaskActivity {
+  id: string;
+  status: TaskStatus;
+  started_at: string;
+  finished_at: string | null;
+  rounds: number;
+  commands: number;
+  tokens: number;
+  steps: TaskStep[];
+  has_more: boolean;
 }
 
 export interface AuditEntry {

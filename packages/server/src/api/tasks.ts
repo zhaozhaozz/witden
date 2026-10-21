@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { canAllowForTaskRun } from "../agent/approval-scope.js";
 import * as approvalSvc from "../agent/approvals.js";
+import { taskProgress, taskStepDetail } from "../agent/progress.js";
 import { listTaskIterations } from "../agent/task-continuation.js";
 import * as admin from "../agent/tasks-admin.js";
 import { taskLog } from "../agent/transcript.js";
@@ -144,6 +145,36 @@ export async function taskRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) =>
       taskOut(db, await load(db, user, params(req).id), { detail: true, viewer: user }),
     ),
+  );
+
+  app.get(
+    "/api/tasks/:id/activity",
+    authed(async ({ db, user, req }) => {
+      const task = await load(db, user, params(req).id);
+      if (!(await contentVisible(db, user, task))) throw new Forbidden("you cannot view this task's execution details");
+      const q = query(req);
+      const cursor = (key: "after" | "before") => {
+        if (q[key] === undefined) return undefined;
+        const n = Number(q[key]);
+        if (!Number.isSafeInteger(n) || n < 0) throw new BadRequest(`${key} must be a non-negative integer`);
+        return n;
+      };
+      if (q.after !== undefined && q.before !== undefined) throw new BadRequest("use either after or before");
+      return taskProgress(db, task, { after: cursor("after"), before: cursor("before"), steps: q.steps === "true" });
+    }),
+  );
+
+  app.get(
+    "/api/tasks/:id/log/:seq",
+    authed(async ({ db, user, req }) => {
+      const task = await load(db, user, params(req).id);
+      if (!(await contentVisible(db, user, task))) throw new Forbidden("you cannot view this task's execution details");
+      const seq = Number(params(req).seq);
+      if (!Number.isSafeInteger(seq) || seq < 1) throw new BadRequest("seq must be a positive integer");
+      const step = await taskStepDetail(db, task, seq);
+      if (!step) throw new NotFound("step not found");
+      return step;
+    }),
   );
 
   app.get(

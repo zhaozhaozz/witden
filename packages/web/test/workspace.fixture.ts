@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { Approval, Memory } from "../src/api/types";
+import type { Approval, Memory, TaskStep } from "../src/api/types";
 
 const now = "2026-10-20T12:00:00Z";
 const computer = { id: "computer-1", name: "workspace", status: "running", color: "#527568" };
@@ -59,6 +59,13 @@ export async function workspace(
   });
   const state = {
     runStatus: "running",
+    activityDelay: 0,
+    activityFailure: false,
+    activityRequests: [] as string[],
+    detailRequests: [] as number[],
+    steps: [] as TaskStep[],
+    fullSteps: new Map<number, TaskStep>(),
+    stats: { rounds: 0, commands: 0, tokens: 0, started_at: new Date(Date.now() - 65000).toISOString() },
     runDelay: 0,
     approvalDelay: 0,
     approvals: [] as Approval[],
@@ -265,6 +272,29 @@ export async function workspace(
                   requester: user,
                 },
               ];
+      } else if (path === "/api/tasks/task-1/activity") {
+        state.activityRequests.push(url.search);
+        if (state.activityFailure)
+          return route.fulfill({ status: 503, json: { error: { message: "temporarily unavailable" } } });
+        const after = url.searchParams.get("after");
+        const before = url.searchParams.get("before");
+        const withSteps = url.searchParams.get("steps") === "true";
+        const rows = state.steps.filter(
+          (s) => (!after || s.seq > Number(after)) && (!before || s.seq < Number(before)),
+        );
+        json = {
+          id: "task-1",
+          status: state.runStatus,
+          ...state.stats,
+          finished_at: state.runStatus === "completed" ? new Date().toISOString() : null,
+          steps: withSteps ? (after ? rows.slice(0, 100) : rows.slice(-100)) : [],
+          has_more: withSteps && rows.length > 100,
+        };
+        await new Promise((r) => setTimeout(r, state.activityDelay));
+      } else if (path.startsWith("/api/tasks/task-1/log/")) {
+        const seq = Number(path.split("/").at(-1));
+        state.detailRequests.push(seq);
+        json = state.fullSteps.get(seq) ?? state.steps.find((s) => s.seq === seq);
       } else if (path === "/api/approvals") {
         await new Promise((r) => setTimeout(r, state.approvalDelay));
         json = state.approvals.filter((a) => url.searchParams.get("status") === "all" || a.status === "pending");
