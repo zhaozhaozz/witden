@@ -94,7 +94,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 控制台不对公网开放。Slack 默认使用 Socket Mode、飞书默认使用长连接，都由 witden 主动连到平台，不需要公网地址；GitHub，以及选择“事件地址（HTTP）”的 Slack、飞书接入，需要把事件推送到一个公网地址，为此 witden 有一个单独的**事件端口**（`WITDEN_WEBHOOK_PORT`，默认 8325）。它只提供：
 
 - 各平台的事件接口 `/api/integrations/<平台>/<接入>/events`，每个接口都校验平台的签名或令牌；
-- Webhook 来源的 `POST /api/hook-sources/<来源编号>`（话题的 Webhook 触发器都经来源接收），使用来源的 Bearer 密钥或 `X-Webhook-Token` 认证，单次正文最多 1 MiB；旧版本触发器的地址 `POST /api/hooks/<编号>` 继续可用，等同于同一编号的来源。管理来源和触发器、查询历史只在控制台端口提供；
+- Webhook 来源的 `POST /api/hook-sources/<来源编号>`（话题的 Webhook 触发器都经来源接收），使用来源的 Bearer 密钥、`X-Webhook-Token` 或 Standard Webhooks 签名认证，单次正文最多 1 MiB；旧版本触发器的地址 `POST /api/hooks/<编号>` 继续可用，等同于同一编号的来源。管理来源和触发器、查询历史只在控制台端口提供；
 - 公网地址的检查接口 `/api/integrations/probe`；
 - Slack 安装回调 `/api/integrations/slack/oauth`：把一个 Slack 应用安装到其他工作区时，Slack 把安装人的浏览器带到这里，只完成控制台中发起的安装（见[接入 Slack](slack.md#10-slack-应用与多个工作区)）；
 - 角色头像 `/api/avatars/<文件>`：以角色身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。

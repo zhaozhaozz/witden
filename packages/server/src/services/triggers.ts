@@ -1,14 +1,12 @@
 /** Topic triggers: durable receipts, bounded filtering, and atomic delivery into a role's conversation. */
 
-import { timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { enqueue } from "../agent/conversation.js";
 import { authorize, saveMessage } from "../agent/dispatch.js";
 import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { type TopicTrigger, type TriggerEvent, topicTriggers, triggerEvents, users } from "../db/schema.js";
-import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
-import { hashToken } from "../security/crypto.js";
+import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { publish } from "./events.js";
 import { getRole, getTopic, participant } from "./topics.js";
@@ -37,14 +35,6 @@ export async function validateTriggerRole(db: Db, topicId: string, roleId: strin
   if (role?.status !== "active" || !(await participant(db, topicId, "role", roleId)))
     throw new BadRequest("请选择已加入这个话题的启用角色");
   if (role.systemAdmin) throw new BadRequest("系统管理员角色只接受人的请求，不能作为自动触发的处理角色");
-}
-
-/** Constant-time check of a webhook source's secret; unknown sources fail the same way as wrong secrets. */
-export function verifySourceToken(source: { tokenHash: string } | undefined, token: string) {
-  const expected = Buffer.from(source?.tokenHash ?? "0".repeat(64), "hex");
-  const actual = Buffer.from(hashToken(token), "hex");
-  if (!token || expected.length !== actual.length || !timingSafeEqual(expected, actual) || !source)
-    throw new Unauthorized("webhook 凭据无效");
 }
 
 function snapshot(trigger: TopicTrigger) {

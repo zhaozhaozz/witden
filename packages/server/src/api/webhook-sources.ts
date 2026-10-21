@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
@@ -6,13 +7,20 @@ import { newId } from "../db/ids.js";
 import { roles, topicTriggers, webhookReceipts, webhookSources } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { runtime } from "../runtime.js";
-import { hashToken, newToken, secretBox } from "../security/crypto.js";
+import { hashToken, secretBox } from "../security/crypto.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { redactWebhookHeaders } from "../services/collaboration-policy.js";
 import { webhookBase } from "../services/public-url.js";
-import { MAX_WEBHOOK_BYTES, processTriggerEvents, verifySourceToken } from "../services/triggers.js";
-import { acceptSourceWebhook, availableSources, sourceEventPage, webhookSource } from "../services/webhook-sources.js";
+import { MAX_WEBHOOK_BYTES, processTriggerEvents } from "../services/triggers.js";
+import {
+  acceptSourceWebhook,
+  availableSources,
+  precheckSourceCredentials,
+  type SourceCredentials,
+  sourceEventPage,
+  webhookSource,
+} from "../services/webhook-sources.js";
 import { authed, body, type Ctx, params, query, row } from "./http.js";
 
 const fields = z
@@ -32,11 +40,15 @@ async function validRoles(ctx: Ctx, ids: string[] = []) {
   }
 }
 /**
- * Senders put it in `Authorization: Bearer` or `X-Webhook-Token`. The hash authenticates them; the encrypted
- * copy is for console accounts to copy it from the source's card (an exception to "secrets are never read").
+ * Senders put it in `Authorization: Bearer` or `X-Webhook-Token`, checked against the hash, or sign with it
+ * (Standard Webhooks), which needs the encrypted copy. That copy also lets console accounts copy it from the
+ * source's card (an exception to "secrets are never read").
+ *
+ * Standard Webhooks senders base64-decode what follows `whsec_` and reject anything else, so it is standard
+ * base64, not base64url. 33 bytes encode without `=` padding, which strict and unpadded decoders both accept.
  */
 function newSecret() {
-  const secret = newToken("whsec_");
+  const secret = `whsec_${randomBytes(33).toString("base64")}`;
   return { secret, tokenHash: hashToken(secret), secretEncrypted: secretBox().encrypt(secret) };
 }
 async function sourceOut(ctx: Ctx, source: typeof webhookSources.$inferSelect) {
@@ -204,10 +216,21 @@ export async function webhookSourceRoutes(app: FastifyInstance) {
   );
 }
 
-const token = (req: FastifyRequest) => {
-  const auth = req.headers.authorization ?? "";
-  return /^Bearer /i.test(auth) ? auth.slice(7).trim() : String(req.headers["x-webhook-token"] ?? "");
-};
+/** Svix sends the same Standard Webhooks signature under its older `svix-*` header names. */
+function credentials(req: FastifyRequest): SourceCredentials {
+  const header = (name: string) => String(req.headers[name] ?? "");
+  const auth = header("authorization");
+  const prefix = req.headers["webhook-signature"] ? "webhook" : "svix";
+  const signed = {
+    id: header(`${prefix}-id`),
+    timestamp: header(`${prefix}-timestamp`),
+    signature: header(`${prefix}-signature`),
+  };
+  return {
+    token: /^Bearer /i.test(auth) ? auth.slice(7).trim() : header("x-webhook-token"),
+    signed: signed.id && signed.timestamp && signed.signature ? signed : undefined,
+  };
+}
 
 /**
  * Registered inside the raw-parser webhook scope. `/api/hooks/:id` is the address triggers with their own
@@ -224,14 +247,15 @@ export async function sharedWebhookRoutes(app: FastifyInstance) {
             .select()
             .from(webhookSources)
             .where(and(eq(webhookSources.id, params(req).id), isNull(webhookSources.deletedAt)));
-          verifySourceToken(source, token(req));
+          precheckSourceCredentials(source, credentials(req));
         },
       },
       async (req, reply) => {
         const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const auth = credentials(req);
         const accepted = await acceptSourceWebhook(
           params(req).id,
-          token(req),
+          auth,
           {
             method: req.method,
             path: req.url.split("?")[0],
@@ -239,7 +263,10 @@ export async function sharedWebhookRoutes(app: FastifyInstance) {
             headers: redactWebhookHeaders(req.headers),
             body_base64: raw.toString("base64"),
           },
-          typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null,
+          // A Standard Webhooks message id stays the same when the sender retries it, and the signature covers
+          // it; an unsigned Idempotency-Key would let a captured signed request be replayed under a new key.
+          auth.signed?.id ??
+            (typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"] : null),
         );
         void runtime().background("shared_webhook.accepted", () => processTriggerEvents());
         // How many triggers take it stays inside: the sender learns only that it was received.

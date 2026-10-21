@@ -95,8 +95,8 @@ export function WebhookSourcesPanel() {
                       </div>
                       {source.id === created ? (
                         <p className="notice" role="status">
-                          来源已添加。把地址和密钥配置到发送方，密钥放在 Authorization: Bearer 或 X-Webhook-Token
-                          请求头中。
+                          来源已添加。把地址和密钥配置到发送方：密钥放在 Authorization: Bearer 或 X-Webhook-Token
+                          请求头中，或由支持 Standard Webhooks 的发送方用它签名。
                         </p>
                       ) : null}
                       <dl className="kv kv-compact">
@@ -222,6 +222,10 @@ export function WebhookSourcesPanel() {
   );
 }
 
+// Secrets made before Standard Webhooks signing was accepted are base64url, which signing senders reject.
+const legacySecret = (secret: string) => !/^whsec_[A-Za-z0-9+/]+=*$/.test(secret);
+const LEGACY_HINT = "这是旧格式密钥，支持 Standard Webhooks 的发送方会提示 base64 无效；需要时请重新生成。";
+
 /**
  * The secret is fetched only when someone copies or shows it (each read is audited). Regenerating invalidates
  * the old one at once.
@@ -246,6 +250,7 @@ function SourceSecret({
           <button type="button" className="btn btn-xs" onClick={() => onSecret(null)}>
             隐藏
           </button>
+          {legacySecret(secret) ? <span className="small muted">{LEGACY_HINT}</span> : null}
         </>
       ) : source.secret_readable ? (
         <>
@@ -257,7 +262,9 @@ function SourceSecret({
             onClick={async () => {
               const r = await read();
               if (!r) return;
-              if (await copyToClipboard(r.secret)) toast("密钥已复制", "ok");
+              const legacy = legacySecret(r.secret);
+              if (await copyToClipboard(r.secret))
+                toast(legacy ? `密钥已复制。${LEGACY_HINT}` : "密钥已复制", legacy ? "info" : "ok");
               else {
                 // The browser refused the write after the request: show it, and its copy button takes over.
                 onSecret(r.secret);
@@ -281,7 +288,7 @@ function SourceSecret({
         </>
       ) : (
         <span className="small muted">
-          这个来源的密钥只保存了哈希，无法显示；发送方已保存的密钥仍然有效，需要复制时请重新生成。
+          这个来源的密钥只保存了哈希，无法显示，也不能校验签名；发送方已保存的密钥仍可在请求头中使用，需要复制或签名时请重新生成。
         </span>
       )}
       <button

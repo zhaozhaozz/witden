@@ -236,8 +236,8 @@ describe("linked topics, shared sources and task iterations", () => {
       });
       expect(r.status, r.raw).toBe(200);
     }
-    const a = await acceptSourceWebhook(source.id, source.secret, rawRequest, "event-1");
-    const b = await acceptSourceWebhook(source.id, source.secret, rawRequest, "event-1");
+    const a = await acceptSourceWebhook(source.id, { token: source.secret }, rawRequest, "event-1");
+    const b = await acceptSourceWebhook(source.id, { token: source.secret }, rawRequest, "event-1");
     expect(b).toMatchObject({ id: a.id, duplicate: true });
     await processTriggerEvents();
     const receipts = await db().select().from(webhookReceipts);
@@ -254,7 +254,7 @@ describe("linked topics, shared sources and task iterations", () => {
       token: w.alice,
       json: { name: "Rule", kind: "webhook", role_id: w.ids.dev, source_id: source.id },
     });
-    await acceptSourceWebhook(source.id, source.secret, rawRequest, "disabled");
+    await acceptSourceWebhook(source.id, { token: source.secret }, rawRequest, "disabled");
     await w.api("PATCH", `/api/webhook-sources/${source.id}`, { token: w.alice, json: { enabled: false } });
     await processTriggerEvents();
     const [event] = await db().select().from(triggerEvents);

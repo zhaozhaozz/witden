@@ -1,4 +1,5 @@
 /** Shared inbound sources. Acceptance, receipt dedupe and per-rule deliveries commit atomically. */
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { type Db, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
@@ -10,10 +11,63 @@ import {
   webhookReceipts,
   webhookSources,
 } from "../db/schema.js";
-import { BadRequest, NotFound } from "../errors.js";
+import { BadRequest, NotFound, Unauthorized } from "../errors.js";
+import { hashToken, secretBox } from "../security/crypto.js";
 import { redactWebhookHeaders } from "./collaboration-policy.js";
 import { publish } from "./events.js";
-import { verifySourceToken } from "./triggers.js";
+
+/**
+ * What a sender presents: the whole secret as a token (`Authorization: Bearer` / `X-Webhook-Token`), or a
+ * Standard Webhooks signature (`webhook-id`, `webhook-timestamp`, `webhook-signature`). One that verifies is
+ * enough, so a relay that keeps an upstream platform's signature can still add the token.
+ */
+export interface SourceCredentials {
+  token?: string;
+  signed?: { id: string; timestamp: string; signature: string };
+}
+type SourceSecrets = { tokenHash: string; secretEncrypted: string | null };
+
+// The Standard Webhooks reference libraries' replay window.
+const SIGNATURE_TOLERANCE_MS = 5 * 60_000;
+
+/** Constant-time; unknown sources fail the same way as wrong secrets. */
+function tokenMatches(source: SourceSecrets | undefined, token = "") {
+  const expected = Buffer.from(source?.tokenHash ?? "0".repeat(64), "hex");
+  const actual = Buffer.from(hashToken(token), "hex");
+  return expected.length === actual.length && timingSafeEqual(expected, actual) && !!token && !!source;
+}
+
+const freshTimestamp = (timestamp: string, now: number) =>
+  /^\d{1,12}$/.test(timestamp) && Math.abs(now - Number(timestamp) * 1000) <= SIGNATURE_TOLERANCE_MS;
+
+/** HMAC-SHA256 over `<id>.<timestamp>.<raw body>`; the header may list several `v1,<base64>` (key rotation). */
+function signatureMatches(source: SourceSecrets | undefined, signed: SourceCredentials["signed"], body: Buffer) {
+  if (!signed || !source?.secretEncrypted || !freshTimestamp(signed.timestamp, Date.now())) return false;
+  const secret = secretBox().decrypt(source.secretEncrypted);
+  // `whsec_` secrets carry the key as base64; anything else signs with its raw bytes, as the libraries do.
+  const key = secret.startsWith("whsec_") ? Buffer.from(secret.slice(6), "base64") : Buffer.from(secret);
+  const expected = createHmac("sha256", key).update(`${signed.id}.${signed.timestamp}.`).update(body).digest();
+  return signed.signature.split(" ").some((entry) => {
+    const actual = entry.startsWith("v1,") ? Buffer.from(entry.slice(3), "base64") : Buffer.alloc(0);
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  });
+}
+
+/**
+ * Before the body is read a signature can only be checked as far as its headers go: a source whose secret can
+ * sign, and a fresh timestamp. `acceptSourceWebhook` then checks the signature against the stored bytes.
+ */
+export function precheckSourceCredentials(source: SourceSecrets | undefined, credentials: SourceCredentials) {
+  if (tokenMatches(source, credentials.token)) return;
+  const { signed } = credentials;
+  if (signed && source?.secretEncrypted && freshTimestamp(signed.timestamp, Date.now())) return;
+  throw new Unauthorized("webhook 凭据无效");
+}
+
+function verifySourceCredentials(source: SourceSecrets | undefined, credentials: SourceCredentials, body: Buffer) {
+  if (tokenMatches(source, credentials.token) || signatureMatches(source, credentials.signed, body)) return;
+  throw new Unauthorized("webhook 凭据无效");
+}
 
 /**
  * A shared source's receipts hold the raw requests and their dedupe keys. Once no topic's history refers to
@@ -34,10 +88,20 @@ export async function webhookSource(db: Db, id: string) {
   return source;
 }
 
-export async function acceptSourceWebhook(id: string, token: string, request: TriggerRequest, eventKey: string | null) {
+export async function acceptSourceWebhook(
+  id: string,
+  credentials: SourceCredentials,
+  request: TriggerRequest,
+  eventKey: string | null,
+) {
   return transaction(async (db) => {
     const [source] = await db.select().from(webhookSources).where(eq(webhookSources.id, id)).for("update");
-    verifySourceToken(source?.deletedAt ? undefined : source, token);
+    // Signatures cover exactly the bytes that are stored.
+    verifySourceCredentials(
+      source?.deletedAt ? undefined : source,
+      credentials,
+      Buffer.from(request.body_base64, "base64"),
+    );
     if (!source.enabled) throw new BadRequest("webhook source is disabled");
     if (eventKey && eventKey.length > 200) throw new BadRequest("Idempotency-Key must be at most 200 characters");
     const clean = { ...request, headers: redactWebhookHeaders(request.headers) };
