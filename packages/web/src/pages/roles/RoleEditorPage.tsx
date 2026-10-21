@@ -235,7 +235,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   const save = async (opts: { stay?: boolean } = {}): Promise<boolean> => {
     if (!body) return false;
     if (!role) {
-      const out = await run(() => api.post<Role>("/api/roles", body), "角色已创建");
+      const out = await run(() => api.post<Role>("/api/roles", body), "AI 员工已创建");
       if (!out) return false;
       void dir.reload();
       if (!opts.stay) {
@@ -256,11 +256,11 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
         if (err.code === "confirmation_required") {
           const fields = ((err.detail.changes as string[]) ?? []).map(fieldLabel).join("、");
           const ok = await confirm({
-            title: "这个角色有进行中的工作",
+            title: "这位 AI 员工有进行中的工作",
             confirmLabel: "确认修改",
             body: (
               <>
-                <p>你修改了 {fields || "角色行为"}。进行中的任务会继续使用旧配置，新的工作使用新配置。</p>
+                <p>你修改了 {fields || "AI 员工的行为"}。进行中的任务会继续使用旧配置，新的工作使用新配置。</p>
                 {impact ? <ImpactView impact={impact} /> : null}
               </>
             ),
@@ -312,12 +312,12 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               {role.name} <Handle handle={role.handle} />
             </span>
           ) : (
-            "新建角色"
+            "新建 AI 员工"
           )
         }
         sub={
           <span className="head-meta">
-            <Link to="/roles">角色</Link>
+            <Link to="/roles">AI 员工</Link>
             {role ? (
               <>
                 <span>/</span>
@@ -344,7 +344,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   className="btn btn-sm"
                   disabled={busy}
                   onClick={async () => {
-                    const out = await run(() => api.post<Role>(`/api/roles/${role.id}/enable`), "角色已启用");
+                    const out = await run(() => api.post<Role>(`/api/roles/${role.id}/enable`), "AI 员工已启用");
                     if (out) reload();
                   }}
                 >
@@ -358,7 +358,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
       {role?.warnings?.length ? (
         <div className="callout callout-bad">
-          <strong>这个角色现在无法正常工作：</strong>
+          <strong>这位 AI 员工现在无法正常工作：</strong>
           <ul>
             {role.warnings.map((w) => (
               <li key={w}>{translateWarning(w)}</li>
@@ -404,13 +404,13 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   onChange={(url) => set("avatar_url", url)}
                 />
               </FieldGroup>
-              <FieldGroup label="颜色" hint="话题、任务、审批等处的角色徽章使用这个颜色">
+              <FieldGroup label="颜色" hint="话题、任务、审批等处的 AI 员工徽章使用这个颜色">
                 <ColorPicker value={draft.color} onChange={(c) => set("color", c)} />
                 <div className="badge-row">
                   <RoleBadge
                     role={{
                       id: role?.id ?? (draft.handle || "new-role"),
-                      name: draft.name || "角色名称",
+                      name: draft.name || "AI 员工名称",
                       handle: draft.handle || "handle",
                       color: draft.color,
                       avatar_url: draft.avatar_url || null,
@@ -419,25 +419,28 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 </div>
               </FieldGroup>
             </div>
-            <Field label="职责说明" hint="成员在邀请、私信时看到的介绍">
+            <Field
+              label="职责说明"
+              hint="它负责什么、可以找它做什么。成员在 AI 员工列表、邀请和私信时看到；同一话题中的其他 AI 员工和话题调度据此判断哪些工作交给它"
+            >
               <textarea rows={2} value={draft.description} onChange={(e) => set("description", e.target.value)} />
             </Field>
             {isAdmin ? (
               <div className="callout">
                 这是 witden
                 内置的系统管理员：始终存在，不能停用或复制，也不能另外添加。它只在控制台中工作，可以像管理员一样读取和修改
-                witden
-                的配置（角色、模型、虚拟电脑、通讯接入和知识；不包括账号），以提问人的身份操作并记入审计日志。它不处理
-                Slack、飞书、GitHub
-                的消息，其他角色也不能把工作交给它；任何密钥它都读不到也改不了。它不需要虚拟电脑，它的设置只能由人修改。
+                witden 的配置（AI
+                员工、模型、虚拟电脑、通讯接入和知识；不包括账号），以提问人的身份操作并记入审计日志。它不处理
+                Slack、飞书、GitHub 的消息，其他 AI
+                员工也不能把工作交给它；任何密钥它都读不到也改不了。它不需要虚拟电脑，它的设置只能由人修改。
               </div>
             ) : null}
           </Section>
 
-          <Section title="工作方式">
+          <Section title="人设">
             <Field
-              label="提示词"
-              hint="职责、工作规则、沟通方式与行为约束。角色在工作中积累、在任何地方都适用的内容记在右侧的「角色记忆」中。权限限制由系统执行，不依赖提示词。"
+              label="人设与工作方式"
+              hint="它的性格与语气、工作规则和行为约束，只有它自己在工作中读到；职责写在上面的「职责说明」中。在工作中积累、在任何地方都适用的内容记在右侧的「AI 员工记忆」中。权限限制由系统执行，不依赖这里的文字。"
             >
               <textarea
                 className="prompt"
@@ -455,7 +458,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                 label="模型"
                 hint={
                   selectedModel && "usable" in selectedModel && !selectedModel.usable
-                    ? "这个模型已停用或服务商密钥已撤销，角色暂时无法工作。"
+                    ? "这个模型已停用或服务商密钥已撤销，AI 员工暂时无法工作。"
                     : "按服务商分组；在「模型」页添加服务商和模型。"
                 }
               >
@@ -536,7 +539,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               hint={
                 isAdmin
                   ? "系统管理员不需要虚拟电脑；分配后，它也可以使用其中的工具。"
-                  : "角色执行任务时只能操作这台虚拟电脑；没有虚拟电脑时只能对话。"
+                  : "AI 员工执行任务时只能操作这台虚拟电脑；没有虚拟电脑时只能对话。"
               }
             >
               <select value={draft.instance_id} onChange={(e) => set("instance_id", e.target.value)}>
@@ -573,8 +576,10 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
           <Section title="权限">
             <p className="small muted perm-intro">
-              每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求；点左侧箭头可以逐个工具设置。新角色默认：虚拟电脑里的操作始终允许，自动化管理、平台记忆和修改职责说明需要询问，读取其他话题禁用。与同一话题中的其他角色协作（@、委托）不需要权限；在话题之外直接与其他
-              AI 员工对话，要在「协作」中逐个允许。
+              每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，AI
+              员工不能批准自己的请求；点左侧箭头可以逐个工具设置。新建的 AI
+              员工默认：虚拟电脑里的操作始终允许，自动化管理、记忆和修改职责说明需要询问，读取其他话题禁用。与同一话题中的其他
+              AI 员工协作（@、委托）不需要权限；在话题之外直接与其他 AI 员工对话，要在「协作」中逐个允许。
             </p>
             <Loaded res={toolGroups}>
               {() => (
@@ -614,7 +619,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                               <>
                                 <div className="perm-detail-label">可以主动对话的 AI 员工</div>
                                 <p className="small muted perm-section-note">
-                                  这个角色可以主动给选中的 AI
+                                  这位 AI 员工可以主动给选中的 AI
                                   员工发消息，对方的回复会回到它发消息的地方；只限这个方向，对方要主动找它需要在对方的设置中允许。双方只交换消息，看不到对方所在的话题和记录。
                                 </p>
                                 <MultiPick
@@ -645,7 +650,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                             content: (
                               <>
                                 <p className="small muted perm-section-note">
-                                  角色通过 witden
+                                  AI 员工通过 witden
                                   使用飞书的日历、文档、多维表格等，飞书应用的凭据只留在平台；只有这个应用在飞书中开通了对应权限才能用上。从飞书读到的内容视为该公司飞书内可见：发回这个公司的飞书会话和控制台不受限，写到别处（包括另一个公司的飞书）需要内容的所有者批准。
                                 </p>
                                 <ConnectionToolPermissions
@@ -670,7 +675,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                             content: (
                               <>
                                 <p className="small muted perm-section-note">
-                                  角色通过 witden 以接入的账号或 App 的身份读代码、处理 issue 和 pull request、查看
+                                  AI 员工通过 witden 以接入的账号或 App 的身份读代码、处理 issue 和 pull request、查看
                                   Actions，Token 和私钥只留在平台；能做的不超过这个账号在 GitHub
                                   上的权限。私有仓库的内容视为这个接入内可见；写到公开仓库的内容所有人都能看到，带有别人看不到的内容时需要内容的所有者批准。
                                 </p>
@@ -710,7 +715,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   onChange={(e) => set("max_tokens_per_task", e.target.value)}
                 />
               </Field>
-              <Field label="每日 token 上限" hint="这个角色一天的总用量；留空不限">
+              <Field label="每日 token 上限" hint="这位 AI 员工一天的总用量；留空不限">
                 <input
                   type="number"
                   min={1}
@@ -734,7 +739,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               className="btn btn-primary"
               disabled={busy || !dirty || !!formError || !draft.name.trim() || !draft.handle.trim()}
             >
-              {busy ? "保存中…" : role ? "保存修改" : "创建角色"}
+              {busy ? "保存中…" : role ? "保存修改" : "创建 AI 员工"}
             </button>
           </div>
         </form>
@@ -816,7 +821,7 @@ function CopyRoleDialog({
   return (
     <FormModal
       title={`复制 ${role.name}`}
-      submitLabel="复制角色"
+      submitLabel="复制 AI 员工"
       busy={busy}
       disabled={!handle.trim()}
       onClose={onClose}
@@ -828,13 +833,14 @@ function CopyRoleDialog({
               name: name.trim() || null,
               instance_id: instanceId || null,
             }),
-          "已复制角色",
+          "已复制 AI 员工",
         );
         if (out) onDone(out);
       }}
     >
       <p className="muted small">
-        新角色拥有相同的提示词和设置，但身份独立：角色记忆、话题记忆、私信和进行中的任务不会被复制。
+        复制出的 AI 员工沿用职责说明、人设与工作方式等设置，但身份独立：AI
+        员工记忆、话题记忆、私信和进行中的任务不会被复制。
       </p>
       <div className="form-row">
         <Field label="名称">
@@ -865,32 +871,33 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
   return (
     <FormModal
       title={`停用 ${role.name}`}
-      submitLabel="停用角色"
+      submitLabel="停用 AI 员工"
       danger
       busy={busy}
       onClose={onClose}
       onSubmit={async () => {
         const out = await run(
           () => api.post<Role>(`/api/roles/${role.id}/disable`, { on_tasks: onTasks }),
-          "角色已停用",
+          "AI 员工已停用",
         );
         if (out) onDone(out);
       }}
     >
       <p>
-        停用后角色不再接受新的工作，它在各话题中的对话随之结束。它还有 {active.length} 项未完成的工作，其中的独立任务：
+        停用后 AI 员工不再接受新的工作，它在各话题中的对话随之结束。它还有 {active.length}{" "}
+        项未完成的工作，其中的独立任务：
       </p>
       <div className="check-col">
         <label className="check">
           <input type="radio" checked={onTasks === "keep"} onChange={() => setOnTasks("keep")} />
-          保留，等待其他角色认领：在任务详情中转交给其他角色；重新启用这个角色时接着做
+          保留，等待其他 AI 员工认领：在任务详情中转交给其他 AI 员工；重新启用这位 AI 员工时接着做
         </label>
         <label className="check">
           <input type="radio" checked={onTasks === "cancel"} onChange={() => setOnTasks("cancel")} />
           取消
         </label>
       </div>
-      <p className="small muted">Slack、飞书和 GitHub 会话中的任务不能由其他角色接手，停用时一律取消。</p>
+      <p className="small muted">Slack、飞书和 GitHub 会话中的任务不能由其他 AI 员工接手，停用时一律取消。</p>
     </FormModal>
   );
 }
@@ -900,18 +907,18 @@ const ROLE_MEMORY_MAX_CHARS = 1000;
 /** The role's own memory: listed in its system prompt wherever it works (server: services/role-memory.ts). */
 function RoleMemories({ role }: { role: Role }) {
   return (
-    <Section title="角色记忆">
+    <Section title="AI 员工记忆">
       <p className="small muted">
-        角色记忆属于角色本身，在它工作的所有地方都适用：最近 30 条随系统提示词给出，角色在所有话题、私信以及
+        AI 员工记忆属于这位 AI 员工本身，在它工作的所有地方都适用：最近 30 条随系统提示词给出，它在所有话题、私信以及
         Slack、飞书、GitHub
-        中都会看到，更早的可以检索。角色可以在管理员请求的工作中自己记下（需要「记忆」权限），你也可以在这里添加。它可能出现在与角色对话的任何人面前，不要写入个人信息、机密，或只与某个话题、某个人有关的内容。
+        中都会看到，更早的可以检索。它可以在管理员请求的工作中自己记下（需要「记忆」权限），你也可以在这里添加。记忆可能出现在与它对话的任何人面前，不要写入个人信息、机密，或只与某个话题、某个人有关的内容。
       </p>
       <MemoryList
         query={{ scope: "role", role_id: role.id }}
         create={{ scope: "role", role_id: role.id }}
         placeholder="例如：发布前必须跑完 make check"
-        emptyTitle="还没有角色记忆"
-        itemName="角色记忆"
+        emptyTitle="还没有 AI 员工记忆"
+        itemName="AI 员工记忆"
         maxChars={ROLE_MEMORY_MAX_CHARS}
       />
     </Section>
@@ -923,7 +930,8 @@ function RoleSessions({ role }: { role: Role }) {
   return (
     <Section title="对话">
       <p className="small muted">
-        角色在每个话题、每个私信里各有一段对话，上下文从一条消息延续到下一条，不同话题之间互不共享；这里只列出你能查看的话题。对话变长后，角色会在达到模型的整理点时把前面的内容压缩成摘要，系统提示词和工具说明不受影响。
+        AI
+        员工在每个话题、每个私信里各有一段对话，上下文从一条消息延续到下一条，不同话题之间互不共享；这里只列出你能查看的话题。对话变长后，它会在达到模型的整理点时把前面的内容压缩成摘要，系统提示词和工具说明不受影响。
       </p>
       <Loaded res={res}>
         {(rows) => <AgentSessionList sessions={rows} by="topic" onChanged={() => void res.reload()} />}

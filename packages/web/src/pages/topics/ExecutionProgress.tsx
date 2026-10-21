@@ -81,7 +81,7 @@ function operations(steps: TaskStep[]): Operation[] {
             },
           ];
     if (s.kind === "event") {
-      const preview = p.type === "role_handoff" ? "任务转交给其他角色" : String(p.note ?? p.reason ?? p.type ?? "");
+      const preview = p.type === "role_handoff" ? "任务转交给其他 AI 员工" : String(p.note ?? p.reason ?? p.type ?? "");
       return [{ key: `step-${s.seq}`, label: "状态", preview, source: s }];
     }
     return [

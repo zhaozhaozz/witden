@@ -37,7 +37,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
 | `db` | PostgreSQL | 只在内部网络中可访问。 |
 | `manager` | Docker Manager | 唯一挂载 Docker socket 的服务，按白名单创建和管理虚拟电脑。 |
 | `api` | 控制台、API、事件接口、虚拟电脑连接入口 | 发布 8320（控制台，只在内网使用）、8325（事件端口，默认只发布在 127.0.0.1，见 2.4）和 8330（虚拟电脑连接）端口。 |
-| `worker` | 运行 AI 角色、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
+| `worker` | 运行 AI 员工、调用模型、发送外部消息 | 没有任何 Docker 权限，只通过 API 操作虚拟电脑。 |
 | `laya`（可选） | 开源的 Laya 决策模型，用作话题调度模型 | 默认不启动，见 2.3。只在内部网络中可访问，不对外发布端口。 |
 | `tunnel`（可选使用） | Cloudflare Tunnel，为平台提供公网 HTTPS 地址 | 在控制台填写 tunnel token 后才连接 Cloudflare，见 2.4。只主动向外连接，不对外发布端口。 |
 
@@ -73,7 +73,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
 
 ### 2.3 可选：Laya 调度模型
 
-话题设为“自动”且有多个角色时，需要一个调度模型（见[使用指南](user-guide.md#8-话题调度)）。可以直接选用已添加的对话模型；想要更快、更便宜的调度时，推荐 System 1 模型，如果不使用 TypeSafe Jev 等外部服务，可以随 Compose 一起部署开源的 Laya 模型。它在 CPU 上运行，不需要 GPU，一次判断通常不到 1 秒。
+话题设为“自动”且有多位 AI 员工时，需要一个调度模型（见[使用指南](user-guide.md#8-话题调度)）。可以直接选用已添加的对话模型；想要更快、更便宜的调度时，推荐 System 1 模型，如果不使用 TypeSafe Jev 等外部服务，可以随 Compose 一起部署开源的 Laya 模型。它在 CPU 上运行，不需要 GPU，一次判断通常不到 1 秒。
 
 在 `.env` 中加入：
 
@@ -97,7 +97,7 @@ WITDEN_LAYA_API_KEY=<任意足够长的随机字符串>
 - Webhook 来源的 `POST /api/hook-sources/<来源编号>`（话题的 Webhook 触发器都经来源接收），使用来源的 Bearer 密钥、`X-Webhook-Token` 或 Standard Webhooks 签名认证，单次正文最多 1 MiB；旧版本触发器的地址 `POST /api/hooks/<编号>` 继续可用，等同于同一编号的来源。管理来源和触发器、查询历史只在控制台端口提供；
 - 公网地址的检查接口 `/api/integrations/probe`；
 - Slack 安装回调 `/api/integrations/slack/oauth`：把一个 Slack 应用安装到其他工作区时，Slack 把安装人的浏览器带到这里，只完成控制台中发起的安装（见[接入 Slack](slack.md#10-slack-应用与多个工作区)）；
-- 角色头像 `/api/avatars/<文件>`：以角色身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。
+- AI 员工头像 `/api/avatars/<文件>`：以 AI 员工身份发言时，Slack 从它的服务器下载头像。头像本来就不需要登录，文件名是内容的哈希。
 
 其他请求一律返回 404，包括控制台页面和所有管理接口。公网地址只能转发到这个端口。消息中“在 witden 中查看”等链接仍然指向 `WITDEN_PUBLIC_URL`（控制台的内网地址），只有能访问内网的人可以打开。
 
@@ -164,12 +164,12 @@ server {
 
 ## 3. 首次配置
 
-平台启动时会自动创建内置的系统管理员角色（@admin，见[使用指南](user-guide.md#43-系统管理员)）。除它之外还没有其他角色时，管理员第一次登录会进入“欢迎使用 witden”引导：连接一个模型服务（填写 API Key）、选择一个模型，witden 就会导入内置模板，创建一台桌面虚拟电脑（`desktop`，使用 `desktop-browser` 模板，需要已构建或拉取 `witden/computer-desktop` 镜像）和一个在这台电脑上工作的助手（@assistant），系统管理员还没有模型时也使用这个模型，然后打开与助手的私信。引导可以跳过；完成或跳过后不再出现。之后也可以按下面的步骤手动配置：
+平台启动时会自动创建内置的系统管理员（@admin，见[使用指南](user-guide.md#43-系统管理员)）。除它之外还没有其他 AI 员工时，管理员第一次登录会进入“欢迎使用 witden”引导：连接一个模型服务（填写 API Key）、选择一个模型，witden 就会导入内置模板，创建一台桌面虚拟电脑（`desktop`，使用 `desktop-browser` 模板，需要已构建或拉取 `witden/computer-desktop` 镜像）和一个在这台电脑上工作的助手（@assistant），系统管理员还没有模型时也使用这个模型，然后打开与助手的私信。引导可以跳过；完成或跳过后不再出现。之后也可以按下面的步骤手动配置：
 
 1. **模型**：在“设置 → 模型”中点击“添加服务商”，选择常见服务（自动填好地址和协议）或“其他服务”，填写 API Key，再在“添加模型”中从模型列表选择或填写名称；对模型点击“检测能力”。
-2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多个角色，需要一个调度模型：System 1 模型（TypeSafe Jev，或开源模型 Laya，推荐），或已添加的普通对话模型。启用 Compose 中的 Laya 服务（见 2.3）后，它会被自动添加并设为调度模型；否则在“设置 → 系统管理 → 话题调度”中选择（System 1 模型要先在“设置 → 模型”中添加接口协议为“System One”的服务商和模型）。详见[使用指南](user-guide.md#8-话题调度)。
+2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多位 AI 员工，需要一个调度模型：System 1 模型（TypeSafe Jev，或开源模型 Laya，推荐），或已添加的普通对话模型。启用 Compose 中的 Laya 服务（见 2.3）后，它会被自动添加并设为调度模型；否则在“设置 → 系统管理 → 话题调度”中选择（System 1 模型要先在“设置 → 模型”中添加接口协议为“System One”的服务商和模型）。详见[使用指南](user-guide.md#8-话题调度)。
 3. **虚拟电脑**：在“设置 → 虚拟电脑 → 模板”中点击“导入内置模板”（命令行模板 `dev-shell` 和桌面模板 `desktop-browser`），然后从模板创建虚拟电脑，等待状态变为运行中。
-4. **角色**：在“设置 → 角色管理”中创建角色，选择模型和虚拟电脑。
+4. **AI 员工**：在“设置 → AI 员工管理”中创建 AI 员工，选择模型和虚拟电脑。
 5. **管理员账号**（可选）：在“设置 → 系统管理 → 账号”中添加其他管理员。能登录控制台的账号都是管理员，可以看到全部会话。
 6. **通讯接入**（可选）：参见[接入 Slack](slack.md)。
 
@@ -186,7 +186,7 @@ server {
 | `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
 | `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 在内网访问控制台的地址，消息中的链接指向这里。控制台中没有保存公网事件地址时，事件地址也按它生成（见 2.4）。 |
-| `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查、Slack 安装回调和角色头像，公网地址只转发到这里。设为 `0` 时不开启。 |
+| `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查、Slack 安装回调和 AI 员工头像，公网地址只转发到这里。设为 `0` 时不开启。 |
 | `WITDEN_WEBHOOK_BIND` | `127.0.0.1` | （Compose）事件端口在宿主机上发布到的网卡地址。反向代理在其他机器上时修改。 |
 | `WITDEN_TUNNEL_TOKEN_FILE` | — | Cloudflare Tunnel token 的保存位置，`tunnel` 服务从这里读取。Compose 中已设置为 `/tunnel/token`；未设置时控制台不提供 Cloudflare Tunnel 选项。 |
 | `WITDEN_TUNNEL_METRICS_URL` | — | cloudflared 指标接口的地址，用于显示连接状态和读取路由。Compose 中为 `http://tunnel:2000`。 |
@@ -201,8 +201,8 @@ server {
 | `WITDEN_BOOTSTRAP_ADMIN_EMAIL` / `_PASSWORD` / `_NAME` | — / — / `admin` | 首次启动时创建的管理员。 |
 | `WITDEN_SESSION_TTL_HOURS` | `168` | 登录会话有效期（小时）。 |
 | `WITDEN_MAX_TASK_STEPS` | `60` | 单个任务的最大步数上限。 |
-| `WITDEN_MAX_DELEGATION_DEPTH` | `3` | 角色之间委托的最大层数。 |
-| `WITDEN_MAX_AUTO_ROUNDS` | `8` | 角色之间自动讨论的最大轮次，对所有话题相同；也是飞书接入开启“其他机器人 @ 这个机器人时，也交给角色处理”后，连续接受机器人请求的次数上限。 |
+| `WITDEN_MAX_DELEGATION_DEPTH` | `3` | AI 员工之间委托的最大层数。 |
+| `WITDEN_MAX_AUTO_ROUNDS` | `8` | AI 员工之间自动讨论的最大轮次，对所有话题相同；也是飞书接入开启“其他机器人 @ 这个机器人时，也交给 AI 员工处理”后，连续接受机器人请求的次数上限。 |
 | `WITDEN_INSTANCE_WAIT_SECONDS` | `300` | 虚拟电脑不可用时任务的最长等待时间。 |
 | `WITDEN_TOOL_OUTPUT_LIMIT` | `12000` | 单次工具输出交给模型的最大字符数。 |
 | `WITDEN_ALLOWED_RUNTIMES` | `runc,runsc,sysbox-runc,kata-runtime` | 模板可以选择的容器运行时。 |

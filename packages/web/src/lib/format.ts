@@ -228,12 +228,22 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
   {
     key: "computer",
     label: "虚拟电脑",
-    hint: "在角色自己的虚拟电脑里工作",
+    hint: "在 AI 员工自己的虚拟电脑里工作",
     groups: ["shell", "terminal", "files", "browser", "desktop", "system_software", "software_list"],
   },
   { key: "automation", label: "自动化", hint: "在参与的话题里管理自己负责的触发器", groups: ["automation"] },
-  { key: "knowledge", label: "资料", hint: "平台上的记忆和知识空间，以及其他话题", groups: ["memory", "topics"] },
-  { key: "self", label: "角色与平台", hint: "角色自己的介绍，以及 witden 本身的配置", groups: ["profile", "config"] },
+  {
+    key: "knowledge",
+    label: "记忆与资料",
+    hint: "平台上的记忆和可读取的知识空间，以及读取其他话题",
+    groups: ["memory", "topics"],
+  },
+  {
+    key: "self",
+    label: "AI 员工与平台",
+    hint: "AI 员工自己的职责说明，以及 witden 本身的配置",
+    groups: ["profile", "config"],
+  },
 ];
 
 const GROUP_ORDER = PERMISSION_SECTIONS.flatMap((s) => s.groups);
@@ -258,23 +268,23 @@ export function permissionLabels(groups: string[]): string[] {
 
 /** What each tool group covers, in people's words. */
 export const TOOL_GROUP_HINT: Record<string, string> = {
-  shell: "在角色的虚拟电脑里执行命令",
+  shell: "在 AI 员工的虚拟电脑里执行命令",
   terminal: "在虚拟电脑里开交互式或长时间运行的终端会话",
   files: "读写和整理虚拟电脑里的文件；也可以把虚拟电脑里的文件分享到话题",
   desktop: "查看虚拟电脑的屏幕，操作它的鼠标和键盘",
   browser: "操作虚拟电脑里的浏览器（桌面上可见的或后台的），下载的文件保存在虚拟电脑里",
   system_software:
-    "请平台在虚拟电脑里安装或卸载系统软件包（apt）。角色自己没有 root 权限，由平台以 root 执行固定的安装命令；镜像自带的软件不能卸载。不在软件清单里的软件，重置虚拟电脑后会消失",
+    "请平台在虚拟电脑里安装或卸载系统软件包（apt）。AI 员工自己没有 root 权限，由平台以 root 执行固定的安装命令；镜像自带的软件不能卸载。不在软件清单里的软件，重置虚拟电脑后会消失",
   software_list: "修改虚拟电脑的软件清单：清单里的软件包在虚拟电脑每次启动时自动安装，重置后也会装回",
   automation:
     "在它参与的话题里新建和修改自己负责的触发器；不能读取密钥，也不能扩大 Webhook 来源的授权。只在控制台账号请求的工作中可用",
-  memory: "在平台上记住和检索笔记与知识，不在虚拟电脑里",
+  memory: "在平台上记下和检索记忆与知识，不在虚拟电脑里",
   topics:
-    "查找并读取其他话题（不含私信），包括 Slack、飞书、GitHub 中的会话；读到的内容可以在角色工作的任何地方使用。新角色默认禁用",
+    "查找并读取其他话题（不含私信），包括 Slack、飞书、GitHub 中的会话；读到的内容可以在 AI 员工工作的任何地方使用。新建的 AI 员工默认禁用",
   profile:
-    "修改自己的职责说明（别人邀请、私信时看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
+    "修改自己的职责说明（成员和其他 AI 员工看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
   config:
-    "像管理员一样读取和修改 witden 的配置（角色、模型、虚拟电脑、通讯接入、知识；不含账号），读不到也改不了任何密钥",
+    "像管理员一样读取和修改 witden 的配置（AI 员工、模型、虚拟电脑、通讯接入、知识；不含账号），读不到也改不了任何密钥",
 };
 
 /** Tool names as actions ("正在" + label reads naturally too). */
@@ -352,11 +362,11 @@ export const TOOL_LABEL: Record<string, string> = {
   uninstall_packages: "卸载系统软件",
   software_list: "查看软件清单",
   edit_software_list: "修改软件清单",
-  message_role: "在话题内 @ 其他角色",
+  message_role: "在话题内 @ 其他 AI 员工",
   delegate_task: "委派任务",
   start_task: "拆出独立任务",
   continue_task: "给自己拆出的任务补充要求",
-  transfer_task: "把任务转交给其他角色",
+  transfer_task: "把任务转交给其他 AI 员工",
   manage_automation: "管理负责的自动化",
   send_message: "向话题发送消息",
   linked_topic_status: "查看关联话题的工作状态",
@@ -379,17 +389,17 @@ export const TOOL_LABEL: Record<string, string> = {
 export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; hint: string }> = {
   mention: {
     label: "主动 @",
-    hint: "主动 @ 模式：角色只在被 @ 时回应。在输入框输入 @ 后，从弹出的列表里点选角色才算 @；粘贴或手打的“@名称”只是文字，不会让角色开始工作。角色之间也只能用专门的工具 @ 对方，回答里提到某个角色不会触发它。",
+    hint: "主动 @ 模式：AI 员工只在被 @ 时回应。在输入框输入 @ 后，从弹出的列表里点选 AI 员工才算 @；粘贴或手打的“@名称”只是文字，不会让 AI 员工开始工作。AI 员工之间也只能用专门的工具 @ 对方，回答里提到某位 AI 员工不会触发它。",
   },
   auto: {
     label: "自动",
-    hint: "自动模式：没有 @ 任何角色的消息也可能交给角色。话题里只有一个角色时，它会看每条消息并自己决定是否回复（闲聊等可以不回）；有多个角色时，由「系统管理 → 话题调度」里设置的调度模型决定交给哪几个角色，也可以一个都不交。被 @ 的角色总会回应。",
+    hint: "自动模式：没有 @ 任何 AI 员工的消息也可能交给 AI 员工。话题里只有一位 AI 员工时，它会看每条消息并自己决定是否回复（闲聊等可以不回）；有多位 AI 员工时，由「系统管理 → 话题调度」里设置的调度模型决定交给哪几位 AI 员工，也可以一位都不交。被 @ 的 AI 员工总会回应。",
   },
 };
 
 /** System One decision models (provider protocol "systemone"): a fast kind of topic dispatcher. */
 export const SYSTEM_ONE_HINT =
-  "System 1 模型（如 TypeSafe Jev、开源的 Laya）不生成文字，而是针对给定内容回答选择、是否、打分等问题并给出概率，一次判断通常只需几十到几百毫秒。witden 可以用它做话题调度；它不能对话、不能调用工具，因此不能用作角色的模型。";
+  "System 1 模型（如 TypeSafe Jev、开源的 Laya）不生成文字，而是针对给定内容回答选择、是否、打分等问题并给出概率，一次判断通常只需几十到几百毫秒。witden 可以用它做话题调度；它不能对话、不能调用工具，因此不能用作 AI 员工的模型。";
 
 export function fmtLatency(ms: number | undefined): string | null {
   if (ms === undefined || ms === null) return null;

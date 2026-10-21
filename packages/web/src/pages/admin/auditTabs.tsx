@@ -35,8 +35,8 @@ export function AuditTab() {
         }}
       >
         <input placeholder="操作前缀，如 task. 或 instance.exec" value={draft.action} onChange={set("action")} />
-        <select value={draft.role_id} onChange={set("role_id")} aria-label="角色">
-          <option value="">全部角色</option>
+        <select value={draft.role_id} onChange={set("role_id")} aria-label="AI 员工">
+          <option value="">全部 AI 员工</option>
           {dir.roles.map((r) => (
             <option key={r.id} value={r.id}>
               @{r.handle}
@@ -141,7 +141,7 @@ export function AuditTab() {
 }
 
 const GROUPS: [string, string][] = [
-  ["role", "按角色"],
+  ["role", "按 AI 员工"],
   ["model", "按模型"],
   ["instance", "按虚拟电脑"],
   ["task", "按任务"],
@@ -187,7 +187,7 @@ export function UsageTab() {
           <option value={30}>最近 30 天</option>
           <option value={90}>最近 90 天</option>
         </select>
-        <span className="small muted">模型调用的 token 用量。限额在角色和模型配置中设置。</span>
+        <span className="small muted">模型调用的 token 用量。限额在 AI 员工和模型配置中设置。</span>
       </div>
       <Loaded res={res}>
         {(rows) => {

@@ -66,8 +66,8 @@ export function FeishuScopePicker({ catalog }: { catalog: FeishuCatalog }) {
         </tbody>
       </table>
       <div className="setup-sub">
-        扩展：飞书工具（可选）。勾选后，角色可以经 witden
-        使用这家公司飞书中的这些功能；具体哪个角色能用、写入前是否要批准，在角色的权限中设置。
+        扩展：飞书工具（可选）。勾选后，AI 员工可以经 witden 使用这家公司飞书中的这些功能；具体哪位 AI
+        员工能用、写入前是否要批准，在 AI 员工的权限中设置。
       </div>
       <div className="feishu-products">
         {catalog.products.map((p) => (

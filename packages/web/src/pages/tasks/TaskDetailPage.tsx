@@ -104,7 +104,8 @@ export default function TaskDetailPage() {
             <TaskStatusBanner task={t} />
             {t.content_restricted ? (
               <div className="callout callout-wait">
-                你无权查看这个任务所在的话题：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以取消它。
+                你无权查看这个任务所在的话题：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责的 AI
+                员工和执行任务的虚拟电脑仍然可见，你仍可以取消它。
               </div>
             ) : null}
             <TaskSummary task={t} />
@@ -125,7 +126,7 @@ export default function TaskDetailPage() {
                   steps.length ? (
                     <ExecutionLog steps={steps} />
                   ) : (
-                    <Empty title="还没有执行记录" hint="角色开始工作后，每一步都会出现在这里。" />
+                    <Empty title="还没有执行记录" hint="AI 员工开始工作后，每一步都会出现在这里。" />
                   )
                 }
               </Loaded>
@@ -234,13 +235,13 @@ function TaskSummary({ task: t }: { task: Task }) {
       <Section title="概要">
         <KV
           items={[
-            ["负责角色", t.owner ? <RoleBadge role={t.owner} /> : "—"],
+            ["负责的 AI 员工", t.owner ? <RoleBadge role={t.owner} /> : "—"],
             [
               "请求人",
               t.requester ? (
                 t.requester.name
               ) : t.requester_role_id ? (
-                <span>角色 {dir.roleLabel(t.requester_role_id)}</span>
+                <span>AI 员工 {dir.roleLabel(t.requester_role_id)}</span>
               ) : (
                 "—"
               ),
@@ -269,7 +270,7 @@ function TaskSummary({ task: t }: { task: Task }) {
                   <StatusChip meta={instanceStatus(t.instance.status)} compact />
                 </span>
               ) : (
-                <span className="muted">未分配（角色没有虚拟电脑时只能对话）</span>
+                <span className="muted">未分配（AI 员工没有虚拟电脑时只能对话）</span>
               ),
             ],
             [
@@ -289,8 +290,8 @@ function TaskSummary({ task: t }: { task: Task }) {
                   <IdText id={t.session_id} />{" "}
                   <span className="small muted">
                     {conversation
-                      ? "该角色在这个话题里的对话：上下文从一条消息延续到下一条"
-                      : "该角色在这个话题里的会话"}
+                      ? "该 AI 员工在这个话题里的对话：上下文从一条消息延续到下一条"
+                      : "该 AI 员工在这个话题里的会话"}
                   </span>
                 </span>
               ) : null,
@@ -429,7 +430,7 @@ function isUncertainStep(s: TaskStep): boolean {
 }
 
 const UNCERTAIN_NOTE =
-  "虚拟电脑没有确认这个操作是否已经执行（连接中断或等待超时）。角色会先查看当前状态（截图、读文件、看页面）再决定是否重做，以免重复点击或重复提交。";
+  "虚拟电脑没有确认这个操作是否已经执行（连接中断或等待超时）。AI 员工会先查看当前状态（截图、读文件、看页面）再决定是否重做，以免重复点击或重复提交。";
 
 function ExecutionLog({ steps }: { steps: TaskStep[] }) {
   const dir = useDirectory();
@@ -625,7 +626,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
             items={[
               [
                 "请求人",
-                t.requester?.name ?? (t.requester_role_id ? `角色 ${dir.roleLabel(t.requester_role_id)}` : "—"),
+                t.requester?.name ?? (t.requester_role_id ? `AI 员工 ${dir.roleLabel(t.requester_role_id)}` : "—"),
               ],
               [
                 "入口",
@@ -637,7 +638,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
               ["外部会话", source.conversation_id ? <IdText id={source.conversation_id as string} /> : null],
               ["Thread", source.thread_key ? <code className="id">{String(source.thread_key)}</code> : null],
               ["执行任务的虚拟电脑", t.instance ? <ComputerBadge computer={t.instance} /> : "—"],
-              ["角色会话", trace.session_id ? <IdText id={trace.session_id} /> : null],
+              ["AI 员工的会话", trace.session_id ? <IdText id={trace.session_id} /> : null],
             ]}
           />
         </Section>
@@ -661,7 +662,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
           ) : (
             <p className="muted small">
               {t.parent_task_id
-                ? "这是由其他角色委托的子任务，权限继承自上级任务。"
+                ? "这是由其他 AI 员工委托的子任务，权限继承自上级任务。"
                 : "没有记录分配过程（例如由转交或系统创建的任务）。"}
             </p>
           )}
@@ -669,7 +670,7 @@ function TraceView({ trace, steps }: { trace: TaskTrace; steps?: TaskStep[] }) {
       </div>
       <div>
         <Section title="权限范围">
-          <p className="small muted">任务实际可用的能力 = 角色能力 ∩ 委托方范围 ∩ 请求人权限。</p>
+          <p className="small muted">任务实际可用的能力 = AI 员工的能力 ∩ 委托方范围 ∩ 请求人权限。</p>
           <KV
             items={[
               [

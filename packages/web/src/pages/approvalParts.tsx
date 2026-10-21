@@ -58,7 +58,7 @@ export function ApprovalCard({
           {a.role ? (
             <RoleBadge role={{ ...a.role, name: a.role.name ?? a.role.handle }} />
           ) : (
-            <span className="muted">未知角色</span>
+            <span className="muted">未知 AI 员工</span>
           )}
           <strong>{actionLabel(a)}</strong>
         </div>
@@ -79,7 +79,7 @@ export function ApprovalCard({
         </div>
       ) : toolCall ? (
         <div className="approval-body">
-          <p className="small">该角色的这类操作被设置为需要人工批准。</p>
+          <p className="small">该 AI 员工的这类操作被设置为需要人工批准。</p>
           <div className="muted small">调用 {toolCall.name}</div>
           {toolCall.name === "remember" && !argsHidden ? (
             <p className="small">{memoryScopeHint((toolCall.arguments as { scope?: string } | undefined)?.scope)}</p>
@@ -155,7 +155,7 @@ export function ApprovalCard({
 /** Where a note the role asks to remember would be used (the scopes of the remember tool). */
 function memoryScopeHint(scope: string | undefined): string {
   if (scope === "role")
-    return "角色记忆：角色在所有话题、私信以及 Slack、飞书、GitHub 中都会看到，可能出现在与它对话的任何人面前。";
+    return "AI 员工记忆：它在所有话题、私信以及 Slack、飞书、GitHub 中都会看到，可能出现在与它对话的任何人面前。";
   return "话题记忆：只在这个话题（或这段私信）中使用。";
 }
 

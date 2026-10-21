@@ -36,8 +36,8 @@ export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange
   };
   return (
     <span className="mode-switch">
-      <span className="small muted">角色响应</span>
-      <span className="segmented" role="radiogroup" aria-label="角色响应方式">
+      <span className="small muted">AI 员工响应</span>
+      <span className="segmented" role="radiogroup" aria-label="AI 员工响应方式">
         {MODES.map((m) => (
           <button
             key={m}
@@ -70,7 +70,8 @@ export function ResponseModeSwitch({ topic, onChange }: { topic: Topic; onChange
 
 const NoDispatcherText = () => (
   <span>
-    还没有设置可用的调度模型：话题里有多个角色时，没有 @ 的消息不会交给任何角色；只有一个角色时，由它自己判断是否回复。
+    还没有设置可用的调度模型：话题里有多位 AI 员工时，没有 @ 的消息不会交给任何 AI 员工；只有一位 AI
+    员工时，由它自己判断是否回复。
   </span>
 );
 
@@ -97,7 +98,7 @@ export function DispatcherWarning({ topic }: { topic: Topic }) {
   );
   if (!needed || !res.data || res.data.usable) return null;
   return (
-    <span title="自动模式下话题里有多个角色时，由调度模型决定交给谁。请管理员在「系统管理 → 话题调度」中设置；在此之前，没有 @ 的消息不会交给任何角色。">
+    <span title="自动模式下话题里有多位 AI 员工时，由调度模型决定交给谁。请管理员在「系统管理 → 话题调度」中设置；在此之前，没有 @ 的消息不会交给任何 AI 员工。">
       <Tag tone="bad">未设置调度模型</Tag>
     </span>
   );

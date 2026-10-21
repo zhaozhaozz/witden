@@ -98,7 +98,7 @@ test("role computer chips stay aligned on hover and keyboard focus", async ({ pa
   const before = await chip.boundingBox();
   await row.hover();
   expect((await chip.boundingBox())?.x).toBe(before?.x);
-  await row.getByRole("link", { name: "编辑角色 研发助手" }).focus();
+  await row.getByRole("link", { name: "编辑 AI 员工 研发助手" }).focus();
   expect((await chip.boundingBox())?.x).toBe(before?.x);
 });
 

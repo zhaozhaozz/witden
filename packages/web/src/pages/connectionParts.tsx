@@ -10,8 +10,8 @@ import { Empty, Field, Loaded, Tag, Toggle } from "../ui/kit";
 export const INBOUND_STATUS: Record<string, [string, "ok" | "wait" | "off" | "bad"]> = {
   queued: ["等待处理", "wait"],
   processing: ["处理中", "wait"],
-  dispatched: ["已交给角色", "ok"],
-  not_assigned: ["没有交给角色", "bad"],
+  dispatched: ["已交给 AI 员工", "ok"],
+  not_assigned: ["没有交给 AI 员工", "bad"],
   stored: ["已记录（未 @ 机器人）", "ok"],
   ignored: ["已忽略", "off"],
   // recorded before every thread was synced (migration 0016)
@@ -63,8 +63,8 @@ export function socketText(
 
 /** What a Slack bot cannot do without a scope the connection test checks (server: integrations/slack.ts). */
 const SCOPE_EFFECTS: Record<string, string> = {
-  "chat:write": "角色不能在 Slack 中回复",
-  "files:write": "角色分享的文件和截图不能发到 Slack，只能附上控制台链接",
+  "chat:write": "AI 员工不能在 Slack 中回复",
+  "files:write": "AI 员工分享的文件和截图不能发到 Slack，只能附上控制台链接",
 };
 
 /** A warning for scopes the Slack app was installed without, or null when nothing is missing. */
@@ -220,13 +220,13 @@ export function ConnectionSettingsFields({
     <>
       {chooseRole ? (
         <Field
-          label="机器人代表的角色"
-          hint="发给这个机器人的消息都交给这个角色，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个应用。"
+          label="机器人代表的 AI 员工"
+          hint="发给这个机器人的消息都交给这位 AI 员工，回复以机器人的名字和头像发出。需要多位 AI 员工时，为每位 AI 员工各建一个应用。"
         >
           <select required value={value.role_id ?? ""} onChange={(e) => set({ role_id: e.target.value || null })}>
             {value.role_id ? null : (
               <option value="" disabled>
-                选择一个角色（未选择时机器人不接收请求）
+                选择一位 AI 员工（未选择时机器人不接收请求）
               </option>
             )}
             {dir.roles
@@ -246,7 +246,7 @@ export function ConnectionSettingsFields({
         label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
         hint={
           value.auto_provision_users
-            ? `外部成员可以使用这个机器人代表的角色${value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。`
+            ? `外部成员可以使用这个机器人代表的 AI 员工${value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。`
             : undefined
         }
       />
@@ -254,8 +254,8 @@ export function ConnectionSettingsFields({
         <Toggle
           checked={!!value.bot_requests}
           onChange={(v) => set({ bot_requests: v })}
-          label="其他机器人 @ 这个机器人时，也交给角色处理"
-          hint={`关闭时（默认），群里其他机器人发的消息只记入话题、作为角色的上下文。开启后，其他机器人 @ 这个机器人的消息也交给角色；为防止机器人之间来回触发，连续 ${botLimit} 次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。`}
+          label="其他机器人 @ 这个机器人时，也交给 AI 员工处理"
+          hint={`关闭时（默认），群里其他机器人发的消息只记入话题、作为 AI 员工的上下文。开启后，其他机器人 @ 这个机器人的消息也交给 AI 员工；为防止机器人之间来回触发，连续 ${botLimit} 次都是机器人的请求、中间没有人发言时，之后的只记录，等有人发言再继续。`}
         />
       ) : null}
     </>
@@ -270,7 +270,8 @@ export function Identities({ conn }: { conn: Connection }) {
     <>
       <p className="small muted side-note">
         外部账号按平台用户 ID
-        关联到内部成员，不按显示名称判断身份。未关联的人在连接开启“允许未关联的人使用”时成为外部成员，否则不能使用角色。
+        关联到内部成员，不按显示名称判断身份。未关联的人在连接开启“允许未关联的人使用”时成为外部成员，否则不能使用 AI
+        员工。
       </p>
       <Loaded res={res}>
         {(rows) =>

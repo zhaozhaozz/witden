@@ -80,7 +80,7 @@ export default function SetupPage() {
           `这个模型无法对话：${checked.capabilities.errors?.chat ?? checked.capabilities.error ?? "检测失败"}。请检查 API Key，或换一个模型。`,
         );
       }
-      setBusy("正在创建虚拟电脑和角色");
+      setBusy("正在创建虚拟电脑和 AI 员工");
       const out = await api.post<Finished>("/api/setup/finish", { model_config_id: checked.id });
       setDone(out);
       await Promise.all([dir.reload(), topics.reload()]);
@@ -203,7 +203,7 @@ export default function SetupPage() {
                   <li>
                     模型 <strong>{model?.name}</strong>：
                     {caps?.tools === false
-                      ? "不能调用工具，角色只能对话，不能操作电脑。"
+                      ? "不能调用工具，AI 员工只能对话，不能操作电脑。"
                       : caps?.vision === false
                         ? "可以调用工具，但看不懂图片，助手看不到桌面截图。"
                         : "可以对话、调用工具和理解图片。"}

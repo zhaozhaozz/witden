@@ -54,7 +54,7 @@ function MemoryForm({
       />
       <input
         aria-label="关键词"
-        placeholder="关键词，用逗号分隔（角色按它们检索）"
+        placeholder="关键词，用逗号分隔（AI 员工按它们检索）"
         value={d.keywords}
         onChange={(e) => set("keywords", e.target.value)}
       />
@@ -102,7 +102,7 @@ export function MemoryList({
   canAdd?: boolean;
   placeholder: string;
   emptyTitle: string;
-  /** What one note is called here, e.g. 角色记忆 (for the delete confirmation). */
+  /** What one note is called here, e.g. AI 员工记忆 (for the delete confirmation). */
   itemName: string;
   maxChars?: number;
   /** In a sidebar, show titles first and open forms and details on demand. */
@@ -126,11 +126,13 @@ export function MemoryList({
     }
   }, [version, res.reload]);
   const fields = (d: Draft) => ({ title: d.title.trim(), keywords: d.keywords, content: d.content.trim() });
+  // After a Chinese word: "添加 AI 员工记忆", "添加话题记忆".
+  const name = /^[A-Za-z0-9]/.test(itemName) ? ` ${itemName}` : itemName;
   return (
     <>
       {canAdd && compact && !adding ? (
         <button type="button" className="btn btn-xs btn-ghost memory-add" onClick={() => setAdding(true)}>
-          添加{itemName}
+          添加{name}
         </button>
       ) : null}
       {canAdd && (!compact || adding) ? (
@@ -231,9 +233,7 @@ export function MemoryList({
                             type="button"
                             className="link-btn"
                             onClick={async () => {
-                              if (
-                                !(await confirm({ title: `删除这条${itemName}`, danger: true, confirmLabel: "删除" }))
-                              )
+                              if (!(await confirm({ title: `删除这条${name}`, danger: true, confirmLabel: "删除" })))
                                 return;
                               const ok = await run(() => api.del(`/api/memories/${m.id}`));
                               if (ok) res.setData((prev) => prev?.filter((x) => x.id !== m.id));

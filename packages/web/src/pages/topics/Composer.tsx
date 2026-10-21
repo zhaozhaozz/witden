@@ -35,8 +35,8 @@ export function Composer({
   topicId,
   participants,
   onSent,
-  placeholder = "描述你想完成的工作，输入 @ 选择角色…",
-  hint = "@ 后从列表选择，才会通知对应角色",
+  placeholder = "描述你想完成的工作，输入 @ 选择 AI 员工…",
+  hint = "@ 后从列表选择，才会通知对应 AI 员工",
 }: {
   topicId: string;
   participants: Participant[];

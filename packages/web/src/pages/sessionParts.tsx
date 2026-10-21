@@ -86,8 +86,8 @@ export function AgentSessionList({
         title="还没有对话"
         hint={
           by === "topic"
-            ? "有人第一次找角色时，它在这个话题里的对话就开始了，之后一直延续。"
-            : "有人在某个话题里第一次找角色时，它在那里的对话就开始了，之后一直延续。"
+            ? "有人第一次找 AI 员工时，它在这个话题里的对话就开始了，之后一直延续。"
+            : "有人在某个话题里第一次找 AI 员工时，它在那里的对话就开始了，之后一直延续。"
         }
       />
     );
@@ -122,7 +122,8 @@ function SessionItem({
       title: "清空上下文",
       body: (
         <p>
-          角色会忘记在这里之前的对话内容；消息都还在，下次有人找它时，它会从最近的消息重新读起。正在进行的这一轮会停止。
+          AI
+          员工会忘记在这里之前的对话内容；消息都还在，下次有人找它时，它会从最近的消息重新读起。正在进行的这一轮会停止。
         </p>
       ),
       confirmLabel: "清空上下文",
@@ -143,7 +144,7 @@ function SessionItem({
         ) : s.role ? (
           <RoleBadge role={{ ...s.role, ...(dir.roleById.get(s.role.id) ?? {}) }} />
         ) : (
-          <span className="muted">已删除的角色</span>
+          <span className="muted">已删除的 AI 员工</span>
         )}{" "}
         {s.status !== "active" ? <Tag tone="off">{s.status}</Tag> : null}
         {s.open_run ? (

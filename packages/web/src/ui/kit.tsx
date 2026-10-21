@@ -186,7 +186,7 @@ export function RoleChip({ role, title }: { role: RoleLike; title?: string }) {
     <MarkChip
       id={role.id}
       color={role.color}
-      title={title ?? (role.handle ? `角色 ${role.name} @${role.handle}` : `角色 ${role.name}`)}
+      title={title ?? (role.handle ? `AI 员工 ${role.name} @${role.handle}` : `AI 员工 ${role.name}`)}
       text={shortName(role.handle || role.name)}
       icon={
         <svg width="11" height="11" viewBox="0 0 16 16" aria-hidden>

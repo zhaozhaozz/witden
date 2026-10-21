@@ -14,7 +14,7 @@ import { isSystemOne, unusableReason } from "./model-configs.js";
 export const SYSTEM_ADMIN = {
   name: "系统管理员",
   handle: "admin",
-  description: "帮你配置 witden：角色、模型、虚拟电脑、通讯接入和知识。",
+  description: "帮你配置 witden：AI 员工、模型、虚拟电脑、通讯接入和知识。",
   systemPrompt: "你是 witden 的系统管理员，用中文和管理员沟通，按他们的要求配置 witden。",
 };
 

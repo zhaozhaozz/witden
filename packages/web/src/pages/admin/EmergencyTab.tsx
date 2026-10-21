@@ -9,7 +9,7 @@ import { useAction, useFeedback } from "../../ui/feedback";
 import { Empty, Field, Loaded, Section, Tag } from "../../ui/kit";
 
 const SCOPES: [KillSwitch["scope"], string][] = [
-  ["role", "某个角色"],
+  ["role", "某位 AI 员工"],
   ["instance", "某台虚拟电脑"],
   ["connection", "某个通讯接入"],
   ["topic", "某个话题"],
@@ -18,7 +18,7 @@ const SCOPES: [KillSwitch["scope"], string][] = [
 
 const SCOPE_LABEL: Record<string, string> = {
   global: "全部 AI 执行",
-  role: "角色",
+  role: "AI 员工",
   instance: "虚拟电脑",
   connection: "通讯接入",
   topic: "话题",
@@ -97,7 +97,7 @@ export function EmergencyTab() {
           <p>
             {globalActive
               ? `由 ${dir.userName(globalActive.created_by)} 于 ${fmtDateTime(globalActive.created_at)} 触发${globalActive.reason ? `：${globalActive.reason}` : ""}。解除前不会开始任何新的 AI 工作。`
-              : "立即暂停所有角色正在进行的工作，并阻止新的工作开始。虚拟电脑本身不会被关闭，已暂停的任务可以在解除后继续。"}
+              : "立即暂停所有 AI 员工正在进行的工作，并阻止新的工作开始。虚拟电脑本身不会被关闭，已暂停的任务可以在解除后继续。"}
           </p>
         </div>
         {globalActive ? (
@@ -128,7 +128,7 @@ export function EmergencyTab() {
               e.preventDefault();
               const ok = await confirm({
                 title: "停止全部 AI 执行",
-                body: <p>所有角色会立即停下手头的工作。确定继续？</p>,
+                body: <p>所有 AI 员工会立即停下手头的工作。确定继续？</p>,
                 confirmLabel: "立即停止",
                 danger: true,
               });

@@ -91,10 +91,10 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
   return (
     <div className="settings">
       <p className="small muted">
-        收到事件或到达计划时间后，交给指定角色处理。先在「设置」的话题目标中写清工作用途和处理要求。
+        收到事件或到达计划时间后，交给指定的 AI 员工处理。先在「设置」的话题目标中写清工作用途和处理要求。
         {topic.channel
-          ? "这个话题对应外部频道：处理角色就是机器人代表的角色，处理结果同步到频道。"
-          : "需要同步到其他话题时，由角色用关联话题发送。"}
+          ? "这个话题对应外部频道：由机器人代表的 AI 员工处理，处理结果同步到频道。"
+          : "需要同步到其他话题时，由 AI 员工用关联话题发送。"}
       </p>
       {topic.status === "archived" ? <p className="notice">话题已归档，触发器暂停接收和发起工作。</p> : null}
       <button
@@ -117,7 +117,7 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
                   </div>
                   <p className="small">
                     {trigger.kind === "webhook" ? "Webhook" : "定时"} ·{" "}
-                    {dir.roleById.get(trigger.role_id)?.name ?? "角色已删除"}
+                    {dir.roleById.get(trigger.role_id)?.name ?? "AI 员工已删除"}
                   </p>
                   {trigger.kind === "schedule" ? (
                     <p className="small muted">
@@ -259,7 +259,7 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
                   ))}
                 </ul>
               ) : (
-                <Empty title="没有触发记录" hint="被过滤的 webhook 也会保留在这里，所属话题的角色可以查询。" />
+                <Empty title="没有触发记录" hint="被过滤的 webhook 也会保留在这里，所属话题的 AI 员工可以查询。" />
               )}
               <div className="btn-row">
                 <button type="button" className="btn btn-xs" disabled={!before} onClick={() => setBefore(undefined)}>
@@ -368,7 +368,7 @@ function TriggerEditor({
           <option value="schedule">定时</option>
         </select>
       </Field>
-      <Field label="处理角色" hint="交给这个角色处理，不受话题的「主动 @ / 自动」模式影响。">
+      <Field label="处理的 AI 员工" hint="交给这位 AI 员工处理，不受话题的「主动 @ / 自动」模式影响。">
         <select value={roleId} onChange={(e) => setRoleId(e.target.value)}>
           <option value="">请选择</option>
           {roles.map((r) => (
@@ -381,8 +381,8 @@ function TriggerEditor({
       {!trigger ? (
         <p className="small muted">保存后你会加入这个话题；你退出话题或账号停用后，触发器不再发起新工作。</p>
       ) : null}
-      {!roles.length ? <p className="notice">请先在「参与者」中邀请一个普通角色。</p> : null}
-      <Field label="本次触发的补充说明" hint="可留空，角色会同时参考话题的目标。">
+      {!roles.length ? <p className="notice">请先在「参与者」中邀请一位系统管理员以外的 AI 员工。</p> : null}
+      <Field label="本次触发的补充说明" hint="可留空，AI 员工会同时参考话题的目标。">
         <textarea rows={3} maxLength={16000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
       </Field>
       {kind === "schedule" ? (
@@ -437,7 +437,7 @@ function TriggerEditor({
           ) : null}
           <Field
             label="前置过滤（JavaScript）"
-            hint="留空表示全部通过。填写函数体，使用 request.body 读取 JSON、request.raw_body 读取原文、request.headers 读取请求头。必须返回 true 或 false；不能联网或读文件，超时 / 出错时不交给角色。"
+            hint="留空表示全部通过。填写函数体，使用 request.body 读取 JSON、request.raw_body 读取原文、request.headers 读取请求头。必须返回 true 或 false；不能联网或读文件，超时 / 出错时不交给 AI 员工。"
           >
             <textarea
               className="mono"
@@ -452,7 +452,7 @@ function TriggerEditor({
               spellCheck={false}
             />
           </Field>
-          <Field label="测试请求正文" hint="仅测试过滤结果，不保存请求、不触发角色。">
+          <Field label="测试请求正文" hint="仅测试过滤结果，不保存请求、不触发 AI 员工。">
             <textarea
               className="mono"
               rows={3}
@@ -473,7 +473,7 @@ function TriggerEditor({
               const result = await run(() =>
                 api.post<{ accepted: boolean }>(`${base}/test-filter`, { filter_code: code, raw_body: sample }),
               );
-              if (result) setTestResult(result.accepted ? "通过：将交给角色" : "过滤：只保留记录");
+              if (result) setTestResult(result.accepted ? "通过：将交给 AI 员工" : "过滤：只保留记录");
             }}
           >
             测试过滤

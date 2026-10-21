@@ -27,7 +27,7 @@ export function KnowledgeTab() {
     <>
       <div className="toolbar">
         <span className="small muted">
-          知识空间存放团队共享资料。管理员都可以查看和编辑；角色需要在配置中选择空间才能读取。
+          知识空间存放团队共享资料。管理员都可以查看和编辑；AI 员工需要在配置中选择空间才能读取。
         </span>
         <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}>
           新建知识空间

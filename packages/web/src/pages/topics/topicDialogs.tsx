@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
-import type { Topic } from "../../api/types";
+import type { Role, Topic } from "../../api/types";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useAction } from "../../ui/feedback";
 import { Field, FieldGroup, FormModal, MultiPick } from "../../ui/kit";
@@ -49,7 +49,7 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
       </Field>
       <Field
         label="目标"
-        hint="这个话题是做什么的、工作有哪些要求；这里的每个角色都会读到，自动模式下调度模型也会参考。"
+        hint="这个话题是做什么的、工作有哪些要求；这里的每位 AI 员工都会读到，自动模式下调度模型也会参考。"
       >
         <textarea rows={3} maxLength={16000} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
@@ -62,7 +62,7 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
           empty="团队里还没有其他成员"
         />
       </FieldGroup>
-      <FieldGroup label="邀请角色" hint="角色默认只在被 @ 时回应；话题建好后可以在顶部切换成自动模式。" wide>
+      <FieldGroup label="邀请 AI 员工" hint="AI 员工默认只在被 @ 时回应；话题建好后可以在顶部切换成自动模式。" wide>
         <MultiPick
           columns={2}
           options={dir.roles
@@ -70,11 +70,11 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
             .map((r) => ({
               value: r.id,
               label: `${r.name} @${r.handle}`,
-              hint: r.instance ? `虚拟电脑 ${r.instance.name}` : "未分配虚拟电脑",
+              hint: roleHint(r),
             }))}
           value={roleIds}
           onChange={setRoleIds}
-          empty="你还没有可以使用的角色"
+          empty="你还没有可以使用的 AI 员工"
         />
       </FieldGroup>
     </FormModal>
@@ -89,7 +89,7 @@ export function OpenDmDialog({ onClose }: { onClose: () => void }) {
   const roles = dir.roles.filter((r) => r.status === "active");
   return (
     <FormModal
-      title="与角色私信"
+      title="与 AI 员工私信"
       submitLabel="打开私信"
       busy={busy}
       disabled={!roleId}
@@ -102,18 +102,16 @@ export function OpenDmDialog({ onClose }: { onClose: () => void }) {
         }
       }}
     >
-      <p className="muted">私信只属于你和这个角色。即使同一个角色也在群组话题中工作，私信内容也不会自动带入群组。</p>
-      <Field label="角色">
-        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} autoFocus>
-          <option value="">选择角色</option>
-          {roles.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name} @{r.handle}
-            </option>
-          ))}
-        </select>
-      </Field>
-      {!roles.length ? <p className="small muted">没有可用的角色。需要管理员授予「使用角色」权限。</p> : null}
+      <p className="muted">
+        私信只属于你和这位 AI 员工。即使同一位 AI 员工也在群组话题中工作，私信内容也不会自动带入群组。
+      </p>
+      <FieldGroup label="AI 员工">
+        {roles.length ? (
+          <RolePick roles={roles} value={roleId} onChange={setRoleId} />
+        ) : (
+          <span className="small muted">没有可用的 AI 员工。需要管理员授予「使用 AI 员工」权限。</span>
+        )}
+      </FieldGroup>
     </FormModal>
   );
 }
@@ -155,10 +153,10 @@ export function InviteDialog({
           type="button"
           className={type === "role" ? "seg seg-on" : "seg"}
           disabled={external}
-          title={external ? "外部会话中只有机器人代表的角色工作，不能邀请其他角色" : undefined}
+          title={external ? "外部会话中只有机器人代表的 AI 员工工作，不能邀请其他 AI 员工" : undefined}
           onClick={() => (setType("role"), setId(""))}
         >
-          角色
+          AI 员工
         </button>
         <button
           type="button"
@@ -170,25 +168,63 @@ export function InviteDialog({
           成员
         </button>
       </div>
-      <Field label={type === "role" ? "角色" : "成员"}>
-        <select value={id} onChange={(e) => setId(e.target.value)}>
-          <option value="">请选择</option>
-          {type === "role"
-            ? roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} @{r.handle}
-                </option>
-              ))
-            : users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-        </select>
-      </Field>
+      {type === "role" ? (
+        <FieldGroup label="AI 员工">
+          {roles.length ? (
+            <RolePick roles={roles} value={id} onChange={setId} />
+          ) : (
+            <span className="small muted">没有可以邀请的 AI 员工</span>
+          )}
+        </FieldGroup>
+      ) : (
+        <Field label="成员">
+          <select value={id} onChange={(e) => setId(e.target.value)}>
+            <option value="">请选择</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       <p className="small muted">
         新加入者可以阅读这个话题的全部历史，包括加入之前的消息；被移除后将无法再访问这个话题。
       </p>
     </FormModal>
+  );
+}
+
+/** Under an AI employee's name in a picker: its 职责说明 (two lines, all of it on hover) and its computer. */
+function roleHint(r: Role): ReactNode {
+  return (
+    <>
+      {r.description ? (
+        <span className="clamp-2" title={r.description}>
+          {r.description}
+        </span>
+      ) : null}
+      <span>{r.instance ? `虚拟电脑 ${r.instance.name}` : "未分配虚拟电脑"}</span>
+    </>
+  );
+}
+
+/** Choose one AI employee by what it does: the same rows as the new topic dialog, as radio buttons. */
+function RolePick({ roles, value, onChange }: { roles: Role[]; value: string; onChange: (id: string) => void }) {
+  const name = useId();
+  return (
+    <div className="pick pick-roles" role="radiogroup" aria-label="AI 员工">
+      {roles.map((r) => (
+        <label key={r.id} className={`pick-item${value === r.id ? " pick-on" : ""}`}>
+          <input type="radio" name={name} checked={value === r.id} onChange={() => onChange(r.id)} />
+          <span className="pick-text">
+            <span>
+              {r.name} @{r.handle}
+            </span>
+            <span className="pick-hint">{roleHint(r)}</span>
+          </span>
+        </label>
+      ))}
+    </div>
   );
 }

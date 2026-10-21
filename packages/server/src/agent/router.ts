@@ -114,7 +114,7 @@ export async function routeMessage(messageId: string): Promise<void> {
         });
         const [topic] = await tx.select().from(topics).where(eq(topics.id, route.topicId)).limit(1);
         if (topic)
-          await systemMessage(tx, topic, "暂时无法自动选择回答的角色，请直接 @ 需要的角色。", {
+          await systemMessage(tx, topic, "暂时无法自动选择回答的 AI 员工，请直接 @ 需要的 AI 员工。", {
             mentions: [{ type: "user", id: route.userId }],
           });
       }

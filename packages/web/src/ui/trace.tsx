@@ -39,10 +39,10 @@ export function TraceRail({ stops, dense }: { stops: Stop[]; dense?: boolean }) 
 const KNOWN_TEXT: Record<string, string> = {
   allowed: "允许",
   "requester is not a recognised active member": "请求人不是已识别的在职成员",
-  "no role was mentioned": "消息没有 @ 角色",
+  "no role was mentioned": "消息没有 @ AI 员工",
   "this connection's bot has no role yet: an administrator must choose the role it stands for":
-    "这个接入的机器人还没有选择代表的角色，需要管理员在接入详情中选择",
-  "the role the connection's bot stands for": "没有 @ 角色，交给机器人代表的角色",
+    "这个接入的机器人还没有选择代表的 AI 员工，需要管理员在接入详情中选择",
+  "the role the connection's bot stands for": "没有 @ AI 员工，交给机器人代表的 AI 员工",
 };
 
 /** Steps of the assignment rules, which were removed; older tasks still carry them. */
@@ -102,7 +102,7 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
                 ) : null}
                 {r.by_role_id ? (
                   <>
-                    <span>由角色转交</span>
+                    <span>由 AI 员工转交</span>
                     <span>{roleName(r.by_role_id)}</span>
                   </>
                 ) : null}
@@ -120,16 +120,16 @@ export function AssignmentTrace({ trace, lookups = {} }: { trace: TraceStep[]; l
               .split(",")
               .map((s) => s.trim())
               .filter(Boolean);
-            body = `请求的角色：${ids.map(roleName).join("、")}`;
+            body = `请求的 AI 员工：${ids.map(roleName).join("、")}`;
           }
-          return { key, title: "确定候选角色", body };
+          return { key, title: "确定候选 AI 员工", body };
         }
         case "roles": {
           const decisions = (Array.isArray(d) ? d : []) as RoleDecision[];
           const anyOk = decisions.some((x) => x.allowed);
           return {
             key,
-            title: "逐个检查角色权限",
+            title: "逐个检查 AI 员工的权限",
             tone: anyOk ? "ok" : "bad",
             body: (
               <ul className="rail-list">

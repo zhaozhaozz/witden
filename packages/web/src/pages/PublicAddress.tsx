@@ -184,7 +184,8 @@ export function PublicAddressIntro() {
       <p>
         Slack、GitHub、飞书会把事件推送到 witden 的<b>事件地址</b>
         ，即这里的公网地址加上固定路径。控制台不对公网开放：witden 有一个单独的<b>事件端口 8325</b>
-        ，只接收这些平台推送的事件（另外提供 Slack 安装回调和角色头像），不提供控制台和任何其他接口。公网地址需要满足：
+        ，只接收这些平台推送的事件（另外提供 Slack 安装回调和 AI
+        员工头像），不提供控制台和任何其他接口。公网地址需要满足：
       </p>
       <ul className="setup-list">
         <li>以 https:// 开头，证书有效（这些平台不接受自签名证书）；</li>

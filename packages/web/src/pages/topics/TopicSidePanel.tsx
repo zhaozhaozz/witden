@@ -173,7 +173,7 @@ export function TopicSidePanel({
         {shown === "settings" ? (
           <div key={topic.id} className="sidebar-settings">
             <details className="sidebar-settings-section" open>
-              <summary>{dm ? "角色" : pair ? "AI 员工" : "参与者"}</summary>
+              <summary>{dm || pair ? "AI 员工" : "参与者"}</summary>
               <div className="sidebar-settings-body">
                 {dm ? (
                   <DmRoleTab topic={topic} />
@@ -227,7 +227,7 @@ function ConversationsBlock({ res, dm, pair }: { res: Resource<AgentSession[]>; 
       return next;
     });
   const reset = async (s: AgentSession) => {
-    const name = s.role ? `@${s.role.handle}` : "角色";
+    const name = s.role ? `@${s.role.handle}` : "AI 员工";
     const ok = await confirm({
       title: `清空 ${name} 的上下文`,
       body: (
@@ -274,7 +274,7 @@ function ConversationsBlock({ res, dm, pair }: { res: Resource<AgentSession[]>; 
                               strokeLinecap="round"
                             />
                           </svg>
-                          {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的角色</span>}
+                          {role ? <RoleBadge role={role} compact /> : <span className="muted">已删除的 AI 员工</span>}
                           <span className="small muted">{s.runs} 轮</span>
                         </span>
                         {s.open_run ? (
@@ -285,7 +285,7 @@ function ConversationsBlock({ res, dm, pair }: { res: Resource<AgentSession[]>; 
                       </span>
                       <span
                         className="small muted"
-                        title="上下文：角色在这里的对话目前占用的大小；达到整理点时，它会把前面的内容压缩成摘要。"
+                        title="上下文：AI 员工在这里的对话目前占用的大小；达到整理点时，它会把前面的内容压缩成摘要。"
                       >
                         上下文 {fmtTokens(s.context_tokens)}
                         {s.compact_at ? ` / ${fmtTokens(s.compact_at)} 时整理` : ""}
@@ -328,8 +328,8 @@ function ConversationsBlock({ res, dm, pair }: { res: Resource<AgentSession[]>; 
                 pair
                   ? "一位 AI 员工给另一位发消息后，双方在这里的对话会一直延续。"
                   : dm
-                    ? "给角色发消息后，它在这里的对话会一直延续，工作期间收到的新消息也会被它读到。"
-                    : "在消息里 @ 一个角色，它在这个话题里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+                    ? "给 AI 员工发消息后，它在这里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+                    : "在消息里 @ 一位 AI 员工，它在这个话题里的对话会一直延续，工作期间收到的新消息也会被它读到。"
               }
             />
           )
@@ -355,7 +355,7 @@ function TasksTab({ res, place }: { res: Resource<Task[]>; place: string }) {
             return (
               <Empty
                 title="还没有任务"
-                hint={`角色把一块较大的工作拆出去单独做、或交给其他角色时，会作为任务出现在这里，各自有独立的上下文，完成后结果回到${place}里的对话。`}
+                hint={`AI 员工把一块较大的工作拆出去单独做、或交给其他 AI 员工时，会作为任务出现在这里，各自有独立的上下文，完成后结果回到${place}里的对话。`}
               />
             );
           return (
@@ -409,7 +409,7 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
           {self
             ? "离开后你将无法再查看这个话题。"
             : type === "role"
-              ? "移除后该角色不再接收这个话题的消息；它在这个话题中进行中的任务会被重新检查，不再被允许的会被取消。"
+              ? "移除后该 AI 员工不再接收这个话题的消息；它在这个话题中进行中的任务会被重新检查，不再被允许的会被取消。"
               : "移除后该成员将无法再访问这个话题；由他发起的进行中任务会被重新检查。"}
         </p>
       ),
@@ -429,7 +429,7 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
       <div className="side-toolbar">
         <span className="small muted">
           {participants.filter((p) => p.type === "user").length} 位成员 ·{" "}
-          {participants.filter((p) => p.type === "role").length} 个角色
+          {participants.filter((p) => p.type === "role").length} 位 AI 员工
         </span>
         {topic.can_post && !external ? (
           <button type="button" className="btn btn-xs" onClick={() => setInviting(true)}>
@@ -439,9 +439,10 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
       </div>
       {external ? (
         <p className="small muted side-note">
-          这是 {PLATFORM_LABEL[external.platform] ?? external.platform} 中的会话：成员就是会话里的人，角色是接入「
+          这是 {PLATFORM_LABEL[external.platform] ?? external.platform} 中的会话：成员就是会话里的人，AI 员工是接入「
           {external.connection_name}
-          」的机器人代表的角色，不能在这里邀请或移除。要换角色，在接入设置中修改机器人代表的角色，所有关联的会话会一起更换。
+          」的机器人代表的 AI 员工，不能在这里邀请或移除。要换 AI 员工，在接入设置中修改机器人代表的 AI
+          员工，所有关联的会话会一起更换。
         </p>
       ) : null}
       <ul className="people">
@@ -502,14 +503,14 @@ function PairRolesTab({ topic }: { topic: Topic }) {
           </div>
           {can("role.manage") ? (
             <Link to={`/roles/${p.id}`} className="btn btn-xs">
-              编辑角色
+              编辑 AI 员工
             </Link>
           ) : null}
         </div>
       ))}
       <p className="small muted side-note">
-        AI 员工只能主动联系在角色设置「协作」中允许的 AI
-        员工，对方的回复不需要设置。这段对话里没有成员，不能邀请其他成员或角色，也不能关联话题或添加触发器。
+        每位 AI 员工只能主动联系在它的设置「协作」中允许的 AI
+        员工，对方的回复不需要设置。这段对话里没有成员，不能邀请其他成员或 AI 员工，也不能关联话题或添加触发器。
       </p>
     </div>
   );
@@ -521,7 +522,7 @@ function DmRoleTab({ topic }: { topic: Topic }) {
   const { can } = useAuth();
   const { newTopic } = useTopics();
   const p = topic.participants?.find((x) => x.type === "role");
-  if (!p) return <Empty title="这段私信没有角色" />;
+  if (!p) return <Empty title="这段私信没有 AI 员工" />;
   const role = dir.roleById.get(p.id);
   return (
     <div className="dm-role">
@@ -543,8 +544,8 @@ function DmRoleTab({ topic }: { topic: Topic }) {
         ]}
       />
       <p className="small muted side-note">
-        私信只在你和 {p.name} 之间：消息不需要
-        @，都会交给它；不能邀请其他成员或角色。需要多人或多个角色一起处理时，请新建话题。
+        私信只在你和 {p.name} 之间：消息不需要 @，都会交给它；不能邀请其他成员或 AI 员工。需要多人或多位 AI
+        员工一起处理时，请新建话题。
       </p>
       <div className="btn-row">
         {can("topic.create") ? (
@@ -554,7 +555,7 @@ function DmRoleTab({ topic }: { topic: Topic }) {
         ) : null}
         {can("role.manage") ? (
           <Link to={`/roles/${p.id}`} className="btn btn-xs">
-            编辑角色
+            编辑 AI 员工
           </Link>
         ) : null}
       </div>
@@ -585,7 +586,7 @@ function FilesTab({ topic }: { topic: Topic }) {
                   </button>
                   <div className="small muted">
                     {fmtBytes(f.size)} ·{" "}
-                    {f.kind === "upload" ? "成员上传" : f.kind === "generated" ? "角色从虚拟电脑分享" : f.kind} ·{" "}
+                    {f.kind === "upload" ? "成员上传" : f.kind === "generated" ? "AI 员工从虚拟电脑分享" : f.kind} ·{" "}
                     {f.created_by_type === "role" ? dir.roleLabel(f.created_by_id) : dir.userName(f.created_by_id)} ·{" "}
                     {fmtRelative(f.created_at)}
                   </div>
@@ -624,7 +625,7 @@ function FilesTab({ topic }: { topic: Topic }) {
             hint={
               topic.kind === "pair"
                 ? "两位 AI 员工从虚拟电脑分享的文件会出现在这里。下载会保存到你自己的电脑。"
-                : "在输入框旁点击「附件」，从你自己的电脑上传；角色从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
+                : "在输入框旁点击「附件」，从你自己的电脑上传；AI 员工从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
             }
           />
         )
@@ -645,10 +646,10 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
         <div className="memory-group-body">
           <p className="small muted side-note">
             {dm
-              ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
+              ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他 AI 员工的私信。"
               : pair
                 ? "这里的记忆只在这两位 AI 员工的这段对话中使用，不会带入它们参与的其他话题。"
-                : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
+                : "话题记忆只在这个话题内使用，不会带入 AI 员工参与的其他话题。"}
           </p>
           <MemoryList
             query={{ scope: "topic", topic_id: topic.id }}
@@ -664,9 +665,9 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
       </details>
       {can("role.manage") ? (
         <details className="memory-group" open>
-          <summary>角色记忆</summary>
+          <summary>AI 员工记忆</summary>
           <div className="memory-group-body">
-            <p className="small muted side-note">属于角色本身，在它参与的所有话题和私信中使用。</p>
+            <p className="small muted side-note">属于每位 AI 员工自己，在它参与的所有话题和私信中使用。</p>
             {roles.length ? (
               roles.map((role) => (
                 <details key={role.id} className="memory-role" open>
@@ -676,9 +677,9 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
                   <MemoryList
                     query={{ scope: "role", role_id: role.id }}
                     create={{ scope: "role", role_id: role.id }}
-                    placeholder="这个角色在各处都适用的工作规则或经验"
-                    emptyTitle="暂无角色记忆"
-                    itemName="角色记忆"
+                    placeholder="这位 AI 员工在各处都适用的工作规则或经验"
+                    emptyTitle="暂无 AI 员工记忆"
+                    itemName="AI 员工记忆"
                     maxChars={1000}
                     compact
                     version={version}
@@ -686,7 +687,7 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
                 </details>
               ))
             ) : (
-              <Empty title="这个话题还没有参与角色" />
+              <Empty title="这个话题还没有 AI 员工参与" />
             )}
           </div>
         </details>
@@ -738,7 +739,7 @@ function SettingsTab({
         </Field>
         <Field
           label="目标"
-          hint="这个话题是做什么的、工作有哪些要求（例如收到 webhook 或定时触发后怎么处理）。这里的每个角色都会读到，自动模式下调度模型也会参考；显示在标题下方。"
+          hint="这个话题是做什么的、工作有哪些要求（例如收到 webhook 或定时触发后怎么处理）。这里的每位 AI 员工都会读到，自动模式下调度模型也会参考；显示在标题下方。"
         >
           <textarea rows={6} maxLength={16000} value={goal} onChange={(e) => setGoal(e.target.value)} />
         </Field>
@@ -785,7 +786,7 @@ function DmSettings({ topic, onCleared }: { topic: Topic; onCleared: () => void 
       <p className="small muted side-note">
         {topic.kind === "pair"
           ? `这是 ${roleNames.join(" 与 ")} 之间一直保留的直接对话：没有标题、成员或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`
-          : `私信是你和 ${roleNames[0] ?? "角色"} 之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`}
+          : `私信是你和 ${roleNames[0] ?? "AI 员工"} 之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`}
       </p>
       {topic.status === "active" ? <CleanupBlock topic={topic} onCleared={onCleared} /> : null}
     </div>
@@ -799,7 +800,7 @@ function CleanupBlock({ topic, onCleared }: { topic: Topic; onCleared: () => voi
   const [clean, setClean] = useState({ messages: true, memories: true, files: true, trigger_history: true });
   const dm = topic.kind === "dm";
   const name = dm
-    ? `与 ${topic.participants?.find((p) => p.type === "role")?.name ?? "角色"} 的私信`
+    ? `与 ${topic.participants?.find((p) => p.type === "role")?.name ?? "AI 员工"} 的私信`
     : `「${topic.title}」`;
   return (
     <div className="settings-block settings-danger">

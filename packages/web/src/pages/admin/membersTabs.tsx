@@ -22,7 +22,8 @@ export function MembersTab() {
     <>
       <div className="toolbar">
         <span className="small muted">
-          能登录控制台的账号都是管理员，可以配置角色和虚拟电脑、查看所有会话。外部成员来自 Slack / 飞书，不登录控制台。
+          能登录控制台的账号都是管理员，可以配置 AI 员工和虚拟电脑、查看所有会话。外部成员来自 Slack /
+          飞书，不登录控制台。
         </span>
         <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing("new")}>
           添加管理员
@@ -59,7 +60,7 @@ export function MembersTab() {
                       {u.is_admin ? (
                         <Tag tone="accent">管理员</Tag>
                       ) : u.external_connection_id ? (
-                        <Tag title="来自 Slack / 飞书 的外部成员：只能使用该接入允许的角色">外部成员</Tag>
+                        <Tag title="来自 Slack / 飞书 的外部成员：只能使用该接入允许的 AI 员工">外部成员</Tag>
                       ) : (
                         "成员"
                       )}
@@ -162,7 +163,7 @@ function UserEditor({ user, onClose, onSaved }: { user: User | null; onClose: ()
       ) : null}
       {user?.external_connection_id ? (
         <p className="small muted">
-          外部成员来自 Slack / 飞书 接入，不登录控制台，只能使用该接入允许的角色（在“通讯接入”中设置）。
+          外部成员来自 Slack / 飞书 接入，不登录控制台，只能使用该接入允许的 AI 员工（在“通讯接入”中设置）。
         </p>
       ) : (
         <Field label={user ? "重置密码" : "初始密码"} hint={user ? "留空保持不变" : undefined}>

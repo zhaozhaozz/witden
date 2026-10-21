@@ -33,8 +33,8 @@ export async function validateTriggerRole(db: Db, topicId: string, roleId: strin
   if (topic.kind !== "group") throw new BadRequest("触发器只能挂在群组话题或关联的外部频道上");
   const role = await getRole(db, roleId);
   if (role?.status !== "active" || !(await participant(db, topicId, "role", roleId)))
-    throw new BadRequest("请选择已加入这个话题的启用角色");
-  if (role.systemAdmin) throw new BadRequest("系统管理员角色只接受人的请求，不能作为自动触发的处理角色");
+    throw new BadRequest("请选择已加入这个话题、已启用的 AI 员工");
+  if (role.systemAdmin) throw new BadRequest("系统管理员只接受人的请求，不能负责处理自动触发");
 }
 
 function snapshot(trigger: TopicTrigger) {
@@ -185,7 +185,7 @@ export async function processTriggerEvents(limit = 20): Promise<number> {
           role.systemAdmin ||
           !(await participant(db, topic.id, "role", role.id))
         )
-          return finish(db, current, "failed", "配置人已停用或离开话题，或处理角色已不再是本话题的可用成员");
+          return finish(db, current, "failed", "配置人已停用或离开话题，或处理的 AI 员工已不再是本话题的可用参与者");
         const { allowed, refusals } = await authorize(db, topic, creator.id, [role.id]);
         if (!allowed.length) return finish(db, current, "failed", refusals.join("; ").slice(0, 1000));
         const content = [
@@ -218,7 +218,7 @@ export async function processTriggerEvents(limit = 20): Promise<number> {
         const [current] = await db.select().from(triggerEvents).where(eq(triggerEvents.id, event.id)).for("update");
         if (current?.claimToken !== event.claimToken) return;
         if (current.attempts >= MAX_ATTEMPTS)
-          await finish(db, current, "failed", "交给角色失败，请检查话题、角色和服务状态");
+          await finish(db, current, "failed", "交给 AI 员工失败，请检查话题、AI 员工和服务状态");
         else
           await db
             .update(triggerEvents)
@@ -284,5 +284,5 @@ export async function getTriggerEvent(db: Db, topicId: string, id: string) {
 
 /** Own-topic history only, even for roles with permission to read other topics' messages. */
 export async function requireWebhookHistory(db: Db, topicId: string, roleId: string) {
-  if (!(await participant(db, topicId, "role", roleId))) throw new Forbidden("角色已不在这个话题中");
+  if (!(await participant(db, topicId, "role", roleId))) throw new Forbidden("AI 员工已不在这个话题中");
 }

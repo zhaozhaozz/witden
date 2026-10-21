@@ -22,10 +22,10 @@ export const BOT_SCOPES: [string, string][] = [
   ["groups:read", "读取私有频道的名称"],
   ["im:read", "读取私信会话的信息"],
   ["mpim:read", "读取多人私信会话的信息"],
-  ["chat:write", "发送角色的回复"],
+  ["chat:write", "发送 AI 员工的回复"],
   ["users:read", "读取发消息的人的名字"],
   ["files:read", "读取消息中的文件"],
-  ["files:write", "把角色分享的文件和截图发到 Slack"],
+  ["files:write", "把 AI 员工分享的文件和截图发到 Slack"],
 ];
 
 const BOT_EVENTS: [string, string][] = [
@@ -110,7 +110,7 @@ const STEP_TITLES: Record<StepKey, string> = {
   app: "在 Slack 中创建应用",
   credentials: "填写凭据并测试连接",
   events: "在 Slack 中订阅事件",
-  access: "选择机器人代表的角色",
+  access: "选择机器人代表的 AI 员工",
   try: "在 Slack 中试一试",
 };
 
@@ -213,7 +213,7 @@ export function SlackSetup({
     access: conn ? (
       <AccessStep
         conn={conn}
-        intro="一个 Slack 应用就是工作区里的一个机器人。选择它代表 witden 中的哪个角色：发给这个机器人的消息都交给这个角色处理，回复以机器人的名字和头像发出。需要多个角色时，为每个角色各建一个 Slack 应用（在 witden 中各是一个接入）。"
+        intro="一个 Slack 应用就是工作区里的一个机器人。选择它代表 witden 中的哪位 AI 员工：发给这个机器人的消息都交给这位 AI 员工处理，回复以机器人的名字和头像发出。需要多位 AI 员工时，为每位 AI 员工各建一个 Slack 应用（在 witden 中各是一个接入）。"
         account="Slack 账号"
         onSaved={(c) => {
           setConn(c);
@@ -258,8 +258,8 @@ export function SlackSetup({
       {header}
       <p className="setup-intro">
         {switching
-          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、机器人代表的角色和已关联的账号都保持不变。`
-          : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的角色：一个频道是 witden 中的一个话题，和 Slack 中看到的一致，角色在提问的地方（频道里或 thread 里）回答。`}
+          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、机器人代表的 AI 员工和已关联的账号都保持不变。`
+          : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的 AI 员工：一个频道是 witden 中的一个话题，和 Slack 中看到的一致，AI 员工在提问的地方（频道里或 thread 里）回答。`}
       </p>
       <div className="setup-modes">
         <div className="segmented">
@@ -339,7 +339,7 @@ function AppStep({
       </p>
       <Field
         label="机器人名称"
-        hint="在 Slack 中显示的名字，大家用“@名称”召唤它。这个机器人会代表 witden 中的一个角色，建议用那个角色的名字；最多 35 个字符，之后也可以在 Slack 中修改。"
+        hint="在 Slack 中显示的名字，大家用“@名称”召唤它。这个机器人会代表 witden 中的一位 AI 员工，建议用那位 AI 员工的名字；最多 35 个字符，之后也可以在 Slack 中修改。"
       >
         <input value={name} maxLength={35} onChange={(e) => onName(e.target.value)} />
       </Field>
@@ -404,8 +404,8 @@ function AppStep({
           </tbody>
         </table>
         <p className="small muted">
-          机器人只能读到它所在频道和私信中的消息；witden 记录这些频道和私信中的所有 thread，只有 @
-          机器人的消息才交给角色。
+          机器人只能读到它所在频道和私信中的消息；witden 记录这些频道和私信中的所有 thread，只有 @ 机器人的消息才交给 AI
+          员工。
         </p>
       </details>
       {mode === "socket" ? <SocketFaq /> : null}

@@ -18,7 +18,7 @@ const STEP_TITLES: Record<StepKey, string> = {
   credentials: "填写凭据并测试连接",
   events: "订阅消息事件",
   publish: "发布应用版本",
-  access: "选择机器人代表的角色",
+  access: "选择机器人代表的 AI 员工",
   try: "在飞书中试一试",
 };
 
@@ -155,7 +155,7 @@ export function FeishuSetup({
     access: conn ? (
       <AccessStep
         conn={conn}
-        intro="一个飞书应用就是一个机器人。选择它代表 witden 中的哪个角色：群里 @ 它的消息和发给它的私聊消息都交给这个角色处理，回复以机器人的身份发出。需要多个角色时，为每个角色各建一个飞书应用（在 witden 中各是一个接入）。"
+        intro="一个飞书应用就是一个机器人。选择它代表 witden 中的哪位 AI 员工：群里 @ 它的消息和发给它的私聊消息都交给这位 AI 员工处理，回复以机器人的身份发出。需要多位 AI 员工时，为每位 AI 员工各建一个飞书应用（在 witden 中各是一个接入）。"
         account="飞书账号"
         onSaved={(c) => {
           setConn(c);
@@ -207,8 +207,8 @@ export function FeishuSetup({
     >
       <p className="setup-intro">
         {switching
-          ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、机器人代表的角色和已关联的账号都保持不变。`
-          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的角色：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；角色在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字（包括富文本和卡片中的文字）。`}
+          ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、机器人代表的 AI 员工和已关联的账号都保持不变。`
+          : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的 AI 员工：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；AI 员工在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字（包括富文本和卡片中的文字）。`}
       </p>
       <div className="setup-modes">
         <div className="segmented">

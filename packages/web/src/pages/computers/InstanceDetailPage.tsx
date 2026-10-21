@@ -155,7 +155,7 @@ const PREVIEW_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   ],
   [/^all data in persistent path (.+)$/, (m) => `持久化目录 ${m[1]} 中的全部数据`],
   [/^data in persistent path (.+)$/, (m) => `持久化目录 ${m[1]} 中的数据`],
-  [/^instance name, resource limits and role assignments$/, () => "虚拟电脑名称、资源限制和角色分配"],
+  [/^instance name, resource limits and role assignments$/, () => "虚拟电脑名称、资源限制和 AI 员工分配"],
   [/^the container and everything in it$/, () => "容器及其中的全部内容"],
   [/^persistent path (.+)$/, (m) => `持久化目录 ${m[1]}`],
   [/^backups are kept until deleted separately$/, () => "已有备份会保留，需要单独删除"],
@@ -174,7 +174,7 @@ function statusHint(status: string): string {
     case "creating":
       return "正在创建容器和存储卷，完成后自动启动。";
     case "running":
-      return "虚拟电脑正在运行，分配到这里的角色可以执行任务。";
+      return "虚拟电脑正在运行，分配到这里的 AI 员工可以执行任务。";
     case "stopped":
       return "虚拟电脑已停止；分配到这里的任务会等待虚拟电脑启动，不会转到其他虚拟电脑执行。";
     case "deleting":
@@ -342,7 +342,7 @@ function DestructiveDialog({
             ) : null}
             {p.roles_detached?.length ? (
               <p className="small">
-                以下角色将失去虚拟电脑，需要重新分配：
+                以下 AI 员工将失去虚拟电脑，需要重新分配：
                 {p.roles_detached.map((h) => (
                   <Handle key={h} handle={h} />
                 ))}
@@ -563,7 +563,7 @@ function Overview({
               </div>
             ) : (
               <div className="small muted">
-                没有人占用鼠标和键盘。同一时间只有一个操作者，避免多个角色或人同时操作造成冲突。
+                没有人占用鼠标和键盘。同一时间只有一个操作者，避免多位 AI 员工或人同时操作造成冲突。
               </div>
             )}
           </div>
@@ -631,12 +631,14 @@ function Overview({
 
         <Section title="共享范围">
           <p className="small">
-            这台虚拟电脑上的所有角色共享文件、已安装的软件和登录状态。需要互相保密的工作应放到不同的虚拟电脑上，而不是只靠不同的角色提示词区分。
+            这台虚拟电脑上的所有 AI
+            员工共享文件、已安装的软件和登录状态。需要互相保密的工作应放到不同的虚拟电脑上，而不是只靠给 AI
+            员工写不同的人设与工作方式来区分。
           </p>
           <KV
             items={[
               [
-                "使用它的角色",
+                "使用它的 AI 员工",
                 inst.roles.length ? (
                   <span className="inline-list">
                     {inst.roles.map((r) => (
@@ -647,7 +649,7 @@ function Overview({
                     ))}
                   </span>
                 ) : (
-                  <span className="muted">没有角色</span>
+                  <span className="muted">没有 AI 员工</span>
                 ),
               ],
               ["用户目录", scope?.home ? <code className="id">{scope.home}</code> : null],
@@ -843,7 +845,10 @@ function SessionsTab({ inst }: { inst: Instance }) {
           const rows = openOnly ? all.filter((s) => s.status === "open") : all;
           if (!rows.length)
             return (
-              <Empty title={openOnly ? "没有打开的会话" : "还没有会话"} hint="角色打开终端或浏览器后会出现在这里。" />
+              <Empty
+                title={openOnly ? "没有打开的会话" : "还没有会话"}
+                hint="AI 员工打开终端或浏览器后会出现在这里。"
+              />
             );
           return (
             <table className="table">
@@ -851,7 +856,7 @@ function SessionsTab({ inst }: { inst: Instance }) {
                 <tr>
                   <th>类型</th>
                   <th>内容</th>
-                  <th>角色与任务</th>
+                  <th>AI 员工与任务</th>
                   <th>状态</th>
                   <th>时间</th>
                 </tr>
@@ -1051,7 +1056,7 @@ function BackupsTab({ inst, reload }: { inst: Instance; reload: () => void }) {
             />
             {withCreds ? (
               <div className="callout callout-bad">
-                新虚拟电脑上的所有角色都将能使用原虚拟电脑的账号和登录状态。只有确实需要时才勾选。
+                新虚拟电脑上的所有 AI 员工都将能使用原虚拟电脑的账号和登录状态。只有确实需要时才勾选。
               </div>
             ) : null}
           </FormModal>
@@ -1087,7 +1092,7 @@ function TasksTab({ inst }: { inst: Instance }) {
                 <tr>
                   <th>任务</th>
                   <th>状态</th>
-                  <th>角色</th>
+                  <th>AI 员工</th>
                   <th>更新</th>
                 </tr>
               </thead>

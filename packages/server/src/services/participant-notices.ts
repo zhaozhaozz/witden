@@ -26,7 +26,7 @@ export async function roleParticipantChange(
   return {
     action,
     actor_name: actorName,
-    role: role ?? { id: roleId, name: "已删除角色", handle: null, color: null, avatar_url: null },
+    role: role ?? { id: roleId, name: "已删除的 AI 员工", handle: null, color: null, avatar_url: null },
   };
 }
 
@@ -95,7 +95,7 @@ export async function legacyParticipantChanges(db: Db, page: Message[]): Promise
     result.set(msg.id, {
       action,
       actor_name: action === "added" ? msg.content.slice(0, -addedSuffix.length) : "",
-      role: row.role ?? { id: row.roleId, name: "已删除角色", handle: null, color: null, avatar_url: null },
+      role: row.role ?? { id: row.roleId, name: "已删除的 AI 员工", handle: null, color: null, avatar_url: null },
     });
   }
   return result;

@@ -210,7 +210,7 @@ export function MessageItem({
             ) : null}
             <time title={fmtDateTime(msg.created_at)}>{fmtTime(msg.created_at)}</time>
             {msg.round > 0 ? (
-              <span className="small muted" title="角色之间自动讨论的轮次">
+              <span className="small muted" title="AI 员工之间自动讨论的轮次">
                 第 {msg.round} 轮
               </span>
             ) : null}

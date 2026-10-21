@@ -83,7 +83,7 @@ export default function ModelsPage() {
     <div className="page">
       <PageHeader
         title="模型"
-        sub="按服务商管理模型：一个服务商（地址、协议、密钥）下可以有多个模型，模型可以从服务商的接口获取，也可以手动填写。密钥加密保存且不会返回到页面；能够使用某个角色的成员不会因此获得它的密钥。"
+        sub="按服务商管理模型：一个服务商（地址、协议、密钥）下可以有多个模型，模型可以从服务商的接口获取，也可以手动填写。密钥加密保存且不会返回到页面；能够使用某位 AI 员工的成员不会因此获得它的密钥。"
         actions={
           <button
             type="button"
@@ -252,7 +252,7 @@ function ProviderCard({
                 <th>能力</th>
                 <th>状态</th>
                 <th className="num">今日用量</th>
-                <th>使用的角色</th>
+                <th>使用的 AI 员工</th>
                 {manage ? <th /> : null}
               </tr>
             </thead>
@@ -297,7 +297,7 @@ function ProviderCard({
                 onClick={async () => {
                   const ok = await confirm({
                     title: `撤销 ${p.name} 的密钥`,
-                    body: <p>撤销后，使用这个服务商任何模型的角色都会立即无法调用模型，直到设置新的密钥。</p>,
+                    body: <p>撤销后，使用这个服务商任何模型的 AI 员工都会立即无法调用模型，直到设置新的密钥。</p>,
                     danger: true,
                     confirmLabel: "撤销密钥",
                   });
@@ -312,7 +312,7 @@ function ProviderCard({
               type="button"
               className="btn btn-xs btn-danger-ghost"
               disabled={busy || inUse}
-              title={inUse ? "仍有角色在使用它的模型，先为它们更换模型" : undefined}
+              title={inUse ? "仍有 AI 员工在使用它的模型，先为它们更换模型" : undefined}
               onClick={async () => {
                 const ok = await confirm({
                   title: `删除服务商 ${p.name}`,
@@ -445,7 +445,7 @@ function ModelRow({
               type="button"
               className="btn btn-xs btn-danger-ghost"
               disabled={busy || !!m.used_by_roles?.length}
-              title={m.used_by_roles?.length ? "仍有角色在使用，先为它们更换模型" : undefined}
+              title={m.used_by_roles?.length ? "仍有 AI 员工在使用，先为它们更换模型" : undefined}
               onClick={async () => {
                 const ok = await confirm({ title: `删除模型 ${m.label}`, danger: true, confirmLabel: "删除" });
                 if (!ok) return;
@@ -638,7 +638,7 @@ function ModelEditor({
           </Field>
           <Field
             label="整理对话的阈值（tokens）"
-            hint={`角色在一个话题里的对话达到这个大小时，把前面的内容压缩成摘要；留空为上下文长度的 3/4${
+            hint={`AI 员工在一个话题里的对话达到这个大小时，把前面的内容压缩成摘要；留空为上下文长度的 3/4${
               shownWindow ? `（${fmtNumber(Math.floor(shownWindow * 0.75))}）` : ""
             }`}
           >
@@ -653,10 +653,10 @@ function ModelEditor({
           systemOne
             ? enabled
               ? "启用：可以用作话题调度模型"
-              : "停用：用它做话题调度时，自动模式的多角色话题不会把消息交给角色"
+              : "停用：用它做话题调度时，自动模式下有多位 AI 员工的话题不会把消息交给 AI 员工"
             : enabled
-              ? "启用：角色可以使用这个模型"
-              : "停用：使用它的角色会无法工作，直到重新启用"
+              ? "启用：AI 员工可以使用这个模型"
+              : "停用：使用它的 AI 员工会无法工作，直到重新启用"
         }
       />
     </FormModal>

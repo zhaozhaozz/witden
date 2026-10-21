@@ -183,7 +183,7 @@ export function AccessStep({
   return (
     <>
       <p>{intro}</p>
-      <div className="pick setup-roles" role="radiogroup" aria-label="机器人代表的角色">
+      <div className="pick setup-roles" role="radiogroup" aria-label="机器人代表的 AI 员工">
         {roles.length ? (
           roles.map((r) => (
             <label key={r.id} className={`pick-item${settings.role_id === r.id ? " pick-on" : ""}`}>
@@ -203,7 +203,7 @@ export function AccessStep({
           ))
         ) : (
           <span className="muted small">
-            还没有可用的角色，请先在<Link to="/roles">角色管理</Link>中创建。
+            还没有可用的 AI 员工，请先在<Link to="/roles">AI 员工管理</Link>中创建。
           </span>
         )}
       </div>
@@ -230,7 +230,7 @@ export function AccessStep({
         >
           保存，下一步
         </button>
-        {settings.role_id ? null : <span className="small muted">选择一个角色后继续。</span>}
+        {settings.role_id ? null : <span className="small muted">选择一位 AI 员工后继续。</span>}
       </div>
     </>
   );
@@ -321,22 +321,22 @@ export function TryStep({
         )}
       </div>
       {latest?.status === "dispatched" ? (
-        <div className="callout">已交给角色处理。角色会在{where}回复，也可以在 witden 的会话列表中查看。</div>
+        <div className="callout">已交给 AI 员工处理。AI 员工会在{where}回复，也可以在 witden 的会话列表中查看。</div>
       ) : null}
       {latest?.status === "not_assigned" ? (
         <div className="callout callout-wait">
-          witden 收到了请求，但没有交给角色：{latest.detail}。常见原因是机器人代表的角色还没有分配电脑或模型（在
-          <Link to="/roles">角色管理</Link>中设置），或者这个接入还没有选择角色（第 {accessStep} 步）。
+          witden 收到了请求，但没有交给 AI 员工：{latest.detail}。常见原因是机器人代表的 AI 员工还没有分配电脑或模型（在
+          <Link to="/roles">AI 员工管理</Link>中设置），或者这个接入还没有选择 AI 员工（第 {accessStep} 步）。
           {`处理后在${on}中再发一次；${on}中提问的地方也会收到这条说明。`}
         </div>
       ) : null}
       {latest?.status === "stored" ? (
-        <div className="callout">这条消息没有 @ 机器人：witden 记录了它，但只有 @ 机器人的消息才交给角色。</div>
+        <div className="callout">这条消息没有 @ 机器人：witden 记录了它，但只有 @ 机器人的消息才交给 AI 员工。</div>
       ) : null}
       {latest?.status === "unlinked_user" ? (
         <>
           <div className="callout callout-wait">
-            {`发消息的${on}账号还没有关联 witden 账号，所以没有交给角色。在下面把你自己的${on}账号关联到你的 witden 账号，然后在${on}中再发一次；其他人可以在第 ${accessStep} 步开启“允许未关联的人使用”。`}
+            {`发消息的${on}账号还没有关联 witden 账号，所以没有交给 AI 员工。在下面把你自己的${on}账号关联到你的 witden 账号，然后在${on}中再发一次；其他人可以在第 ${accessStep} 步开启“允许未关联的人使用”。`}
           </div>
           <Identities key={events?.length} conn={conn} />
         </>

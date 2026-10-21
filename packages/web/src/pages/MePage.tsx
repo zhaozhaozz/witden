@@ -38,7 +38,7 @@ export default function MePage() {
         <div>
           <Section title="我的权限">
             <p className="small">
-              控制台账号都是管理员：可以配置角色、虚拟电脑和通讯接入，查看所有会话。外部成员（来自 Slack /
+              控制台账号都是管理员：可以配置 AI 员工、虚拟电脑和通讯接入，查看所有会话。外部成员（来自 Slack /
               飞书）不登录控制台。
             </p>
           </Section>

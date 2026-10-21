@@ -11,7 +11,7 @@ type Level = "off" | "read" | "write_ask" | "write";
 export type ToolPlatform = "feishu" | "github";
 
 const LABELS: Record<Level, [string, string]> = {
-  off: ["禁用", "角色不能使用"],
+  off: ["禁用", "AI 员工不能使用"],
   read: ["只读", "可以查看，不能创建或修改"],
   write_ask: ["读写，写入需询问", "查看直接进行；创建或修改前由有审批权限的人批准"],
   write: ["读写", "查看、创建和修改都直接进行"],

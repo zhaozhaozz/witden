@@ -14,7 +14,7 @@ export type Level = "allow" | "ask" | "off";
 const LEVELS: { value: Level; label: string; title: string }[] = [
   { value: "allow", label: "始终允许", title: "直接使用，不需要批准" },
   { value: "ask", label: "询问", title: "每次使用前由有审批权限的人批准" },
-  { value: "off", label: "禁用", title: "角色不能使用" },
+  { value: "off", label: "禁用", title: "AI 员工不能使用" },
 ];
 
 export function groupLevel(group: string, allowed: string[], approval: string[]): Level {

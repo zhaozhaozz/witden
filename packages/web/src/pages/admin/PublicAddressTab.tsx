@@ -25,7 +25,7 @@ export function PublicAddressTab() {
       ) : null}
       {clearing ? (
         <span className="small">
-          清除后，各接入显示的事件地址和角色头像地址改按 WITDEN_PUBLIC_URL 生成，外部平台通常访问不到；已在
+          清除后，各接入显示的事件地址和 AI 员工头像地址改按 WITDEN_PUBLIC_URL 生成，外部平台通常访问不到；已在
           Slack、GitHub、飞书中填写的地址不会自动改变。{" "}
           <button
             type="button"

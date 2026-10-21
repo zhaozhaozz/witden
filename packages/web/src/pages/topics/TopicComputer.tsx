@@ -46,7 +46,7 @@ export function TopicComputer({
   useInterval(() => void res.reload(), 8000, !!current);
 
   if (!computers.length) {
-    return <Empty title="没有虚拟电脑" hint="这个话题里的角色还没有分配虚拟电脑。" />;
+    return <Empty title="没有虚拟电脑" hint="这个话题里的 AI 员工还没有分配虚拟电脑。" />;
   }
   return (
     <div className={`topic-computer${maximized ? " topic-computer-max" : ""}`}>
@@ -150,7 +150,7 @@ function ComputerView({
     ) : (
       <Empty
         title="命令行虚拟电脑没有桌面画面"
-        hint="有「接管虚拟电脑」权限的人可以在这里直接执行命令；角色的操作记录见任务详情。"
+        hint="有「接管虚拟电脑」权限的人可以在这里直接执行命令；AI 员工的操作记录见任务详情。"
       />
     );
   }

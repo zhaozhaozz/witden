@@ -90,7 +90,7 @@ function usePendingApprovals() {
 const SCOPE_LABEL: Record<string, string> = {
   global: "全部 AI 执行",
   connection: "通讯接入",
-  role: "角色",
+  role: "AI 员工",
   instance: "虚拟电脑",
   topic: "话题",
   task: "任务",
@@ -143,7 +143,7 @@ export default function Layout() {
   const settings = (
     [
       { to: "/computers", label: "虚拟电脑", icon: "computer", any: COMPUTER_PERMS },
-      { to: "/roles", label: "角色管理", icon: "roles", any: ["role.manage"] },
+      { to: "/roles", label: "AI 员工管理", icon: "roles", any: ["role.manage"] },
       { to: "/models", label: "模型", icon: "model", any: ["secrets.manage"] },
       { to: "/connections", label: "通讯接入", icon: "connection", any: ["connection.manage"] },
       { to: "/admin", label: "系统管理", icon: "settings", any: ADMIN_PERMS },
@@ -526,7 +526,7 @@ function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleI
   if (!cast.length) return null;
   const computers = [...new Map(cast.filter((r) => r.instance).map((r) => [r.instance!.id, r.instance!])).values()];
   const title = [
-    ...cast.map((r) => `${r.id === bound ? "机器人代表" : "参与"}的角色：${r.name} @${r.handle}`),
+    ...cast.map((r) => `${r.id === bound ? "机器人代表" : "参与"}的 AI 员工：${r.name} @${r.handle}`),
     ...computers.map((m) => `虚拟电脑：${m.name}${m.status === "running" ? "（运行中）" : "（未运行）"}`),
   ].join("\n");
   // Chips are wider than avatars were: two of each fit beside a section title.
@@ -555,7 +555,7 @@ function RoleList() {
   const dmOf = new Map(t.topics.filter((x) => isWebDm(x) && x.dm_role_id).map((x) => [x.dm_role_id as string, x]));
   const roles = dir.roles.filter((r) => r.status === "active").sort((a, b) => a.name.localeCompare(b.name, "zh"));
   return (
-    <SideSection id="roles" title="角色" action={{ label: "+", title: "与角色私信", onClick: t.pickDm }}>
+    <SideSection id="roles" title="AI 员工" action={{ label: "+", title: "与 AI 员工私信", onClick: t.pickDm }}>
       {roles.map((r) => {
         const dm = dmOf.get(r.id);
         const on = !!dm && dm.id === t.activeId;
@@ -583,8 +583,8 @@ function RoleList() {
               <Link
                 to={`/roles/${r.id}`}
                 className="side-quick"
-                title={`编辑角色 ${r.name}`}
-                aria-label={`编辑角色 ${r.name}`}
+                title={`编辑 AI 员工 ${r.name}`}
+                aria-label={`编辑 AI 员工 ${r.name}`}
               >
                 <PencilIcon />
               </Link>
@@ -595,7 +595,7 @@ function RoleList() {
           </div>
         );
       })}
-      {!roles.length ? <div className="side-empty">没有可用的角色</div> : null}
+      {!roles.length ? <div className="side-empty">没有可用的 AI 员工</div> : null}
     </SideSection>
   );
 }

@@ -51,11 +51,11 @@ function AllTopics() {
     <div className="page">
       <PageHeader
         title="全部会话"
-        sub="角色参与的全部会话：控制台里的话题和私信，以及 Slack、飞书中的 thread 和私信、GitHub 上的 issue 和 pull request。"
+        sub="AI 员工参与的全部会话：控制台里的话题和私信，以及 Slack、飞书中的 thread 和私信、GitHub 上的 issue 和 pull request。"
         actions={
           <div className="btn-row">
             <button type="button" className="btn btn-sm" onClick={t.pickDm}>
-              与角色私信
+              与 AI 员工私信
             </button>
             {can("topic.create") ? (
               <button type="button" className="btn btn-sm btn-primary" onClick={t.newTopic}>
@@ -129,7 +129,7 @@ function AllTopics() {
                         <td className="nowrap">
                           {conversationKind(x)}
                           {x.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
-                          {dmRole && dmRole.status !== "active" ? <Tag tone="off">角色已停用</Tag> : null}
+                          {dmRole && dmRole.status !== "active" ? <Tag tone="off">AI 员工已停用</Tag> : null}
                         </td>
                         <td className="nowrap muted">
                           {x.last_message_at ? fmtRelative(x.last_message_at) : "无消息"}
@@ -146,7 +146,7 @@ function AllTopics() {
               hint={
                 query || source
                   ? undefined
-                  : "新建一个话题，或在左侧选一个角色私信；接入 Slack、GitHub 后，那里的会话也会出现在这里。"
+                  : "新建一个话题，或在左侧选一位 AI 员工私信；接入 Slack、GitHub 后，那里的会话也会出现在这里。"
               }
             />
           );

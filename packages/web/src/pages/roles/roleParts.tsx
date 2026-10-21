@@ -6,11 +6,11 @@ import { TaskStatusChip } from "../tasks/taskParts";
 
 // Backend warnings are English sentences with a few fixed shapes; show them in Chinese when recognised.
 const WARNING_PATTERNS: [RegExp, (m: RegExpMatchArray) => string][] = [
-  [/^no model configured/, () => "未配置模型：角色无法工作"],
-  [/^the key of (.+) has been revoked: the role cannot work$/, (m) => `服务商 ${m[1]} 的密钥已撤销：角色无法工作`],
-  [/^model (.+) is disabled: the role cannot work$/, (m) => `模型 ${m[1]} 已停用：角色无法工作`],
+  [/^no model configured/, () => "未配置模型：AI 员工无法工作"],
+  [/^the key of (.+) has been revoked: the role cannot work$/, (m) => `服务商 ${m[1]} 的密钥已撤销：AI 员工无法工作`],
+  [/^model (.+) is disabled: the role cannot work$/, (m) => `模型 ${m[1]} 已停用：AI 员工无法工作`],
   [/^model (.+) has not been checked yet$/, (m) => `模型 ${m[1]} 还没有做能力检测`],
-  [/^the model cannot call tools/, () => "模型不支持工具调用：角色只能对话"],
+  [/^the model cannot call tools/, () => "模型不支持工具调用：AI 员工只能对话"],
   [/^the model cannot understand images/, () => "模型不支持图像理解：桌面操作会被拒绝"],
   [/^no computer assigned/, () => "未分配虚拟电脑：任务无法执行"],
   [/^computer (.+) has no desktop$/, (m) => `虚拟电脑 ${m[1]} 没有桌面，桌面工具不可用`],
@@ -27,14 +27,14 @@ export function translateWarning(w: string): string {
 
 const NOTE_ZH: Record<string, string> = {
   "Running and queued tasks keep the prompt, model and computer they started with.":
-    "执行中和排队中的任务继续使用开始时的提示词、模型和虚拟电脑。",
+    "执行中和排队中的任务继续使用开始时的人设与工作方式、模型和虚拟电脑。",
   "Changing the computer does not move files, installed software or logins; tasks pinned to the old computer must be cancelled or re-run explicitly.":
     "更换虚拟电脑不会迁移文件、已安装的软件和登录状态；已固定在旧虚拟电脑上的任务需要明确取消或重新执行。",
-  "Agent sessions and topic notes stay with their topics.": "角色会话和话题记忆留在各自话题中。",
+  "Agent sessions and topic notes stay with their topics.": "AI 员工在各话题中的对话和话题记忆留在各自话题中。",
 };
 
 const FIELD_ZH: Record<string, string> = {
-  system_prompt: "提示词",
+  system_prompt: "人设与工作方式",
   model_config_id: "模型",
   model_params: "模型参数",
   instance_id: "虚拟电脑",
@@ -62,7 +62,7 @@ export function ImpactView({ impact }: { impact: RoleImpact }) {
         </div>
         <div>
           <strong>{impact.memories}</strong>
-          <span>角色记下的笔记</span>
+          <span>它记下的记忆</span>
         </div>
       </div>
       {impact.active_tasks.length ? (

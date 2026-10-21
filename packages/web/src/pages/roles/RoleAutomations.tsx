@@ -47,7 +47,7 @@ export function RoleAutomations({ roleId }: { roleId: string }) {
               ))}
             </ul>
           ) : (
-            <Empty title="没有负责的触发器" hint="在话题右侧栏的“触发器”中把这个角色设为处理角色。" />
+            <Empty title="没有负责的触发器" hint="在话题右侧栏的“触发器”中把它设为处理的 AI 员工。" />
           )
         }
       </Loaded>

@@ -40,22 +40,23 @@ export function DispatcherTab() {
   return (
     <Section title="话题调度">
       <p className="small muted">
-        话题设为「自动」且有多个角色时，没有 @
-        任何角色的消息由这个模型决定交给哪几个角色，也可以一个都不交（比如闲聊、人和人之间的对话）。只有一个角色的话题不经过调度，由角色自己决定是否回复。
+        话题设为「自动」且有多位 AI 员工时，没有 @ 任何 AI 员工的消息由这个模型决定交给哪几位 AI
+        员工，也可以一位都不交（比如闲聊、人和人之间的对话）。只有一位 AI 员工的话题不经过调度，由它自己决定是否回复。
       </p>
       <p className="small muted">调度模型可以是以下两类之一，调度的 token 用量计入所选模型：</p>
       <ul className="small muted">
         <li>
           <strong>System 1 模型</strong>（推荐，快且便宜）：{SYSTEM_ONE_HINT}
-          调度时它只看这条消息本身，从“各个角色”和“不需要角色”中选出最可能的一项；选中某个角色时，概率不低于 30%
-          的其他角色也会一起接手。它不看之前的对话，所以回答某个角色的提问时，请 @ 这个角色。添加方法：在
+          调度时它只看这条消息本身，从话题中的每位 AI 员工和“不需要 AI 员工”中选出最可能的一项；选中某位 AI
+          员工时，概率不低于 30% 的其他 AI 员工也会一起接手。它不看之前的对话，所以回答某位 AI 员工的提问时，请 @ 这位
+          AI 员工。添加方法：在
           <Link to="/models">模型</Link>页添加服务商，选择“TypeSafe Jev”或“Laya”，再添加模型（Jev 一般为
           jev-latest；自部署的 Laya 中文对话用 multilingual）。
         </li>
         <li>
           <strong>普通对话模型</strong>
-          （与角色使用的模型相同）：它会参考这条消息之前的几条消息，所以直接回答某个角色的提问时，通常不用 @
-          也能交给这个角色；可以选零个、一个或几个角色。每条没有 @
+          （与 AI 员工使用的模型相同）：它会参考这条消息之前的几条消息，所以直接回答某位 AI 员工的提问时，通常不用 @
+          也能交给这位 AI 员工；可以一位都不选，也可以选一位或几位。每条没有 @
           的消息都要调用一次，速度和费用取决于所选模型，建议选响应快的小模型。
         </li>
       </ul>
@@ -75,7 +76,7 @@ export function DispatcherTab() {
                 label="调度模型"
                 hint={
                   s.model_config_id && !s.usable
-                    ? "当前的调度模型已停用或服务商不可用；自动模式的多角色话题暂时不会把消息交给角色。"
+                    ? "当前的调度模型已停用或服务商不可用；自动模式下有多位 AI 员工的话题暂时不会把消息交给 AI 员工。"
                     : "按服务商分组；System 1 模型附最近一次检测的响应时间。"
                 }
               >
@@ -84,7 +85,7 @@ export function DispatcherTab() {
                   value={picked}
                   onChange={setPicked}
                   kind="all"
-                  none="未设置（多角色的自动话题不会自动交给角色）"
+                  none="未设置（自动模式下有多位 AI 员工的话题不会自动交给 AI 员工）"
                   suffix={(m) =>
                     m.capabilities?.latency_ms !== undefined ? ` · 响应 ${fmtLatency(m.capabilities.latency_ms)}` : ""
                   }

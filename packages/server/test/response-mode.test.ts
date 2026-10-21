@@ -200,7 +200,7 @@ describe("auto mode", () => {
     await w.drain();
     const notices = (await w.messages(w.ids.topic)).filter((m: any) => m.author_type === "system");
     expect(notices).toHaveLength(1);
-    expect(notices[0].content).toBe("暂时无法自动选择回答的角色，请直接 @ 需要的角色。");
+    expect(notices[0].content).toBe("暂时无法自动选择回答的 AI 员工，请直接 @ 需要的 AI 员工。");
     const logs = (await w.api("GET", "/api/audit?action=routing.failed", { token: w.adminToken })).body;
     expect(logs).toHaveLength(1);
     expect(logs[0].detail.error).toContain("private upstream failure");
@@ -335,7 +335,7 @@ describe("auto mode", () => {
     for (let i = 0; i < 3; i++) await w.drain();
     expect(await tasksIn(w.ids.topic)).toHaveLength(0);
     const notices = (await w.messages(w.ids.topic)).filter((m: any) => m.author_type === "system");
-    expect(notices.map((m: any) => m.content)).toEqual(["暂时无法自动选择回答的角色，请直接 @ 需要的角色。"]);
+    expect(notices.map((m: any) => m.content)).toEqual(["暂时无法自动选择回答的 AI 员工，请直接 @ 需要的 AI 员工。"]);
   });
 
   it("WITDEN_LAYA_URL adds that Laya server once, as the dispatcher when none is set", async () => {

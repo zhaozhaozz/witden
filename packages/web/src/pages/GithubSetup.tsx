@@ -25,9 +25,9 @@ const STEP_TITLES: Record<StepKey, string> = {
   account: "准备机器人账号和 Token",
   credentials: "填写 Token 并测试连接",
   webhook: "在仓库中添加 Webhook",
-  access: "选择机器人代表的角色",
+  access: "选择机器人代表的 AI 员工",
   try: "在 GitHub 中试一试",
-  grant: "给角色授权",
+  grant: "给 AI 员工授权",
 };
 
 /**
@@ -51,7 +51,7 @@ const PERMISSIONS: [string, string, string][] = [
 ];
 
 const EVENTS: [string, string, string][] = [
-  ["issues", "Issues", "新建的 issue（正文中 @ 机器人时交给角色）"],
+  ["issues", "Issues", "新建的 issue（正文中 @ 机器人时交给 AI 员工）"],
   ["issue_comment", "Issue comments", "issue 和 pull request 中的评论"],
   ["pull_request", "Pull requests", "新建的 pull request"],
 ];
@@ -85,7 +85,7 @@ function appManifest(name: string, eventsUrl: string, redirectUrl: string) {
     name,
     // GitHub requires a homepage; the public address is the only one it can reach.
     url: new URL(eventsUrl).origin,
-    description: "witden 的机器人：在 issue 和 pull request 中 @ 它，把工作交给 witden 中的角色。",
+    description: "witden 的机器人：在 issue 和 pull request 中 @ 它，把工作交给 witden 中的 AI 员工。",
     hook_attributes: { url: eventsUrl, active: true },
     redirect_url: redirectUrl,
     public: false,
@@ -228,7 +228,7 @@ export function GithubSetup({
     access: conn ? (
       <AccessStep
         conn={conn}
-        intro="一个 GitHub App（或机器人账号）就是一个机器人。选择它代表 witden 中的哪个角色：在 issue 和 pull request 中 @ 它的评论都交给这个角色处理，回复以它的身份发出。需要多个角色时，为每个角色各建一个 App（在 witden 中各是一个接入）。"
+        intro="一个 GitHub App（或机器人账号）就是一个机器人。选择它代表 witden 中的哪位 AI 员工：在 issue 和 pull request 中 @ 它的评论都交给这位 AI 员工处理，回复以它的身份发出。需要多位 AI 员工时，为每位 AI 员工各建一个 App（在 witden 中各是一个接入）。"
         account="GitHub 账号"
         onSaved={(c) => {
           update(c);
@@ -281,14 +281,14 @@ export function GithubSetup({
       {authOnly ? (
         <p className="setup-intro">
           按下面 {flow.length} 步接入一个 GitHub 账号，只作为认证：witden 不接收它的消息，也不需要公网地址和
-          Webhook。获得授权的角色可以用这个账号的身份在 GitHub 中做事，例如代替本人提 issue、开 pull request、查看
-          Actions；Token 由 witden 保管，不交给角色或电脑。
+          Webhook。获得授权的 AI 员工可以用这个账号的身份在 GitHub 中做事，例如代替本人提 issue、开 pull request、查看
+          Actions；Token 由 witden 保管，不交给 AI 员工或电脑。
         </p>
       ) : (
         <p className="setup-intro">
           按下面 {flow.length} 步把 GitHub 接入 witden。完成后，在仓库的 issue 和 pull request 中 @
-          机器人，就能把工作交给 witden 中的角色：一个 issue 或 pull request 是 witden
-          中的一个话题，角色以评论回复。GitHub 把事件推送到 witden 的公网事件地址，所以先要准备一个公网地址。
+          机器人，就能把工作交给 witden 中的 AI 员工：一个 issue 或 pull request 是 witden 中的一个话题，AI
+          员工以评论回复。GitHub 把事件推送到 witden 的公网事件地址，所以先要准备一个公网地址。
         </p>
       )}
       {initial ? null : (
@@ -317,7 +317,7 @@ export function GithubSetup({
             {mode === "app"
               ? "以 App 的身份工作，回复显示为“名称[bot]”；按安装授权到仓库，令牌自动续期。witden 把 App 的设置一次交给 GitHub，凭据自动取回，不需要手动复制。"
               : authOnly
-                ? "这个账号不当机器人使用，只给角色的 GitHub 工具提供认证（在角色的权限中按接入授权）。"
+                ? "这个账号不当机器人使用，只给 AI 员工的 GitHub 工具提供认证（在 AI 员工的权限中按接入授权）。"
                 : "以一个 GitHub 账号的身份工作：需要手动创建 Token，并在仓库中添加 Webhook。"}
           </p>
           {mode === "token" ? (
@@ -690,9 +690,8 @@ function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => vo
     return (
       <>
         <p>
-          可以用本人的账号（角色代替本人操作，GitHub
-          上显示为本人），也可以用一个单独的账号。角色能做的不会超过这个账号和 Token
-          的权限，也不会超过在角色权限中授予的范围。
+          可以用本人的账号（AI 员工代替本人操作，GitHub 上显示为本人），也可以用一个单独的账号。AI
+          员工能做的不会超过这个账号和 Token 的权限，也不会超过在 AI 员工权限中授予的范围。
         </p>
         <ol className="setup-list">
           <li>
@@ -704,7 +703,7 @@ function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => vo
                   新建 fine-grained token ↗
                 </a>
                 。Resource owner 选择仓库所在的账号或组织（组织可能需要管理员批准）；Repository access
-                只选需要的仓库；Permissions 只给角色要用的（见下表，Metadata 会自动设为
+                只选需要的仓库；Permissions 只给 AI 员工要用的（见下表，Metadata 会自动设为
                 Read-only）。设置有效期后生成，复制 <code>github_pat_</code> 开头的 Token。
               </li>
               <li>
@@ -734,7 +733,7 @@ function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => vo
           </tbody>
         </table>
         <div className="callout callout-wait">
-          Token 过期后角色的 GitHub 工具会失败；到期前请在接入的“编辑”中换上新的 Token。
+          Token 过期后 AI 员工的 GitHub 工具会失败；到期前请在接入的“编辑”中换上新的 Token。
         </div>
         <div className="setup-next">
           <button type="button" className="btn btn-primary" onClick={onNext}>
@@ -746,7 +745,7 @@ function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => vo
   return (
     <>
       <p>
-        机器人账号就是一个普通的 GitHub 账号：大家在 issue 中 @ 它，角色以它的身份回复。建议为 witden
+        机器人账号就是一个普通的 GitHub 账号：大家在 issue 中 @ 它，AI 员工以它的身份回复。建议为 witden
         单独注册一个账号（例如 acme-witden），不要用个人账号。
       </p>
       <ol className="setup-list">
@@ -777,7 +776,7 @@ function AccountStep({ authOnly, onNext }: { authOnly: boolean; onNext: () => vo
           </ul>
         </li>
       </ol>
-      <div className="callout callout-wait">Token 过期后角色无法回复；到期前请在接入的“编辑”中换上新的 Token。</div>
+      <div className="callout callout-wait">Token 过期后 AI 员工无法回复；到期前请在接入的“编辑”中换上新的 Token。</div>
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onNext}>
           已拿到 Token，下一步
@@ -850,7 +849,7 @@ function TokenStep({
     <>
       <p>
         {authOnly
-          ? "把账号的 Token 填到这里。witden 加密保存它，保存后不能再查看，也不会交给角色或电脑。"
+          ? "把账号的 Token 填到这里。witden 加密保存它，保存后不能再查看，也不会交给 AI 员工或电脑。"
           : "把机器人账号的 Token 填到这里。witden 加密保存它，保存后不能再查看；同时生成下一步要用的 Webhook Secret。"}
       </p>
       <form
@@ -903,10 +902,10 @@ function TokenStep({
 function GrantStep({ conn, onDone }: { conn: Connection; onDone: () => void }) {
   return (
     <>
-      <p>接入已经可以使用。它不接收消息；要让角色用这个账号在 GitHub 中做事：</p>
+      <p>接入已经可以使用。它不接收消息；要让 AI 员工用这个账号在 GitHub 中做事：</p>
       <ol className="setup-list">
         <li>
-          打开 <b>角色</b>，编辑要授权的角色，在 <b>权限</b> 的 GitHub 部分找到「{conn.name}」。
+          打开 <b>AI 员工管理</b>，编辑要授权的 AI 员工，在 <b>权限</b> 的 GitHub 部分找到「{conn.name}」。
         </li>
         <li>
           按类别（代码与文件、Issue、Pull
@@ -915,7 +914,7 @@ function GrantStep({ conn, onDone }: { conn: Connection; onDone: () => void }) {
         <li>多个 GitHub 接入（例如不同的人或组织）分别授权，一个接入的权限不会用到另一个接入上。</li>
       </ol>
       <p className="small muted">
-        角色要把私有仓库或其他话题中的内容写到更多人能看到的地方（例如公开仓库的
+        AI 员工要把私有仓库或其他话题中的内容写到更多人能看到的地方（例如公开仓库的
         issue）之前，会先请内容的所有者在控制台批准。
       </p>
       <div className="setup-next">

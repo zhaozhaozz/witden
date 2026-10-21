@@ -181,8 +181,9 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
   const conversation = isConversation(task);
   const parts = [
     `You are ${role.name} (@${role.handle}), an AI employee of the team.`,
+    // What others see it do (description), then how it is and works (its own prompt): labelled apart.
     role.description ? `Responsibilities: ${role.description}` : "",
-    prompt,
+    prompt.trim() ? `Persona and working rules:\n${prompt}` : "",
     "## Where you are",
     inst
       ? `- Computer: ${inst.name} (${inst.spec.kind}), user ${inst.spec.user}, working directory ${inst.spec.workdir}.` +

@@ -84,8 +84,9 @@ export function SoftwareTab({ inst, onChanged }: { inst: Instance; onChanged: (i
       }
     >
       <p className="small muted">
-        虚拟电脑里的人和角色都没有 root
-        权限，系统软件由平台安装。清单里的软件包在这台虚拟电脑每次启动时自动安装缺少的部分，重置后也会装回。这台电脑上的角色也可以修改清单；角色临时安装、没有加入清单的软件，重置后会消失。镜像自带的软件不用填。
+        虚拟电脑里的人和 AI 员工都没有 root
+        权限，系统软件由平台安装。清单里的软件包在这台虚拟电脑每次启动时自动安装缺少的部分，重置后也会装回。这台电脑上的
+        AI 员工也可以修改清单；AI 员工临时安装、没有加入清单的软件，重置后会消失。镜像自带的软件不用填。
       </p>
       <Field label="Debian 软件包" hint="每行一个，与 apt-get install 使用的名称相同，例如 ffmpeg">
         {manage ? (

@@ -62,7 +62,7 @@ export default function TasksPage() {
     <div className="page">
       <PageHeader
         title="任务"
-        sub="任务是角色单独开展的工作：从对话中拆出的较大工作，或委托给其他角色的工作，各有自己的上下文。角色在话题里的对话不算任务，勾选“包括对话”可一并查看它们的每一轮。点开可以看到每一步执行记录和分配依据。"
+        sub="任务是 AI 员工单独开展的工作：从对话中拆出的较大工作，或委托给其他 AI 员工的工作，各有自己的上下文。AI 员工在话题里的对话不算任务，勾选“包括对话”可一并查看它们的每一轮。点开可以看到每一步执行记录和分配依据。"
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
@@ -85,8 +85,8 @@ export default function TasksPage() {
             </button>
           ))}
         </div>
-        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label="按角色筛选">
-          <option value="">全部角色</option>
+        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} aria-label="按 AI 员工筛选">
+          <option value="">全部 AI 员工</option>
           {dir.roles.map((r) => (
             <option key={r.id} value={r.id}>
               {r.name} @{r.handle}
@@ -111,7 +111,7 @@ export default function TasksPage() {
                   <tr>
                     <th>任务</th>
                     <th>状态与原因</th>
-                    <th>负责角色</th>
+                    <th>负责的 AI 员工</th>
                     <th>虚拟电脑</th>
                     <th>话题</th>
                     <th>请求人</th>
@@ -127,7 +127,7 @@ export default function TasksPage() {
                         </Link>
                         {t.kind === "conversation" ? (
                           <div className="small muted">
-                            <Tag>对话</Tag> 角色在话题里的一轮工作
+                            <Tag>对话</Tag> AI 员工在话题里的一轮工作
                           </div>
                         ) : t.parent_task_id ? (
                           <div className="small muted">委托的子任务 · 第 {t.depth} 层</div>
@@ -169,7 +169,7 @@ export default function TasksPage() {
           ) : (
             <Empty
               title="没有符合条件的任务"
-              hint="角色在对话中把较大的工作拆出去、或委托给其他角色时，会出现在这里。"
+              hint="AI 员工在对话中把较大的工作拆出去、或委托给其他 AI 员工时，会出现在这里。"
             />
           )
         }

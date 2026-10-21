@@ -45,7 +45,9 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
       privateLink &&
       !(await confirm({
         title: "允许这个私信与所选话题通信？",
-        body: <p>角色可以主动将必要消息发送到对方。这不会开放私信完整历史，但被发送的内容会对接收话题的成员可见。</p>,
+        body: (
+          <p>AI 员工可以主动将必要消息发送到对方。这不会开放私信完整历史，但被发送的内容会对接收话题的成员可见。</p>
+        ),
         confirmLabel: "确认关联",
         cancelLabel: "返回",
       }))
@@ -67,7 +69,9 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
   return (
     <div className="settings">
       <p className="small muted">
-        关联只能建立在外部会话（Slack、飞书、GitHub）和内部话题之间：外部会话的机器人代表的角色把需要处理的工作发给关联的内部话题，由那里的角色完成，再把进展和结果发回外部会话。角色根据工作需要主动发送，普通聊天不会自动转发，双方上下文不会合并。
+        关联只能建立在外部会话（Slack、飞书、GitHub）和内部话题之间：外部会话的机器人代表的 AI
+        员工把需要处理的工作发给关联的内部话题，由那里的 AI 员工完成，再把进展和结果发回外部会话。AI
+        员工根据工作需要主动发送，普通聊天不会自动转发，双方上下文不会合并。
       </p>
       <Loaded res={links}>
         {(rows) =>
@@ -87,10 +91,10 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
                   <p className="small muted">
                     {link.external
                       ? "收到发送的消息后同步到外部平台，不再次运行机器人。"
-                      : "收到发送的消息后交给话题中的角色处理。"}
+                      : "收到发送的消息后交给话题中的 AI 员工处理。"}
                   </p>
                   <p className="small muted">
-                    {link.roles.map((r) => `@${r.handle}`).join("、") || "暂无可用角色"}
+                    {link.roles.map((r) => `@${r.handle}`).join("、") || "暂无可用 AI 员工"}
                     {link.status !== "active" ? " · 已归档" : ""}
                   </p>
                   <button
@@ -161,7 +165,8 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
           )}
         </Loaded>
         <p className="small muted">
-          关联后，外部会话中机器人代表的角色可以把请求交给内部话题，并查看内部话题的工作状态（进行中的工作和结果摘录），外部会话中的人可能因此看到这些内容。
+          关联后，外部会话中机器人代表的 AI
+          员工可以把请求交给内部话题，并查看内部话题的工作状态（进行中的工作和结果摘录），外部会话中的人可能因此看到这些内容。
         </p>
         <button
           type="button"

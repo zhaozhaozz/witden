@@ -54,7 +54,7 @@ const CAP_ROWS: [string, string][] = [
   ["account_types", "账号类型"],
   ["conversations", "会话类型"],
   ["threads", "话题 / thread"],
-  ["mentions", "@ 与选择角色"],
+  ["mentions", "@ 与选择 AI 员工"],
   ["files", "文件"],
   ["edits_deletes", "编辑与删除"],
   ["limits", "限制"],
@@ -234,7 +234,7 @@ export default function ConnectionsPage() {
     <div className="page">
       <PageHeader
         title="通讯接入"
-        sub="把 Slack、飞书、GitHub 的机器人接入进来。每个机器人代表一个角色：机器人所在频道和私信中的消息都会记录下来，@ 机器人的消息交给它代表的角色。"
+        sub="把 Slack、飞书、GitHub 的机器人接入进来。每个机器人代表一位 AI 员工：机器人所在频道和私信中的消息都会记录下来，@ 机器人的消息交给它代表的 AI 员工。"
         actions={
           <>
             <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
@@ -374,8 +374,8 @@ export default function ConnectionsPage() {
             ) : (
               <Section title="还没有接入任何通讯平台">
                 <p className="setup-intro">
-                  接入后，角色以机器人的身份在这些平台上工作：大家在频道、私信、issue 中 @ 机器人，就能把工作交给 witden
-                  中的角色。选择要接入的平台开始设置：
+                  接入后，AI 员工以机器人的身份在这些平台上工作：大家在频道、私信、issue 中 @ 机器人，就能把工作交给
+                  witden 中的 AI 员工。选择要接入的平台开始设置：
                 </p>
                 <PlatformPicker onPick={(platform) => setSetup({ platform, conn: null })} />
               </Section>
@@ -586,7 +586,7 @@ function ConnectionDetail({
             {conn.status_reason ??
               (conn.status === "active"
                 ? authOnly
-                  ? "只作为认证：不接收消息，供获得授权的角色使用 GitHub 工具"
+                  ? "只作为认证：不接收消息，供获得授权的 AI 员工使用 GitHub 工具"
                   : "正在接收和发送消息"
                 : "")}
           </div>
@@ -601,15 +601,15 @@ function ConnectionDetail({
         ) : null}
         {authOnly ? (
           <div className="callout">
-            这个账号不当机器人使用：witden 不接收它的消息，也不需要 Webhook。要让角色用它在 GitHub 中做事（读代码、提
-            issue、开 pull request 等），在“角色 → 编辑 → 权限”的 GitHub
-            部分为角色勾选这个接入的读取或写入，并选择写入是否需要询问。Token 不交给角色或电脑。
+            这个账号不当机器人使用：witden 不接收它的消息，也不需要 Webhook。要让 AI 员工用它在 GitHub
+            中做事（读代码、提 issue、开 pull request 等），在“AI 员工管理 → 编辑 → 权限”的 GitHub 部分为 AI
+            员工勾选这个接入的读取或写入，并选择写入是否需要询问。Token 不交给 AI 员工或电脑。
           </div>
         ) : conn.settings?.role_id ? null : (
           <div className="callout callout-bad" role="alert">
-            这个机器人还没有选择代表的角色，发给它的请求都会被拒绝。{" "}
+            这个机器人还没有选择代表的 AI 员工，发给它的请求都会被拒绝。{" "}
             <button type="button" className="btn btn-xs" onClick={() => setEditing(true)}>
-              选择角色
+              选择 AI 员工
             </button>
           </div>
         )}
@@ -657,7 +657,7 @@ function ConnectionDetail({
               : [
                   ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
                   [
-                    "机器人代表的角色",
+                    "机器人代表的 AI 员工",
                     typeof conn.settings?.role_id === "string" && conn.settings.role_id ? (
                       dir.roleLabel(conn.settings.role_id)
                     ) : (
@@ -691,8 +691,8 @@ function ConnectionDetail({
                         [
                           "其他机器人的消息",
                           conn.settings?.bot_requests
-                            ? `@ 这个机器人时交给角色（连续 ${conn.bot_request_limit ?? 8} 次机器人请求后，等有人发言再继续）`
-                            : "只作为上下文，不交给角色",
+                            ? `@ 这个机器人时交给 AI 员工（连续 ${conn.bot_request_limit ?? 8} 次机器人请求后，等有人发言再继续）`
+                            : "只作为上下文，不交给 AI 员工",
                         ] as [string, ReactNode],
                       ]
                     : []),
@@ -735,7 +735,7 @@ function ConnectionDetail({
                   [
                     "外部成员",
                     conn.settings?.auto_provision_users
-                      ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的角色"
+                      ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的 AI 员工"
                       : "关闭：未关联的人不能使用，需要管理员关联身份",
                   ],
                 ]
@@ -755,7 +755,8 @@ function ConnectionDetail({
       {conn.platform === "feishu" ? (
         <Section title="飞书应用的权限">
           <p className="small muted">
-            向飞书查询这个应用现在开通了哪些权限。基础权限决定能否收发消息、显示名字；扩展决定角色能用哪些飞书工具（在角色的权限中按应用设置）。
+            向飞书查询这个应用现在开通了哪些权限。基础权限决定能否收发消息、显示名字；扩展决定 AI
+            员工能用哪些飞书工具（在 AI 员工的权限中按应用设置）。
           </p>
           <FeishuScopeCheck conn={conn} />
         </Section>
@@ -1129,7 +1130,7 @@ function ConnectionForm({
           checked={authOnly}
           onChange={(v) => setSettings({ ...settings, auth_only: v })}
           label="只作为认证（不当机器人使用）"
-          hint="开启后不接收 GitHub 的消息，也不需要 Webhook；这个账号只给获得授权的角色使用 GitHub 工具（在角色的权限中按接入设置），例如代替本人提 issue、开 pull request。Token 不交给角色或电脑。"
+          hint="开启后不接收 GitHub 的消息，也不需要 Webhook；这个账号只给获得授权的 AI 员工使用 GitHub 工具（在 AI 员工的权限中按接入设置），例如代替本人提 issue、开 pull request。Token 不交给 AI 员工或电脑。"
         />
       ) : null}
       {workspace ? (
@@ -1218,7 +1219,9 @@ function ConnectionForm({
         <button type="button" className="btn" onClick={onCancel}>
           取消
         </button>
-        {authOnly || settings.role_id ? null : <span className="small muted">选择机器人代表的角色后才能保存。</span>}
+        {authOnly || settings.role_id ? null : (
+          <span className="small muted">选择机器人代表的 AI 员工后才能保存。</span>
+        )}
       </div>
     </form>
   );

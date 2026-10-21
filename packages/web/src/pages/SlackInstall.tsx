@@ -16,7 +16,7 @@ const STEP_TITLES: Record<StepKey, string> = {
   callback: "选择完成安装的方式",
   distribute: "在 Slack 中添加回调地址并开放安装",
   install: "安装到工作区",
-  access: "选择机器人代表的角色",
+  access: "选择机器人代表的 AI 员工",
   try: "在 Slack 中试一试",
 };
 
@@ -131,7 +131,7 @@ export function SlackInstall({
     access: conn ? (
       <AccessStep
         conn={conn}
-        intro={`这是应用在工作区「${conn.name}」中的机器人，默认代表与应用的第一个工作区相同的角色。选择它在这个工作区代表 witden 中的哪个角色：这里发给机器人的消息都交给这个角色处理。`}
+        intro={`这是应用在工作区「${conn.name}」中的机器人，默认代表与应用的第一个工作区相同的 AI 员工。选择它在这个工作区代表 witden 中的哪位 AI 员工：这里发给机器人的消息都交给这位 AI 员工处理。`}
         account="Slack 账号"
         onSaved={(c) => {
           setConn(c);
@@ -169,9 +169,9 @@ export function SlackInstall({
       {header}
       <p className="setup-intro">
         一个 Slack
-        应用可以安装到多个工作区（例如不同的组织），不需要为每个工作区各建一个应用。每个工作区是应用下的一个接入，有自己的频道、私信、关联的账号和机器人代表的角色；应用的令牌和与
-        Slack 的连接由它的所有工作区共用，删除任何一个工作区都不影响应用和其他工作区。安装用的是 Slack 的
-        OAuth：安装的人在 Slack 中确认后，witden 换取这个工作区的机器人令牌。
+        应用可以安装到多个工作区（例如不同的组织），不需要为每个工作区各建一个应用。每个工作区是应用下的一个接入，有自己的频道、私信、关联的账号和机器人代表的
+        AI 员工；应用的令牌和与 Slack 的连接由它的所有工作区共用，删除任何一个工作区都不影响应用和其他工作区。安装用的是
+        Slack 的 OAuth：安装的人在 Slack 中确认后，witden 换取这个工作区的机器人令牌。
       </p>
       <SetupSteps
         flow={FLOW}

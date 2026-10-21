@@ -47,7 +47,7 @@ export default function InstancesPage() {
     <div className="page">
       <PageHeader
         title="虚拟电脑"
-        sub="每台虚拟电脑是一个独立的 Docker 容器，角色只能在分配给自己的虚拟电脑里执行命令和操作桌面。"
+        sub="每台虚拟电脑是一个独立的 Docker 容器，AI 员工只能在分配给自己的虚拟电脑里执行命令和操作桌面。"
         actions={
           <>
             {live ? <span className="live-dot live-on">实时</span> : null}
@@ -71,7 +71,7 @@ export default function InstancesPage() {
                     <th>状态</th>
                     <th>模板</th>
                     <th>资源限制</th>
-                    <th>使用它的角色</th>
+                    <th>使用它的 AI 员工</th>
                     <th>当前操作者</th>
                   </tr>
                 </thead>
@@ -122,7 +122,7 @@ export default function InstancesPage() {
               title="还没有虚拟电脑"
               hint={
                 can("instance.manage")
-                  ? "从模板创建一台虚拟电脑，再把角色分配到这台虚拟电脑上。"
+                  ? "从模板创建一台虚拟电脑，再把 AI 员工分配到这台虚拟电脑上。"
                   : "你没有可以查看的虚拟电脑。"
               }
               action={

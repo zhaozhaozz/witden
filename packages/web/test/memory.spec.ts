@@ -48,7 +48,7 @@ test("background work refresh preserves expanded memory and editing drafts", asy
   await detail.getByRole("textbox", { name: "内容", exact: true }).fill("尚未保存的工作约定");
   state.memoryDelay = 900;
   const beforeRequests = state.memoryRequests.length;
-  state.memories.find((m) => m.id === "mem-role")!.content = "角色刚更新的内容";
+  state.memories.find((m) => m.id === "mem-role")!.content = "AI 员工刚更新的内容";
   await emit(page, "task.step", { task_id: "task-1" });
   await expect.poll(() => state.memoryRequests.length).toBeGreaterThan(beforeRequests);
   await expect(detail.getByRole("textbox", { name: "内容", exact: true })).toHaveValue("尚未保存的工作约定");
@@ -57,7 +57,7 @@ test("background work refresh preserves expanded memory and editing drafts", asy
   await expect(title).toHaveAttribute("aria-expanded", "true");
   await expect(detail.getByRole("textbox", { name: "内容", exact: true })).toHaveValue("尚未保存的工作约定");
   await detail.getByRole("button", { name: "取消" }).click();
-  await expect(detail).toContainText("角色刚更新的内容");
+  await expect(detail).toContainText("AI 员工刚更新的内容");
   expect(errors).toEqual([]);
 });
 
@@ -65,7 +65,7 @@ test("role memory can be added edited and deleted in its own sidebar group", asy
   const { state, errors } = await workspace(page, { multipleRoles: true });
   await page.getByRole("tab", { name: "记忆", exact: true }).click();
   const group = page.locator(".memory-role").filter({ hasText: "研发助手" });
-  await group.getByRole("button", { name: "添加角色记忆" }).click();
+  await group.getByRole("button", { name: "添加 AI 员工记忆" }).click();
   await group.getByRole("textbox", { name: "标题", exact: true }).fill("新增约定");
   await group.getByRole("textbox", { name: "关键词", exact: true }).fill("验证，发布");
   await group.getByRole("textbox", { name: "内容", exact: true }).fill("检查部署结果。");
@@ -108,7 +108,7 @@ test("memory panel handles no participants and narrow screens with long content"
   state.memories[0].content = "LongContentWithoutSpaces".repeat(100);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("tab", { name: "记忆", exact: true }).click();
-  await expect(page.locator(".memory-group").last()).toContainText("这个话题还没有参与角色");
+  await expect(page.locator(".memory-group").last()).toContainText("这个话题还没有 AI 员工参与");
   await page.getByRole("button", { name: state.memories[0].title }).click();
   await expect(page.locator(".memory-text")).toHaveText(state.memories[0].content);
   expect(await page.locator(".side-panel").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);

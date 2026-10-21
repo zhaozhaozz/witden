@@ -207,7 +207,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     return {
       kind: "role",
       id,
-      name: p?.name ?? r?.name ?? "已移除的角色",
+      name: p?.name ?? r?.name ?? "已移除的 AI 员工",
       handle: p?.handle ?? r?.handle,
       avatarUrl: p?.avatar_url ?? r?.avatar_url,
       color: p?.color ?? r?.color,
@@ -242,7 +242,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     if (msg.tasks?.length) {
       const name = (t: { owner_role_id: string }) => {
         const r = dir.roleById.get(t.owner_role_id);
-        return r ? `@${r.handle}` : "角色";
+        return r ? `@${r.handle}` : "AI 员工";
       };
       // A role already at work here reads the message at its next step instead of starting over.
       const joined = msg.tasks.filter((t) => t.joined).map(name);
@@ -326,7 +326,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             <h2>{heading}</h2>
             <div className="topic-tags">
               {dm && !ch ? (
-                <Tag title={`你与 ${heading} 的私信；不能邀请其他成员或角色`}>私信</Tag>
+                <Tag title={`你与 ${heading} 的私信；不能邀请其他成员或 AI 员工`}>私信</Tag>
               ) : pair ? (
                 <Tag title="两位 AI 员工之间的直接对话：只有它们发消息，控制台账号可以查看">AI 员工对话</Tag>
               ) : (
@@ -352,7 +352,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
               />
               <DispatcherWarning topic={topic} />
               {topic.status === "archived" ? <Tag tone="off">已归档</Tag> : null}
-              {roleOff ? <Tag tone="off">角色已停用</Tag> : null}
+              {roleOff ? <Tag tone="off">AI 员工已停用</Tag> : null}
               <span
                 className={`live-dot${live ? " live-on" : ""}`}
                 title={live ? "实时更新已连接" : "实时更新未连接，正在重试"}
@@ -416,7 +416,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                           ? undefined
                           : dm
                             ? `直接发消息即可，不需要 @，${heading} 会回复；它接下的工作会出现在右侧的任务列表。`
-                            : "用 @ 提及角色把工作交给它；角色接下的工作会出现在右侧的任务列表。"
+                            : "用 @ 提及 AI 员工把工作交给它；AI 员工接下的工作会出现在右侧的任务列表。"
                       }
                     />
                   ) : null}
@@ -489,9 +489,9 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             {pair
               ? `这是 ${pairNames.join(" 与 ") || "两位 AI 员工"} 之间的直接对话，由其中一方主动发起，只能查看。双方只交换消息，看不到对方所在的话题和记录。`
               : roleOff
-                ? `${heading} 已停用，这段私信只能查看。角色重新启用后可以继续私信。`
+                ? `${heading} 已停用，这段私信只能查看。AI 员工重新启用后可以继续私信。`
                 : dm && topic.status === "archived"
-                  ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
+                  ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧 AI 员工列表打开。`
                   : topic.status === "archived"
                     ? "话题已归档，只能查看。可以在右侧“设置”中恢复。"
                     : dm
@@ -576,7 +576,10 @@ function TopicCast({
         </span>
       ) : null}
       {computers.size ? (
-        <span className="badge-row" title={showRoles ? "这些角色在各自的虚拟电脑里工作" : "角色在这台虚拟电脑里工作"}>
+        <span
+          className="badge-row"
+          title={showRoles ? "这些 AI 员工在各自的虚拟电脑里工作" : "AI 员工在这台虚拟电脑里工作"}
+        >
           <span className="small muted">在</span>
           {[...computers.values()].map((c) => (
             <ComputerBadge key={c.id} computer={c} />

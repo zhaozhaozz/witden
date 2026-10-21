@@ -106,11 +106,11 @@ export function TaskControls({
       ) : null}
       {!conversation && TRANSFERABLE.includes(task.status) ? (
         task.topic?.kind === "dm" ? (
-          <button type="button" className={cls} disabled title="私信中只有一个角色，任务不能转交给其他角色">
+          <button type="button" className={cls} disabled title="私信中只有一位 AI 员工，任务不能转交给其他 AI 员工">
             转交
           </button>
         ) : task.topic?.kind === "pair" ? (
-          <button type="button" className={cls} disabled title="AI 员工之间对话中的任务不能转交给其他角色">
+          <button type="button" className={cls} disabled title="AI 员工对话中的任务不能转交给其他 AI 员工">
             转交
           </button>
         ) : (
@@ -136,7 +136,8 @@ export function TaskControls({
                     title: "停止这一轮",
                     body: (
                       <p>
-                        角色这一轮的工作会停止，还没读到的消息也不再处理；它拆出或委托出去的任务不受影响。之后有人再找它时，对话照常继续。
+                        AI
+                        员工这一轮的工作会停止，还没读到的消息也不再处理；它拆出或委托出去的任务不受影响。之后有人再找它时，对话照常继续。
                       </p>
                     ),
                     confirmLabel: "停止",
@@ -161,7 +162,7 @@ export function TaskControls({
       {dialog === "instruct" || dialog === "continue" ? (
         <FormModal
           title="补充要求"
-          submitLabel="发送给角色"
+          submitLabel="发送给 AI 员工"
           busy={busy}
           disabled={!note.trim()}
           onClose={() => setDialog(null)}
@@ -169,7 +170,7 @@ export function TaskControls({
             const out = await control(
               dialog === "continue" ? "continue" : "instruct",
               note.trim(),
-              dialog === "continue" ? "已补充要求，任务重新开始工作" : "要求已送达，角色会在下一步读取",
+              dialog === "continue" ? "已补充要求，任务重新开始工作" : "要求已送达，AI 员工会在下一步读取",
             );
             if (out) {
               setNote("");
@@ -183,7 +184,7 @@ export function TaskControls({
               dialog === "continue"
                 ? "这项任务已经完成。补充要求后，它在原来的执行记录和虚拟电脑上接着做，完成后再交付一次结果；之前交付的结果都保留。"
                 : conversation
-                  ? "角色会在下一步读到它（不打断正在执行的操作），和话题里的新消息一样。"
+                  ? "AI 员工会在下一步读到它（不打断正在执行的操作），和话题里的新消息一样。"
                   : "作为一条补充指令加入任务记录；如任务正在等待人工答复，会立即继续。"
             }
           >
@@ -194,7 +195,7 @@ export function TaskControls({
 
       {dialog === "reassign" ? (
         <FormModal
-          title="转交给其他角色"
+          title="转交给其他 AI 员工"
           submitLabel="转交"
           busy={busy}
           disabled={!target}
@@ -212,11 +213,12 @@ export function TaskControls({
           }}
         >
           <p className="muted">
-            转交后仍是同一项任务，所属话题、执行记录和历次交付都保留。新角色按自己的权限配置，在自己的虚拟电脑上接着做；原虚拟电脑上的文件不会迁移，之前的执行过程也不会交给新角色。
+            转交后仍是同一项任务，所属话题、执行记录和历次交付都保留。接手的 AI
+            员工按自己的权限配置，在自己的虚拟电脑上接着做；原虚拟电脑上的文件不会迁移，之前的执行过程也不会交给它。
           </p>
           <Field label="新负责人">
             <select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">选择角色</option>
+              <option value="">选择 AI 员工</option>
               {candidates.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name} @{r.handle}
@@ -227,7 +229,7 @@ export function TaskControls({
           </Field>
           <Field
             label="交接说明"
-            hint="选填。新角色从任务要求、已有的结果和这段说明开始工作，可以写明进展、相关的分支或文件位置和接下来要做的事。"
+            hint="选填。接手的 AI 员工从任务要求、已有的结果和这段说明开始工作，可以写明进展、相关的分支或文件位置和接下来要做的事。"
           >
             <textarea rows={4} maxLength={4000} value={handoffNote} onChange={(e) => setHandoffNote(e.target.value)} />
           </Field>
