@@ -57,12 +57,17 @@ export async function appendStep(db: Db, task: Task, kind: string, payload: Reco
 
 /** The steps that make up the model context: the task's own, or its conversation's from the context start. */
 async function contextSteps(db: Db, task: Task) {
-  if (!isConversation(task))
+  if (!isConversation(task)) {
+    // A reassigned task retains its complete audit log, but does not inject a previous role's
+    // private tool outputs and model history into the new executor's context.
+    const from = Number(task.assignment?.handoff_context_from_seq ?? 0);
+    const start = Number.isSafeInteger(from) && from > 0 ? from : 0;
     return db
       .select()
       .from(taskSteps)
-      .where(and(eq(taskSteps.taskId, task.id), inArray(taskSteps.kind, TRANSCRIPT_KINDS)))
+      .where(and(eq(taskSteps.taskId, task.id), gte(taskSteps.seq, start), inArray(taskSteps.kind, TRANSCRIPT_KINDS)))
       .orderBy(asc(taskSteps.seq));
+  }
   const [session] = await db.select().from(agentSessions).where(eq(agentSessions.id, task.sessionId!)).limit(1);
   return db
     .select()

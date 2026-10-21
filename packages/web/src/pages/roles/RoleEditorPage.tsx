@@ -844,10 +844,8 @@ function CopyRoleDialog({
 }
 
 function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () => void; onDone: (r: Role) => void }) {
-  const dir = useDirectory();
   const { run, busy } = useAction();
-  const [onTasks, setOnTasks] = useState("pause");
-  const [target, setTarget] = useState("");
+  const [onTasks, setOnTasks] = useState("keep");
   const active = role.impact?.active_tasks ?? [];
   return (
     <FormModal
@@ -855,49 +853,29 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
       submitLabel="停用角色"
       danger
       busy={busy}
-      disabled={onTasks === "reassign" && !target}
       onClose={onClose}
       onSubmit={async () => {
         const out = await run(
-          () =>
-            api.post<Role>(`/api/roles/${role.id}/disable`, {
-              on_tasks: onTasks,
-              reassign_to: onTasks === "reassign" ? target : null,
-            }),
+          () => api.post<Role>(`/api/roles/${role.id}/disable`, { on_tasks: onTasks }),
           "角色已停用",
         );
         if (out) onDone(out);
       }}
     >
-      <p>停用后角色不再接受新的工作。它还有 {active.length} 项未完成的任务，需要决定如何处理：</p>
+      <p>
+        停用后角色不再接受新的工作，它在各话题中的对话随之结束。它还有 {active.length} 项未完成的工作，其中的独立任务：
+      </p>
       <div className="check-col">
         <label className="check">
-          <input type="radio" checked={onTasks === "pause"} onChange={() => setOnTasks("pause")} />
-          暂停，之后可以继续或转交
+          <input type="radio" checked={onTasks === "keep"} onChange={() => setOnTasks("keep")} />
+          保留，等待其他角色认领：在任务详情中转交给其他角色；重新启用这个角色时接着做
         </label>
         <label className="check">
           <input type="radio" checked={onTasks === "cancel"} onChange={() => setOnTasks("cancel")} />
           取消
         </label>
-        <label className="check">
-          <input type="radio" checked={onTasks === "reassign"} onChange={() => setOnTasks("reassign")} />
-          转交给其他角色
-        </label>
       </div>
-      {onTasks === "reassign" ? (
-        <Field label="接手的角色" hint="转交会重新检查权限，接手角色在自己的虚拟电脑上执行。">
-          <select value={target} onChange={(e) => setTarget(e.target.value)}>
-            <option value="">选择角色</option>
-            {dir.roles
-              .filter((r) => r.id !== role.id && r.status === "active")
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} @{r.handle}
-                </option>
-              ))}
-          </select>
-        </Field>
-      ) : null}
+      <p className="small muted">Slack、飞书和 GitHub 会话中的任务不能由其他角色接手，停用时一律取消。</p>
     </FormModal>
   );
 }

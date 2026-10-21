@@ -15,6 +15,8 @@ export const ACTIVE = new Set([
   "waiting_children",
   "waiting_resource",
   "waiting_timer",
+  // The role was disabled: the task waits for another role to take it over.
+  "waiting_role",
   "paused",
 ]);
 

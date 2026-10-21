@@ -1,4 +1,4 @@
-/** Human control over tasks: pause, resume, cancel, add instructions, retry, reassign. */
+/** Human control over tasks: resume, cancel, add instructions, retry, reassign; a conversation run can also be paused. */
 
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -8,11 +8,11 @@ import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
 import { clearRunApprovals } from "./approval-scope.js";
-import { ACTIVE, cancelTree, getTask, pause, resume, setStatus, TERMINAL } from "./control.js";
+import { cancelTree, getTask, pause, resume, setStatus, TERMINAL } from "./control.js";
 import { enqueue, openRun } from "./conversation.js";
-import { authorize, buildEnvelope, createTask, systemMessage } from "./dispatch.js";
 import { activeKillSwitch } from "./revocation.js";
 import { lockTask, submitTaskInput } from "./task-continuation.js";
+import { transferTask } from "./task-handoff.js";
 
 /** Console accounts steer every task (they are all administrators). */
 export async function canControl(db: Db, user: User, task: Task, _action = "pause"): Promise<boolean> {
@@ -38,8 +38,11 @@ export async function control(
   // An independent task takes new requirements as queued input; that records its own audit entry.
   if (action === "continue" || (action === "instruct" && task.kind === "task" && !TERMINAL.has(task.status)))
     return submitTaskInput(db, task.id, note, { userId: user.id, ...opts });
-  if (action === "pause") await pause(db, task, `paused by ${user.name}`);
-  else if (action === "resume") {
+  if (action === "pause") {
+    // Independent tasks are not paused by hand: cancel them, or hand them over once they stop.
+    if (task.kind === "task") throw new BadRequest("tasks cannot be paused; cancel the task instead");
+    await pause(db, task, `paused by ${user.name}`);
+  } else if (action === "resume") {
     if (task.status !== "paused") throw new BadRequest("task is not paused");
     if (await activeKillSwitch(db, task)) throw new BadRequest("an emergency stop covering this task is still active");
     await resume(db, task);
@@ -92,64 +95,8 @@ export async function control(
   return (await getTask(db, task.id))!;
 }
 
-/** Explicit hand-over to another role. Permissions are re-checked; nothing widens silently. */
-export async function reassign(
-  db: Db,
-  user: User,
-  task: Task,
-  target: Role,
-  opts: { byRoleManager?: boolean } = {},
-): Promise<Task> {
-  // Disabling a role (role.manage) moves its work explicitly.
-  if (!opts.byRoleManager) await requireControl(db, user, task, "reassign");
-  if (!ACTIVE.has(task.status)) throw new BadRequest("only unfinished tasks can be reassigned");
-  // A conversation belongs to its role; @-mention another role in the topic instead.
-  if (task.kind === "conversation") throw new BadRequest("a role's conversation cannot be reassigned; only tasks can");
-  const topic = await topicSvc.getTopic(db, task.topicId);
-  if (!(await topicSvc.participant(db, topic.id, "role", target.id)))
-    await topicSvc.inviteRole(db, user, topic, target.id);
-  const { allowed, refusals } = await authorize(db, topic, task.requesterUserId, [target.id]);
-  if (!allowed.length) throw new Forbidden(`cannot reassign: ${refusals.join("; ")}`);
-  const previous = await topicSvc.getRole(db, task.ownerRoleId);
-  // The new owner starts from the brief, not the previous owner's transcript or computer state.
-  await cancelTree(db, task, `reassigned to @${target.handle} by ${user.name}`);
-  const parent = task.parentTaskId ? await getTask(db, task.parentTaskId) : null;
-  const created = await createTask(db, {
-    topic,
-    role: target,
-    requesterUserId: task.requesterUserId,
-    instruction: task.instruction,
-    title: task.title,
-    parent,
-    assignment: allowed[0][1],
-    round: task.round,
-    waitsForResult: !!parent,
-  });
-  await db
-    .update(tasks)
-    .set({ envelope: buildEnvelope(target, parent ?? null) })
-    .where(eq(tasks.id, created.id));
-  if (parent) {
-    const wait = { ...(parent.wait ?? {}) };
-    wait.child_ids = (wait.child_ids ?? []).map((c: string) => (c === task.id ? created.id : c));
-    await db.update(tasks).set({ wait }).where(eq(tasks.id, parent.id));
-  }
-  let note = `Task reassigned from @${previous?.handle ?? "?"} to @${target.handle} by ${user.name}.`;
-  if (task.instanceId !== target.instanceId)
-    note += " It now runs on a different computer; files from the previous computer were not moved.";
-  await systemMessage(db, topic, note, { taskId: created.id });
-  await audit(db, "task.reassign", {
-    actorType: "user",
-    actorId: user.id,
-    taskId: created.id,
-    topicId: topic.id,
-    detail: {
-      from_task: task.id,
-      from_role: task.ownerRoleId,
-      to_role: target.id,
-      old_instance: task.instanceId,
-      new_instance: target.instanceId,
-    },
-  });
-  return (await getTask(db, created.id))!;
+/** Explicit hand-over to another role: the same task, with the new role's permissions and computer. */
+export async function reassign(db: Db, user: User, task: Task, target: Role, note = ""): Promise<Task> {
+  await requireControl(db, user, task, "reassign");
+  return transferTask(db, user, task.id, target, note);
 }

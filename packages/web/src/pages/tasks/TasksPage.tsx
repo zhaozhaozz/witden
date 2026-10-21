@@ -14,7 +14,14 @@ const FILTERS: { key: string; label: string; statuses: string[] }[] = [
   {
     key: "waiting",
     label: "等待中",
-    statuses: ["waiting_human", "waiting_approval", "waiting_children", "waiting_resource", "waiting_timer"],
+    statuses: [
+      "waiting_human",
+      "waiting_approval",
+      "waiting_children",
+      "waiting_resource",
+      "waiting_timer",
+      "waiting_role",
+    ],
   },
   { key: "running", label: "执行中", statuses: ["running"] },
   { key: "paused", label: "已暂停", statuses: ["paused"] },

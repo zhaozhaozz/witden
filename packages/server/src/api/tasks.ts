@@ -220,7 +220,8 @@ export async function taskRoutes(app: FastifyInstance) {
         .where(eq(roles.id, String(body(req).roleId ?? "")))
         .limit(1);
       if (!target) throw new NotFound("role not found");
-      return taskOut(db, await admin.reassign(db, user, task, target), { detail: true, viewer: user });
+      const moved = await admin.reassign(db, user, task, target, String(body(req).note ?? ""));
+      return taskOut(db, moved, { detail: true, viewer: user });
     }),
   );
 

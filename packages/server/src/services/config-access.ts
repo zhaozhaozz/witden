@@ -52,7 +52,7 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       },
       { method: "PATCH", path: "/api/roles/:id", note: "any of the fields above" },
       { method: "POST", path: "/api/roles/:id/copy", note: "name, handle" },
-      { method: "POST", path: "/api/roles/:id/disable", note: "on_tasks: pause | cancel | reassign, reassign_to" },
+      { method: "POST", path: "/api/roles/:id/disable", note: "on_tasks: keep | cancel" },
       { method: "POST", path: "/api/roles/:id/enable" },
     ],
   },

@@ -28,8 +28,12 @@ interface ControlTarget {
   revision?: number;
 }
 
+/** A task changes hands only while nothing runs it and nothing waits for the previous role (server: task-handoff.ts). */
+const TRANSFERABLE = ["pending", "waiting_resource", "waiting_role", "completed", "failed"];
+
 /**
- * Pause / resume / cancel / add instructions / retry / reassign, offered according to the task state.
+ * Resume / cancel / add instructions / retry / reassign, offered according to the task state; only a
+ * conversation run can be paused by hand (a task is paused only by an emergency stop or a takeover).
  * The backend re-checks permissions; buttons only reflect what makes sense for the state.
  */
 export function TaskControls({
@@ -48,6 +52,7 @@ export function TaskControls({
   const [note, setNote] = useState("");
   const [requestKey, setRequestKey] = useState("");
   const [target, setTarget] = useState("");
+  const [handoffNote, setHandoffNote] = useState("");
   const active = isActiveTask(task.status);
   const conversation = task.kind === "conversation";
   const cls = `btn btn-${size}`;
@@ -66,11 +71,11 @@ export function TaskControls({
     return out;
   };
 
-  const candidates = dir.roles.filter((r) => r.status === "active" && r.id !== task.owner_role_id);
+  const candidates = dir.roles.filter((r) => r.status === "active" && !r.system_admin && r.id !== task.owner_role_id);
 
   return (
     <div className="btn-row">
-      {active && task.status !== "paused" ? (
+      {conversation && active && task.status !== "paused" ? (
         <button type="button" className={cls} disabled={busy} onClick={() => control("pause", "", "任务已暂停")}>
           暂停
         </button>
@@ -102,7 +107,7 @@ export function TaskControls({
           补充要求
         </button>
       ) : null}
-      {active && !conversation ? (
+      {!conversation && TRANSFERABLE.includes(task.status) ? (
         <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
           转交
         </button>
@@ -189,17 +194,18 @@ export function TaskControls({
           onClose={() => setDialog(null)}
           onSubmit={async () => {
             const out = await run(
-              () => api.post<Task>(`/api/tasks/${task.id}/reassign`, { role_id: target }),
+              () => api.post<Task>(`/api/tasks/${task.id}/reassign`, { role_id: target, note: handoffNote }),
               "任务已转交",
             );
             if (out) {
               setDialog(null);
+              setHandoffNote("");
               onChanged(out);
             }
           }}
         >
           <p className="muted">
-            转交会创建一项由新角色负责的任务，并重新检查权限；新角色不会因此获得原角色更多的权限，任务会在新角色自己的虚拟电脑上执行。
+            转交后仍是同一项任务，所属话题、执行记录和历次交付都保留。新角色按自己的权限配置，在自己的虚拟电脑上接着做；原虚拟电脑上的文件不会迁移，之前的执行过程也不会交给新角色。
           </p>
           <Field label="新负责人">
             <select value={target} onChange={(e) => setTarget(e.target.value)}>
@@ -211,6 +217,12 @@ export function TaskControls({
                 </option>
               ))}
             </select>
+          </Field>
+          <Field
+            label="交接说明"
+            hint="选填。新角色从任务要求、已有的结果和这段说明开始工作，可以写明进展、相关的分支或文件位置和接下来要做的事。"
+          >
+            <textarea rows={4} maxLength={4000} value={handoffNote} onChange={(e) => setHandoffNote(e.target.value)} />
           </Field>
         </FormModal>
       ) : null}

@@ -78,10 +78,9 @@ export async function submitTaskInput(db: Db, id: string, instruction: string, o
     opts = { ...opts, caller: currentCaller };
     const callerDenied = await stillAllowed(db, currentCaller);
     if (callerDenied) throw new Forbidden(callerDenied);
-    // Its own work: a task this conversation started (start_task), which reports back to it.
+    // The originating conversation continues to coordinate this task even after it is assigned to another role.
     if (
       currentCaller.topicId !== task.topicId ||
-      currentCaller.ownerRoleId !== task.ownerRoleId ||
       !currentCaller.sessionId ||
       task.reportSessionId !== currentCaller.sessionId
     )

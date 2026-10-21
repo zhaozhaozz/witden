@@ -186,6 +186,14 @@ export class TaskRunner {
       });
       return false;
     }
+    if (task.kind === "task") {
+      // A disabled role's task waits until another role takes it over, or the role is enabled again.
+      const [role] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
+      if (role && role.status !== "active") {
+        await setStatus(db, task, "waiting_role", `@${role.handle} is disabled; waiting for another role`);
+        return false;
+      }
+    }
     const why = await stillAllowed(db, task);
     if (why) {
       await setStatus(db, task, "cancelled", why);

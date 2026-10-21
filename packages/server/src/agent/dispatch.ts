@@ -301,8 +301,21 @@ export interface CreateTaskOptions {
   auto?: boolean;
 }
 
-export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
+/** The role's limits for one task; a delegate cannot spend more than what the delegator had left. */
+export function taskBudget(role: Role, parent: Task | null): Record<string, any> {
   const s = settings();
+  const budget: Record<string, any> = {
+    max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
+    max_tokens: role.maxTokensPerTask,
+  };
+  if (parent?.budget?.max_tokens) {
+    const left = parent.budget.max_tokens - (parent.usage?.tokens ?? 0);
+    budget.max_tokens = Math.max(0, Math.min(budget.max_tokens ?? left, left));
+  }
+  return budget;
+}
+
+export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
   if (o.idempotencyKey) {
     const [existing] = await db.select().from(tasks).where(eq(tasks.idempotencyKey, o.idempotencyKey)).limit(1);
     if (existing) return existing;
@@ -310,15 +323,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
   const { role, topic, parent = null } = o;
   const conversation = o.kind === "conversation";
   if (conversation && !o.session) throw new Error("a conversation run needs its session");
-  const budget: Record<string, any> = {
-    max_steps: Math.min(role.maxSteps ?? s.maxTaskSteps, s.maxTaskSteps),
-    max_tokens: role.maxTokensPerTask,
-  };
-  if (parent?.budget?.max_tokens) {
-    // A delegate cannot spend more than what the delegator had left.
-    const left = parent.budget.max_tokens - (parent.usage?.tokens ?? 0);
-    budget.max_tokens = Math.max(0, Math.min(budget.max_tokens ?? left, left));
-  }
+  const budget = taskBudget(role, parent);
   const firstLine = plainTitle(o.instruction) || "task";
   const [task] = await db
     .insert(tasks)

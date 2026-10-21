@@ -325,7 +325,7 @@ export async function roleRoutes(app: FastifyInstance) {
     authed(async ({ db, user, req }) => {
       const b = body(req);
       const role = await svc.getRole(db, params(req).id);
-      const result = await svc.disableRole(db, user, role, b.onTasks ?? "pause", b.reassignTo ?? null);
+      const result = await svc.disableRole(db, user, role, b.onTasks ?? "keep");
       await audit(db, "role.disable", {
         actorType: "user",
         actorId: user.id,
@@ -347,11 +347,13 @@ export async function roleRoutes(app: FastifyInstance) {
         .set({ status: "active" })
         .where(eq(roles.id, params(req).id))
         .returning();
+      const resumed = await svc.resumeKeptTasks(db, role);
       await audit(db, "role.enable", {
         actorType: "user",
         actorId: user.id,
         resourceType: "role",
         resourceId: role.id,
+        detail: { resumed_tasks: resumed },
       });
       return roleOut(db, role, true);
     }),

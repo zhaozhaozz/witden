@@ -32,6 +32,7 @@ export const ACTIVE_TASK_STATES = [
   "waiting_children",
   "waiting_resource",
   "waiting_timer",
+  "waiting_role",
   "paused",
 ];
 const NAME = /^[a-z0-9][a-z0-9-]{1,62}$/;

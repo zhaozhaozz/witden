@@ -21,7 +21,8 @@ import { ACTIVE, cancelTree, pause } from "./control.js";
 /** Re-check the conditions the task was created under; returns why it may not continue (or null). */
 export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   const [role] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
-  if (role?.status !== "active") return "the role was disabled or removed";
+  // A disabled role's independent tasks are kept for another role to take over (agent/runner.ts gate).
+  if (!role || (role.status !== "active" && task.kind !== "task")) return "the role was disabled or removed";
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
   if (topic?.status !== "active") return "the topic was archived";
   if (!(await participant(db, topic.id, "role", role.id))) return `@${role.handle} was removed from the topic`;

@@ -542,7 +542,7 @@ export const tasks = pgTable(
     title: text("title").notNull(),
     instruction: text("instruction").notNull().default(""),
     // pending | running | waiting_human | waiting_approval | waiting_children | waiting_resource | waiting_timer
-    // | paused | completed | failed | cancelled
+    // | waiting_role | paused | completed | failed | cancelled
     status: text("status").notNull().default("pending"),
     statusReason: text("status_reason"),
     requesterUserId: text("requester_user_id"),

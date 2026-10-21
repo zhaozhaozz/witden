@@ -94,7 +94,7 @@ export default function TaskDetailPage() {
                 <TaskControls
                   task={t}
                   onChanged={(n) => {
-                    // Reassigning creates a new task owned by the other role: follow it.
+                    // Task reassignment keeps the id; the fallback also supports other task controls.
                     if (n && n.id !== t.id) nav(`/tasks/${n.id}`);
                     else void task.reload();
                   }}

@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { ACTIVE, cancelTree, pause } from "../agent/control.js";
+import { ACTIVE, cancelTree, setStatus } from "../agent/control.js";
 import {
   ADMIN_TOOL_GROUPS,
   DEFAULT_ALLOWED_TOOLS,
@@ -291,30 +291,43 @@ export async function copyRole(
   return clone;
 }
 
-/** Disable a role and decide explicitly what happens to its unfinished work. */
-export async function disableRole(db: Db, user: User, role: Role, onTasks: string, reassignTo: string | null) {
+/**
+ * Disable a role. Its conversations end (they are its context, not work items). Its independent tasks are kept
+ * ("keep") until a person hands them to another role, or the role is enabled again; or they are cancelled.
+ */
+export async function disableRole(db: Db, user: User, role: Role, onTasks: string) {
   await requirePerm(db, user, Perm.ROLE_MANAGE);
   if (role.systemAdmin) throw new BadRequest("the system administrator is built in and is always available");
+  if (!["keep", "cancel"].includes(onTasks)) throw new BadRequest("on_tasks must be keep or cancel");
   const active = await db
     .select()
     .from(tasks)
     .where(and(eq(tasks.ownerRoleId, role.id), inArray(tasks.status, [...ACTIVE])));
-  if (onTasks === "cancel") for (const t of active) await cancelTree(db, t, `@${role.handle} was disabled`);
-  else if (onTasks === "reassign") {
-    const target = await getRole(db, reassignTo ?? "");
-    if (target.status !== "active") throw new BadRequest("target role is disabled");
-    const { reassign } = await import("../agent/tasks-admin.js");
-    // Tasks move to the other role; the role's own conversations end (they are its context, not work items).
-    for (const t of active)
-      if (t.kind === "conversation") await cancelTree(db, t, `@${role.handle} was disabled`);
-      // In a Slack, Feishu or GitHub conversation no other role may take over: the work ends there.
-      else if ((await externalRoleId(db, t.topicId)) !== undefined)
-        await cancelTree(db, t, `@${role.handle} was disabled`);
-      else await reassign(db, user, t, target, { byRoleManager: true });
-  } else if (onTasks === "pause") for (const t of active) await pause(db, t, `@${role.handle} was disabled`);
-  else throw new BadRequest("on_tasks must be cancel, reassign or pause");
+  const reason = `@${role.handle} was disabled`;
+  for (const t of active) {
+    // In a Slack, Feishu or GitHub conversation no other role may take over: the work ends there.
+    if (onTasks === "cancel" || t.kind === "conversation" || (await externalRoleId(db, t.topicId)) !== undefined)
+      await cancelTree(db, t, reason);
+    else {
+      // Queued work waits at once; a running task stops after its current step, waits for an answer, approval
+      // or delegate as before, and then waits for another role (agent/runner.ts gate).
+      const [fresh] = await db.select().from(tasks).where(eq(tasks.id, t.id)).for("update");
+      if (fresh && ["pending", "waiting_resource"].includes(fresh.status))
+        await setStatus(db, fresh, "waiting_role", `${reason}; waiting for another role`);
+    }
+  }
   await db.update(roles).set({ status: "disabled" }).where(eq(roles.id, role.id));
   return { affected_tasks: active.map((t) => t.id), on_tasks: onTasks };
+}
+
+/** Enabling a role again: the tasks it kept go on where they stopped. */
+export async function resumeKeptTasks(db: Db, role: Role): Promise<number> {
+  const kept = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.ownerRoleId, role.id), eq(tasks.status, "waiting_role")));
+  for (const t of kept) await setStatus(db, t, "pending", `@${role.handle} was enabled again`);
+  return kept.length;
 }
 
 /** Connection grants (``<platform>:<connection>:<product>:read|write``) name a connection of that platform and a mode the product has. */

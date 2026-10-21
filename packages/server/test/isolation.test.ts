@@ -6,7 +6,8 @@
  */
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { db, db as getDb } from "../src/db/client.js";
+import { getTask, pause } from "../src/agent/control.js";
+import { db, db as getDb, transaction } from "../src/db/client.js";
 import { tasks, users } from "../src/db/schema.js";
 import { call, lastToolResult, lastUser, reply } from "./support/harness.js";
 import { linkChannel, teamNote } from "./support/outside.js";
@@ -188,8 +189,9 @@ describe("control flow", () => {
     await w.drain();
     const id = await firstOwnTask(run);
     expect((await w.task(id)).status).toBe("waiting_human");
+    // Only an emergency stop or a takeover pauses a task; a second pause must not lose where it was.
     for (let i = 0; i < 2; i++)
-      await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "pause" } });
+      await transaction(async (tx) => pause(tx, (await getTask(tx, id))!, "stopped", "kill:x"));
     await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "resume" } });
     await w.drain();
     expect((await w.task(id)).status).toBe("waiting_human");

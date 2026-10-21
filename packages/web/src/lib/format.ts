@@ -15,6 +15,7 @@ const TASK_STATUS: Record<string, StatusMeta> = {
   waiting_children: { label: "等待子任务", tone: "wait" },
   waiting_resource: { label: "等待虚拟电脑", tone: "wait" },
   waiting_timer: { label: "等待定时跟进", tone: "wait" },
+  waiting_role: { label: "待认领", tone: "wait" },
   paused: { label: "已暂停", tone: "off" },
   completed: { label: "已完成", tone: "ok" },
   failed: { label: "失败", tone: "bad" },
@@ -57,6 +58,7 @@ export const ACTIVE_TASK_STATUSES = [
   "waiting_children",
   "waiting_resource",
   "waiting_timer",
+  "waiting_role",
   "paused",
 ];
 

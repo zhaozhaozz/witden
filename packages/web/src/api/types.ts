@@ -149,6 +149,7 @@ export type TaskStatus =
   | "waiting_children"
   | "waiting_resource"
   | "waiting_timer"
+  | "waiting_role"
   | "paused"
   | "completed"
   | "failed"

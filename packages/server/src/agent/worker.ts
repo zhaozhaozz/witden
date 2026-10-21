@@ -5,7 +5,7 @@
 
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
-import { and, eq, inArray, lt, lte } from "drizzle-orm";
+import { and, eq, inArray, lt, lte, ne } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
@@ -79,7 +79,16 @@ export class Worker {
         const t = await getTask(tx, id);
         if (t) await publishTaskStatus(tx, t);
       });
-      const p = new TaskRunner(this.gateway).run(id).finally(() => {
+      const p = new TaskRunner(this.gateway).run(id).finally(async () => {
+        // The run is over: release the claim now, not when the lease runs out, so the task can be handed over.
+        try {
+          await getDb()
+            .update(tasks)
+            .set({ claimedBy: null, leaseUntil: null })
+            .where(and(eq(tasks.id, id), eq(tasks.claimedBy, this.id), ne(tasks.status, "running")));
+        } catch (err) {
+          console.error(`[witden] releasing task ${id} failed`, err);
+        }
         this.running.delete(id);
         this.notify();
       });
