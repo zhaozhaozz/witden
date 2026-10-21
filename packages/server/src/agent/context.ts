@@ -8,7 +8,7 @@
  * - In an independent task: the same kind of system prompt plus who asked and when, then the brief with
  *   recent topic messages.
  * Both system prompts end with the role's own memory (services/role-memory.ts), the same wherever it works.
- * Nothing from other topics is included unless the role explicitly references it (read_topic).
+ * Nothing from other topics is included, and no tool reads one: the role reads only this topic (topic_history).
  */
 import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
 import type { Db } from "../db/client.js";

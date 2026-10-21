@@ -816,7 +816,7 @@ function describeRecovered(outcome: RecoverResult, why: string): string {
 function opBacked(name: string): boolean {
   return (
     TOOLS.get(name)?.group !== null &&
-    !["memory", "topics"].includes(TOOLS.get(name)?.group ?? "") &&
+    TOOLS.get(name)?.group !== "memory" &&
     name !== "share_file" &&
     name !== "release_desktop"
   );

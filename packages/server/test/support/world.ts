@@ -88,7 +88,7 @@ export async function buildWorld(): Promise<World> {
         }),
       )
     ).id as string;
-  ids.dev = await role("dev", ["shell", "files", "memory", "topics", "terminal", "browser", "desktop"]);
+  ids.dev = await role("dev", ["shell", "files", "memory", "terminal", "browser", "desktop"]);
   ids.test = await role("test", ["shell"]);
   ids.analyst = await role("analyst", ["memory"]);
   const aliceToken = await h.login("alice@example.com", "alice-pass-1");

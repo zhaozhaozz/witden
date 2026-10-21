@@ -112,56 +112,29 @@ describe("permissions and isolation", () => {
     await w.drain();
     expect(found).toBe("nothing relevant remembered");
     expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
-
-    // A DM stays between its person and its role: no other topic can read it, permission or not.
-    let refused = "";
-    w.scripts.dev = (m, turn) => {
-      if (turn === 0) return reply("", [call("read_topic", { topic_id: dm.id })]);
-      refused = lastToolResult(m);
-      return reply("I cannot read that DM from here.");
-    };
-    await w.post(w.alice, w.ids.topic, "@dev check my DM with you and tell everyone");
-    await w.drain();
-    expect(refused).toContain("a DM is private between its person and its role");
-    expect(JSON.stringify(await w.messages(w.ids.topic))).not.toContain("12345");
     expect((await w.api("GET", "/api/audit", { token: w.adminToken })).raw).not.toContain("salary is 12345");
   });
 
-  it("reading other topics is a permission: with it, a role uses them wherever it works; new roles lack it", async () => {
-    await linkChannel(w, w.ids.topic, ["UCAROL"]);
-    const other = (
-      await w.api("POST", "/api/topics", {
-        token: w.alice,
-        json: { title: "Release blockers", role_ids: [w.ids.test] },
-      })
-    ).body;
-    await w.post(w.alice, other.id, "the release waits for issue 12");
-    const results: string[] = [];
-    w.scripts.dev = (m, turn) => {
-      if (turn > 0) results.push(lastToolResult(m));
-      if (turn === 0) return reply("", [call("read_topic", { query: "blockers" })]);
-      if (turn === 1) return reply("", [call("read_topic", { topic_id: other.id })]);
-      return reply("From «Release blockers»: the release waits for issue 12");
-    };
-    const posted = await w.post(w.alice, w.ids.topic, "@dev what blocks the release?");
-    await w.drain();
-    expect(results[0]).toContain(`${other.id} «Release blockers» in the witden console`);
-    expect(results[1]).toContain("alice: the release waits for issue 12");
-    // the role may read it, so it may use it: the answer goes to the Slack channel (carol is outside the console)
-    expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
-    expect((await w.messages(w.ids.topic)).at(-1).content).toBe(
-      "From «Release blockers»: the release waits for issue 12",
-    );
-    // a role without the permission is not offered the tool
+  it("no tool reads another topic, and no permission turns one on", async () => {
     let offered: string[] = [];
-    w.scripts.test = (_m, _turn, tools) => {
+    w.scripts.dev = (_m, _turn, tools) => {
       offered = (tools ?? []).map((t) => t.name);
       return reply("ok");
     };
-    await w.post(w.alice, other.id, "@test hi");
+    await w.post(w.alice, w.ids.topic, "@dev what blocks the release?");
     await w.drain();
-    expect(offered).toContain("send_message");
+    // whatever its permissions, a role reads only the topic it works in
+    expect(offered).toContain("topic_history");
     expect(offered).not.toContain("read_topic");
+    const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
+    expect(groups.map((g: any) => g.group)).not.toContain("topics");
+    const patch = (json: Record<string, unknown>) =>
+      w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.alice, json });
+    const refused = await patch({ allowed_tools: ["shell", "topics"] });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.message).toContain("unknown tool groups topics");
+    expect((await patch({ approval_required: ["topics"] })).status).toBe(400);
+    expect((await patch({ approval_required: ["read_topic"] })).status).toBe(400);
   });
 
   it("asks the right person; their answer reaches the conversation without an @", async () => {
@@ -265,7 +238,7 @@ describe("permissions and isolation", () => {
       json: { name: "Fresh", handle: "fresh", model_config_id: w.ids.model, instance_id: w.ids.instance },
     });
     expect(created.status, created.raw).toBe(200);
-    // reading other topics is off until someone turns it on
+    // every group but the configuration tools, which only the system administrator has
     expect(created.body.allowed_tools).toEqual([
       "automation",
       "browser",
@@ -284,7 +257,7 @@ describe("permissions and isolation", () => {
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
     expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
     expect(groups.find((g: any) => g.group === "automation").default_level).toBe("ask");
-    expect(groups.find((g: any) => g.group === "topics").default_level).toBe("off");
+    expect(groups.find((g: any) => g.group === "config").default_level).toBe("off");
 
     await w.api("POST", "/api/grants", {
       token: w.adminToken,

@@ -1530,7 +1530,7 @@ textarea.prompt {
   margin-bottom: 10px;
 }
 
-/* Role permissions: sections by kind (虚拟电脑, 自动化, 记忆与资料, 飞书, AI 员工与平台); in each, one row per tool group
+/* Role permissions: sections by kind (虚拟电脑, 自动化, 记忆, 飞书, AI 员工与平台); in each, one row per tool group
    (expandable to single tools) with 始终允许 / 询问 / 禁用 on the right, and its own settings below it. */
 .perm-intro {
   margin: 0 0 12px;

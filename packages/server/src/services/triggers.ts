@@ -282,7 +282,7 @@ export async function getTriggerEvent(db: Db, topicId: string, id: string) {
   return hydrateTriggerEvent(db, event);
 }
 
-/** Own-topic history only, even for roles with permission to read other topics' messages. */
+/** Own-topic history only, even for a role that works in several topics. */
 export async function requireWebhookHistory(db: Db, topicId: string, roleId: string) {
   if (!(await participant(db, topicId, "role", roleId))) throw new Forbidden("AI 员工已不在这个话题中");
 }

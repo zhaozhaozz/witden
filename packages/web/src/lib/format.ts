@@ -213,7 +213,6 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   software_list: "软件清单",
   automation: "自动化管理",
   memory: "记忆",
-  topics: "读取其他话题",
   config: "witden 配置",
   profile: "职责说明",
 };
@@ -232,12 +231,7 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
     groups: ["shell", "terminal", "files", "browser", "desktop", "system_software", "software_list"],
   },
   { key: "automation", label: "自动化", hint: "在参与的话题里管理自己负责的触发器", groups: ["automation"] },
-  {
-    key: "knowledge",
-    label: "记忆与资料",
-    hint: "平台上的记忆和可读取的知识空间，以及读取其他话题",
-    groups: ["memory", "topics"],
-  },
+  { key: "knowledge", label: "记忆", hint: "平台上的记忆和可读取的知识空间", groups: ["memory"] },
   {
     key: "self",
     label: "AI 员工与平台",
@@ -279,8 +273,6 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   automation:
     "在它参与的话题里新建和修改自己负责的触发器；不能读取密钥，也不能扩大 Webhook 来源的授权。只在控制台账号请求的工作中可用",
   memory: "在平台上记下和检索记忆与知识，不在虚拟电脑里",
-  topics:
-    "查找并读取其他话题（不含私信），包括 Slack、飞书、GitHub 中的会话；读到的内容可以在 AI 员工工作的任何地方使用。新建的 AI 员工默认禁用",
   profile:
     "修改自己的职责说明（成员和其他 AI 员工看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
   config:
@@ -374,7 +366,6 @@ export const TOOL_LABEL: Record<string, string> = {
   recall: "检索记忆",
   update_memory: "修改记忆",
   forget: "删除记忆",
-  read_topic: "查阅其他话题",
   read_webhook_history: "查阅本话题的 webhook 历史",
   ask_human: "向人提问",
   post_progress: "汇报进度",

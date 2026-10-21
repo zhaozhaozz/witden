@@ -8,7 +8,7 @@
  */
 
 import type { PackagesResult, RunnerOp } from "@witden/shared";
-import { and, desc, eq, gte, ilike, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
@@ -43,7 +43,6 @@ import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
 import * as topicSvc from "../services/topics.js";
 import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../services/triggers.js";
 import { contactRole } from "./contacts.js";
-import { topicPlace } from "./context.js";
 import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
@@ -64,7 +63,6 @@ export const TOOL_GROUPS: Record<string, string> = {
   software_list: "Change the virtual computer's software list: packages installed whenever it starts",
   automation: "Manage your own automation rules across topics (no access to secrets)",
   memory: "Remember and recall scoped notes on the platform",
-  topics: "Find and read other topics (not DMs), wherever they are: console, Slack, Feishu, GitHub",
   config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
   profile: "Change the role's own description, in console conversations only",
 };
@@ -77,17 +75,13 @@ export const ADMIN_TOOL_GROUPS = new Set(["config"]);
  */
 export const CONSOLE_ONLY_GROUPS = new Set(["profile", "automation"]);
 
-/** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
-export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
-
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
  * into the topic, is always allowed; platform memory and changing its own description or automation rules ask
- * a person first; reading other topics is off. Working with the other roles of a topic needs no permission.
+ * a person first. Working with the other roles of a topic needs no permission. No tool reads another topic: a
+ * role learns of one by taking part in it, through a link, or from a colleague it talks to directly.
  */
-export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter(
-  (g) => !ADMIN_TOOL_GROUPS.has(g) && !DEFAULT_OFF_GROUPS.has(g),
-);
+export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
 /** A new system administrator: the configuration tools; it needs no computer. */
 export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
 export const DEFAULT_APPROVAL_REQUIRED: string[] = ["automation", "memory", "profile"];
@@ -988,60 +982,6 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
   return { content: hits.map(([src, m]) => memoryLine(m, src)).join("\n") || "nothing relevant remembered" };
 }
 
-/**
- * Other topics, as far as the role's permission (the "topics" group, off by default) goes: find them by title,
- * or read one by id. Whether it may is the permission alone — not who asked, and what it read is not tracked
- * as a source: a role allowed to read other topics may use it wherever it works, e.g. answer in Feishu about
- * a GitHub issue (00 的 D58). DMs stay between their person and role, and direct conversations between two roles
- * between them: neither is read from elsewhere.
- */
-async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  const db = ctx.db();
-  const id = String(args.topic_id ?? "").trim();
-  if (!id) {
-    const q = String(args.query ?? "").trim();
-    const found = await db
-      .select()
-      .from(topics)
-      .where(
-        and(
-          notInArray(topics.kind, ["dm", "pair"]),
-          ne(topics.id, ctx.topicId),
-          q ? ilike(topics.title, `%${q}%`) : undefined,
-        ),
-      )
-      .orderBy(desc(topics.lastMessageAt))
-      .limit(20);
-    const lines: string[] = [];
-    for (const t of found)
-      lines.push(
-        `- ${t.id} «${t.title}» in ${await topicPlace(db, t)}${t.status !== "active" ? " (archived)" : ""}${t.lastMessageAt ? `, last message ${t.lastMessageAt.toISOString().slice(0, 16).replace("T", " ")} UTC` : ""}`,
-      );
-    return {
-      content: lines.length
-        ? `Topics${q ? ` matching «${q}»` : ""}, most recently active first (read one with topic_id):\n${lines.join("\n")}`
-        : `no topics${q ? ` matching «${q}»` : ""}`,
-    };
-  }
-  const [source] = await db.select().from(topics).where(eq(topics.id, id)).limit(1);
-  if (!source) throw new BadRequest(`no topic ${id}; find topics with query`);
-  if (source.kind === "dm")
-    throw new Forbidden("a DM is private between its person and its role; it cannot be read from other topics");
-  if (source.kind === "pair")
-    throw new Forbidden("a direct conversation between two AI employees cannot be read from other topics");
-  const msgs = await topicSvc.visibleMessages(db, source, {
-    limit: Math.max(1, Math.min(Number(args.limit ?? 40), 200)),
-  });
-  const lines: string[] = [];
-  for (const m of msgs)
-    lines.push(
-      `[${m.id} ${m.createdAt.toISOString().slice(0, 16)}] ${await authorName(db, m.authorType, m.authorId)}: ${m.content}`,
-    );
-  return {
-    content: `Source: topic «${source.title}» (${source.id}) in ${await topicPlace(db, source)}. Cite it when you use this.\n${lines.join("\n") || "(no messages)"}`,
-  };
-}
-
 async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
   await requireWebhookHistory(db, ctx.topicId, ctx.roleId);
@@ -1442,13 +1382,6 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       "Delete a note by its id when it is wrong or no longer holds. You may delete this topic's notes and your role memory.",
       obj({ id: str }, ["id"]),
       forget,
-    ),
-    spec(
-      "read_topic",
-      "topics",
-      "Read other topics of the team (not DMs), in the console, Slack, Feishu or GitHub: give query to find topics by title (no topic_id), then topic_id to read one's latest messages. You may use what you read where you work now; cite the source.",
-      obj({ topic_id: str, query: str, limit: int }),
-      readTopic,
     ),
     spec(
       "read_webhook_history",

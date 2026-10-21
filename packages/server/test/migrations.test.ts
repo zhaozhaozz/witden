@@ -1106,3 +1106,27 @@ describe("0045_role_conversations", () => {
     await db.close();
   });
 });
+
+describe("0046_drop_read_topic", () => {
+  it("removes the permission to read other topics, and approvals asked for it, from every role", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0046")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, allowed_tools, approval_required) values
+        ('role_dev', 'Dev', 'dev', '["memory", "shell", "topics"]', '["memory", "topics"]'),
+        ('role_ops', 'Ops', 'ops', '["shell", "topics"]', '["read_topic", "run_command"]'),
+        ('role_qa', 'QA', 'qa', '["shell"]', '["profile"]');
+    `);
+    await apply(db, "0046_drop_read_topic");
+    expect((await db.query("select id, allowed_tools, approval_required from roles order by id")).rows).toEqual([
+      { id: "role_dev", allowed_tools: ["memory", "shell"], approval_required: ["memory"] },
+      { id: "role_ops", allowed_tools: ["shell"], approval_required: ["run_command"] },
+      { id: "role_qa", allowed_tools: ["shell"], approval_required: ["profile"] },
+    ]);
+    await db.close();
+  });
+});

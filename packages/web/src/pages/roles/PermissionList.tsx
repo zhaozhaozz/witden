@@ -290,7 +290,7 @@ export function PermissionList({
           <button
             type="button"
             className="btn btn-xs"
-            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；自动化管理、记忆和修改自己的职责说明需要询问；读取其他话题禁用。飞书和 GitHub 工具、可以主动对话的 AI 员工不变。"
+            title="虚拟电脑里的操作（包括把其中的文件分享到话题）始终允许；自动化管理、记忆和修改自己的职责说明需要询问。飞书和 GitHub 工具、可以主动对话的 AI 员工不变。"
             onClick={() =>
               onChange(
                 [...defaults.allowed, ...grants(allowed)],
