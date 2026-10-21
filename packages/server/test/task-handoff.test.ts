@@ -10,6 +10,7 @@ import { newId } from "../src/db/ids.js";
 import { approvals, roles, type Task, taskInputs, tasks } from "../src/db/schema.js";
 import { getRole, getTopic } from "../src/services/topics.js";
 import { reply } from "./support/harness.js";
+import { linkChannel } from "./support/outside.js";
 import { buildWorld, type World } from "./support/world.js";
 
 describe("handing a task to another role", () => {
@@ -169,6 +170,43 @@ describe("handing a task to another role", () => {
     expect((await fresh(done.id)).ownerRoleId).toBe(w.ids.dev);
     const people = (await w.api("GET", `/api/topics/${dm}`, { token: w.alice })).body.participants;
     expect(people.filter((p: any) => p.type === "role").map((p: any) => p.id)).toEqual([w.ids.dev]);
+  });
+
+  it("a person hands a task only to a role already in its topic; nobody is invited with it", async () => {
+    const ops = (
+      await w.api("POST", "/api/roles", {
+        token: w.adminToken,
+        json: { name: "Ops", handle: "ops", model_config_id: w.ids.model, instance_id: w.ids.instance },
+      })
+    ).body.id as string;
+    const done = await taskOf(w.ids.dev, "completed");
+    const res = await move(done.id, ops);
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toContain("@ops is not in this topic");
+    expect(res.body.error.message).toContain("invite it into the topic first");
+    expect((await fresh(done.id)).ownerRoleId).toBe(w.ids.dev);
+    const roleIds = async () =>
+      (await w.api("GET", `/api/topics/${w.ids.topic}`, { token: w.alice })).body.participants
+        .filter((p: any) => p.type === "role")
+        .map((p: any) => p.id);
+    expect(await roleIds()).not.toContain(ops);
+    // Invited first, it can take the task over.
+    const invited = await w.api("POST", `/api/topics/${w.ids.topic}/participants`, {
+      token: w.alice,
+      json: { type: "role", id: ops },
+    });
+    expect(invited.status, invited.raw).toBe(200);
+    expect((await move(done.id, ops)).status).toBe(200);
+    expect((await fresh(done.id)).ownerRoleId).toBe(ops);
+  });
+
+  it("in a Slack, Feishu or GitHub conversation nobody else can take a task over", async () => {
+    const done = await taskOf(w.ids.dev, "completed");
+    await linkChannel(w, w.ids.topic, ["UCAROL"]);
+    const res = await move(done.id, w.ids.test);
+    expect(res.status).toBe(403);
+    expect(res.body.error.message).toContain("only the bot's AI employee works");
+    expect((await fresh(done.id)).ownerRoleId).toBe(w.ids.dev);
   });
 
   it("neither tasks nor conversation runs are paused by hand", async () => {

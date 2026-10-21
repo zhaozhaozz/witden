@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { api } from "../../api/client";
-import type { Task, TaskStatus } from "../../api/types";
+import type { Task, TaskStatus, Topic } from "../../api/types";
 import { isActiveTask, taskStatus } from "../../lib/format";
+import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
 import { useAction, useFeedback } from "../../ui/feedback";
-import { Field, FormModal, StatusChip } from "../../ui/kit";
+import { Field, FormModal, Loaded, StatusChip } from "../../ui/kit";
 
 export function TaskStatusChip({
   status,
@@ -26,8 +27,8 @@ interface ControlTarget {
   /** A run of a role's conversation: it can be stopped, not handed to another role or retried. */
   kind?: "conversation" | "task";
   revision?: number;
-  /** A task in a DM stays with the DM's one role: it is not handed over. */
-  topic?: { kind: string } | null;
+  /** A task in a DM stays with the DM's one role: it is not handed over. Others go to roles of this topic. */
+  topic?: { id?: string; kind: string } | null;
 }
 
 /** A task changes hands only while nothing runs it and nothing waits for the previous role (server: task-handoff.ts). */
@@ -73,7 +74,18 @@ export function TaskControls({
     return out;
   };
 
-  const candidates = dir.roles.filter((r) => r.status === "active" && !r.system_admin && r.id !== task.owner_role_id);
+  // A task goes only to an active role already taking part in its topic (server: task-handoff.ts); who takes part
+  // is read when the dialog opens.
+  const topicId = task.topic?.id;
+  const topic = useResource(
+    () => api.get<Topic>(`/api/topics/${topicId}`),
+    [topicId],
+    dialog === "reassign" && !!topicId,
+  );
+  const inTopic = new Set((topic.data?.participants ?? []).filter((p) => p.type === "role").map((p) => p.id));
+  const candidates = dir.roles.filter(
+    (r) => r.status === "active" && !r.system_admin && r.id !== task.owner_role_id && inTopic.has(r.id),
+  );
 
   return (
     <div className="btn-row">
@@ -198,7 +210,7 @@ export function TaskControls({
           title="转交给其他 AI 员工"
           submitLabel="转交"
           busy={busy}
-          disabled={!target}
+          disabled={!target || !candidates.some((r) => r.id === target)}
           onClose={() => setDialog(null)}
           onSubmit={async () => {
             const out = await run(
@@ -216,23 +228,46 @@ export function TaskControls({
             转交后仍是同一项任务，所属话题、执行记录和历次交付都保留。接手的 AI
             员工按自己的权限配置，在自己的虚拟电脑上接着做；原虚拟电脑上的文件不会迁移，之前的执行过程也不会交给它。
           </p>
-          <Field label="新负责人">
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">选择 AI 员工</option>
-              {candidates.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name} @{r.handle}
-                  {r.instance ? ` · ${r.instance.name}` : " · 未分配虚拟电脑"}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field
-            label="交接说明"
-            hint="选填。接手的 AI 员工从任务要求、已有的结果和这段说明开始工作，可以写明进展、相关的分支或文件位置和接下来要做的事。"
-          >
-            <textarea rows={4} maxLength={4000} value={handoffNote} onChange={(e) => setHandoffNote(e.target.value)} />
-          </Field>
+          <Loaded res={topic}>
+            {(t) =>
+              candidates.length ? (
+                <>
+                  <Field label="新负责人" hint="只能转交给这个话题中已启用的 AI 员工。">
+                    <select value={target} onChange={(e) => setTarget(e.target.value)}>
+                      <option value="">选择 AI 员工</option>
+                      {candidates.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name} @{r.handle}
+                          {r.instance ? ` · ${r.instance.name}` : " · 未分配虚拟电脑"}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field
+                    label="交接说明"
+                    hint="选填。接手的 AI 员工从任务要求、已有的结果和这段说明开始工作，可以写明进展、相关的分支或文件位置和接下来要做的事。"
+                  >
+                    <textarea
+                      rows={4}
+                      maxLength={4000}
+                      value={handoffNote}
+                      onChange={(e) => setHandoffNote(e.target.value)}
+                    />
+                  </Field>
+                </>
+              ) : t.channel ? (
+                <div className="callout callout-wait">
+                  这是 Slack、飞书或 GitHub 中的会话，其中只有机器人代表的 AI 员工工作，没有其他 AI
+                  员工可以接手这项任务。
+                </div>
+              ) : (
+                <div className="callout callout-wait">
+                  这个话题中没有可以接手的其他 AI 员工。任务只能转交给话题中已启用的 AI
+                  员工：先在话题右侧栏“设置”的“参与者”中邀请 AI 员工加入话题，再转交。
+                </div>
+              )
+            }
+          </Loaded>
         </FormModal>
       ) : null}
     </div>

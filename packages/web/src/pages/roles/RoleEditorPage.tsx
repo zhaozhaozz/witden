@@ -890,7 +890,7 @@ function DisableRoleDialog({ role, onClose, onDone }: { role: Role; onClose: () 
       <div className="check-col">
         <label className="check">
           <input type="radio" checked={onTasks === "keep"} onChange={() => setOnTasks("keep")} />
-          保留，等待其他 AI 员工认领：在任务详情中转交给其他 AI 员工；重新启用这位 AI 员工时接着做
+          保留，等待其他 AI 员工认领：在任务详情中转交给同一话题中的其他 AI 员工；重新启用这位 AI 员工时接着做
         </label>
         <label className="check">
           <input type="radio" checked={onTasks === "cancel"} onChange={() => setOnTasks("cancel")} />

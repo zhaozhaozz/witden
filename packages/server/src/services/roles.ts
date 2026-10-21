@@ -307,7 +307,8 @@ export async function copyRole(
 
 /**
  * Disable a role. Its conversations end (they are its context, not work items). Its independent tasks are kept
- * ("keep") until a person hands them to another role, or the role is enabled again; or they are cancelled.
+ * ("keep") until a person hands them to another role of their topic, or the role is enabled again; or they are
+ * cancelled.
  */
 export async function disableRole(db: Db, user: User, role: Role, onTasks: string) {
   await requirePerm(db, user, Perm.ROLE_MANAGE);

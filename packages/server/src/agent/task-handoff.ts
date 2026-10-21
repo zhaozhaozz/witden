@@ -6,10 +6,11 @@
  * computer. Earlier steps stay in the task's log but not in the new role's model context: that starts from a
  * handoff brief (transcript.ts reads from assignment.handoff_context_from_seq).
  *
- * A person hands a task over from the console (transferTask) and may bring the role into the topic with it. A
- * role hands one over with transfer_task, only to a role already taking part in the topic: the task it is
- * executing (requestHandover records it at the call, the worker applies it once the run is over:
- * finishHandover), or a task its conversation started that nothing runs (transferStartedTask).
+ * Whoever hands it over, a task goes only to a role already taking part in its topic; a hand-over never brings a
+ * role in (a person invites it first). A person hands a task over from the console (transferTask). A role hands
+ * one over with transfer_task: the task it is executing (requestHandover records it at the call, the worker
+ * applies it once the run is over: finishHandover), or a task its conversation started that nothing runs
+ * (transferStartedTask).
  */
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import { settings } from "../config.js";
@@ -27,6 +28,7 @@ import {
   type User,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound, WitdenError } from "../errors.js";
+import { externalRoleId } from "../integrations/links.js";
 import { audit } from "../services/audit.js";
 import { type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
 import { wake } from "../services/events.js";
@@ -51,7 +53,7 @@ const CARRIED = [
   "topic_routes",
 ];
 
-/** Who hands a task over: a person, or a role of the topic (never bringing another role in). */
+/** Who hands a task over: a person, or a role of the topic. Neither brings another role in. */
 type By = { user: User; role?: undefined } | { role: Role; user?: undefined };
 
 /** A role's hand-over of the task it executes, waiting for its run to end. The note stays in the call's step. */
@@ -124,13 +126,18 @@ async function prepare(db: Db, task: Task, topic: Topic, target: Role, by: By, l
   if (child) throw new BadRequest("work this task delegated is still under way; wait for it or cancel it");
 
   if (topic.status !== "active") throw new Forbidden("cannot reassign work in an archived topic");
+  // Work never brings a role into a topic, whoever hands it over: a person invites the role first.
   if (!(await topicSvc.participant(db, topic.id, "role", target.id))) {
-    // Work never brings a role into a topic; a person may invite it along with the hand-over.
-    if (!by.user)
+    if (by.role)
       throw new Forbidden(
         `@${target.handle} is not in this topic: hand tasks only to roles taking part in it; ask a person to invite another role`,
       );
-    await topicSvc.inviteRole(db, by.user, topic, target.id);
+    // Only the bot's role works in an external conversation: nobody can be invited there to take it over.
+    throw new Forbidden(
+      (await externalRoleId(db, topic.id)) !== undefined
+        ? "only the bot's AI employee works in a Slack, Feishu or GitHub conversation: no other AI employee can take this task over"
+        : `@${target.handle} is not in this topic: tasks are handed only to AI employees taking part in it; invite it into the topic first (topic settings, participants), then hand the task over`,
+    );
   }
   // The same checks as new work for the target, as the original requester.
   const { allowed, refusals } = await authorize(db, topic, task.requesterUserId, [target.id]);
@@ -284,7 +291,7 @@ async function apply(
   return updated;
 }
 
-/** A person hands the task over (console): the role may be brought into the topic with it. */
+/** A person hands the task over (console), to a role already taking part in the topic. */
 export async function transferTask(db: Db, user: User, id: string, target: Role, note = ""): Promise<Task> {
   const task = await lockTask(db, id);
   if (!task) throw new NotFound("task not found");
