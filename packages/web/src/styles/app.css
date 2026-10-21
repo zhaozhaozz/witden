@@ -3152,6 +3152,77 @@ img.avatar-role.avatar-colored {
 .memory-form textarea {
   width: 100%;
 }
+.memory-groups {
+  display: grid;
+  gap: 12px;
+}
+.memory-group {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.memory-group > summary,
+.memory-role > summary {
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.memory-group-body {
+  padding: 0 12px 12px;
+}
+.memory-role + .memory-role {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-2);
+}
+.memory-role > summary {
+  padding: 8px 0;
+}
+.memory-role > summary .badge-role {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.memory-add {
+  margin-bottom: 6px;
+}
+.memory-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+  font-size: 13.5px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.memory-toggle strong {
+  min-width: 0;
+  font-weight: 500;
+}
+.memory-chevron {
+  flex: 0 0 12px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.memory-toggle[aria-expanded="true"] .memory-chevron {
+  transform: rotate(90deg);
+}
+.memory-toggle:hover {
+  color: var(--harbor);
+}
+.memory-detail {
+  padding: 8px 0 2px 20px;
+}
+.memory-detail .memory-text {
+  margin: 8px 0;
+}
 .note-form {
   display: flex;
   flex-direction: column;

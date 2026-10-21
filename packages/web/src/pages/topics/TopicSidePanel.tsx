@@ -145,7 +145,7 @@ export function TopicSidePanel({
         {shown === "people" ? <PeopleTab topic={topic} onTopicChange={onTopicChange} /> : null}
         {shown === "role" ? <DmRoleTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} /> : null}
-        {shown === "notes" ? <NotesTab topic={topic} /> : null}
+        {shown === "notes" ? <NotesTab key={topic.id} topic={topic} version={version} /> : null}
         {shown === "links" ? <TopicLinksTab key={topic.id} topic={topic} /> : null}
         {shown === "triggers" ? <TriggersTab key={topic.id} topic={topic} version={version} /> : null}
         {shown === "settings" ? (
@@ -525,24 +525,62 @@ function FilesTab({ topic }: { topic: Topic }) {
   );
 }
 
-function NotesTab({ topic }: { topic: Topic }) {
+function NotesTab({ topic, version }: { topic: Topic; version: number }) {
   const dm = topic.kind === "dm";
+  const { can } = useAuth();
+  const roles = (topic.participants ?? []).filter((p) => p.type === "role");
   return (
-    <>
-      <p className="small muted side-note">
-        {dm
-          ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
-          : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
-      </p>
-      <MemoryList
-        query={{ scope: "topic", topic_id: topic.id }}
-        create={{ scope: "topic", topic_id: topic.id }}
-        canAdd={!!topic.can_post}
-        placeholder={dm ? "这段私信的要点或约定" : "这个话题的要点或约定"}
-        emptyTitle={dm ? "暂无私信记忆" : "暂无话题记忆"}
-        itemName={dm ? "私信记忆" : "话题记忆"}
-      />
-    </>
+    <div className="memory-groups">
+      <details className="memory-group" open>
+        <summary>{dm ? "私信记忆" : "话题记忆"}</summary>
+        <div className="memory-group-body">
+          <p className="small muted side-note">
+            {dm
+              ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
+              : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
+          </p>
+          <MemoryList
+            query={{ scope: "topic", topic_id: topic.id }}
+            create={{ scope: "topic", topic_id: topic.id }}
+            canAdd={!!topic.can_post}
+            placeholder={dm ? "这段私信的要点或约定" : "这个话题的要点或约定"}
+            emptyTitle={dm ? "暂无私信记忆" : "暂无话题记忆"}
+            itemName={dm ? "私信记忆" : "话题记忆"}
+            compact
+            version={version}
+          />
+        </div>
+      </details>
+      {can("role.manage") ? (
+        <details className="memory-group" open>
+          <summary>角色记忆</summary>
+          <div className="memory-group-body">
+            <p className="small muted side-note">属于角色本身，在它参与的所有话题和私信中使用。</p>
+            {roles.length ? (
+              roles.map((role) => (
+                <details key={role.id} className="memory-role" open>
+                  <summary>
+                    <RoleBadge role={role} />
+                  </summary>
+                  <MemoryList
+                    query={{ scope: "role", role_id: role.id }}
+                    create={{ scope: "role", role_id: role.id }}
+                    placeholder="这个角色在各处都适用的工作规则或经验"
+                    emptyTitle="暂无角色记忆"
+                    itemName="角色记忆"
+                    maxChars={1000}
+                    compact
+                    version={version}
+                  />
+                </details>
+              ))
+            ) : (
+              <Empty title="这个话题还没有参与角色" />
+            )}
+          </div>
+        </details>
+      ) : null}
+    </div>
   );
 }
 

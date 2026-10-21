@@ -1,0 +1,117 @@
+import { expect, test } from "@playwright/test";
+import { emit, workspace } from "./workspace.fixture";
+
+test("sidebar groups topic and each role's memory, showing titles until opened", async ({ page }) => {
+  const { state, errors } = await workspace(page, { multipleRoles: true });
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const notes = page.locator(".memory-groups");
+  await expect(notes.getByRole("button", { name: "本周交付约定" })).toBeVisible();
+  await expect(notes.getByRole("button", { name: "发布前检查" })).toBeVisible();
+  await expect(notes.getByRole("button", { name: "测试覆盖规则" })).toBeVisible();
+  await expect(notes.locator(".memory-text:visible")).toHaveCount(0);
+  await expect(notes.getByRole("textbox")).toHaveCount(0);
+  await notes.getByRole("button", { name: "发布前检查" }).focus();
+  await page.keyboard.press("Enter");
+  const detail = notes.locator("#memory-mem-role");
+  await expect(detail).toContainText("先完成回归测试，再发布。");
+  await expect(detail).toContainText("回归");
+  await expect(detail).toContainText("林 添加");
+  await expect(detail).toContainText("2026");
+  const roles = notes.locator(".memory-group").nth(1);
+  await roles.locator(":scope > summary").click();
+  await expect(detail).toBeHidden();
+  await roles.locator(":scope > summary").click();
+  await expect(detail).toBeVisible();
+  await page.screenshot({ path: ".tmp/memory-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: ".tmp/memory-mobile.png" });
+  const qa = notes.locator(".memory-role").filter({ hasText: "质量助手" });
+  await expect(qa.getByRole("button", { name: "发布前检查" })).toHaveCount(0);
+  await qa.locator("summary").click();
+  await expect(qa.getByRole("button", { name: "测试覆盖规则" })).toBeHidden();
+  expect([...new Set(state.memoryRequests)].sort()).toEqual([
+    "?scope=role&role_id=role-1",
+    "?scope=role&role_id=role-2",
+    "?scope=topic&topic_id=topic-1",
+  ]);
+  expect(errors).toEqual([]);
+});
+
+test("background work refresh preserves expanded memory and editing drafts", async ({ page }) => {
+  const { state, errors } = await workspace(page);
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const title = page.getByRole("button", { name: "发布前检查" });
+  await title.click();
+  const element = await title.elementHandle();
+  const detail = page.locator("#memory-mem-role");
+  await detail.getByRole("button", { name: "编辑", exact: true }).click();
+  await detail.getByRole("textbox", { name: "内容", exact: true }).fill("尚未保存的工作约定");
+  state.memoryDelay = 900;
+  const beforeRequests = state.memoryRequests.length;
+  state.memories.find((m) => m.id === "mem-role")!.content = "角色刚更新的内容";
+  await emit(page, "task.step", { task_id: "task-1" });
+  await expect.poll(() => state.memoryRequests.length).toBeGreaterThan(beforeRequests);
+  await expect(detail.getByRole("textbox", { name: "内容", exact: true })).toHaveValue("尚未保存的工作约定");
+  await page.waitForTimeout(1100);
+  expect(await element?.evaluate((el) => el.isConnected)).toBe(true);
+  await expect(title).toHaveAttribute("aria-expanded", "true");
+  await expect(detail.getByRole("textbox", { name: "内容", exact: true })).toHaveValue("尚未保存的工作约定");
+  await detail.getByRole("button", { name: "取消" }).click();
+  await expect(detail).toContainText("角色刚更新的内容");
+  expect(errors).toEqual([]);
+});
+
+test("role memory can be added edited and deleted in its own sidebar group", async ({ page }) => {
+  const { state, errors } = await workspace(page, { multipleRoles: true });
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const group = page.locator(".memory-role").filter({ hasText: "研发助手" });
+  await group.getByRole("button", { name: "添加角色记忆" }).click();
+  await group.getByRole("textbox", { name: "标题", exact: true }).fill("新增约定");
+  await group.getByRole("textbox", { name: "关键词", exact: true }).fill("验证，发布");
+  await group.getByRole("textbox", { name: "内容", exact: true }).fill("检查部署结果。");
+  await expect(group.getByRole("textbox", { name: "内容", exact: true })).toHaveAttribute("maxlength", "1000");
+  await group.getByRole("button", { name: "添加", exact: true }).click();
+  const item = group.locator(".memory-list > li").filter({ hasText: "新增约定" });
+  await expect(item).toContainText("检查部署结果。");
+  expect(state.memories.find((m) => m.title === "新增约定")).toMatchObject({ scope: "role", role_id: "role-1" });
+  await item.getByRole("button", { name: "编辑", exact: true }).click();
+  await item.getByRole("textbox", { name: "内容", exact: true }).fill("检查所有连接恢复。");
+  await item.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(item).toContainText("检查所有连接恢复。");
+  await expect(item).toContainText("修改");
+  await item.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();
+  await expect(item).toHaveCount(0);
+  expect(state.memories.map((m) => m.id)).toEqual(["mem-topic", "mem-role", "mem-role-2"]);
+  expect(errors).toEqual([]);
+});
+
+test("DM keeps private conversation memory separate from the role's memory", async ({ page }) => {
+  const { state, errors } = await workspace(page, { dm: true });
+  state.memories = state.memories.filter((m) => m.scope !== "topic");
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const topic = page.locator(".memory-group").first();
+  await expect(topic.locator("summary")).toHaveText("私信记忆");
+  await expect(topic).toContainText("暂无私信记忆");
+  await expect(page.getByRole("button", { name: "发布前检查" })).toBeVisible();
+  await topic.getByRole("button", { name: "添加私信记忆" }).click();
+  await topic.getByRole("textbox", { name: "标题", exact: true }).fill("个人偏好");
+  await topic.getByRole("textbox", { name: "内容", exact: true }).fill("只在这段私信使用。");
+  await topic.getByRole("button", { name: "添加", exact: true }).click();
+  expect(state.memories.find((m) => m.title === "个人偏好")).toMatchObject({ scope: "topic", topic_id: "topic-1" });
+  expect(errors).toEqual([]);
+});
+
+test("memory panel handles no participants and narrow screens with long content", async ({ page }) => {
+  const { state, errors } = await workspace(page, { noRoles: true });
+  state.memories[0].title = "很长的标题".repeat(15);
+  state.memories[0].content = "LongContentWithoutSpaces".repeat(100);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  await expect(page.locator(".memory-group").last()).toContainText("这个话题还没有参与角色");
+  await page.getByRole("button", { name: state.memories[0].title }).click();
+  await expect(page.locator(".memory-text")).toHaveText(state.memories[0].content);
+  expect(await page.locator(".side-panel").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect([...new Set(state.memoryRequests)]).toEqual(["?scope=topic&topic_id=topic-1"]);
+  expect(errors).toEqual([]);
+});

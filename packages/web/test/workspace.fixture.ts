@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { Memory } from "../src/api/types";
 
 const now = "2026-10-20T12:00:00Z";
 const computer = { id: "computer-1", name: "workspace", status: "running", color: "#527568" };
@@ -37,7 +38,18 @@ export const progressText = Array.from({ length: 12 }, (_, i) => `检查项目 $
   "\n",
 );
 
-export async function workspace(page: Page) {
+export async function workspace(
+  page: Page,
+  options: { dm?: boolean; multipleRoles?: boolean; noRoles?: boolean } = {},
+) {
+  const otherRole = { ...role, id: "role-2", name: "质量助手", handle: "qa" };
+  const currentTopic = {
+    ...topic,
+    kind: options.dm ? "dm" : "group",
+    participants: options.noRoles
+      ? [topic.participants[1]]
+      : [...topic.participants, ...(options.multipleRoles ? [{ ...otherRole, type: "role", joined_at: now }] : [])],
+  };
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("console", (msg) => {
@@ -46,6 +58,45 @@ export async function workspace(page: Page) {
   const state = {
     runStatus: "running",
     runDelay: 0,
+    memoryDelay: 0,
+    memoryRequests: [] as string[],
+    memories: [
+      {
+        id: "mem-topic",
+        scope: "topic",
+        topic_id: topic.id,
+        title: "本周交付约定",
+        keywords: ["交付", "验收"],
+        content: "周五完成验收。\n完整保留第二行约定。",
+      },
+      {
+        id: "mem-role",
+        scope: "role",
+        role_id: role.id,
+        title: "发布前检查",
+        keywords: ["发布", "回归"],
+        content: "先完成回归测试，再发布。",
+      },
+      {
+        id: "mem-role-2",
+        scope: "role",
+        role_id: otherRole.id,
+        title: "测试覆盖规则",
+        keywords: [],
+        content: "覆盖主要流程和边界条件。",
+      },
+    ].map((m) => ({
+      role_id: null,
+      topic_id: null,
+      space_id: null,
+      user_id: null,
+      source_message_ids: [],
+      created_by_type: "user",
+      created_by_id: user.id,
+      created_at: now,
+      updated_at: null,
+      ...m,
+    })) as Memory[],
     sent: [] as Record<string, unknown>[],
     messages: [
       message("m1", "帮我梳理产品发布流程，并检查交付前需要完成的工作。", "user"),
@@ -91,13 +142,54 @@ export async function workspace(page: Page) {
       let json: unknown;
       if (path === "/api/auth/me") json = user;
       else if (path === "/api/users") json = [user];
-      else if (path === "/api/roles") json = [role];
+      else if (path === "/api/roles") json = [role, ...(options.multipleRoles ? [otherRole] : [])];
       else if (path === "/api/setup") json = { needed: false };
       else if (path === "/api/instances/computer-1")
         json = { ...computer, status: "stopped", spec: { kind: "desktop" }, operator: null };
-      else if (path === "/api/topics") json = [topic, { ...topic, id: "topic-2", title: "设计讨论" }];
-      else if (path === "/api/topics/topic-1") json = topic;
-      else if (path === "/api/topics/topic-1/messages") {
+      else if (path === "/api/topics") json = [currentTopic, { ...topic, id: "topic-2", title: "设计讨论" }];
+      else if (path === "/api/topics/topic-1") json = currentTopic;
+      else if (path === "/api/memories") {
+        state.memoryRequests.push(url.search);
+        if (req.method() === "POST") {
+          const body = req.postDataJSON();
+          const m = {
+            ...state.memories[0],
+            ...body,
+            id: `mem-new-${state.memories.length}`,
+            keywords: String(body.keywords).split(/[，,]/).filter(Boolean),
+          };
+          state.memories.push(m);
+          json = m;
+        } else {
+          await new Promise((r) => setTimeout(r, state.memoryDelay));
+          json = state.memories.filter(
+            (m) =>
+              m.scope === url.searchParams.get("scope") &&
+              (m.scope === "role"
+                ? m.role_id === url.searchParams.get("role_id")
+                : m.topic_id === url.searchParams.get("topic_id")),
+          );
+        }
+      } else if (path.startsWith("/api/memories/")) {
+        const id = path.split("/").at(-1);
+        if (req.method() === "DELETE") {
+          state.memories = state.memories.filter((m) => m.id !== id);
+          json = { ok: true };
+        } else {
+          const body = req.postDataJSON();
+          state.memories = state.memories.map((m) =>
+            m.id === id
+              ? {
+                  ...m,
+                  ...body,
+                  keywords: String(body.keywords).split(/[，,]/).filter(Boolean),
+                  updated_at: "2026-10-21T01:00:00Z",
+                }
+              : m,
+          );
+          json = state.memories.find((m) => m.id === id);
+        }
+      } else if (path === "/api/topics/topic-1/messages") {
         if (req.method() === "POST") {
           const body = req.postDataJSON();
           state.sent.push(body);
