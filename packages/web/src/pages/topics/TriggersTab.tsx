@@ -91,7 +91,7 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
   return (
     <div className="settings">
       <p className="small muted">
-        收到事件或到达计划时间后，交给指定角色处理。先在「设置 → 工作说明」中写清工作用途。
+        收到事件或到达计划时间后，交给指定角色处理。先在「设置」的话题目标中写清工作用途和处理要求。
         {topic.channel
           ? "这个话题对应外部频道：处理角色就是机器人代表的角色，处理结果同步到频道。"
           : "需要同步到其他话题时，由角色用关联话题发送。"}
@@ -382,7 +382,7 @@ function TriggerEditor({
         <p className="small muted">保存后你会加入这个话题；你退出话题或账号停用后，触发器不再发起新工作。</p>
       ) : null}
       {!roles.length ? <p className="notice">请先在「参与者」中邀请一个普通角色。</p> : null}
-      <Field label="本次触发的补充说明" hint="可留空，角色会同时参考话题设置中的「工作说明」。">
+      <Field label="本次触发的补充说明" hint="可留空，角色会同时参考话题的目标。">
         <textarea rows={3} maxLength={16000} value={instructions} onChange={(e) => setInstructions(e.target.value)} />
       </Field>
       {kind === "schedule" ? (

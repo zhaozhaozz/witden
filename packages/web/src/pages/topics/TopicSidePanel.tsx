@@ -10,7 +10,6 @@ import {
   isActiveTask,
   isRestricted,
   PLATFORM_LABEL,
-  RESPONSE_MODE,
 } from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -23,7 +22,6 @@ import {
   ComputerBadge,
   Empty,
   Field,
-  FieldGroup,
   Guarded,
   Handle,
   KV,
@@ -37,7 +35,6 @@ import { ApprovalCard } from "../approvalParts";
 import { MemoryList } from "../memoryParts";
 import { SessionRuns } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
-import { NoDispatcherNotice } from "./ResponseMode";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { TopicLinksTab } from "./TopicLinksTab";
 import { TriggersTab } from "./TriggersTab";
@@ -649,18 +646,12 @@ function SettingsTab({
   const { run, busy } = useAction();
   const [title, setTitle] = useState(topic.title);
   const [goal, setGoal] = useState(topic.goal);
-  const [workInstructions, setWorkInstructions] = useState(topic.work_instructions);
-  const [responseMode, setResponseMode] = useState(topic.response_mode);
-  const [rounds, setRounds] = useState(topic.max_auto_rounds?.toString() ?? "");
 
   useEffect(() => {
     setTitle(topic.title);
     setGoal(topic.goal);
-    setWorkInstructions(topic.work_instructions);
-    setResponseMode(topic.response_mode);
-    setRounds(topic.max_auto_rounds?.toString() ?? "");
     // Participant updates in the same settings page must not reset the configuration draft.
-  }, [topic.title, topic.goal, topic.work_instructions, topic.response_mode, topic.max_auto_rounds]);
+  }, [topic.title, topic.goal]);
 
   const patch = async (body: Record<string, unknown>, success: string): Promise<boolean> => {
     const t = await run(() => api.patch<Topic>(`/api/topics/${topic.id}`, body), success);
@@ -668,27 +659,10 @@ function SettingsTab({
     return !!t;
   };
   const saveSettings = () =>
-    title.trim()
-      ? patch(
-          {
-            title: title.trim(),
-            goal,
-            work_instructions: workInstructions,
-            ...(topic.kind === "group" ? { response_mode: responseMode } : {}),
-            max_auto_rounds: rounds ? Number(rounds) : null,
-          },
-          "设置已保存",
-        )
-      : Promise.resolve(false);
-  useUnsavedChanges(
-    title !== topic.title ||
-      goal !== topic.goal ||
-      workInstructions !== topic.work_instructions ||
-      responseMode !== topic.response_mode ||
-      rounds !== (topic.max_auto_rounds?.toString() ?? ""),
-    saveSettings,
-  );
+    title.trim() ? patch({ title: title.trim(), goal }, "设置已保存") : Promise.resolve(false);
+  useUnsavedChanges(title !== topic.title || goal !== topic.goal, saveSettings);
 
+  // A topic is configured with its name and goal; the response mode is switched in the topic header.
   return (
     <div className="settings">
       <form
@@ -701,43 +675,12 @@ function SettingsTab({
         <Field label="标题">
           <input value={title} onChange={(e) => setTitle(e.target.value)} />
         </Field>
-        <Field label="目标" hint="这个话题要完成什么；显示在标题下方，角色接到任务时也会读到。">
-          <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
-        </Field>
         <Field
-          label="工作说明"
-          hint="说明这个频道的工作用途，以及收到 webhook 或定时触发后该做什么。这里的所有角色都会读到。"
+          label="目标"
+          hint="这个话题是做什么的、工作有哪些要求（例如收到 webhook 或定时触发后怎么处理）。这里的每个角色都会读到，自动模式下调度模型也会参考；显示在标题下方。"
         >
-          <textarea
-            rows={6}
-            maxLength={16000}
-            value={workInstructions}
-            onChange={(e) => setWorkInstructions(e.target.value)}
-            placeholder="例如：收到部署事件后检查结果；失败时分析原因并在这个频道汇报。"
-          />
+          <textarea rows={6} maxLength={16000} value={goal} onChange={(e) => setGoal(e.target.value)} />
         </Field>
-        {/* Response mode and the rounds limit are about several roles: a Slack, Feishu or GitHub conversation has one. */}
-        {topic.kind === "group" && !topic.channel ? (
-          <FieldGroup label="角色响应方式">
-            <div className="mode-options">
-              {(["mention", "auto"] as const).map((m) => (
-                <label key={m} className="check mode-option" title={RESPONSE_MODE[m].hint}>
-                  <input type="radio" checked={responseMode === m} onChange={() => setResponseMode(m)} />
-                  <span>
-                    <strong>{RESPONSE_MODE[m].label}</strong>
-                    <span className="small muted">{RESPONSE_MODE[m].short}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <NoDispatcherNotice auto={responseMode === "auto"} />
-          </FieldGroup>
-        ) : null}
-        {topic.channel ? null : (
-          <Field label="角色自动讨论轮次上限" hint="防止角色之间相互 @ 无限讨论；留空使用系统默认。">
-            <input type="number" min={0} max={50} value={rounds} onChange={(e) => setRounds(e.target.value)} />
-          </Field>
-        )}
         <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !title.trim()}>
           保存设置
         </button>

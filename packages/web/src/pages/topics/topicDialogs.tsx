@@ -47,8 +47,11 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
           autoFocus
         />
       </Field>
-      <Field label="目标" hint="写清楚要完成什么，角色会把它当作这个话题的工作背景。">
-        <textarea rows={3} value={goal} onChange={(e) => setGoal(e.target.value)} />
+      <Field
+        label="目标"
+        hint="这个话题是做什么的、工作有哪些要求；这里的每个角色都会读到，自动模式下调度模型也会参考。"
+      >
+        <textarea rows={3} maxLength={16000} value={goal} onChange={(e) => setGoal(e.target.value)} />
       </Field>
       <FieldGroup label="邀请成员" hint="只有参与者能看到这个话题；参与者可以阅读全部历史，包括加入之前的消息。" wide>
         <MultiPick
@@ -59,11 +62,7 @@ export function NewTopicDialog({ onClose, onCreated }: { onClose: () => void; on
           empty="团队里还没有其他成员"
         />
       </FieldGroup>
-      <FieldGroup
-        label="邀请角色"
-        hint="角色默认只在被 @ 时回应；话题建好后可以在顶部或「设置」里切换成自动模式。"
-        wide
-      >
+      <FieldGroup label="邀请角色" hint="角色默认只在被 @ 时回应；话题建好后可以在顶部切换成自动模式。" wide>
         <MultiPick
           columns={2}
           options={dir.roles

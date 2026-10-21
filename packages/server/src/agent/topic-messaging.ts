@@ -150,10 +150,7 @@ export async function sendLinkedMessage(db: Db, task: Task, sender: Role, args: 
     const ids = [...new Set(reports.map((r) => relayFrom(r.ref)?.related_task_id).filter((id): id is string => !!id))];
     if (ids.length === 1) related = ids[0];
   }
-  const nextRound = assertNextRound(
-    task.round,
-    Math.min(target.maxAutoRounds ?? settings().maxAutoRounds, settings().maxAutoRounds),
-  );
+  const nextRound = assertNextRound(task.round, settings().maxAutoRounds);
   const relay: TopicDelivery = {
     link_id: link.id,
     source_topic_id: source.id,

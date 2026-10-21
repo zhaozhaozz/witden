@@ -39,14 +39,12 @@ export interface Participant {
 export interface Topic {
   id: string;
   title: string;
+  /** What the topic is for: every role in it and the dispatcher read it. */
   goal: string;
-  work_instructions: string;
   kind: "group" | "dm";
   status: "active" | "archived";
   /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */
   response_mode: "mention" | "auto";
-  max_auto_rounds: number | null;
-  allowed_model_config_ids: string[] | null;
   source: string;
   created_by: string | null;
   last_message_at: string | null;

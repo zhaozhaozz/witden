@@ -132,12 +132,7 @@ export async function submitTaskInput(db: Db, id: string, instruction: string, o
     envelope.tools = (envelope.tools ?? []).filter(
       (tool: string) => !["config", "profile", "automation"].includes(tool),
     );
-  const nextRound = opts.caller
-    ? assertNextRound(
-        opts.caller.round,
-        Math.min(topic.maxAutoRounds ?? settings().maxAutoRounds, settings().maxAutoRounds),
-      )
-    : 0;
+  const nextRound = opts.caller ? assertNextRound(opts.caller.round, settings().maxAutoRounds) : 0;
   if (newIteration) {
     envelope = clearRunApprovals(envelope);
     await recordTaskIteration(db, task);

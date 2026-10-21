@@ -2341,12 +2341,17 @@ img.avatar-role.avatar-colored {
   align-items: center;
   gap: 6px;
 }
+/* The goal may hold a long brief: the header shows its start, the whole text is in settings and on hover. */
 .topic-goal {
   margin: 8px 0 0;
   font-size: 13px;
   color: var(--ink-2);
   max-width: 90ch;
   white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .conversation-feed {
@@ -5016,15 +5021,6 @@ body.resizing {
   line-height: 1.5;
   color: var(--ink-2);
 }
-.mode-tip-inline {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
 .mode-switch .segmented {
   padding: 1px;
 }
@@ -5037,26 +5033,6 @@ body.resizing {
 }
 .seg-readonly:not(.seg-on) {
   opacity: 0.55;
-}
-.mode-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.mode-option {
-  align-items: flex-start;
-  white-space: normal;
-}
-.mode-option > input {
-  margin-top: 3px;
-}
-.mode-option > span {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  line-height: 1.5;
 }
 .form-narrow {
   max-width: 560px;

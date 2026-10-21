@@ -86,20 +86,6 @@ function DispatcherLink() {
   );
 }
 
-/** In the topic settings: auto picked while no usable dispatcher model is set. */
-export function NoDispatcherNotice({ auto }: { auto: boolean }) {
-  const res = useResource(() => api.get<{ usable: boolean }>("/api/settings/dispatcher"), [], auto);
-  if (!auto || !res.data || res.data.usable) return null;
-  return (
-    <div className="notice mode-tip-inline" role="status">
-      <NoDispatcherText />
-      <span className="btn-row">
-        <DispatcherLink />
-      </span>
-    </div>
-  );
-}
-
 /** Auto mode with several roles needs the dispatcher model; say so when it is missing. */
 export function DispatcherWarning({ topic }: { topic: Topic }) {
   const roles = (topic.participants ?? []).filter((p) => p.type === "role" && p.status !== "disabled").length;

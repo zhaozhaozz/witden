@@ -27,7 +27,7 @@ describe("DMs", () => {
     await refused("POST", `/api/topics/${dm.id}/participants`, { type: "user", id: w.ids.bob });
     await refused("DELETE", `/api/topics/${dm.id}/participants/role/${w.ids.dev}`);
     await refused("DELETE", `/api/topics/${dm.id}/participants/user/${w.ids.alice}`);
-    for (const json of [{ status: "archived" }, { title: "x" }, { goal: "x" }, { max_auto_rounds: 2 }]) {
+    for (const json of [{ status: "archived" }, { title: "x" }, { goal: "x" }, { response_mode: "auto" }]) {
       await refused("PATCH", `/api/topics/${dm.id}`, json);
     }
 

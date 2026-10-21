@@ -351,7 +351,11 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                 {live ? "实时" : "离线"}
               </span>
             </div>
-            {topic.goal ? <p className="topic-goal">{topic.goal}</p> : null}
+            {topic.goal ? (
+              <p className="topic-goal" title={topic.goal}>
+                {topic.goal}
+              </p>
+            ) : null}
             <TopicCast participants={topic.participants ?? []} showRoles={!dm} />
           </div>
           <button

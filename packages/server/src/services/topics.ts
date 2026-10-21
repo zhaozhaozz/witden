@@ -124,12 +124,9 @@ export async function createTopic(
   data: {
     title: string;
     goal?: string;
-    workInstructions?: string;
     responseMode?: string;
     userIds?: string[];
     roleIds?: string[];
-    maxAutoRounds?: number | null;
-    allowedModelConfigIds?: string[] | null;
     source?: string;
     kind?: "group" | "dm";
   },
@@ -137,23 +134,16 @@ export async function createTopic(
   await requirePerm(db, user, Perm.TOPIC_CREATE);
   const responseMode = parseResponseMode(data.responseMode ?? "mention");
   if (!data.title?.trim()) throw new BadRequest("title is required");
-  if (
-    data.workInstructions !== undefined &&
-    (typeof data.workInstructions !== "string" || data.workInstructions.length > 16_000)
-  )
-    throw new BadRequest("work_instructions must be a string of at most 16000 characters");
+  const goal = parseGoal(data.goal ?? "");
   const kind = data.kind ?? "group";
   const [topic] = await db
     .insert(topics)
     .values({
       id: newId("top"),
       title: data.title.trim(),
-      goal: data.goal ?? "",
-      workInstructions: data.workInstructions ?? "",
+      goal,
       kind,
       responseMode,
-      maxAutoRounds: data.maxAutoRounds ?? null,
-      allowedModelConfigIds: data.allowedModelConfigIds ?? null,
       source: data.source ?? "internal",
       createdBy: user.id,
     })
@@ -211,6 +201,13 @@ export function parseResponseMode(value: unknown): string {
   if (!RESPONSE_MODES.includes(value as (typeof RESPONSE_MODES)[number]))
     throw new BadRequest("response_mode must be mention or auto");
   return String(value);
+}
+
+/** A topic's goal: what it is for, read by every role in it and by the dispatcher. */
+export function parseGoal(value: unknown): string {
+  if (typeof value !== "string" || value.length > 16_000)
+    throw new BadRequest("goal must be a string of at most 16000 characters");
+  return value;
 }
 
 /** A topic's messages, newest page first in time order. Every participant reads the whole history. */

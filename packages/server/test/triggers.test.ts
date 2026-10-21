@@ -309,7 +309,7 @@ describe("topic triggers", () => {
     await expect(tool.handler(ctx, {})).rejects.toThrow("不在");
   });
 
-  it("gives work instructions and a receipt-reading tool to the existing conversation and mirrors replies to its external channel", async () => {
+  it("gives the topic goal and a receipt-reading tool to the existing conversation and mirrors replies to its external channel", async () => {
     const channel = await linkChannel(w, w.ids.topic, []);
     await db()
       .update(externalThreadLinks)
@@ -317,7 +317,7 @@ describe("topic triggers", () => {
       .where(eq(externalThreadLinks.topicId, w.ids.topic));
     // An administrator often configures a synced channel before participating in it.
     await w.api("DELETE", `${base()}/participants/user/${w.ids.alice}`, { token: w.alice });
-    await w.api("PATCH", base(), { token: w.alice, json: { work_instructions: "检查部署结果，仅汇报异常。" } });
+    await w.api("PATCH", base(), { token: w.alice, json: { goal: "检查部署结果，仅汇报异常。" } });
     await create({ instructions: "本次检查 production" });
     const result = await receive();
     await w.witden.runtime.drain();
@@ -332,7 +332,7 @@ describe("topic triggers", () => {
     const [task] = await db().select().from(tasks).where(eq(tasks.topicId, w.ids.topic));
     const [role] = await db().select().from(roles).where(eq(roles.id, w.ids.dev));
     const [topic] = await db().select().from(topics).where(eq(topics.id, w.ids.topic));
-    expect(await systemPrompt(db(), task, role, topic)).toContain("检查部署结果，仅汇报异常。");
+    expect(await systemPrompt(db(), task, role, topic)).toContain("## Topic goal\n检查部署结果，仅汇报异常。");
     expect(task.instruction).toContain("本次检查 production");
     expect(task.status).toBe("completed");
     const output = await w.messages(w.ids.topic);

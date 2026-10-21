@@ -193,7 +193,7 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
   return env;
 }
 
-/** Checks independent of who asks: model availability and topic model restrictions. */
+/** Checks independent of who asks: the topic is open and the role's model is usable. */
 export async function preflight(db: Db, topic: Topic, role: Role): Promise<string[]> {
   const reasons: string[] = [];
   if (topic.status !== "active") reasons.push("the topic is archived");
@@ -202,12 +202,6 @@ export async function preflight(db: Db, topic: Topic, role: Role): Promise<strin
     const found = await models.modelWithProvider(db, role.modelConfigId);
     const unusable = found ? models.unusableReason(found.model, found.provider) : "it no longer exists";
     if (!found || unusable) reasons.push(`@${role.handle}'s model is unavailable: ${unusable}`);
-    else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(found.model.id)) {
-      // No silent switch to another model: the role simply cannot act here.
-      reasons.push(
-        `this topic only allows specific models; @${role.handle} uses ${models.modelLabel(found.model, found.provider)}`,
-      );
-    }
   }
   return reasons;
 }
@@ -564,8 +558,7 @@ export async function dispatchRoleMessage(
   if (!targets.length) return [];
   // Outside the console only the bot's role works: its @-mentions of other roles are just text.
   if ((await externalRoleId(db, topic.id)) !== undefined) return [];
-  const s = settings();
-  const limit = Math.min(topic.maxAutoRounds ?? s.maxAutoRounds, s.maxAutoRounds);
+  const limit = settings().maxAutoRounds;
   if (msg.round > limit) {
     await systemMessage(
       db,

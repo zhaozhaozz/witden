@@ -9,8 +9,6 @@ const topic = {
   id: "topic-1",
   title: "产品工作台",
   goal: "一起把想法变成可以使用的产品。",
-  work_instructions: "",
-  max_auto_rounds: null,
   kind: "group",
   status: "active",
   source: "internal",

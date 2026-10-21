@@ -302,6 +302,13 @@
       "when": 1792566762553,
       "tag": "0042_external_topic_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792571271456,
+      "tag": "0043_topic_name_and_goal",
+      "breakpoints": true
     }
   ]
 }

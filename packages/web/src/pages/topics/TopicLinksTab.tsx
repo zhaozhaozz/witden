@@ -73,7 +73,11 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
                     <Link to={`/topics/${link.topic_id}`}>{link.title}</Link>
                     <Tag>{link.external ? "外部发布" : "内部协作"}</Tag>
                   </div>
-                  {link.goal ? <p className="small">{link.goal}</p> : null}
+                  {link.goal ? (
+                    <p className="small clamp-1" title={link.goal}>
+                      {link.goal}
+                    </p>
+                  ) : null}
                   <p className="small muted">
                     {link.external
                       ? "收到发送的消息后同步到外部平台，不再次运行机器人。"

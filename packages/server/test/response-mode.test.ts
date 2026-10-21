@@ -6,7 +6,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setFetch } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
-import { messageRoutes, usageRecords } from "../src/db/schema.js";
+import { messageRoutes, topics, usageRecords } from "../src/db/schema.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -146,7 +146,8 @@ describe("auto mode", () => {
       text.includes("回归") ? ["test"] : text.includes("一起") ? ["dev", "analyst"] : [],
     );
     await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: laya.id } });
-    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    const goal = "准备十月版本的发布";
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto", goal } });
     w.scripts.dev = () => reply("dev 在");
     w.scripts.test = () => reply("回归开始");
     w.scripts.analyst = () => reply("analyst 在");
@@ -164,6 +165,10 @@ describe("auto mode", () => {
     expect(first.body.questions.who.type).toBe("choice");
     expect(Object.keys(first.body.questions.who.criteria).sort()).toEqual(["analyst", "dev", "nobody", "test"]);
     expect(first.body.state).toMatch(/: 今天的回归能跑吗？$/);
+    // the topic goal goes with the question, as background; the state stays the message
+    expect(first.body.questions.who.instructions).toBe(
+      `Which role should handle alice's message? The topic is for: ${goal}`,
+    );
 
     await say(w.bob, w.ids.topic, "哈哈，辛苦了");
     await w.drain();
@@ -235,10 +240,13 @@ describe("auto mode", () => {
     expect(note.content).toContain("the dispatcher model is unavailable");
   });
 
-  it("a chat model dispatches with earlier messages as context, by calling choose_roles", async () => {
+  it("a chat model dispatches with the topic goal and earlier messages as context, by calling choose_roles", async () => {
     const chat = await chatDispatcherModel();
     await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: chat } });
-    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, {
+      token: w.alice,
+      json: { response_mode: "auto", goal: "准备十月版本的发布" },
+    });
     const asked: { text: string; tools: string[] }[] = [];
     // "可以" alone means nothing; after test's question it is test's answer
     w.scripts.dispatcher = (messages, _turn, tools) => {
@@ -260,6 +268,7 @@ describe("auto mode", () => {
     let tasks = await tasksIn(w.ids.topic);
     expect(tasks.map((t) => t.owner_role_id)).toEqual([w.ids.test]);
     expect(asked[0].tools).toEqual(["choose_roles"]);
+    expect(asked[0].text).toMatch(/^Topic goal: 准备十月版本的发布\n\nRoles:\n/);
     expect(asked[0].text).toContain("- @test:");
     expect(asked[0].text).toMatch(/Latest message:\n.+: 今天的回归能跑吗？$/);
 
@@ -284,6 +293,37 @@ describe("auto mode", () => {
     expect(routes.every((r) => r.status === "done")).toBe(true);
     const usage = await db().select().from(usageRecords).where(eq(usageRecords.modelConfigId, chat));
     expect(usage.map((u) => u.taskId)).toEqual([null, null, null, null]);
+  });
+
+  it("the dispatcher reads the start of the topic goal, which holds up to 16000 characters", async () => {
+    const laya = await decisionService();
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: laya.id } });
+    const patch = (json: unknown) => w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json });
+    expect((await patch({ goal: "x".repeat(16_001) })).status).toBe(400);
+    expect((await patch({ goal: 42 })).status).toBe(400);
+    // a topic has no other settings: work instructions, a round limit or a model list are not kept
+    const saved = await patch({
+      response_mode: "auto",
+      goal: `${"a".repeat(500)}${"b".repeat(15_500)}`,
+      work_instructions: "ignored",
+      max_auto_rounds: 2,
+      allowed_model_config_ids: [],
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.goal).toHaveLength(16_000);
+    for (const gone of ["work_instructions", "max_auto_rounds", "allowed_model_config_ids"])
+      expect(saved.body).not.toHaveProperty(gone);
+    await say(w.alice, w.ids.topic, "有人在吗");
+    await w.drain();
+    const asked = laya.requests[0].body.questions.who.instructions as string;
+    expect(asked).toContain("a".repeat(500));
+    expect(asked).not.toContain("ab");
+    // a goal already longer (merged work instructions) can be sent back unchanged with a new title
+    await db()
+      .update(topics)
+      .set({ goal: "c".repeat(16_001) })
+      .where(eq(topics.id, w.ids.topic));
+    expect((await patch({ title: "Release 1.1", goal: "c".repeat(16_001) })).status).toBe(200);
   });
 
   it("a chat model that does not answer with choose_roles is retried, then people are told", async () => {

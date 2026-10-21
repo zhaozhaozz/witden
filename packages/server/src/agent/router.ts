@@ -6,8 +6,8 @@
  * (agent/chat-dispatch.ts), which also reads a few earlier messages.
  *
  * A decision model gets one ``choice`` question: which role should handle the message, or nobody. The most
- * likely answer wins; when it is a role, other roles at least ``ALSO`` likely take the message too. The state is
- * the message alone:
+ * likely answer wins; when it is a role, other roles at least ``ALSO`` likely take the message too. The question
+ * carries the start of the topic goal; the state is the message alone:
  * measured on a real Laya server with Chinese chat, separate yes/no questions per role and any earlier
  * messages in the state made the decisions much worse (a role's previous reply drew nearly every message to
  * that role). A reply to a role's question therefore needs an @ to reach it.
@@ -25,7 +25,7 @@ import { audit } from "../services/audit.js";
 import { relayFrom } from "../services/collaboration-policy.js";
 import * as models from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting } from "../services/platform-settings.js";
-import { chatDispatchRequest, chooseWithChat } from "./chat-dispatch.js";
+import { chatDispatchRequest, chooseWithChat, DISPATCH_GOAL_CHARS } from "./chat-dispatch.js";
 import { enqueue } from "./conversation.js";
 import { activeRoleIds, authorize, systemMessage } from "./dispatch.js";
 import type { Decision, Question } from "./systemone.js";
@@ -163,15 +163,13 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
   if (!found) problem = "no dispatcher model is set (System administration → dispatcher)";
   else if (models.unusableReason(found.model, found.provider))
     problem = `the dispatcher model is unavailable: ${models.unusableReason(found.model, found.provider)}`;
-  else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(found.model.id))
-    problem = "this topic does not allow the dispatcher model";
   if (problem || !found) return { ...base, problem };
   const linked = msg.source === "topic";
   const label = models.modelLabel(found.model, found.provider);
   let decide: () => Promise<Dispatch>;
   if (models.isSystemOne(found.provider)) {
     const model = await models.decisionModelFor(db, found.model);
-    const request = await buildRequest(db, msg, candidates);
+    const request = await buildRequest(db, msg, topic, candidates);
     decide = async () => {
       const answer = await model.decide(request.state, request.questions);
       const decision = readDecision(answer, candidates);
@@ -185,7 +183,7 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
     };
   } else {
     const model = await models.chatModelFor(db, found.model);
-    const request = await chatDispatchRequest(db, msg, candidates);
+    const request = await chatDispatchRequest(db, msg, topic, candidates);
     decide = async () => {
       const chosen = await chooseWithChat(model, request, candidates);
       // Linked work always reaches exactly one role: the first chosen, else the first offered.
@@ -202,15 +200,18 @@ const clip = (text: string, max: number) => text.replace(/\s+/g, " ").trim().sli
 /** The option for "no role should answer" (a role could be called "nobody"). */
 const nobodyKey = (candidates: Role[]) => (candidates.some((r) => r.handle === "nobody") ? "no_role" : "nobody");
 
-/** The question: which role (by name and responsibilities) should handle this message, or nobody. */
-async function buildRequest(db: Db, msg: Message, candidates: Role[]) {
+/**
+ * The question: which role (by name and responsibilities) should handle this message, or nobody. The topic goal
+ * goes with the question, as background: the state stays the message alone.
+ */
+async function buildRequest(db: Db, msg: Message, topic: Topic, candidates: Role[]) {
   const from = await authorName(db, msg.authorType, msg.authorId);
   const criteria: Record<string, string> = {};
   for (const r of candidates) criteria[r.handle] = r.description ? `${r.name}: ${clip(r.description, 100)}` : r.name;
   criteria[nobodyKey(candidates)] = "no role: small talk, greetings, thanks, or people talking to each other";
-  const questions: Record<string, Question> = {
-    who: { type: "choice", instructions: `Which role should handle ${from}'s message?`, criteria },
-  };
+  const goal = clip(topic.goal, DISPATCH_GOAL_CHARS);
+  const instructions = `Which role should handle ${from}'s message?${goal ? ` The topic is for: ${goal}` : ""}`;
+  const questions: Record<string, Question> = { who: { type: "choice", instructions, criteria } };
   return { state: `${from}: ${clip(msg.content, 2000)}`, questions };
 }
 

@@ -971,3 +971,41 @@ describe("0042_external_topic_roles", () => {
     await db.close();
   });
 });
+
+describe("0043_topic_name_and_goal", () => {
+  it("moves work instructions into the goal and drops the per-topic instructions, round limit and model list", async () => {
+    const db = new PGlite();
+    try {
+      for (const f of fs
+        .readdirSync(DIR)
+        .filter((f) => f.endsWith(".sql") && f < "0043")
+        .sort())
+        await apply(db, f.replace(/\.sql$/, ""));
+      await db.exec(`
+        insert into topics (id, title, goal, work_instructions, max_auto_rounds, allowed_model_config_ids) values
+          ('top_both', 'Ops', 'Keep production healthy', E'On a deploy event check the result.\\nReport failures only.', 3, '["mdl_1"]'),
+          ('top_instructions', 'Alerts', '', 'Triage every alert.', null, null),
+          ('top_goal', 'Release', 'Ship the October release', '', null, null);
+      `);
+      await apply(db, "0043_topic_name_and_goal");
+      expect((await db.query("select id, goal from topics order by id")).rows).toEqual([
+        {
+          id: "top_both",
+          goal: "Keep production healthy\n\nOn a deploy event check the result.\nReport failures only.",
+        },
+        { id: "top_goal", goal: "Ship the October release" },
+        { id: "top_instructions", goal: "Triage every alert." },
+      ]);
+      const columns = (
+        await db.query<{ column_name: string }>(
+          "select column_name from information_schema.columns where table_name = 'topics'",
+        )
+      ).rows.map((r) => r.column_name);
+      expect(columns).toContain("goal");
+      for (const gone of ["work_instructions", "max_auto_rounds", "allowed_model_config_ids"])
+        expect(columns).not.toContain(gone);
+    } finally {
+      await db.close();
+    }
+  });
+});

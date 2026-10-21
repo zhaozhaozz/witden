@@ -199,26 +199,16 @@ export async function topicRoutes(app: FastifyInstance) {
       const b = body(req);
       const keys = Object.keys(b);
       // A DM is one person and one role, always open: nothing to rename, archive or reconfigure.
-      if (topic.kind === "dm" && keys.some((k) => k !== "allowedModelConfigIds"))
+      if (topic.kind === "dm" && keys.length)
         throw new BadRequest("a DM has no title, archive or response settings: it is always one person and one role");
       if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can change a topic");
       if (b.status !== undefined && !["active", "archived"].includes(b.status))
         throw new BadRequest("status must be active or archived");
       if (b.responseMode !== undefined) svc.parseResponseMode(b.responseMode);
-      if (
-        b.workInstructions !== undefined &&
-        (typeof b.workInstructions !== "string" || b.workInstructions.length > 16_000)
-      )
-        throw new BadRequest("work_instructions must be a string of at most 16000 characters");
-      const allowed = [
-        "title",
-        "goal",
-        "workInstructions",
-        "status",
-        "responseMode",
-        "maxAutoRounds",
-        "allowedModelConfigIds",
-      ];
+      // An unchanged goal passes: merged work instructions (migration 0043) may have made an old one longer.
+      if (b.goal !== undefined && b.goal !== topic.goal) svc.parseGoal(b.goal);
+      // A topic is configured with its name and goal; status and response mode are switched elsewhere.
+      const allowed = ["title", "goal", "status", "responseMode"];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
       const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
       if (b.status === "archived") {

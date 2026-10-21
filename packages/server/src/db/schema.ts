@@ -298,14 +298,12 @@ export const knowledgeSpaces = pgTable("knowledge_spaces", {
 export const topics = pgTable("topics", {
   id: id(),
   title: text("title").notNull(),
+  /** What the topic is for: every role here and the dispatcher read it. */
   goal: text("goal").notNull().default(""),
-  workInstructions: text("work_instructions").notNull().default(""),
   kind: text("kind").notNull().default("group"), // group | dm
   status: text("status").notNull().default("active"),
   /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
   responseMode: text("response_mode").notNull().default("mention"), // mention | auto
-  maxAutoRounds: integer("max_auto_rounds"),
-  allowedModelConfigIds: json<string[] | null>("allowed_model_config_ids"),
   source: text("source").notNull().default("internal"),
   createdBy: text("created_by"),
   lastMessageAt: ts("last_message_at"),

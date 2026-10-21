@@ -282,9 +282,6 @@ export class TaskRunner {
       if (!found) return this.failIn(tx, task, "no model configured for this role");
       const cfg = found.model;
       const label = models.modelLabel(cfg, found.provider);
-      if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(cfg.id)) {
-        return this.failIn(tx, task, `model ${label} is not allowed in this topic`);
-      }
       if (role.dailyTokenLimit && (await models.tokensToday(tx, { roleId: role.id })) >= role.dailyTokenLimit) {
         return this.failIn(tx, task, `@${role.handle} reached its daily token limit`);
       }

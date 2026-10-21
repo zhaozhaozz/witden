@@ -1,25 +1,32 @@
 /**
  * The dispatcher on an ordinary chat model (agent/router.ts decides which kind is set). A chat model reads the
- * message with a few earlier ones, so a reply to a role's question can reach that role without an @; it answers
- * by calling ``choose_roles`` with none, one or several of the offered handles. Slower and dearer per message
- * than a System One decision model, and its choice comes without probabilities.
+ * message with the topic goal and a few earlier messages, so a reply to a role's question can reach that role
+ * without an @; it answers by calling ``choose_roles`` with none, one or several of the offered handles. Slower
+ * and dearer per message than a System One decision model, and its choice comes without probabilities.
  */
 import { and, desc, eq, isNull, lt, ne } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type Message, messages, type Role } from "../db/schema.js";
+import { type Message, messages, type Role, type Topic } from "../db/schema.js";
 import { ModelError } from "../errors.js";
 import type { ChatMessage, ChatModel, ToolSchema } from "./llm.js";
 import { authorName } from "./tools.js";
 
 /** Earlier messages given as context: enough for "yes, go ahead" to find its question, little enough to stay fast. */
 const CONTEXT_MESSAGES = 6;
+/** The start of the topic goal either kind of dispatcher reads: what the topic is for, not its whole brief. */
+export const DISPATCH_GOAL_CHARS = 500;
 
 export const DISPATCH_PROMPT = `You route messages in a team chat to the AI roles in it. Decide which roles should handle the latest message: none (small talk, greetings, thanks, or people talking to each other), usually one, or several when it needs different responsibilities. A message answering a role's question goes to that role. Earlier messages are context only; route just the latest one. Answer only by calling choose_roles.`;
 
 const clip = (text: string, max: number) => text.replace(/\s+/g, " ").trim().slice(0, max);
 
-/** The role list, earlier messages (oldest first) and the message to route, as one user turn. */
-export async function chatDispatchRequest(db: Db, msg: Message, candidates: Role[]): Promise<ChatMessage[]> {
+/** The topic goal, the role list, earlier messages (oldest first) and the message to route, as one user turn. */
+export async function chatDispatchRequest(
+  db: Db,
+  msg: Message,
+  topic: Topic,
+  candidates: Role[],
+): Promise<ChatMessage[]> {
   const line = async (m: Message) => `${await authorName(db, m.authorType, m.authorId)}: ${clip(m.content, 300)}`;
   const earlier = await db
     .select()
@@ -39,7 +46,9 @@ export async function chatDispatchRequest(db: Db, msg: Message, candidates: Role
   );
   const context = [];
   for (const m of earlier.reverse()) context.push(await line(m));
+  const goal = clip(topic.goal, DISPATCH_GOAL_CHARS);
   const text = [
+    goal ? `Topic goal: ${goal}` : "",
     `Roles:\n${roles.join("\n")}`,
     context.length ? `Earlier messages (oldest first):\n${context.join("\n")}` : "",
     `Latest message:\n${await line({ ...msg, content: clip(msg.content, 2000) })}`,
