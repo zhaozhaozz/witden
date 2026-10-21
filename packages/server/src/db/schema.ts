@@ -263,7 +263,10 @@ export const roles = pgTable(
     reasoningEffort: text("reasoning_effort"),
     instanceId: text("instance_id").references(() => computerInstances.id),
     allowedTools: json<string[]>("allowed_tools").notNull().default([]),
-    // No longer used: roles reach each other through topics and topic links (design D99).
+    /**
+     * Roles this role may start a direct conversation with (agent/contacts.ts): one direction only, never a system
+     * administrator. Answers to its messages need no entry on the other side.
+     */
     allowedContacts: json<string[]>("allowed_contacts").notNull().default([]),
     knowledgeSpaceIds: json<string[]>("knowledge_space_ids").notNull().default([]),
     approvalRequired: json<string[]>("approval_required").notNull().default([]),
@@ -300,7 +303,8 @@ export const topics = pgTable("topics", {
   title: text("title").notNull(),
   /** What the topic is for: every role here and the dispatcher read it. */
   goal: text("goal").notNull().default(""),
-  kind: text("kind").notNull().default("group"), // group | dm
+  // group | dm (one person, one role) | pair (two roles talking directly, no people; agent/contacts.ts)
+  kind: text("kind").notNull().default("group"),
   status: text("status").notNull().default("active"),
   /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
   responseMode: text("response_mode").notNull().default("mention"), // mention | auto
@@ -495,7 +499,7 @@ export const agentSessions = pgTable(
 
 /** An entry of a conversation's inbox (agent_sessions.inbox). */
 export interface InboxItem {
-  kind: "message" | "result" | "timer" | "instruction";
+  kind: "message" | "result" | "timer" | "instruction" | "reply";
   at: string;
   /** message: the message for the role; auto = it reached the role without an @-mention (auto topics). */
   message_id?: string;
@@ -519,6 +523,13 @@ export interface InboxItem {
   done?: string;
   /** timer: the automatic round it counts as (a chain of follow-ups without a person is bounded like others). */
   round?: number;
+  /**
+   * A direct conversation between two roles (agent/contacts.ts). message: another role's message here and where
+   * its answer goes; reply: the answer to the role's own message (message_id), or why none came (note).
+   */
+  contact?: import("../services/collaboration-policy.js").ContactRoute;
+  /** message with ``contact``: when the answer was sent back (it is owed from when the run was shown it). */
+  answered?: string;
 }
 
 /**

@@ -43,7 +43,9 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
     const linkedRequester = (task.envelope?.topic_routes ?? []).some(
       (r: any) => r.origin?.requester_user_id === user.id,
     );
-    if (!linkedRequester && !(await participant(db, topic.id, "user", user.id))) return "the requester left the topic";
+    // Two roles talking directly (agent/contacts.ts) work for a person who is never in that conversation.
+    if (!linkedRequester && topic.kind !== "pair" && !(await participant(db, topic.id, "user", user.id)))
+      return "the requester left the topic";
   }
   return null;
 }

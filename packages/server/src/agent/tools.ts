@@ -8,7 +8,7 @@
  */
 
 import type { PackagesResult, RunnerOp } from "@witden/shared";
-import { and, desc, eq, gte, ilike, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import type { GatewayClient } from "../compute/gateway.js";
 import { OutcomeUncertain } from "../compute/hub.js";
 import { settings } from "../config.js";
@@ -42,6 +42,7 @@ import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../servi
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
 import * as topicSvc from "../services/topics.js";
 import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../services/triggers.js";
+import { contactRole } from "./contacts.js";
 import { topicPlace } from "./context.js";
 import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
@@ -579,6 +580,19 @@ async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise
   });
 }
 
+/** Write to another AI employee directly (agent/contacts.ts), only to one a person allowed; its answer comes back. */
+async function contactOtherRole(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return transaction(async (db) => {
+    const { task, role } = await load(ctx, db);
+    const out = await contactRole(db, task, role, String(args.role ?? ""), String(args.message ?? ""), ctx.toolCallId);
+    const back =
+      ctx.mode === "conversation"
+        ? "its answer comes back to you here as a new item. Continue, or end your turn."
+        : "its answer reaches this task as a new input while it runs.";
+    return { content: `${out.status === "sent" ? "sent" : "already sent"} (message ${out.messageId}); ${back}` };
+  });
+}
+
 const HISTORY_LIMIT = 100;
 
 /**
@@ -978,7 +992,8 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
  * Other topics, as far as the role's permission (the "topics" group, off by default) goes: find them by title,
  * or read one by id. Whether it may is the permission alone — not who asked, and what it read is not tracked
  * as a source: a role allowed to read other topics may use it wherever it works, e.g. answer in Feishu about
- * a GitHub issue (00 的 D58). DMs stay between their person and role and are never read from elsewhere.
+ * a GitHub issue (00 的 D58). DMs stay between their person and role, and direct conversations between two roles
+ * between them: neither is read from elsewhere.
  */
 async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
@@ -988,7 +1003,13 @@ async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<T
     const found = await db
       .select()
       .from(topics)
-      .where(and(ne(topics.kind, "dm"), ne(topics.id, ctx.topicId), q ? ilike(topics.title, `%${q}%`) : undefined))
+      .where(
+        and(
+          notInArray(topics.kind, ["dm", "pair"]),
+          ne(topics.id, ctx.topicId),
+          q ? ilike(topics.title, `%${q}%`) : undefined,
+        ),
+      )
       .orderBy(desc(topics.lastMessageAt))
       .limit(20);
     const lines: string[] = [];
@@ -1006,6 +1027,8 @@ async function readTopic(ctx: ToolContext, args: Record<string, any>): Promise<T
   if (!source) throw new BadRequest(`no topic ${id}; find topics with query`);
   if (source.kind === "dm")
     throw new Forbidden("a DM is private between its person and its role; it cannot be read from other topics");
+  if (source.kind === "pair")
+    throw new Forbidden("a direct conversation between two AI employees cannot be read from other topics");
   const msgs = await topicSvc.visibleMessages(db, source, {
     limit: Math.max(1, Math.min(Number(args.limit ?? 40), 200)),
   });
@@ -1372,6 +1395,18 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
         "Hand an independent task your conversation here started (start_task, or delegated from here) over to another role taking part in this topic, while nothing runs it: pending, waiting for its computer or for a role, completed or failed. The role continues the same task from a brief with its requirements, last result and your note, on its own computer; the result still comes back here. A completed task stays completed until you give it more work (continue_task); a failed one is retried by a person. To have a role do only a part, use delegate_task; to ask or tell it something, message_role.",
       conversationParameters: obj({ task_id: str, role: str, note: str }, ["task_id", "role", "note"]),
     },
+    // Outside any topic, to the AI employees a person allowed (agent/contacts.ts); no permission group, no approval.
+    {
+      ...spec(
+        "contact_role",
+        null,
+        "Write to another AI employee directly, outside this topic, as one colleague messages another: only to those listed in your instructions as ones you may contact. It answers in your direct conversation with it and the answer reaches this task as a new input. It cannot see this topic and you cannot see its work: write a self-contained message and share only what it needs.",
+        obj({ role: { type: "string", description: "its handle, e.g. @ops" }, message: str }, ["role", "message"]),
+        contactOtherRole,
+      ),
+      conversation:
+        "Write to another AI employee directly, outside this topic, as one colleague messages another: only to those listed in your instructions as ones you may contact. It answers in your direct conversation with it and the answer comes back to you here as a new item, so end your turn or go on meanwhile. It cannot see this topic and you cannot see its work: write a self-contained message and share only what it needs.",
+    },
     spec(
       "remember",
       "memory",
@@ -1646,7 +1681,12 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         // work to. A request relayed from there into a console topic may still involve that topic's roles.
         (!["message_role", "delegate_task", "transfer_task"].includes(t.name) || !envelope.external_topic) &&
         // Only that role reports on the linked internal topics; an internal topic has no use for an external one's.
-        (t.name !== "linked_topic_status" || !!envelope.external_topic),
+        (t.name !== "linked_topic_status" || !!envelope.external_topic) &&
+        // Writing to another role directly: only with someone to write to, never in an external conversation and
+        // never for a system administrator. Where two roles talk directly nobody else is asked, involved or handed
+        // work (agent/contacts.ts).
+        (t.name !== "contact_role" || (!!envelope.contacts && !envelope.external_topic && !envelope.system_admin)) &&
+        (!["message_role", "delegate_task", "transfer_task", "ask_human"].includes(t.name) || !envelope.pair_topic),
     )
     .map((t) =>
       mode === "conversation" && (t.conversation || t.conversationParameters)
@@ -1659,6 +1699,8 @@ export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, arg
   // @-mentions, delegation and hand-overs stay within the topic and need no permission (an older per-tool setting
   // is ignored).
   if (["message_role", "delegate_task", "transfer_task"].includes(tool.name)) return false;
+  // Writing to an allowed AI employee needs no approval either: the person who allowed it decided.
+  if (tool.name === "contact_role") return false;
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
   // A connection tool (Feishu, GitHub) asks when its connection's product asks (the connection comes from the call).

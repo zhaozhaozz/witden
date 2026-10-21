@@ -32,10 +32,10 @@ export function TopicLinksTab({ topic }: { topic: Topic }) {
   const { confirm } = useFeedback();
   const existing = new Set((links.data ?? []).map((l) => l.topic_id));
   // A link joins an external conversation (Slack, Feishu, GitHub) and an internal topic: only the other kind is
-  // offered. A console DM is internal.
+  // offered. A console DM is internal; a direct conversation between two AI employees is never linked.
   const external = !!topic.channel;
   const options = (choices.data ?? []).filter(
-    (t) => t.id !== topic.id && !existing.has(t.id) && !!t.channel !== external,
+    (t) => t.id !== topic.id && !existing.has(t.id) && !!t.channel !== external && t.kind !== "pair",
   );
   const add = async () => {
     const target = options.find((t) => t.id === selected);

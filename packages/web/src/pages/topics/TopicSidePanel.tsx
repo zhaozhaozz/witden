@@ -63,8 +63,10 @@ export function TopicSidePanel({
   onToggleComputerMax?: () => void;
   onClose: () => void;
 }) {
-  // A DM is always you and one role: settings show the role instead of a participant list.
+  // A DM is always you and one role: settings show the role instead of a participant list. A pair is two AI
+  // employees talking directly: settings show the two of them, and nothing there can be changed.
   const dm = topic.kind === "dm";
+  const pair = topic.kind === "pair";
   // A link may name the tab to open, e.g. ?panel=triggers when coming back from adding a webhook source.
   const [params] = useSearchParams();
   const [tab, setTab] = useState(() => {
@@ -128,7 +130,7 @@ export function TopicSidePanel({
           { key: "computer", label: "虚拟电脑", hidden: !hasComputers },
           { key: "files", label: "文件" },
           { key: "notes", label: "记忆" },
-          { key: "triggers", label: "触发器", hidden: dm },
+          { key: "triggers", label: "触发器", hidden: dm || pair },
           { key: "settings", label: "设置" },
         ]}
       />
@@ -158,8 +160,8 @@ export function TopicSidePanel({
                 ) : null
               }
             </Loaded>
-            <ConversationsBlock res={sessions} dm={dm} />
-            <TasksTab res={tasks} dm={dm} />
+            <ConversationsBlock res={sessions} dm={dm} pair={pair} />
+            <TasksTab res={tasks} place={dm ? "私信" : pair ? "对话" : "话题"} />
           </>
         ) : null}
         {shown === "computer" ? (
@@ -171,21 +173,29 @@ export function TopicSidePanel({
         {shown === "settings" ? (
           <div key={topic.id} className="sidebar-settings">
             <details className="sidebar-settings-section" open>
-              <summary>{dm ? "角色" : "参与者"}</summary>
-              <div className="sidebar-settings-body">
-                {dm ? <DmRoleTab topic={topic} /> : <PeopleTab topic={topic} onTopicChange={onTopicChange} />}
-              </div>
-            </details>
-            <details className="sidebar-settings-section" open>
-              <summary>关联话题</summary>
-              <div className="sidebar-settings-body">
-                <TopicLinksTab topic={topic} />
-              </div>
-            </details>
-            <details className="sidebar-settings-section" open>
-              <summary>{dm ? "私信设置" : "话题设置"}</summary>
+              <summary>{dm ? "角色" : pair ? "AI 员工" : "参与者"}</summary>
               <div className="sidebar-settings-body">
                 {dm ? (
+                  <DmRoleTab topic={topic} />
+                ) : pair ? (
+                  <PairRolesTab topic={topic} />
+                ) : (
+                  <PeopleTab topic={topic} onTopicChange={onTopicChange} />
+                )}
+              </div>
+            </details>
+            {pair ? null : (
+              <details className="sidebar-settings-section" open>
+                <summary>关联话题</summary>
+                <div className="sidebar-settings-body">
+                  <TopicLinksTab topic={topic} />
+                </div>
+              </details>
+            )}
+            <details className="sidebar-settings-section" open>
+              <summary>{dm ? "私信设置" : pair ? "对话设置" : "话题设置"}</summary>
+              <div className="sidebar-settings-body">
+                {dm || pair ? (
                   <DmSettings topic={topic} onCleared={onCleared} />
                 ) : (
                   <SettingsTab topic={topic} onTopicChange={onTopicChange} onCleared={onCleared} />
@@ -204,7 +214,7 @@ export function TopicSidePanel({
  * working on something now, how large its context is and when it gets compacted; stop the current round or
  * clear the context.
  */
-function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: boolean }) {
+function ConversationsBlock({ res, dm, pair }: { res: Resource<AgentSession[]>; dm: boolean; pair: boolean }) {
   const dir = useDirectory();
   const { confirm } = useFeedback();
   const { run, busy } = useAction();
@@ -223,7 +233,7 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
       body: (
         <p>
           {name}
-          会忘记在{dm ? "这个私信" : "这个话题"}
+          会忘记在{dm ? "这个私信" : pair ? "这段对话" : "这个话题"}
           里之前的对话内容；消息都还在，下次有人找它时，它会从最近的消息重新读起。正在进行的这一轮会停止。
         </p>
       ),
@@ -315,9 +325,11 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
             <Empty
               title="还没有对话"
               hint={
-                dm
-                  ? "给角色发消息后，它在这里的对话会一直延续，工作期间收到的新消息也会被它读到。"
-                  : "在消息里 @ 一个角色，它在这个话题里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+                pair
+                  ? "一位 AI 员工给另一位发消息后，双方在这里的对话会一直延续。"
+                  : dm
+                    ? "给角色发消息后，它在这里的对话会一直延续，工作期间收到的新消息也会被它读到。"
+                    : "在消息里 @ 一个角色，它在这个话题里的对话会一直延续，工作期间收到的新消息也会被它读到。"
               }
             />
           )
@@ -328,7 +340,7 @@ function ConversationsBlock({ res, dm }: { res: Resource<AgentSession[]>; dm: bo
 }
 
 /** Independent tasks: work a conversation split off (start_task) or delegated, each with its own context. */
-function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
+function TasksTab({ res, place }: { res: Resource<Task[]>; place: string }) {
   const [onlyActive, setOnlyActive] = useState(false);
   return (
     <section className="work-section">
@@ -343,7 +355,7 @@ function TasksTab({ res, dm }: { res: Resource<Task[]>; dm: boolean }) {
             return (
               <Empty
                 title="还没有任务"
-                hint={`角色把一块较大的工作拆出去单独做、或交给其他角色时，会作为任务出现在这里，各自有独立的上下文，完成后结果回到${dm ? "私信" : "话题"}里的对话。`}
+                hint={`角色把一块较大的工作拆出去单独做、或交给其他角色时，会作为任务出现在这里，各自有独立的上下文，完成后结果回到${place}里的对话。`}
               />
             );
           return (
@@ -467,6 +479,42 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
   );
 }
 
+/** The two AI employees of a direct conversation: who they are and where they work; nothing to change here. */
+function PairRolesTab({ topic }: { topic: Topic }) {
+  const dir = useDirectory();
+  const { can } = useAuth();
+  const roles = (topic.participants ?? []).filter((x) => x.type === "role");
+  return (
+    <div className="dm-role">
+      {roles.map((p) => (
+        <div key={p.id} className="person">
+          <Avatar id={p.id} name={p.name} kind="role" size={32} src={p.avatar_url} color={p.color} />
+          <div className="person-main">
+            <div className="person-name">
+              <strong>{p.name}</strong>
+              {p.handle ? <Handle handle={p.handle} /> : null}
+              {p.instance ? <ComputerBadge computer={p.instance} /> : null}
+              {p.status === "disabled" ? <Tag tone="off">已停用</Tag> : null}
+            </div>
+            {dir.roleById.get(p.id)?.description ? (
+              <div className="small">{dir.roleById.get(p.id)?.description}</div>
+            ) : null}
+          </div>
+          {can("role.manage") ? (
+            <Link to={`/roles/${p.id}`} className="btn btn-xs">
+              编辑角色
+            </Link>
+          ) : null}
+        </div>
+      ))}
+      <p className="small muted side-note">
+        AI 员工只能主动联系在角色设置「协作」中允许的 AI
+        员工，对方的回复不需要设置。这段对话里没有成员，不能邀请其他成员或角色，也不能关联话题或添加触发器。
+      </p>
+    </div>
+  );
+}
+
 /** The other side of a DM: the role, what it does and where it works. */
 function DmRoleTab({ topic }: { topic: Topic }) {
   const dir = useDirectory();
@@ -566,8 +614,18 @@ function FilesTab({ topic }: { topic: Topic }) {
           </ul>
         ) : (
           <Empty
-            title={topic.kind === "dm" ? "这段私信还没有文件" : "这个话题还没有文件"}
-            hint="在输入框旁点击「附件」，从你自己的电脑上传；角色从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
+            title={
+              topic.kind === "dm"
+                ? "这段私信还没有文件"
+                : topic.kind === "pair"
+                  ? "这段对话还没有文件"
+                  : "这个话题还没有文件"
+            }
+            hint={
+              topic.kind === "pair"
+                ? "两位 AI 员工从虚拟电脑分享的文件会出现在这里。下载会保存到你自己的电脑。"
+                : "在输入框旁点击「附件」，从你自己的电脑上传；角色从虚拟电脑分享的文件也会出现在这里。下载会保存到你自己的电脑。"
+            }
           />
         )
       }
@@ -577,25 +635,28 @@ function FilesTab({ topic }: { topic: Topic }) {
 
 function NotesTab({ topic, version }: { topic: Topic; version: number }) {
   const dm = topic.kind === "dm";
+  const pair = topic.kind === "pair";
   const { can } = useAuth();
   const roles = (topic.participants ?? []).filter((p) => p.type === "role");
   return (
     <div className="memory-groups">
       <details className="memory-group" open>
-        <summary>{dm ? "私信记忆" : "话题记忆"}</summary>
+        <summary>{dm ? "私信记忆" : pair ? "对话记忆" : "话题记忆"}</summary>
         <div className="memory-group-body">
           <p className="small muted side-note">
             {dm
               ? "这里的记忆只在这段私信中使用，不会带入其他话题和其他角色的私信。"
-              : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
+              : pair
+                ? "这里的记忆只在这两位 AI 员工的这段对话中使用，不会带入它们参与的其他话题。"
+                : "话题记忆只在这个话题内使用，不会带入角色参与的其他话题。"}
           </p>
           <MemoryList
             query={{ scope: "topic", topic_id: topic.id }}
             create={{ scope: "topic", topic_id: topic.id }}
             canAdd={!!topic.can_post}
             placeholder={dm ? "这段私信的要点或约定" : "这个话题的要点或约定"}
-            emptyTitle={dm ? "暂无私信记忆" : "暂无话题记忆"}
-            itemName={dm ? "私信记忆" : "话题记忆"}
+            emptyTitle={dm ? "暂无私信记忆" : pair ? "暂无对话记忆" : "暂无话题记忆"}
+            itemName={dm ? "私信记忆" : pair ? "对话记忆" : "话题记忆"}
             compact
             version={version}
           />
@@ -713,14 +774,18 @@ function SettingsTab({
   );
 }
 
-/** A DM has nothing to configure: it is always you and its role. Only its history can be cleared. */
+/**
+ * A DM has nothing to configure: it is always you and its role; nor has the direct conversation of two AI
+ * employees. Only their history can be cleared.
+ */
 function DmSettings({ topic, onCleared }: { topic: Topic; onCleared: () => void }) {
-  const roleName = topic.participants?.find((p) => p.type === "role")?.name ?? "角色";
+  const roleNames = (topic.participants ?? []).filter((p) => p.type === "role").map((p) => p.name);
   return (
     <div className="settings">
       <p className="small muted side-note">
-        私信是你和 {roleName}{" "}
-        之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。
+        {topic.kind === "pair"
+          ? `这是 ${roleNames.join(" 与 ")} 之间一直保留的直接对话：没有标题、成员或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`
+          : `私信是你和 ${roleNames[0] ?? "角色"} 之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`}
       </p>
       {topic.status === "active" ? <CleanupBlock topic={topic} onCleared={onCleared} /> : null}
     </div>
@@ -767,7 +832,7 @@ function CleanupBlock({ topic, onCleared }: { topic: Topic; onCleared: () => voi
           />
           文件
         </label>
-        {topic.kind !== "dm" ? (
+        {topic.kind === "group" ? (
           <label className="check">
             <input
               type="checkbox"

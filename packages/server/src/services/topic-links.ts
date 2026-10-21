@@ -87,6 +87,8 @@ export async function addTopicLink(
     throw new BadRequest(
       `two ${external1 ? "external conversations" : "internal topics"} cannot be linked: a link joins an external conversation (Slack, Feishu, GitHub) and an internal topic`,
     );
+  if (t1.kind === "pair" || t2.kind === "pair")
+    throw new BadRequest("a conversation between two AI employees cannot be linked to another topic");
   if ((t1.kind === "dm" || t2.kind === "dm") && !confirmPrivate)
     throw new BadRequest("linking a DM may share selected messages with another topic; confirm_private is required");
   const existing = await findTopicLink(db, a, b);

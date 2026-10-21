@@ -58,6 +58,7 @@ interface Draft {
   reasoning_effort: string;
   instance_id: string;
   allowed_tools: string[];
+  allowed_contacts: string[];
   knowledge_space_ids: string[];
   approval_required: string[];
   max_steps: string;
@@ -78,6 +79,7 @@ function toDraft(r: Role | null): Draft {
     reasoning_effort: r?.reasoning_effort ?? "",
     instance_id: r?.instance_id ?? "",
     allowed_tools: r?.allowed_tools ?? [],
+    allowed_contacts: r?.allowed_contacts ?? [],
     knowledge_space_ids: r?.knowledge_space_ids ?? [],
     approval_required: r?.approval_required ?? [],
     max_steps: r?.max_steps?.toString() ?? "",
@@ -112,6 +114,7 @@ function toBody(d: Draft): Record<string, unknown> {
     instance_id: d.instance_id || null,
     // Sorted (as the server stores them) so toggling back and forth does not count as a change.
     allowed_tools: [...d.allowed_tools].sort(),
+    allowed_contacts: [...d.allowed_contacts].sort(),
     knowledge_space_ids: d.knowledge_space_ids,
     approval_required: [...d.approval_required].sort(),
     max_steps: num(d.max_steps),
@@ -570,7 +573,8 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
 
           <Section title="权限">
             <p className="small muted perm-intro">
-              每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求；点左侧箭头可以逐个工具设置。新角色默认：虚拟电脑里的操作始终允许，自动化管理、平台记忆和修改职责说明需要询问，读取其他话题禁用。与同一话题中的其他角色协作（@、委托）不需要权限。
+              每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，角色不能批准自己的请求；点左侧箭头可以逐个工具设置。新角色默认：虚拟电脑里的操作始终允许，自动化管理、平台记忆和修改职责说明需要询问，读取其他话题禁用。与同一话题中的其他角色协作（@、委托）不需要权限；在话题之外直接与其他
+              AI 员工对话，要在「协作」中逐个允许。
             </p>
             <Loaded res={toolGroups}>
               {() => (
@@ -598,6 +602,40 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                     ),
                   }}
                   extra={[
+                    // Whom it may write to directly, outside any topic: a list of roles, not a tool group.
+                    ...(!isAdmin
+                      ? [
+                          {
+                            key: "contacts",
+                            after: "automation",
+                            label: "协作",
+                            hint: "在话题之外直接与其他 AI 员工对话",
+                            content: (
+                              <>
+                                <div className="perm-detail-label">可以主动对话的 AI 员工</div>
+                                <p className="small muted perm-section-note">
+                                  这个角色可以主动给选中的 AI
+                                  员工发消息，对方的回复会回到它发消息的地方；只限这个方向，对方要主动找它需要在对方的设置中允许。双方只交换消息，看不到对方所在的话题和记录。
+                                </p>
+                                <MultiPick
+                                  columns={2}
+                                  options={dir.roles
+                                    .filter((r) => r.id !== role?.id && !r.system_admin)
+                                    .sort((a, b) => a.name.localeCompare(b.name, "zh"))
+                                    .map((r) => ({
+                                      value: r.id,
+                                      label: `${r.name} @${r.handle}`,
+                                      hint: r.status === "disabled" ? "已停用" : r.description || undefined,
+                                    }))}
+                                  value={draft.allowed_contacts}
+                                  onChange={(v) => set("allowed_contacts", v)}
+                                  empty="还没有其他 AI 员工"
+                                />
+                              </>
+                            ),
+                          },
+                        ]
+                      : []),
                     ...(!isAdmin && feishuTools.data?.apps.length
                       ? [
                           {
@@ -749,6 +787,7 @@ const ALL_FIELD_ZH: Record<string, string> = {
   color: "颜色",
   description: "职责说明",
   knowledge_space_ids: "知识空间",
+  allowed_contacts: "可以主动对话的 AI 员工",
   approval_required: "询问设置",
   max_steps: "步数上限",
   max_tokens_per_task: "每轮 token 上限",

@@ -109,6 +109,10 @@ export function TaskControls({
           <button type="button" className={cls} disabled title="私信中只有一个角色，任务不能转交给其他角色">
             转交
           </button>
+        ) : task.topic?.kind === "pair" ? (
+          <button type="button" className={cls} disabled title="AI 员工之间对话中的任务不能转交给其他角色">
+            转交
+          </button>
         ) : (
           <button type="button" className={cls} disabled={busy} onClick={() => setDialog("reassign")}>
             转交

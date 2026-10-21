@@ -288,9 +288,16 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
 
   const ch = topic.channel ?? null;
   const dm = topic.kind === "dm";
-  // A DM is named after its role (the stored title is "person · role").
+  // Two AI employees talking directly (one of them started it): only they write, people read.
+  const pair = topic.kind === "pair";
+  const pairNames = pair ? (topic.participants ?? []).filter((p) => p.type === "role").map((p) => p.name) : [];
+  // A DM is named after its role (the stored title is "person · role"), a pair after its two roles.
   const dmRole = dm ? topic.participants?.find((p) => p.type === "role") : undefined;
-  const heading = dm ? (dmRole?.name ?? topic.title) : topic.title;
+  const heading = dm
+    ? (dmRole?.name ?? topic.title)
+    : pair && pairNames.length === 2
+      ? `${pairNames[0]} ↔ ${pairNames[1]}`
+      : topic.title;
   // A DM with a disabled role keeps its history, read-only (the server refuses new messages).
   const roleOff = dm && dmRole?.status === "disabled";
 
@@ -304,7 +311,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       >
         {computerMax ? (
           <div className="chat-float-bar" {...chat.handle("move")}>
-            <span className="chat-float-title">{dm ? `与 ${heading} 的私信` : topic.title}</span>
+            <span className="chat-float-title">{dm ? `与 ${heading} 的私信` : heading}</span>
             <button type="button" className="btn btn-xs btn-ghost" onClick={() => setChatOpen(false)}>
               收起
             </button>
@@ -320,6 +327,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
             <div className="topic-tags">
               {dm && !ch ? (
                 <Tag title={`你与 ${heading} 的私信；不能邀请其他成员或角色`}>私信</Tag>
+              ) : pair ? (
+                <Tag title="两位 AI 员工之间的直接对话：只有它们发消息，控制台账号可以查看">AI 员工对话</Tag>
               ) : (
                 <Tag>{conversationKind(topic)}</Tag>
               )}
@@ -397,7 +406,7 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                       </button>
                     </div>
                   ) : messages.length ? (
-                    <div className="timeline-start small muted">{dm ? "私信开始" : "话题开始"}</div>
+                    <div className="timeline-start small muted">{dm ? "私信开始" : pair ? "对话开始" : "话题开始"}</div>
                   ) : null}
                   {!messages.length ? (
                     <Empty
@@ -477,15 +486,17 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
           />
         ) : (
           <div className="readonly-note">
-            {roleOff
-              ? `${heading} 已停用，这段私信只能查看。角色重新启用后可以继续私信。`
-              : dm && topic.status === "archived"
-                ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
-                : topic.status === "archived"
-                  ? "话题已归档，只能查看。可以在右侧“设置”中恢复。"
-                  : dm
-                    ? `这是其他人与 ${heading} 的私信，只能查看。`
-                    : "你不是这个话题的参与者，可以查看；在右侧“参与者”中把自己加入后即可发言。"}
+            {pair
+              ? `这是 ${pairNames.join(" 与 ") || "两位 AI 员工"} 之间的直接对话，由其中一方主动发起，只能查看。双方只交换消息，看不到对方所在的话题和记录。`
+              : roleOff
+                ? `${heading} 已停用，这段私信只能查看。角色重新启用后可以继续私信。`
+                : dm && topic.status === "archived"
+                  ? `这是之前与 ${heading} 的一段私信记录，只能查看；继续私信请从左侧角色列表打开。`
+                  : topic.status === "archived"
+                    ? "话题已归档，只能查看。可以在右侧“设置”中恢复。"
+                    : dm
+                      ? `这是其他人与 ${heading} 的私信，只能查看。`
+                      : "你不是这个话题的参与者，可以查看；在右侧“参与者”中把自己加入后即可发言。"}
           </div>
         )}
       </div>

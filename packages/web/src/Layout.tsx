@@ -232,6 +232,7 @@ export default function Layout() {
           </div>
           <TopicList />
           <RoleList />
+          <PairList />
           <ConnectionLists />
           {settings.length ? (
             <SideSection id="settings" title="设置">
@@ -408,6 +409,41 @@ function TopicList() {
           查看全部 {topics.length} 个话题
         </Link>
       ) : null}
+    </SideSection>
+  );
+}
+
+/**
+ * Direct conversations between two AI employees, started by one of them: people read them here, only the two
+ * roles write. Shown once there is one.
+ */
+function PairList() {
+  const t = useTopics();
+  const dir = useDirectory();
+  const pairs = t.topics.filter((x) => x.kind === "pair" && x.status === "active");
+  if (!pairs.length) return null;
+  return (
+    <SideSection id="pairs" title="AI 员工对话">
+      {pairs.slice(0, MAX_TOPICS).map((x) => {
+        const names = (x.role_ids ?? []).map((id) => dir.roleById.get(id)?.name).filter((n): n is string => !!n);
+        const label = names.length === 2 ? `${names[0]} ↔ ${names[1]}` : x.title;
+        return (
+          <NavLink
+            key={x.id}
+            to={`/topics/${x.id}`}
+            className={({ isActive }) =>
+              `nav-item side-item${isActive ? " nav-on" : ""}${t.unread(x) ? " side-unread" : ""}`
+            }
+            title={`AI 员工对话：${label}（只读）`}
+          >
+            <span className="side-icon" aria-hidden>
+              ↔
+            </span>
+            <span className="side-label">{label}</span>
+            {t.unread(x) ? <span className="side-dot" role="img" aria-label="有新消息" /> : null}
+          </NavLink>
+        );
+      })}
     </SideSection>
   );
 }

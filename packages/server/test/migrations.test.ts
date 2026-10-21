@@ -1084,3 +1084,25 @@ describe("0044_collaboration_scope", () => {
     await db.close();
   });
 });
+
+describe("0045_role_conversations", () => {
+  it("empties every role's contact list: it now names whom a role may write to directly", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0045")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, allowed_contacts) values
+        ('role_dev', 'Dev', 'dev', '["*"]'), ('role_ops', 'Ops', 'ops', '["role_dev"]'), ('role_qa', 'QA', 'qa', '[]');
+    `);
+    await apply(db, "0045_role_conversations");
+    expect((await db.query("select id, allowed_contacts from roles order by id")).rows).toEqual([
+      { id: "role_dev", allowed_contacts: [] },
+      { id: "role_ops", allowed_contacts: [] },
+      { id: "role_qa", allowed_contacts: [] },
+    ]);
+    await db.close();
+  });
+});

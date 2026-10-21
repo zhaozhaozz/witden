@@ -201,6 +201,11 @@ export async function topicRoutes(app: FastifyInstance) {
       // A DM is one person and one role, always open: nothing to rename, archive or reconfigure.
       if (topic.kind === "dm" && keys.length)
         throw new BadRequest("a DM has no title, archive or response settings: it is always one person and one role");
+      // So is the direct conversation of two roles (agent/contacts.ts).
+      if (topic.kind === "pair" && keys.length)
+        throw new BadRequest(
+          "a conversation between two AI employees has no title, archive or response settings: it is always the two of them",
+        );
       if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can change a topic");
       if (b.status !== undefined && !["active", "archived"].includes(b.status))
         throw new BadRequest("status must be active or archived");
@@ -233,6 +238,8 @@ export async function topicRoutes(app: FastifyInstance) {
       if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can invite");
       if (topic.kind === "dm")
         throw new BadRequest("a DM is between one person and one role; start a topic to work with more");
+      if (topic.kind === "pair")
+        throw new BadRequest("a conversation between two AI employees keeps its two roles and has no people");
       await refuseExternalMembers(db, topic);
       if (b.type === "role") await svc.inviteRole(db, user, topic, String(b.id));
       else if (b.type === "user") {
@@ -265,6 +272,7 @@ export async function topicRoutes(app: FastifyInstance) {
       const p = params(req);
       const topic = await svc.getTopic(db, p.id);
       if (topic.kind === "dm") throw new BadRequest("a DM always keeps its person and its role");
+      if (topic.kind === "pair") throw new BadRequest("a conversation between two AI employees keeps its two roles");
       await refuseExternalMembers(db, topic);
       if (!((await svc.canAdminister(db, user, topic)) || (p.type === "user" && p.pid === user.id)))
         throw new Forbidden("only topic owners can remove participants");
@@ -328,6 +336,8 @@ export async function topicRoutes(app: FastifyInstance) {
     "/api/topics/:id/messages",
     authed(async ({ db, user, req }) => {
       const topic = await svc.getTopic(db, params(req).id);
+      if (topic.kind === "pair")
+        throw new Forbidden("only its two AI employees write in this conversation; people can read it");
       if (!(await svc.canPost(db, user, topic)))
         throw new Forbidden("you are not a participant of this topic (or it is archived)");
       const b = body(req);

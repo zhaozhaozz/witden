@@ -220,8 +220,9 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
 
 /**
  * How permissions are ordered and grouped wherever a role's are shown: where the role works, what it automates,
- * what it reads, and the role itself. Working with the roles of a topic needs no permission. Groups not listed
- * (none yet) go last.
+ * what it reads, and the role itself. Working with the roles of a topic needs no permission; the AI employees a
+ * role may talk to directly are listed in the role editor's 协作 section, right after 自动化 (not a tool group).
+ * Groups not listed (none yet) go last.
  */
 export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; groups: string[] }[] = [
   {

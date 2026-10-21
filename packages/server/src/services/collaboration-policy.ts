@@ -20,6 +20,22 @@ export interface TopicDelivery {
   round: number;
 }
 
+/**
+ * Where a role's message to another role came from (agent/contacts.ts), kept by the server with the receiver's
+ * inbox item: the answer goes back there. The receiver is never shown it.
+ */
+export interface ContactRoute {
+  /** The role that wrote and the message in their direct conversation. */
+  from_role_id: string;
+  message_id: string;
+  /** The run or task that sent it, its topic, and its conversation (session) when it was one. */
+  task_id: string;
+  topic_id: string;
+  session_id: string | null;
+  /** The person the sender was working for. */
+  user_id: string | null;
+}
+
 export function orderedPair(a: string, b: string): [string, string] {
   if (!a || !b || a === b) throw new Error("choose two different topics");
   return a < b ? [a, b] : [b, a];

@@ -316,6 +316,13 @@
       "when": 1792573103125,
       "tag": "0044_collaboration_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1792574427564,
+      "tag": "0045_role_conversations",
+      "breakpoints": true
     }
   ]
 }

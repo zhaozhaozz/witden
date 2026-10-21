@@ -12,6 +12,7 @@ export const sourceOf = (t: Topic): string =>
 /** What kind of conversation it is, in words. */
 export function conversationKind(t: Topic): string {
   const c = t.channel;
+  if (t.kind === "pair") return "AI 员工对话";
   if (t.source === "internal" || !c) return t.kind === "dm" ? "私信" : "话题";
   if (c.thread_kind === "pull_request") return "Pull request";
   if (c.thread_kind === "issue") return "Issue";
@@ -25,6 +26,7 @@ export function conversationKind(t: Topic): string {
 /** A one-character mark for lists. */
 export function conversationIcon(t: Topic): string {
   const c = t.channel;
+  if (t.kind === "pair") return "↔";
   if (t.source === "internal" || !c) return "#";
   if (c.thread_kind === "pull_request") return "⇄";
   if (c.thread_kind === "issue") return "◎";

@@ -149,6 +149,10 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     if (unknown.length) throw new BadRequest(`unknown tools ${unknown.join(", ")}`);
     out.approvalRequired = [...new Set<string>(data.approvalRequired)].sort();
   }
+  if ("allowedContacts" in data) out.allowedContacts = await parseContacts(db, data.allowedContacts, current);
+  // A system administrator works for people only: it neither writes to other roles nor is written to.
+  if (admin && (out.allowedContacts ?? current?.allowedContacts ?? []).length)
+    throw new BadRequest("the system administrator does not talk to other AI employees directly");
   if ("knowledgeSpaceIds" in data) {
     const ids = [...new Set<string>(data.knowledgeSpaceIds ?? [])];
     for (const sid of ids) {
@@ -162,6 +166,25 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
     out.knowledgeSpaceIds = ids;
   }
   return out;
+}
+
+/**
+ * The roles a role may start a direct conversation with (agent/contacts.ts): existing roles, enabled or not, named
+ * one by one; not itself and never the system administrator.
+ */
+async function parseContacts(db: Db, value: unknown, current?: Role): Promise<string[]> {
+  if (value === null || value === undefined) return [];
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string"))
+    throw new BadRequest("allowed_contacts must be a list of role ids");
+  const ids = [...new Set<string>(value)].sort();
+  for (const id of ids) {
+    if (current && id === current.id) throw new BadRequest("a role cannot have itself as a contact");
+    const [r] = await db.select().from(roles).where(eq(roles.id, id)).limit(1);
+    if (!r) throw new NotFound(`role ${id} not found (allowed_contacts names roles one by one)`);
+    if (r.systemAdmin)
+      throw new BadRequest(`@${r.handle} is the system administrator: other roles cannot talk to it directly`);
+  }
+  return ids;
 }
 
 export async function createRole(db: Db, user: User, data: Record<string, any>): Promise<Role> {
@@ -272,6 +295,7 @@ export async function copyRole(
     reasoningEffort: role.reasoningEffort,
     instanceId,
     allowedTools: role.allowedTools,
+    allowedContacts: role.allowedContacts,
     knowledgeSpaceIds: role.knowledgeSpaceIds,
     approvalRequired: role.approvalRequired,
     maxSteps: role.maxSteps,

@@ -86,6 +86,10 @@ async function checkTask(db: Db, task: Task): Promise<Topic> {
   // A DM is the conversation between one person and one role: no other role can take its work over.
   if (topic.kind === "dm")
     throw new BadRequest("a task in a DM cannot be handed to another role: a DM has only its one role");
+  // Nor the work of one of two roles talking directly (agent/contacts.ts): that would hand it to the other without
+  // a permission, whether a person or a role (transfer_task) hands it over.
+  if (topic.kind === "pair")
+    throw new BadRequest("a task in a conversation between two AI employees cannot be handed to another role");
   return topic;
 }
 

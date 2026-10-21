@@ -173,6 +173,8 @@ export function buildEnvelope(role: Role, parent: Task | null): Record<string, a
     approval_required: [...role.approvalRequired],
     // The configuration tools are open only to a system administrator's own work, never delegated.
     ...(role.systemAdmin && !parent ? { system_admin: true } : {}),
+    // Some roles a person allowed it to write to directly (agent/contacts.ts): contact_role is offered.
+    ...(role.allowedContacts.length && !role.systemAdmin ? { contacts: true } : {}),
   };
   if (parent) {
     const p = parent.envelope ?? {};
@@ -349,6 +351,8 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
             // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered, and only the
             // bot's role works there (external_topic).
             ...(external ? { outside: true, external_topic: true } : {}),
+            // Two roles talking directly: nobody to ask and nobody else to involve (agent/contacts.ts).
+            ...(topic.kind === "pair" ? { pair_topic: true } : {}),
           },
           o.sourceMessage?.source === "topic" ? relayFrom(o.sourceMessage.externalRef) : null,
           ["webhook", "schedule"].includes(o.sourceMessage?.source ?? ""),

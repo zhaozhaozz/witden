@@ -41,7 +41,8 @@ export interface Topic {
   title: string;
   /** What the topic is for: every role in it and the dispatcher read it. */
   goal: string;
-  kind: "group" | "dm";
+  /** group; dm: one person and one role; pair: two AI employees talking directly (no people, read-only here). */
+  kind: "group" | "dm" | "pair";
   status: "active" | "archived";
   /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */
   response_mode: "mention" | "auto";
@@ -539,6 +540,8 @@ export interface Role {
   model_params?: Dict;
   instance_id: string | null;
   allowed_tools: string[];
+  /** The AI employees (roles) this role may start a direct conversation with; one direction only. */
+  allowed_contacts?: string[];
   knowledge_space_ids?: string[];
   approval_required?: string[];
   max_steps: number | null;

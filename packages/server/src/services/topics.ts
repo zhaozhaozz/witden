@@ -1,5 +1,5 @@
 /** Topics, participants and who may see which part of the history. */
-import { and, desc, eq, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { messages, type Role, roles, type Topic, topicParticipants, topics, type User, users } from "../db/schema.js";
@@ -49,6 +49,8 @@ export async function requireView(db: Db, user: User, topic: Topic): Promise<voi
 }
 
 export async function canPost(db: Db, user: User, topic: Topic): Promise<boolean> {
+  // A conversation between two roles has no people: it is read, never written to, in the console.
+  if (topic.kind === "pair") return false;
   if (topic.status !== "active" || !(await participant(db, topic.id, "user", user.id))) return false;
   if (topic.kind !== "dm") return true;
   // A DM whose role was disabled keeps its history, read-only; enabling the role opens it again.
@@ -108,6 +110,7 @@ export async function inviteRole(
   const role = await getRole(db, roleId);
   if (!role) throw new NotFound(`role ${roleId} not found`);
   if (role.status !== "active") throw new BadRequest(`role ${role.handle} is disabled`);
+  if (topic.kind === "pair") throw new BadRequest("a conversation between two AI employees keeps its two roles");
   if (topic.kind === "dm" && (await participants(db, topic.id, "role")).length)
     throw new BadRequest("a DM has exactly one role");
   // A Slack, Feishu or GitHub conversation has one role: the one its bot stands for.
@@ -136,6 +139,8 @@ export async function createTopic(
   if (!data.title?.trim()) throw new BadRequest("title is required");
   const goal = parseGoal(data.goal ?? "");
   const kind = data.kind ?? "group";
+  // Conversations between two roles start only with their first message (agent/contacts.ts).
+  if (!["group", "dm"].includes(kind)) throw new BadRequest("kind must be group or dm");
   const [topic] = await db
     .insert(topics)
     .values({
@@ -189,6 +194,47 @@ export async function getOrCreateDm(db: Db, user: User, role: Role, source = "in
   await addParticipant(db, topic, "role", role.id, { invitedBy: user.id });
   return topic;
 }
+
+const rolesIn = (roleId: string) =>
+  sql`${topics.id} in (select ${topicParticipants.topicId} from ${topicParticipants} where ${topicParticipants.participantType} = 'role' and ${topicParticipants.participantId} = ${roleId} and ${topicParticipants.removedAt} is null)`;
+
+/** The direct conversation of two roles, if they have one (nothing is created). */
+export async function findPairTopic(db: Db, a: string, b: string): Promise<Topic | undefined> {
+  const [topic] = await db
+    .select()
+    .from(topics)
+    .where(and(eq(topics.kind, "pair"), eq(topics.status, "active"), rolesIn(a), rolesIn(b)))
+    .limit(1);
+  return topic;
+}
+
+/**
+ * The place where two roles talk directly (agent/contacts.ts): exactly these two roles and no people, one per
+ * pair, created with their first message. Nobody posts, invites, links or configures anything there.
+ */
+export async function getOrCreatePairTopic(db: Db, a: Role, b: Role): Promise<Topic> {
+  const [first, second] = a.id < b.id ? [a, b] : [b, a];
+  // Two first messages at once wait for each other here, so the pair gets one conversation.
+  await db.execute(sql`select pg_advisory_xact_lock(hashtext(${`witden:pair:${first.id}:${second.id}`}))`);
+  const existing = await findPairTopic(db, first.id, second.id);
+  if (existing) return existing;
+  const [topic] = await db
+    .insert(topics)
+    .values({
+      id: newId("top"),
+      title: `@${first.handle} ↔ @${second.handle}`,
+      kind: "pair",
+      source: "internal",
+      createdBy: null,
+    })
+    .returning();
+  await addParticipant(db, topic, "role", first.id);
+  await addParticipant(db, topic, "role", second.id);
+  return topic;
+}
+
+/** A topic in which two roles talk directly, outside any other topic. */
+export const isPair = (topic: Pick<Topic, "kind">) => topic.kind === "pair";
 
 /**
  * How roles respond in a group topic. "mention": only when @-mentioned (picked from the composer's list, or
