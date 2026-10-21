@@ -37,6 +37,7 @@ import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import { linkedTopicContext } from "../services/topic-links.js";
 import { hasRunToolApproval } from "./approval-scope.js";
+import { consumeCommandNotices, hasUntoldCommands } from "./commands.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL } from "./control.js";
 import {
@@ -344,6 +345,8 @@ export class TaskRunner {
       }
       if (!conversation) {
         await consumeTaskInputs(tx, task);
+        // Background commands of the task that ended meanwhile (agent/commands.ts).
+        await consumeCommandNotices(tx, task);
         transcript = await loadTranscript(tx, task);
       }
       // A conversation's token budget counts per turn (each batch of new messages starts a new count).
@@ -626,8 +629,9 @@ export class TaskRunner {
       const [role] = await tx.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
       const [topic] = await tx.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
       const conversation = isConversation(task);
-      // A newer input arrived while the model answered: do not publish a stale final answer.
-      if (!conversation && (await hasTaskInputs(tx, task.id))) return true;
+      // A newer input (or the end of a background command) arrived while the model answered: do not publish a
+      // stale final answer.
+      if (!conversation && ((await hasTaskInputs(tx, task.id)) || (await hasUntoldCommands(tx, task.id)))) return true;
       const said = redact(content.trim());
       // Everything may already have been said with send_message: then the empty final answer posts nothing.
       // A conversation looks only at what it posted since the latest messages reached it; a task only at this

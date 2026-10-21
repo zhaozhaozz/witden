@@ -295,6 +295,8 @@ export class RunnerHub {
   proxyHandler: RunnerConnection["onProxy"] = null;
   /** Extra welcome fields for a computer, e.g. its model proxy settings. */
   welcomeExtras: ((instanceId: string) => Promise<Partial<WelcomeMessage>>) | null = null;
+  /** Called for every accepted runner connection, e.g. to follow its commands (agent/commands.ts). */
+  onConnected: ((conn: RunnerConnection) => void) | null = null;
   /** How long the connected runner has to answer before a new connection replaces it (tests shorten it). */
   duplicateCheckMs = DUPLICATE_CHECK_MS;
 
@@ -358,6 +360,11 @@ export class RunnerHub {
       });
       const welcome: WelcomeMessage = { type: "welcome", serverTime: new Date().toISOString(), ...extras };
       transport.sendText(JSON.stringify(welcome));
+      try {
+        this.onConnected?.(conn);
+      } catch (err) {
+        console.error("[witden] runner connection hook failed", err);
+      }
       for (const fn of this.waiters.get(hello.instanceId) ?? []) fn(conn);
       this.waiters.delete(hello.instanceId);
     });

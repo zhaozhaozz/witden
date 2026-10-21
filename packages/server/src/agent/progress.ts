@@ -68,7 +68,7 @@ export async function taskProgress(
   const [commands] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(toolCalls)
-    .where(and(eq(toolCalls.taskId, task.id), inArray(toolCalls.op, ["exec.run", "terminal.create"])));
+    .where(and(eq(toolCalls.taskId, task.id), inArray(toolCalls.op, ["exec.run", "command.start", "terminal.create"])));
   const out = {
     id: task.id,
     status: task.status,

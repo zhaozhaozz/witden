@@ -98,12 +98,17 @@ function operations(steps: TaskStep[], toolsOnly = false): Operation[] {
           ];
     if (s.kind === "event") {
       const preview = p.type === "role_handoff" ? "任务转交给其他 AI 员工" : String(p.note ?? p.reason ?? p.type ?? "");
-      return [{ key: `step-${s.seq}`, label: "状态", preview, source: s }];
+      return [
+        { key: `step-${s.seq}`, label: p.type === "command_finished" ? "后台命令结束" : "状态", preview, source: s },
+      ];
     }
+    // Ends of background commands: on their own, or with what was new in the topic.
+    const inbox = p.inbox as { commands?: string[]; messages?: string[] } | undefined;
+    const commandEnds = !!p.command_notices || (!!inbox?.commands?.length && !inbox.messages?.length);
     return [
       {
         key: `step-${s.seq}`,
-        label: p.summary ? "整理上下文" : s.kind === "system" ? "系统" : "输入",
+        label: p.summary ? "整理上下文" : commandEnds ? "后台命令结束" : s.kind === "system" ? "系统" : "输入",
         preview: text(p.content),
         source: s,
       },

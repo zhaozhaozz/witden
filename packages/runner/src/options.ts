@@ -12,6 +12,8 @@ export interface RunnerOptions {
   home: string;
   /** Journal and other runner state; survives runner restarts. */
   stateDir: string;
+  /** Output, exit status and state of commands (command.*), readable by the computer's user. */
+  commandsDir: string;
   /** X11 display of the desktop, or null when the computer has none. */
   display: string | null;
   vncPort: number;
@@ -63,6 +65,7 @@ export function resolveRunnerOptions(overrides: Partial<RunnerOptions> = {}, env
     workdir,
     home,
     stateDir,
+    commandsDir: overrides.commandsDir ?? path.join(home, ".witden", "commands"),
     display: "display" in overrides ? (overrides.display ?? null) : detectDisplay(env),
     vncPort: overrides.vncPort ?? parsePort(env.WITDEN_VNC_PORT, 5900),
     vncViewPort: overrides.vncViewPort ?? parsePort(env.WITDEN_VNC_VIEW_PORT, 5901),

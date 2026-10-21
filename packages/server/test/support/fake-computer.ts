@@ -31,6 +31,22 @@ export type ExecHandler = (
   command: string,
 ) => { exitCode: number; output: string } | undefined | Promise<{ exitCode: number; output: string } | undefined>;
 
+/** A command started with command.start: it ends when its ExecHandler result arrives, or when stopped. */
+export interface FakeCommand {
+  id: string;
+  command: string;
+  cwd: string;
+  startedAt: string;
+  done: boolean;
+  exitCode: number | null;
+  signal: string | null;
+  lost: boolean;
+  finishedAt: string | null;
+  output: string;
+  ended: Promise<void>;
+  end: () => void;
+}
+
 export class FakeComputer {
   files = new Map<string, Buffer>();
   /** System packages installed by the platform (FakeManager.packages); a new container has none. */
@@ -58,6 +74,10 @@ export class FakeComputer {
   };
   /** False: the runner has gone quiet (its connection looks open but nothing answers). */
   answersPings = true;
+  /** False: a runner from before background commands (exec.run only); takes effect at the next connect. */
+  commandOps = true;
+  /** Commands started with command.start, by id. */
+  started = new Map<string, FakeCommand>();
   private transport: HubTransport | null = null;
   private hub: RunnerHub | null = null;
   private sessions = 0;
@@ -94,7 +114,7 @@ export class FakeComputer {
           workdir: this.spec.workdir,
           desktop: null,
           browser: true,
-          tools: [],
+          tools: this.commandOps ? ["command"] : [],
         },
       }),
     );
@@ -103,6 +123,55 @@ export class FakeComputer {
   disconnect(): void {
     this.transport?.close("computer stopped");
     this.transport = null;
+  }
+
+  /** The computer restarted under its commands: they are gone without an exit status. */
+  loseCommands(): void {
+    for (const c of this.started.values()) {
+      if (c.done) continue;
+      Object.assign(c, { done: true, lost: true, finishedAt: new Date().toISOString() });
+      c.end();
+    }
+  }
+
+  private commandInfo(c: FakeCommand) {
+    return {
+      id: c.id,
+      command: c.command,
+      cwd: c.cwd,
+      logPath: `/home/witden/.witden/commands/${c.id}.log`,
+      pid: 4242,
+      startedAt: c.startedAt,
+      running: !c.done,
+      exitCode: c.exitCode,
+      signal: c.signal,
+      finishedAt: c.finishedAt,
+      lost: c.lost,
+      outputBytes: Buffer.byteLength(c.output),
+    };
+  }
+
+  /** It ended: the runner reports it to the hub, if one is listening. */
+  private endCommand(c: FakeCommand, exitCode: number, output: string, signal: string | null = null): void {
+    if (c.done) return;
+    Object.assign(c, { done: true, exitCode, signal, output: c.output + output, finishedAt: new Date().toISOString() });
+    c.end();
+    this.transport?.sendText(
+      JSON.stringify({
+        type: "event",
+        event: "command.exited",
+        data: { ...this.commandInfo(c), tail: c.output.slice(-2000) },
+      }),
+    );
+  }
+
+  private excerpt(output: string, limit: number) {
+    if (output.length <= limit) return { output, truncated: false };
+    const half = Math.floor(limit / 2);
+    return {
+      output: `${output.slice(0, half)}\n... [${output.length - limit} bytes omitted] ...\n${output.slice(-half)}`,
+      truncated: true,
+    };
   }
 
   /** Resolved against the working directory, or the home directory for ``~``, as the runner does. */
@@ -277,6 +346,62 @@ export class FakeComputer {
         this.browserActions.push({ op: req.op, ...p });
         this.files.set("/home/witden/Downloads/data.csv", Buffer.from("a,b\n1,2\n"));
         return { path: "/home/witden/Downloads/data.csv", size: 8, suggestedName: "data.csv" };
+      case "command.start": {
+        if (!this.commandOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const known = this.started.get(p.id);
+        if (known) return this.commandInfo(known);
+        this.commands.push(p.command);
+        let end = () => {};
+        const ended = new Promise<void>((resolve) => {
+          end = resolve;
+        });
+        const c: FakeCommand = {
+          id: p.id,
+          command: p.command,
+          cwd: this.path(p.cwd ?? "."),
+          startedAt: new Date().toISOString(),
+          done: false,
+          exitCode: null,
+          signal: null,
+          lost: false,
+          finishedAt: null,
+          output: "",
+          ended,
+          end,
+        };
+        this.started.set(p.id, c);
+        Promise.resolve(this.execHandler?.(p.command)).then(
+          (r) => this.endCommand(c, r?.exitCode ?? 0, r?.output ?? `[${this.spec.name}] ran: ${p.command}`),
+          (err) => this.endCommand(c, 1, String(err)),
+        );
+        return this.commandInfo(c);
+      }
+      case "command.wait": {
+        if (!this.commandOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const c = this.started.get(p.id);
+        if (!c) throw Object.assign(new Error(`no command ${p.id}`), { code: "not_found" });
+        if (!c.done && p.waitMs > 0) await Promise.race([c.ended, new Promise((r) => setTimeout(r, p.waitMs))]);
+        return { ...this.commandInfo(c), ...this.excerpt(c.output, p.outputLimit ?? 12_000) };
+      }
+      case "command.list": {
+        if (!this.commandOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const ids: string[] = p.ids ?? [...this.started.keys()];
+        const known = ids.map((id) => this.started.get(id)).filter((c): c is FakeCommand => !!c);
+        return {
+          commands: known.map((c) => ({ ...this.commandInfo(c), ...(c.done ? { tail: c.output.slice(-2000) } : {}) })),
+          unknown: ids.filter((id) => !this.started.has(id)),
+        };
+      }
+      case "command.stop": {
+        if (!this.commandOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const c = this.started.get(p.id);
+        if (!c) throw Object.assign(new Error(`no command ${p.id}`), { code: "not_found" });
+        const was = c.done;
+        const [code, signal] =
+          p.signal === "interrupt" ? [130, "SIGINT"] : p.signal === "kill" ? [137, "SIGKILL"] : [143, "SIGTERM"];
+        this.endCommand(c, code, "", signal);
+        return { ...this.commandInfo(c), signalled: was ? 0 : 1 };
+      }
       case "journal.get": {
         const entry = this.journal.get(String(p.requestId));
         if (entry === "running") return { state: "running" };

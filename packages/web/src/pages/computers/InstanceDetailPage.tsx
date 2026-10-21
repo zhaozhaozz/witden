@@ -2,7 +2,16 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, errorMessage } from "../../api/client";
 import { useLiveEvents } from "../../api/events";
-import type { ActionPreview, Backup, ExecSession, Instance, InstanceStats, Task, Template } from "../../api/types";
+import type {
+  ActionPreview,
+  BackgroundCommand,
+  Backup,
+  ExecSession,
+  Instance,
+  InstanceStats,
+  Task,
+  Template,
+} from "../../api/types";
 import { EXEC_SESSION_KIND, fmtBytes, fmtDateTime, fmtRelative, fmtTime } from "../../lib/format";
 import { useDebounced, useInterval, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
@@ -130,7 +139,12 @@ export default function InstanceDetailPage() {
               ) : null}
               {tab === "screen" && desktop ? <ScreenTab inst={inst} reload={() => void res.reload()} /> : null}
               {tab === "console" ? <OperatorConsole inst={inst} /> : null}
-              {tab === "sessions" ? <SessionsTab inst={inst} /> : null}
+              {tab === "sessions" ? (
+                <>
+                  <SessionsTab inst={inst} />
+                  <CommandsSection inst={inst} />
+                </>
+              ) : null}
               {tab === "software" ? <SoftwareTab inst={inst} onChanged={(i) => res.setData(i)} /> : null}
               {tab === "models" ? <ModelAccessTab inst={inst} /> : null}
               {tab === "backups" ? <BackupsTab inst={inst} reload={() => void res.reload()} /> : null}
@@ -892,6 +906,120 @@ function SessionsTab({ inst }: { inst: Instance }) {
                     >
                       {fmtRelative(s.created_at)}
                     </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          );
+        }}
+      </Loaded>
+    </Section>
+  );
+}
+
+/** How long a command ran (or has been running). */
+function ranFor(c: BackgroundCommand): string {
+  const start = Date.parse(c.started_at ?? c.created_at);
+  const end = c.finished_at ? Date.parse(c.finished_at) : Date.now();
+  const s = Math.max(0, Math.round((end - start) / 1000));
+  if (s < 60) return `${s} 秒`;
+  if (s < 3600) return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  return `${Math.floor(s / 3600)} 小时 ${Math.floor((s % 3600) / 60)} 分`;
+}
+
+function CommandState({ c }: { c: BackgroundCommand }) {
+  if (c.status === "running" || c.status === "starting") return <Tag tone="run">运行中</Tag>;
+  if (c.status === "lost")
+    return (
+      <Tag tone="off" title="进程已不在，没有退出码（虚拟电脑停止、重启或重置过）">
+        已丢失
+      </Tag>
+    );
+  const ok = c.exit_code === 0;
+  return (
+    <Tag tone={ok ? "ok" : "bad"}>
+      退出码 {c.exit_code ?? "?"}
+      {c.signal ? `（${c.signal}）` : ""}
+    </Tag>
+  );
+}
+
+/** Commands the AI left running in the background (agent/commands.ts); read-only, their output stays in the computer. */
+function CommandsSection({ inst }: { inst: Instance }) {
+  const dir = useDirectory();
+  const [runningOnly, setRunningOnly] = useState(false);
+  const res = useResource(() => api.get<BackgroundCommand[]>(`/api/instances/${inst.id}/commands`), [inst.id]);
+  const live = (c: BackgroundCommand) => c.status === "running" || c.status === "starting";
+  useInterval(() => void res.reload(), 10_000, !!res.data?.some(live));
+  return (
+    <Section
+      title="后台命令"
+      actions={
+        <div className="btn-row">
+          <Toggle checked={runningOnly} onChange={setRunningOnly} label="只看运行中的" />
+          <button type="button" className="btn btn-sm" disabled={res.loading} onClick={() => void res.reload()}>
+            刷新
+          </button>
+        </div>
+      }
+    >
+      <p className="small muted">
+        AI 员工执行的命令超过等待时间后转到后台继续运行，不会被结束；也可以直接在后台启动。命令结束后，AI
+        员工会收到通知。任务或对话结束时，后台命令不会自动停止，由 AI
+        员工自己停止。完整输出保存在虚拟电脑中的日志文件里。
+      </p>
+      <Loaded res={res}>
+        {(all) => {
+          const rows = runningOnly ? all.filter(live) : all;
+          if (!rows.length)
+            return (
+              <Empty
+                title={runningOnly ? "没有运行中的后台命令" : "还没有后台命令"}
+                hint="AI 员工在后台运行命令后会出现在这里。"
+              />
+            );
+          return (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>命令</th>
+                  <th>AI 员工与任务</th>
+                  <th>状态</th>
+                  <th>开始</th>
+                  <th>时长</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((c) => (
+                  <tr key={c.id} className={live(c) ? undefined : "row-muted"}>
+                    <td>
+                      <code className="id break">{c.command}</code>
+                      <div className="small muted">
+                        <code className="id">{c.id}</code>
+                        {c.log_path ? (
+                          <>
+                            {" "}
+                            · 日志 <code className="id break">{c.log_path}</code>
+                          </>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      {dir.roleLabel(c.role_id)}
+                      <div className="small">
+                        <Link to={`/tasks/${c.task_id}`}>查看任务</Link>
+                      </div>
+                    </td>
+                    <td className="nowrap">
+                      <CommandState c={c} />
+                      {c.output_bytes !== null ? (
+                        <div className="small muted">输出 {fmtBytes(c.output_bytes)}</div>
+                      ) : null}
+                    </td>
+                    <td className="nowrap" title={fmtDateTime(c.started_at ?? c.created_at)}>
+                      {fmtRelative(c.started_at ?? c.created_at)}
+                    </td>
+                    <td className="nowrap">{ranFor(c)}</td>
                   </tr>
                 ))}
               </tbody>

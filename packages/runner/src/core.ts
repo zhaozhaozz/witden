@@ -1,5 +1,6 @@
 import os from "node:os";
 import {
+  COMMAND_TOOL,
   type HelloMessage,
   type ModelProxyConfig,
   READ_ONLY_OPS,
@@ -15,6 +16,7 @@ import { Journal } from "./journal.js";
 import type { Logger } from "./log.js";
 import { ModelProxy } from "./model-proxy.js";
 import { Browsers } from "./ops/browser.js";
+import { Commands } from "./ops/commands.js";
 import { Desktop } from "./ops/desktop.js";
 import { execRun } from "./ops/exec.js";
 import { Files } from "./ops/files.js";
@@ -77,6 +79,7 @@ export class RunnerCore {
   readonly files: Files;
   readonly desktop: Desktop;
   readonly browsers: Browsers;
+  readonly commands: Commands;
   readonly streams: StreamManager;
   readonly modelProxy: ModelProxy;
   private transport: RunnerTransport | null = null;
@@ -107,6 +110,11 @@ export class RunnerCore {
       stateDir: options.stateDir,
     });
     this.modelProxy = new ModelProxy(options.home, this.log, (m) => this.send(m));
+    // Commands report their end whenever it comes, to whichever connection is attached then (or nobody: the
+    // platform asks again with command.list when it reconnects).
+    this.commands = new Commands(this.env, options.commandsDir, this.log, (event, data) =>
+      this.send({ type: "event", event, data }),
+    );
     this.streams = new StreamManager(
       options.streamPorts,
       {
@@ -121,6 +129,7 @@ export class RunnerCore {
     const f = this.files;
     const d = this.desktop;
     const b = this.browsers;
+    const c = this.commands;
     this.handlers = {
       "system.info": async () => ({
         ...(await this.info()),
@@ -155,14 +164,19 @@ export class RunnerCore {
       "browser.list": async () => b.list(),
       "process.list": async () => processList(),
       "journal.get": async (p) => this.journal.get(reqString(p, "requestId", 256)),
+      "command.start": (p, ctx) => c.start(p, ctx),
+      "command.wait": (p, ctx) => c.wait(p, ctx),
+      "command.list": async (p) => c.list(p),
+      "command.stop": (p, ctx) => c.stop(p, ctx),
     };
   }
 
-  /** Loads the journal left by a previous runner process. Idempotent. */
+  /** Loads the journal and the commands left by a previous runner process. Idempotent. */
   start(): this {
     if (this.started) return this;
     this.started = true;
     this.journal.load();
+    this.commands.load();
     return this;
   }
 
@@ -202,7 +216,7 @@ export class RunnerCore {
     }
     const desktop = await this.desktop.describe();
     const browser = await this.browsers.available();
-    const tools = ["exec", "file", "process", "journal"];
+    const tools = ["exec", COMMAND_TOOL, "file", "process", "journal"];
     if (this.options.streamPorts.length) tools.push("stream");
     if (which("tmux")) tools.push("terminal");
     if (desktop && which("import")) tools.push("screen");
@@ -399,10 +413,11 @@ export class RunnerCore {
 
   /**
    * Stops accepting requests, aborts running ones (exec trees are killed and journaled as killed), closes
-   * streams and browser connections. Terminals and the desktop browser keep running.
+   * streams and browser connections. Terminals, commands (command.*) and the desktop browser keep running.
    */
   async shutdown(): Promise<void> {
     this.closing = true;
+    this.commands.dispose();
     for (const entry of this.inflight.values()) entry.controller.abort("shutdown");
     await Promise.race([this.drain(), new Promise((r) => setTimeout(r, ABORT_GRACE_MS + 1000))]);
     this.streams.closeAll();

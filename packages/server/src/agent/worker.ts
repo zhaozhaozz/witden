@@ -11,10 +11,12 @@ import { settings } from "../config.js";
 import { type Database, db as getDb, transaction } from "../db/client.js";
 import { agentSessions, computerInstances, messageRoutes, tasks } from "../db/schema.js";
 import { WAKE_CHANNEL } from "../services/events.js";
+import { commandWaitTimedOut, wakeForCommands } from "./commands.js";
 import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./control.js";
 import { wakeDue } from "./conversation.js";
 import { claimRoutes, routeMessage } from "./router.js";
 import { claimNext, collectChildren, TaskRunner } from "./runner.js";
+import { lockTask } from "./task-continuation.js";
 import { finishHandover } from "./task-handoff.js";
 import { appendStep } from "./transcript.js";
 
@@ -163,14 +165,19 @@ export class Worker {
       await transaction((tx) => collectChildren(tx, t));
     }
     for (const t of await db.select().from(tasks).where(eq(tasks.status, "waiting_timer"))) {
-      if (new Date(t.wait?.until ?? 0).getTime() > Date.now()) continue;
       await transaction(async (tx) => {
-        const fresh = await getTask(tx, t.id);
+        const fresh = await lockTask(tx, t.id);
         if (fresh?.status !== "waiting_timer") return;
+        // One of its background commands ended (agent/commands.ts): it goes on before its time.
+        if (await wakeForCommands(tx, fresh)) return;
+        if (new Date(fresh.wait?.until ?? 0).getTime() > Date.now()) return;
         await appendStep(tx, fresh, "tool", {
           tool_call_id: fresh.wait?.tool_call_id,
-          name: "follow_up_later",
-          content: `Time to follow up: ${fresh.wait?.note ?? ""}`,
+          name: fresh.wait?.tool ?? "follow_up_later",
+          content:
+            fresh.wait?.type === "commands"
+              ? await commandWaitTimedOut(tx, fresh)
+              : `Time to follow up: ${fresh.wait?.note ?? ""}`,
         });
         await setStatus(tx, fresh, "pending", "follow-up time reached", { wait: null });
       });

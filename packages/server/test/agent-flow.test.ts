@@ -350,7 +350,7 @@ describe("computers", () => {
 
   it("an action whose outcome is unknown is never repeated blindly", async () => {
     const pc = w.manager.computer(w.ids.instance);
-    pc.dropOn = "exec.run"; // the connection drops while the command may already be running
+    pc.dropOn = "command.start"; // the connection drops while the command may already be running
     let sawUncertain = "";
     w.scripts.dev = (m, turn) => {
       if (turn === 0) return reply("", [call("run_command", { command: "git push" })]);
@@ -362,12 +362,13 @@ describe("computers", () => {
     expect(sawUncertain).toContain("uncertain");
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");
     const trace = (await w.api("GET", `/api/tasks/${posted.tasks[0].id}/trace`, { token: w.alice })).body;
-    expect(trace.tool_calls.map((c: any) => [c.op, c.state])).toEqual([["exec.run", "uncertain"]]);
+    expect(trace.tool_calls.map((c: any) => [c.op, c.state])).toEqual([["command.start", "uncertain"]]);
+    expect(pc.commands).not.toContain("git push");
   });
 
   it("after a brief disconnect the runner's journal answers instead of repeating the action", async () => {
     const pc = w.manager.computer(w.ids.instance);
-    pc.dropAfter = "exec.run"; // the command ran, but the answer was lost with the connection
+    pc.dropAfter = "command.start"; // the command started, but the answer was lost with the connection
     let seen = "";
     w.scripts.dev = (m, turn) => {
       if (turn === 0) return reply("", [call("run_command", { command: "git push" })]);
@@ -376,7 +377,8 @@ describe("computers", () => {
     };
     const posted = await w.post(w.alice, w.ids.topic, "@dev push");
     await w.drain();
-    expect(seen).toContain("recovered result");
+    // the journal said it had started: run_command waited for it as usual
+    expect(seen).toContain("[exit code 0]");
     expect(seen).toContain("ran: git push");
     expect(pc.commands.filter((c) => c === "git push")).toHaveLength(1);
     expect((await w.task(posted.tasks[0].id)).status).toBe("completed");

@@ -415,6 +415,7 @@ const EVENT_LABEL: Record<string, string> = {
   instance_wait: "等待虚拟电脑",
   transcript_removed: "记录已删除",
   compaction_failed: "整理上下文失败",
+  command_finished: "后台命令结束（任务已结束，记入日志）",
   // events of older tasks
   external_agent_started: "启动外部智能体",
   external_agent_exited: "外部智能体退出",
@@ -456,15 +457,20 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
                 ? "上下文摘要（之前的内容已压缩）"
                 : p.repeated
                   ? "新内容（摘要后保留原文）"
-                  : p.inbox
-                    ? "话题里的新内容"
-                    : p.type === "role_handoff_brief"
-                      ? "交接简报"
-                      : p.type === "handover_dropped"
-                        ? "转交未生效"
-                        : c.text.startsWith("Additional instruction")
-                          ? "补充要求"
-                          : "输入";
+                  : p.command_notices
+                    ? "后台命令结束"
+                    : p.inbox
+                      ? "话题里的新内容"
+                      : p.type === "role_handoff_brief"
+                        ? "交接简报"
+                        : p.type === "handover_dropped"
+                          ? "转交未生效"
+                          : c.text.startsWith("Additional instruction")
+                            ? "补充要求"
+                            : "输入";
+          // Ends of background commands that reached a conversation with what was new (server: agent/commands.ts).
+          const inbox = p.inbox as { commands?: string[] } | undefined;
+          if (inbox?.commands?.length) flag = <Tag tone="info">含后台命令结束通知</Tag>;
           body = (
             <>
               <Collapsible text={c.text} />
@@ -494,6 +500,8 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
           label = `工具结果 ${String(p.name ?? "")}`;
           if (uncertain) flag = <Tag tone="wait">结果不确定</Tag>;
           else if (p.recovered) flag = <Tag>中断后恢复</Tag>;
+          // A wait (command_wait, follow_up_later) ended by background commands that ended.
+          else if (p.command_notices) flag = <Tag tone="info">后台命令结束</Tag>;
           body = (
             <>
               {uncertain ? <div className="callout callout-wait">{UNCERTAIN_NOTE}</div> : null}

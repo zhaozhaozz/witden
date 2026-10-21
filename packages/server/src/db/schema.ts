@@ -498,8 +498,10 @@ export const agentSessions = pgTable(
 
 /** An entry of a conversation's inbox (agent_sessions.inbox). */
 export interface InboxItem {
-  kind: "message" | "result" | "timer" | "instruction" | "reply";
+  kind: "message" | "result" | "timer" | "instruction" | "reply" | "command";
   at: string;
+  /** command: a background command the role started ended (background_commands). */
+  command_id?: string;
   /** message: the message for the role; auto = it reached the role without an @-mention (auto topics). */
   message_id?: string;
   auto?: boolean;
@@ -641,6 +643,54 @@ export const toolCalls = pgTable(
     finishedAt: ts("finished_at"),
   },
   (t) => [index("ix_tool_calls_task").on(t.taskId)],
+);
+
+/**
+ * Commands a role ran with run_command (agent/commands.ts). They are never killed by a timeout: one still
+ * running when the role stops waiting goes on in the background, and its end reaches the work that started it
+ * as a notice. Nothing stops them or removes them automatically.
+ */
+export const backgroundCommands = pgTable(
+  "background_commands",
+  {
+    id: id(), // also the runner's command id (names its files in the computer)
+    instanceId: text("instance_id")
+      .notNull()
+      .references(() => computerInstances.id, { onDelete: "cascade" }),
+    roleId: text("role_id").notNull(),
+    topicId: text("topic_id").notNull(),
+    /** The task or conversation run whose tool call started it; its notice goes there (or where it reports). */
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    command: text("command").notNull(),
+    cwd: text("cwd"),
+    logPath: text("log_path"),
+    // starting | running | finished | lost
+    status: text("status").notNull().default("starting"),
+    /** The role stopped waiting (or never waited): its end is announced. Commands finished in time are not. */
+    background: boolean("background").notNull().default(false),
+    /** A foreground wait ends by then; a command still running later was left to the background. */
+    foregroundUntil: ts("foreground_until"),
+    exitCode: integer("exit_code"),
+    signal: text("signal"),
+    outputBytes: integer("output_bytes"),
+    /** End of the output when it finished (shown in the notice). */
+    tail: text("tail"),
+    startedAt: ts("started_at"),
+    finishedAt: ts("finished_at"),
+    /** Its end was told: foreground | conversation | task | log | none. Set once (idempotent notices). */
+    notifiedAt: ts("notified_at"),
+    notifiedTo: text("notified_to"),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [
+    index("ix_background_commands_instance").on(t.instanceId, t.status),
+    index("ix_background_commands_task").on(t.taskId),
+    // Ends still to be told (a small set: every command is told once).
+    index("ix_background_commands_untold").on(t.taskId).where(sql`${t.notifiedAt} is null`),
+  ],
 );
 
 export const approvals = pgTable("approvals", {
@@ -907,6 +957,7 @@ export type ExternalConversation = typeof externalConversations.$inferSelect;
 export type KillSwitch = typeof killSwitches.$inferSelect;
 export type ExecSession = typeof execSessions.$inferSelect;
 export type ToolCallRecord = typeof toolCalls.$inferSelect;
+export type BackgroundCommand = typeof backgroundCommands.$inferSelect;
 
 export const nowSql = sql`now()`;
 export type OutboundMessage = typeof outboundMessages.$inferSelect;

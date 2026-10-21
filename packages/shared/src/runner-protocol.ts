@@ -219,7 +219,11 @@ export type RunnerOp =
   | "browser.close"
   | "browser.list"
   | "process.list"
-  | "journal.get";
+  | "journal.get"
+  | "command.start"
+  | "command.wait"
+  | "command.list"
+  | "command.stop";
 
 // --- params / results ---------------------------------------------------------------------------------
 
@@ -238,6 +242,70 @@ export interface ExecRunResult {
   /** True when the process tree was killed (timeout or cancel). */
   killed: boolean;
 }
+
+/**
+ * Commands that outlive the request that started them (runners whose ``info.tools`` include
+ * COMMAND_TOOL; older runners only know exec.run). Each runs detached in its own session with stdout and
+ * stderr combined into a log file in the computer; its exit status is written to a file next to it, so a
+ * restarted runner still knows how it ended. Nothing stops a command but command.stop.
+ */
+export const COMMAND_TOOL = "command";
+
+export interface CommandStartParams {
+  /** Chosen by the platform (letters, digits, "_" and "-"); names the files. Starting an id twice is a no-op. */
+  id: string;
+  command: string;
+  cwd?: string;
+  env?: Record<string, string>;
+}
+export interface CommandInfo {
+  id: string;
+  command: string;
+  cwd: string;
+  /** Combined stdout / stderr, kept whole. */
+  logPath: string;
+  pid: number;
+  startedAt: string;
+  running: boolean;
+  /** The shell's exit status (128 + n after signal n); null while running or when it is unknown. */
+  exitCode: number | null;
+  /** Signal name when the exit status says the command was killed by one. */
+  signal: string | null;
+  finishedAt: string | null;
+  /** It ended without an exit status: the computer restarted or its wrapper was killed. */
+  lost: boolean;
+  outputBytes: number;
+  /** End of the output (finished commands, when asked for). */
+  tail?: string;
+}
+export interface CommandWaitParams {
+  id: string;
+  /** How long to wait for the command to end (0: just look at it). */
+  waitMs: number;
+  /** Bytes of output returned: the head and the tail of the log when it is longer. */
+  outputLimit?: number;
+}
+export interface CommandOutputResult extends CommandInfo {
+  output: string;
+  truncated: boolean;
+}
+export interface CommandListParams {
+  /** Only these commands (unknown ones are listed in ``unknown``); default: all, newest first. */
+  ids?: string[];
+  /** Include the last bytes of the output of finished commands. */
+  tailBytes?: number;
+}
+export interface CommandListResult {
+  commands: CommandInfo[];
+  unknown: string[];
+}
+export interface CommandStopParams {
+  id: string;
+  /** interrupt: SIGINT; terminate (default): SIGTERM, then SIGKILL after a grace period; kill: SIGKILL. */
+  signal?: "interrupt" | "terminate" | "kill";
+}
+/** Event "command.exited": a command ended (also sent for commands started by an earlier runner process). */
+export type CommandExitedEvent = CommandInfo;
 
 export interface TerminalCreateParams {
   command?: string;
@@ -417,6 +485,8 @@ export const READ_ONLY_OPS: ReadonlySet<RunnerOp> = new Set<RunnerOp>([
   "browser.list",
   "process.list",
   "journal.get",
+  "command.wait",
+  "command.list",
 ]);
 
 // --- stdio transport ----------------------------------------------------------------------------------

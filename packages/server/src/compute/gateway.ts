@@ -66,7 +66,7 @@ export const PACKAGES_GROUP = "system_software";
 
 /** Tool group (permission unit in the task envelope) that each runner operation belongs to. */
 export function opGroup(op: RunnerOp): string {
-  if (op === "exec.run" || op === "process.list") return "shell";
+  if (op === "exec.run" || op === "process.list" || op.startsWith("command.")) return "shell";
   if (op.startsWith("terminal.")) return "terminal";
   if (op.startsWith("file.")) return "files";
   if (op.startsWith("screen.") || op.startsWith("input.")) return "desktop";

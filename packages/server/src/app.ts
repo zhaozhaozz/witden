@@ -13,6 +13,7 @@ import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import type { ManagerApi } from "@witden/shared";
 import Fastify, { type FastifyInstance } from "fastify";
+import { announceOverdue, watchCommands } from "./agent/commands.js";
 import { Worker } from "./agent/worker.js";
 import { adminRoutes } from "./api/admin.js";
 import { authRoutes } from "./api/auth.js";
@@ -177,6 +178,8 @@ export async function start(opts: StartOptions): Promise<Witden> {
     // Computers' model proxies are relayed here, next to the runner connections.
     rt.hub.proxyHandler = handleProxyMessage;
     rt.hub.welcomeExtras = async (instanceId) => ({ modelProxy: await proxyConfigFor(instanceId) });
+    // Ends of background commands, reported now or found out when a runner (re)connects.
+    rt.hub.onConnected = watchCommands;
     if (opts.listenHub !== false) await rt.hub.listen(settings.hubPort, settings.hubHost);
     app = await buildApp(rt);
     rt.app = app;
@@ -184,6 +187,8 @@ export async function start(opts: StartOptions): Promise<Witden> {
     // Keep recorded computer status honest (crashes, OOM kills, manual docker changes).
     void reconcile().catch(() => {});
     timers.push(setInterval(() => void reconcile().catch(() => {}), 30_000));
+    // Ends of commands whose foreground wait was given up (agent/commands.ts).
+    timers.push(setInterval(() => void announceOverdue().catch(() => {}), 30_000));
     // Slack apps in Socket Mode and Feishu connections on the long connection receive their events over
     // connections this process keeps open.
     slackSockets.start();

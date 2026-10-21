@@ -2,9 +2,10 @@
  * A role's main conversation in a topic (its agent session): one model context that lasts from message to
  * message, fed through an inbox.
  *
- * - enqueue(): something for the role — a message, a task's result, its own follow-up, a console instruction —
- *   goes into the session's inbox. With no open run a conversation run is created; an open run (even one in
- *   the middle of its work) takes it at its next step instead of a second run starting in parallel.
+ * - enqueue(): something for the role — a message, a task's result, its own follow-up, the end of a background
+ *   command (agent/commands.ts), a console instruction — goes into the session's inbox. With no open run a
+ *   conversation run is created; an open run (even one in the middle of its work) takes it at its next step
+ *   instead of a second run starting in parallel.
  * - inject(): before each model call the open run turns what is new in the topic (since the cursor) and the
  *   ready inbox items into one user turn of the context.
  * - settle(): a run that would end ends only when nothing is waiting; otherwise it carries on. In a conversation
@@ -20,6 +21,7 @@ import type { Db } from "../db/client.js";
 import {
   type AgentSession,
   agentSessions,
+  backgroundCommands,
   type InboxItem,
   type Message,
   messages,
@@ -34,6 +36,7 @@ import {
 import { relayFrom, type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
 import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
+import { afterTaskEnd, noticeText } from "./commands.js";
 import { answerContacts, lockPair, replyText, unansweredContacts } from "./contacts.js";
 import { HISTORY_MESSAGES, messagePlace, rosterLine, SESSION_NOTES, triggerContext } from "./context.js";
 import { ACTIVE } from "./control.js";
@@ -110,7 +113,8 @@ export interface Delivery {
 const sameItem = (a: Omit<InboxItem, "at">, b: InboxItem) =>
   a.kind === b.kind &&
   ((!!a.message_id && a.message_id === b.message_id) ||
-    (!!a.task_id && a.task_id === b.task_id && (a.revision ?? 1) === (b.revision ?? 1)));
+    (!!a.task_id && a.task_id === b.task_id && (a.revision ?? 1) === (b.revision ?? 1)) ||
+    (!!a.command_id && a.command_id === b.command_id));
 
 /** Hand something to the role's conversation in the topic. Returns the run that takes it (null: not yet). */
 export async function enqueue(db: Db, d: Delivery): Promise<Task | null> {
@@ -189,7 +193,12 @@ export async function wakeDue(db: Db, sessionId: string): Promise<Task | null> {
   const first = ready[0];
   return startRun(db, s, topic, role, {
     requesterUserId: first.user_id ?? null,
-    title: first.kind === "timer" ? `Follow-up: ${first.note ?? ""}`.slice(0, 200) : undefined,
+    title:
+      first.kind === "timer"
+        ? `Follow-up: ${first.note ?? ""}`.slice(0, 200)
+        : first.kind === "command"
+          ? `Background command ${first.command_id} ended`
+          : undefined,
     limits: first.limits,
   });
 }
@@ -230,6 +239,8 @@ export async function dropReady(db: Db, sessionId: string): Promise<void> {
  */
 export async function afterEnd(db: Db, task: Task): Promise<void> {
   await recordTaskIteration(db, task);
+  // Background commands that ended after its last step: their notices go where its result goes.
+  await afterTaskEnd(db, task);
   await lockPair(db, task);
   if (task.kind === "conversation" && task.sessionId && task.status === "cancelled")
     await dropReady(db, task.sessionId);
@@ -334,6 +345,21 @@ async function resultText(
   };
 }
 
+/** A background command ended (agent/commands.ts): started here, or by a task of this conversation that ended. */
+async function commandText(db: Db, item: InboxItem, run: Task): Promise<string> {
+  const [c] = item.command_id
+    ? await db.select().from(backgroundCommands).where(eq(backgroundCommands.id, item.command_id)).limit(1)
+    : [];
+  if (!c) return `A background command you started (${item.command_id}) is no longer recorded.`;
+  if (c.taskId === run.id) return noticeText(c);
+  const [starter] = await db.select().from(tasks).where(eq(tasks.id, c.taskId)).limit(1);
+  const note =
+    starter && starter.kind === "task"
+      ? `It was started by task ${starter.id} «${starter.title}», which has ended (${starter.status}).`
+      : "";
+  return noticeText(c, note);
+}
+
 /**
  * Before a model call: show the conversation what is new — topic messages since it last looked (those for it
  * marked "→ you"), results of its tasks, follow-ups that came due, console instructions — as one user turn.
@@ -428,6 +454,9 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
       // Another role answered what this role wrote to it (agent/contacts.ts): an automatic round, like a result.
       parts.push(await replyText(db, item, topic.id));
       resultRound = Math.max(resultRound, item.round ?? 0);
+    } else if (item.kind === "command") {
+      parts.push(await commandText(db, item, run));
+      resultRound = Math.max(resultRound, item.round ?? 0);
     }
   }
   const explicit = forYouItems.some((i) => !i.auto);
@@ -438,7 +467,14 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   parts.push(`Now: ${now.toISOString().slice(0, 16).replace("T", " ")} UTC`);
   await appendStep(db, run, "user", {
     content: parts.join("\n\n"),
-    inbox: { explicit, messages: [...forYouIds], items: ready.length },
+    inbox: {
+      explicit,
+      messages: [...forYouIds],
+      items: ready.length,
+      ...(ready.some((i) => i.kind === "command")
+        ? { commands: ready.filter((i) => i.kind === "command").map((i) => i.command_id) }
+        : {}),
+    },
   });
 
   // The latest message for the role decides who is asking and where answers go.

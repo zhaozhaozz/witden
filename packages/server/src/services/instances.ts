@@ -136,12 +136,17 @@ export async function canObserveInstance(db: Db, user: User, instanceId: string)
   return false;
 }
 
-/** Container stopped, restarted or recreated: none of its terminals, browsers or agents survive. */
+/**
+ * Container stopped, restarted or recreated: none of its terminals, browsers or agents survive, and its running
+ * commands are lost (their roles are told; agent/commands.ts).
+ */
 async function closeInstanceSessions(tx: Db, instanceId: string): Promise<void> {
   await tx
     .update(execSessions)
     .set({ status: "closed" })
     .where(and(eq(execSessions.instanceId, instanceId), eq(execSessions.status, "open")));
+  const { loseInstanceCommands } = await import("../agent/commands.js");
+  await loseInstanceCommands(tx, instanceId);
 }
 
 async function setStatus(id: string, status: string, reason: string | null, fields: Partial<ComputerInstance> = {}) {

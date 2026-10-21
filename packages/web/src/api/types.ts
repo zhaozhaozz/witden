@@ -500,6 +500,25 @@ export interface ExecSession {
   updated_at: string;
 }
 
+/** A command an AI employee runs or ran in the background of a computer (its output stays in the computer). */
+export interface BackgroundCommand {
+  id: string;
+  instance_id: string;
+  role_id: string;
+  topic_id: string;
+  task_id: string;
+  command: string;
+  cwd: string | null;
+  log_path: string | null;
+  status: "starting" | "running" | "finished" | "lost" | string;
+  exit_code: number | null;
+  signal: string | null;
+  output_bytes: number | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+}
+
 export interface Backup {
   id: string;
   instance_id: string;

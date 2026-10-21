@@ -42,6 +42,7 @@ import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../servi
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
 import * as topicSvc from "../services/topics.js";
 import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../services/triggers.js";
+import { commandStatus, commandStop, commandWait, runCommand } from "./commands.js";
 import { contactRole } from "./contacts.js";
 import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
@@ -159,20 +160,6 @@ async function load(ctx: ToolContext, db: Db) {
 }
 
 // --- computer: shell, terminals, files ------------------------------------------------------------------
-
-async function runCommand(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  const timeout = Math.max(1, Math.min(Number(args.timeout_seconds ?? 120), 1800));
-  const r = await op(
-    ctx,
-    "exec.run",
-    { command: String(args.command ?? ""), cwd: args.workdir, outputLimit: 64 * 1024 },
-    timeout * 1000,
-  );
-  const status = r.timedOut ? "timed out (process tree killed)" : `exit code ${r.exitCode}`;
-  return {
-    content: `[${status}]${r.truncated ? " [output truncated]" : ""}\n${clip(r.output, settings().toolOutputLimit)}`,
-  };
-}
 
 async function terminalStart(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const r = await op(ctx, "terminal.create", { command: String(args.command ?? ""), cwd: args.workdir }, 30_000);
@@ -1179,10 +1166,43 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "run_command",
       "shell",
-      "Run a shell command in your computer and wait for it to finish.",
-      obj({ command: str, timeout_seconds: { type: "number" }, workdir: str }, ["command"]),
+      "Run a shell command in your computer (sh -c; stdout and stderr together). It waits up to timeout_seconds (default 120, at most 1800) for the command to end and returns its exit code and output. A command still running then is not stopped: it goes on in the background and you get its id and the output so far. background: true starts it in the background at once. Several background commands can run at the same time; when one ends you get a notice with its exit code and last output. The whole output of every command is kept in a log file in your computer (its path is in the result); long output is cut in the result, read the log with read_file or run_command.",
+      obj(
+        {
+          command: str,
+          timeout_seconds: { type: "number", description: "how long to wait before leaving it in the background" },
+          background: { type: "boolean", description: "start it in the background and return at once" },
+          workdir: str,
+        },
+        ["command"],
+      ),
       runCommand,
     ),
+    spec(
+      "command_status",
+      "shell",
+      "Your background commands on your computer. Without id: each one with its state (running, or its exit code), duration and output size. With id: its state and latest output (head and tail when long) and the path of its log file.",
+      obj({ id: { type: "string", description: "a command id from run_command" } }),
+      commandStatus,
+    ),
+    spec(
+      "command_stop",
+      "shell",
+      "Stop one of your background commands with all its processes. signal: terminate (default: SIGTERM, then SIGKILL if it does not end), interrupt (like Ctrl-C) or kill (SIGKILL). Its log file stays.",
+      obj({ id: str, signal: { type: "string", enum: ["terminate", "interrupt", "kill"] } }, ["id"]),
+      commandStop,
+    ),
+    {
+      ...spec(
+        "command_wait",
+        "shell",
+        "Pause this task until one of the background commands it started ends (you get its notice) or the given minutes pass (default 30, at most 1440), instead of checking again and again. Returns at once when one has already ended or none is running.",
+        obj({ minutes: int }),
+        commandWait,
+      ),
+      // A conversation is never blocked: the notice reaches it by itself.
+      modes: ["task"] as WorkMode[],
+    },
     spec(
       "terminal_start",
       "terminal",
@@ -1702,6 +1722,7 @@ export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, arg
 /** Tools whose effect inside the computer cannot be safely repeated after an interruption. */
 export const SIDE_EFFECT_TOOLS = new Set([
   "run_command",
+  "command_stop",
   "terminal_start",
   "terminal_input",
   "terminal_control",

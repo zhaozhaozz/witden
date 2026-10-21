@@ -1,11 +1,12 @@
 /** Templates and computer instances (the management channel, plus human observation / takeover). */
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
 import { interruptInstanceTasks, pauseInstanceTasks, resumeInstanceTasks } from "../agent/control.js";
 import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import {
+  backgroundCommands,
   type ComputerInstance,
   computerInstances,
   computerTemplates,
@@ -18,6 +19,7 @@ import {
 } from "../db/schema.js";
 import { BadRequest, Conflict, Forbidden, Unavailable } from "../errors.js";
 import { runtime } from "../runtime.js";
+import { redact } from "../security/crypto.js";
 import { Perm, requirePerm } from "../security/permissions.js";
 import { parseColor } from "../services/appearance.js";
 import * as svc from "../services/instances.js";
@@ -364,6 +366,29 @@ export async function computerRoutes(app: FastifyInstance) {
         .orderBy(desc(execSessions.createdAt))
         .limit(200);
       return rows.map((s) => row(s));
+    }),
+  );
+  // Commands of the AI that run or ran in the background (agent/commands.ts), without their output.
+  app.get(
+    "/api/instances/:id/commands",
+    authed(async ({ db, user, req }) => {
+      const inst = await svc.getInstance(db, params(req).id);
+      if (!(await canSee(db, user, inst))) await requirePerm(db, user, Perm.INSTANCE_OBSERVE, inst.id);
+      const rows = await db
+        .select()
+        .from(backgroundCommands)
+        .where(
+          and(
+            eq(backgroundCommands.instanceId, inst.id),
+            or(eq(backgroundCommands.background, true), inArray(backgroundCommands.status, ["starting", "running"])),
+          ),
+        )
+        .orderBy(desc(backgroundCommands.createdAt))
+        .limit(200);
+      return rows.map((c) => ({
+        ...row(c, ["tail", "notifiedAt", "notifiedTo", "foregroundUntil", "background", "updatedAt"]),
+        command: redact(c.command).slice(0, 1000),
+      }));
     }),
   );
   // --- model proxy: a local model endpoint inside the computer, relayed and checked by the platform ---
