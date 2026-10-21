@@ -126,11 +126,102 @@ it("enforces task visibility for summaries and full details and validates cursor
     .values({ id: "progress-outsider", name: "Outside", externalConnectionId: "outside-connection" })
     .returning();
   const token = await transaction((tx) => issueToken(tx, outsider));
-  for (const path of ["/activity", "/activity?steps=true", "/log/1"]) {
+  for (const path of ["/activity", "/activity?steps=true", "/activity?steps=platform", "/log/1"]) {
     expect((await w.api("GET", `/api/tasks/${id}${path}`)).status).toBe(401);
     expect((await get(id, path, token)).status).toBe(404);
   }
-  for (const path of ["/activity?after=-1", "/activity?before=no", "/activity?after=1&before=2", "/log/1.5"])
+  for (const path of [
+    "/activity?after=-1",
+    "/activity?before=no",
+    "/activity?after=1&before=2",
+    "/log/1.5",
+    "/activity?steps=invalid",
+  ])
     expect((await get(id, path)).status).toBe(400);
   expect((await get(id, "/log/999")).status).toBe(404);
+});
+
+it("lists platform requests before approval and keeps rejected results inspectable", async () => {
+  await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.alice, json: { approval_required: ["memory"] } });
+  w.scripts.dev = (_m, turn) =>
+    turn === 0
+      ? reply("Working", [call("remember", { scope: "role", title: "Release checks", content: "Run tests" })])
+      : reply("stopped");
+  const id = (await w.post(w.alice, w.ids.topic, "@dev remember")).tasks[0].id;
+  await w.drain();
+  const before = (await get(id, "/activity?steps=platform")).body;
+  expect(before.status).toBe("waiting_approval");
+  expect(before.steps).toHaveLength(1);
+  expect(Object.keys(before.steps[0].payload)).toEqual(["tool_calls"]);
+  expect(before.steps[0].payload.tool_calls[0].function.name).toBe("remember");
+  const approval = (await w.api("GET", "/api/approvals", { token: w.alice })).body.find((a: any) => a.task_id === id);
+  await w.api("POST", `/api/approvals/${approval.id}/decide`, { token: w.alice, json: { approve: false } });
+  await w.drain();
+  const after = (await get(id, `/activity?steps=platform&after=${before.steps[0].seq}`)).body;
+  expect(after.steps).toHaveLength(1);
+  expect(after.steps[0].kind).toBe("tool");
+  expect(after.steps[0].request.function.name).toBe("remember");
+  expect(after.steps[0].payload.content).toMatch(/denied|reject/i);
+});
+
+it("filters before pagination, omits reasoning and computer calls, and preserves full platform details", async () => {
+  const id = (await w.post(w.alice, w.ids.topic, "@dev work")).tasks[0].id;
+  const memoryArgs = JSON.stringify({
+    title: "Release checks",
+    content: "password=supersecret " + "x".repeat(5000) + "END OF MEMORY",
+  });
+  const request = { id: "memory-call", function: { name: "update_memory", arguments: memoryArgs } };
+  await db()
+    .insert(taskSteps)
+    .values([
+      {
+        id: "mixed-call",
+        taskId: id,
+        seq: 1,
+        kind: "assistant",
+        payload: {
+          content: "Private model output",
+          reasoning_content: "Private model thought",
+          tool_calls: [
+            request,
+            { id: "command-call", function: { name: "run_command", arguments: '{"command":"pwd"}' } },
+          ],
+        },
+      },
+      ...Array.from({ length: 120 }, (_, i) => ({
+        id: `thought-${i}`,
+        taskId: id,
+        seq: i + 2,
+        kind: "assistant",
+        payload: { content: "Unrelated thought" },
+      })),
+      {
+        id: "memory-result",
+        taskId: id,
+        seq: 122,
+        kind: "tool",
+        payload: { name: "update_memory", tool_call_id: request.id, content: "saved" },
+      },
+      {
+        id: "computer-result",
+        taskId: id,
+        seq: 123,
+        kind: "tool",
+        payload: { name: "run_command", tool_call_id: "command-call", content: "computer output" },
+      },
+    ]);
+  const recent = (await get(id, "/activity?steps=platform")).body;
+  expect(recent.steps.map((s: any) => s.seq)).toEqual([1, 122]);
+  expect(recent.has_more).toBe(false);
+  expect(recent.steps[0].payload.tool_calls).toHaveLength(1);
+  expect(recent.steps[0].payload.tool_calls[0].function.arguments.length).toBeLessThanOrEqual(4000);
+  for (const omitted of ["Private model", "run_command", "computer output", "supersecret", "END OF MEMORY"])
+    expect(JSON.stringify(recent)).not.toContain(omitted);
+  const incremental = (await get(id, "/activity?steps=platform&after=1")).body;
+  expect(incremental.steps[0].request.function.name).toBe("update_memory");
+  const full = (await get(id, "/log/122")).body;
+  expect(full.request.function.arguments).toContain("END OF MEMORY");
+  expect(JSON.stringify(full)).not.toContain("supersecret");
+  const earlier = (await get(id, "/activity?steps=platform&before=122")).body;
+  expect(earlier.steps.map((s: any) => s.seq)).toEqual([1]);
 });

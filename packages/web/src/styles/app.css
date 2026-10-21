@@ -2750,6 +2750,22 @@ img.avatar-role.avatar-colored {
   margin-top: 6px;
   min-width: 0;
 }
+.platform-operations {
+  margin-bottom: 4px;
+  min-width: 0;
+}
+.platform-operations .execution-row {
+  min-height: 32px;
+  padding: 6px 0;
+}
+.platform-operations .execution-label {
+  max-width: min(45%, 18em);
+}
+.platform-operations .execution-detail {
+  max-height: min(360px, 50dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
 .execution-toggle {
   display: flex;
   align-items: center;

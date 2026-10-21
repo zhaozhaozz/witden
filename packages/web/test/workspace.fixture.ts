@@ -299,8 +299,35 @@ export async function workspace(
           return route.fulfill({ status: 503, json: { error: { message: "temporarily unavailable" } } });
         const after = url.searchParams.get("after");
         const before = url.searchParams.get("before");
-        const withSteps = url.searchParams.get("steps") === "true";
-        const rows = state.steps.filter(
+        const mode = url.searchParams.get("steps");
+        const withSteps = mode === "true" || mode === "platform";
+        const platformNames = new Set([
+          "remember",
+          "recall",
+          "update_memory",
+          "forget",
+          "read_config",
+          "change_config",
+          "send_message",
+          "message_role",
+          "delegate_task",
+          "contact_role",
+        ]);
+        const platformCalls = (s: TaskStep) =>
+          ((s.payload.tool_calls as { id: string; function: { name: string; arguments: unknown } }[]) ?? []).filter(
+            (c) => platformNames.has(c.function.name),
+          );
+        const sourceSteps =
+          mode === "platform"
+            ? state.steps
+                .filter((s) =>
+                  s.kind === "assistant"
+                    ? platformCalls(s).length
+                    : s.kind === "tool" && platformNames.has(String(s.payload.name)),
+                )
+                .map((s) => (s.kind === "assistant" ? { ...s, payload: { tool_calls: platformCalls(s) } } : s))
+            : state.steps;
+        const rows = sourceSteps.filter(
           (s) => (!after || s.seq > Number(after)) && (!before || s.seq < Number(before)),
         );
         const id = path.split("/")[3];
@@ -311,7 +338,14 @@ export async function workspace(
           ...state.stats,
           ...run,
           finished_at: ["completed", "failed", "cancelled"].includes(run.status) ? state.finishedAt : null,
-          steps: withSteps ? (after ? rows.slice(0, 100) : rows.slice(-100)) : [],
+          steps: withSteps
+            ? (after ? rows.slice(0, 100) : rows.slice(-100)).map((s) => ({
+                ...s,
+                ...(s.kind === "tool" && mode === "platform"
+                  ? { request: state.steps.flatMap(platformCalls).find((c) => c.id === s.payload.tool_call_id) }
+                  : {}),
+              }))
+            : [],
           has_more: withSteps && rows.length > 100,
         };
         await new Promise((r) => setTimeout(r, state.activityDelay));

@@ -39,26 +39,42 @@ function args(value: unknown): string {
 function callPreview(value: unknown): string {
   try {
     const p = typeof value === "string" ? JSON.parse(value) : value;
-    return String(p?.command ?? p?.path ?? p?.query ?? p?.text ?? args(value));
+    return String(
+      p?.command ??
+        p?.title ??
+        p?.path ??
+        p?.query ??
+        p?.task ??
+        p?.instruction ??
+        p?.question ??
+        p?.text ??
+        p?.role ??
+        p?.id ??
+        args(value),
+    );
   } catch {
     return String(value ?? "");
   }
 }
 
 /** Join tool requests and results by ID: one operation stays one row even when its result arrives later. */
-function operations(steps: TaskStep[]): Operation[] {
+function operations(steps: TaskStep[], toolsOnly = false): Operation[] {
   const results = new Map(steps.filter((s) => s.kind === "tool").map((s) => [s.payload.tool_call_id, s]));
   const known = new Set(steps.flatMap((s) => calls(s).map((c) => c.id)));
   return steps.flatMap((s): Operation[] => {
     const p = s.payload;
     if (s.kind === "assistant")
       return [
-        {
-          key: `model-${s.seq}`,
-          label: "思考",
-          preview: text(p.reasoning_content) || text(p.content) || "模型未返回思考文本",
-          source: s,
-        },
+        ...(toolsOnly
+          ? []
+          : [
+              {
+                key: `model-${s.seq}`,
+                label: "思考",
+                preview: text(p.reasoning_content) || text(p.content) || "模型未返回思考文本",
+                source: s,
+              },
+            ]),
         ...calls(s).map((c: { id: string; function?: { name?: string; arguments?: unknown } }) => ({
           key: `tool-${c.id}`,
           label: TOOL_LABEL[c.function?.name ?? ""] ?? c.function?.name ?? "使用工具",
@@ -160,6 +176,10 @@ export function ExecutionProgress({
   const [snapshot, setSnapshot] = useState<TaskActivity>();
   const [steps, setSteps] = useState<TaskStep[]>([]);
   const stepsRef = useRef(steps);
+  const [platformSteps, setPlatformSteps] = useState<TaskStep[]>([]);
+  const platformRef = useRef(platformSteps);
+  const [platformOlder, setPlatformOlder] = useState(false);
+  const [loadingPlatformOlder, setLoadingPlatformOlder] = useState(false);
   const [older, setOlder] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState("");
@@ -181,6 +201,10 @@ export function ExecutionProgress({
     }
     return pending;
   };
+  const mergePlatform = (incoming: TaskStep[]) => {
+    platformRef.current = mergeSteps(platformRef.current, incoming);
+    setPlatformSteps(platformRef.current);
+  };
   const merge = (incoming: TaskStep[]) => {
     stepsRef.current = mergeSteps(stepsRef.current, incoming);
     setSteps(stepsRef.current);
@@ -201,26 +225,29 @@ export function ExecutionProgress({
   useEffect(() => {
     let cancelled = false;
     const timer = window.setTimeout(async () => {
-      let after = expanded ? stepsRef.current.at(-1)?.seq : undefined;
-      try {
+      const read = async (platform: boolean) => {
+        let after = (platform ? platformRef : stepsRef).current.at(-1)?.seq;
         do {
           const data = await api.get<TaskActivity>(`/api/tasks/${taskId}/activity`, {
-            steps: expanded ? "true" : undefined,
+            steps: platform ? "platform" : "true",
             after,
           });
           if (cancelled) return;
           setSnapshot(data);
           if (data.status !== statusCode) onStatus(data.status);
-          setError("");
-          if (!expanded) return;
-          merge(data.steps);
+          (platform ? mergePlatform : merge)(data.steps);
           if (after === undefined) {
-            setOlder(data.has_more);
+            (platform ? setPlatformOlder : setOlder)(data.has_more);
             return;
           }
           if (!data.has_more || !data.steps.length) return;
           after = data.steps.at(-1)!.seq;
         } while (!cancelled);
+      };
+      try {
+        // Fetch compact platform actions even while the full transcript stays collapsed.
+        await Promise.all([read(true), ...(expanded ? [read(false)] : [])]);
+        if (!cancelled) setError("");
       } catch {
         if (!cancelled) setError("暂时无法更新执行过程");
       }
@@ -240,25 +267,29 @@ export function ExecutionProgress({
     } else if (following.current) el.scrollTop = el.scrollHeight;
   }, [steps, expanded]);
 
-  const loadOlder = async () => {
-    if (loadingOlder || !steps.length) return;
-    setLoadingOlder(true);
+  const loadOlder = async (platform = false) => {
+    const current = platform ? platformSteps : steps;
+    if ((platform ? loadingPlatformOlder : loadingOlder) || !current.length) return;
+    const loading = platform ? setLoadingPlatformOlder : setLoadingOlder;
+    loading(true);
     try {
       const data = await api.get<TaskActivity>(`/api/tasks/${taskId}/activity`, {
-        steps: "true",
-        before: steps[0].seq,
+        steps: platform ? "platform" : "true",
+        before: current[0].seq,
       });
       const el = scroller.current;
-      if (el) prepend.current = { height: el.scrollHeight, top: el.scrollTop };
-      merge(data.steps);
-      setOlder(data.has_more);
+      if (!platform && el) prepend.current = { height: el.scrollHeight, top: el.scrollTop };
+      (platform ? mergePlatform : merge)(data.steps);
+      (platform ? setPlatformOlder : setOlder)(data.has_more);
       setError("");
     } catch {
       setError("暂时无法加载更早的过程");
     } finally {
-      setLoadingOlder(false);
+      loading(false);
     }
   };
+  const pendingLabel = !active ? "未完成" : statusCode === "waiting_approval" ? "待审批" : "待结果";
+  const platformRows = operations(platformSteps, true);
   const rows = operations(steps);
   if (running && ["thinking", "writing", "compacting"].includes(phase))
     rows.push({
@@ -270,6 +301,23 @@ export function ExecutionProgress({
   const end = snapshot?.finished_at ? Date.parse(snapshot.finished_at) : now;
   return (
     <section className={`execution-progress${running && connected ? " execution-running" : ""}`} aria-label="执行进度">
+      {platformRows.length ? (
+        <div className="platform-operations" role="group" aria-label="系统工具调用">
+          {platformOlder ? (
+            <button
+              type="button"
+              className="execution-earlier"
+              disabled={loadingPlatformOlder}
+              onClick={() => loadOlder(true)}
+            >
+              {loadingPlatformOlder ? "加载中…" : "加载更早的系统工具调用"}
+            </button>
+          ) : null}
+          {platformRows.map((row) => (
+            <OperationRow key={row.key} operation={row} detail={detail} pendingLabel={pendingLabel} />
+          ))}
+        </div>
+      ) : null}
       <button type="button" className="execution-toggle" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
         <span className="execution-heading">
           <span className="live-indicator" aria-hidden />
@@ -319,7 +367,7 @@ export function ExecutionProgress({
           }}
         >
           {older ? (
-            <button type="button" className="execution-earlier" disabled={loadingOlder} onClick={loadOlder}>
+            <button type="button" className="execution-earlier" disabled={loadingOlder} onClick={() => loadOlder()}>
               {loadingOlder ? "加载中…" : "加载更早的过程"}
             </button>
           ) : null}
@@ -330,9 +378,7 @@ export function ExecutionProgress({
                 key={row.key}
                 operation={row}
                 detail={detail}
-                pendingLabel={
-                  !active ? "未完成" : status === "等待审批" ? "待审批" : row.key === "current" ? "进行中" : "待结果"
-                }
+                pendingLabel={row.key === "current" && active ? "进行中" : pendingLabel}
               />
             ))
           ) : (

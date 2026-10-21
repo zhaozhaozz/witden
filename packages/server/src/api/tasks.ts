@@ -160,7 +160,13 @@ export async function taskRoutes(app: FastifyInstance) {
         return n;
       };
       if (q.after !== undefined && q.before !== undefined) throw new BadRequest("use either after or before");
-      return taskProgress(db, task, { after: cursor("after"), before: cursor("before"), steps: q.steps === "true" });
+      if (q.steps !== undefined && !["true", "false", "platform"].includes(q.steps))
+        throw new BadRequest("steps must be true, false or platform");
+      return taskProgress(db, task, {
+        after: cursor("after"),
+        before: cursor("before"),
+        steps: q.steps === "platform" ? "platform" : q.steps === "true",
+      });
     }),
   );
 

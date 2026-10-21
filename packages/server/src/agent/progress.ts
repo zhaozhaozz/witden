@@ -2,7 +2,28 @@ import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { type Task, taskSteps, toolCalls, usageRecords } from "../db/schema.js";
 import { redactDeep } from "../security/crypto.js";
+import { TOOLS } from "./tools.js";
 import { stepPreview } from "./transcript.js";
+
+// Keep computer operations in the full execution log; platform actions also appear directly in chat.
+const platformGroups = new Set(["memory", "config", "profile", "automation", "software_list"]);
+const platformNames = new Set([
+  ...[...TOOLS.values()].filter((t) => t.group === null || platformGroups.has(t.group)).map((t) => t.name),
+  "share_file",
+  "read_topic", // Historical calls remain readable after a tool is retired.
+]);
+const platformCall = (call: { function?: { name?: string } }) => platformNames.has(call.function?.name ?? "");
+function callPreview(value: { id: string; function: { name: string; arguments: unknown } }) {
+  const call = redactDeep(value);
+  return {
+    ...call,
+    function: {
+      ...call.function,
+      arguments:
+        typeof call.function.arguments === "string" ? call.function.arguments.slice(0, 4000) : call.function.arguments,
+    },
+  };
+}
 
 /** A page can start with a tool result whose request is on an earlier page. Keep that operation inspectable. */
 async function requestsFor(db: Db, task: Task, ids: string[]) {
@@ -29,7 +50,11 @@ async function requestsFor(db: Db, task: Task, ids: string[]) {
   return calls;
 }
 
-export async function taskProgress(db: Db, task: Task, cursor: { after?: number; before?: number; steps: boolean }) {
+export async function taskProgress(
+  db: Db,
+  task: Task,
+  cursor: { after?: number; before?: number; steps: boolean | "platform" },
+) {
   const [usage] = await db
     .select({
       rounds: sql<number>`count(*)::int`,
@@ -56,6 +81,17 @@ export async function taskProgress(db: Db, task: Task, cursor: { after?: number;
   };
   if (!cursor.steps) return out;
   const cond = [eq(taskSteps.taskId, task.id)];
+  const platform = cursor.steps === "platform";
+  if (platform) {
+    const names = sql.join(
+      [...platformNames].map((name) => sql`${name}`),
+      sql`, `,
+    );
+    cond.push(sql`((${taskSteps.kind} = 'tool' and ${taskSteps.payload}->>'name' in (${names}))
+      or (${taskSteps.kind} = 'assistant' and exists (
+        select 1 from jsonb_array_elements(coalesce(${taskSteps.payload}->'tool_calls', '[]'::jsonb)) c
+        where c->'function'->>'name' in (${names}))))`);
+  }
   if (cursor.after !== undefined) cond.push(gt(taskSteps.seq, cursor.after));
   if (cursor.before !== undefined) cond.push(lt(taskSteps.seq, cursor.before));
   const rows = await db
@@ -79,14 +115,26 @@ export async function taskProgress(db: Db, task: Task, cursor: { after?: number;
     .map((s) => ({
       seq: s.seq,
       kind: s.kind,
-      payload: redactDeep({
-        ...stepPreview(s.payload),
-        ...(typeof s.payload.reasoning_content === "string"
-          ? { reasoning_content: s.payload.reasoning_content.slice(0, 4000) }
-          : {}),
-      }),
+      payload: redactDeep(
+        platform && s.kind === "assistant"
+          ? {
+              tool_calls: (s.payload.tool_calls ?? []).filter(platformCall).map(callPreview),
+            }
+          : {
+              ...stepPreview(s.payload),
+              ...(typeof s.payload.reasoning_content === "string"
+                ? { reasoning_content: s.payload.reasoning_content.slice(0, 4000) }
+                : {}),
+            },
+      ),
       created_at: s.createdAt.toISOString(),
-      ...(requests.has(s.payload.tool_call_id) ? { request: requests.get(s.payload.tool_call_id) } : {}),
+      ...(requests.has(s.payload.tool_call_id)
+        ? {
+            request: platform
+              ? callPreview(requests.get(s.payload.tool_call_id)!)
+              : requests.get(s.payload.tool_call_id),
+          }
+        : {}),
     }));
   return out;
 }

@@ -356,6 +356,7 @@ export const TOOL_LABEL: Record<string, string> = {
   edit_software_list: "修改软件清单",
   message_role: "在话题内 @ 其他 AI 员工",
   delegate_task: "委派任务",
+  contact_role: "联系其他 AI 员工",
   start_task: "拆出独立任务",
   continue_task: "给自己拆出的任务补充要求",
   transfer_task: "把任务转交给其他 AI 员工",
