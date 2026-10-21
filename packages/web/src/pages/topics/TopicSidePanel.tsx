@@ -56,11 +56,15 @@ export function TopicSidePanel({
   onToggleComputerMax?: () => void;
   onClose: () => void;
 }) {
-  // A DM is always you and one role: its tab shows the role instead of a participant list.
+  // A DM is always you and one role: settings show the role instead of a participant list.
   const dm = topic.kind === "dm";
   // A link may name the tab to open, e.g. ?panel=triggers when coming back from adding a webhook source.
   const [params] = useSearchParams();
-  const [tab, setTab] = useState(() => params.get("panel") ?? "tasks");
+  const [tab, setTab] = useState(() => {
+    const panel = params.get("panel") ?? "tasks";
+    // Keep links to the former standalone tabs useful after consolidating them into settings.
+    return ["people", "role", "links"].includes(panel) ? "settings" : panel;
+  });
   const guard = useLeaveGuard();
   const hasComputers = topicComputers(topic).length > 0;
   // Maximised, the panel shows only the computer (the tab row is hidden).
@@ -99,11 +103,8 @@ export function TopicSidePanel({
           { key: "tasks", label: "工作", badge: activeCount },
           { key: "approvals", label: "审批", badge: pendingApprovals?.length },
           { key: "computer", label: "虚拟电脑", hidden: !hasComputers },
-          { key: "people", label: "参与者", hidden: dm },
-          { key: "role", label: "角色", hidden: !dm },
           { key: "files", label: "文件" },
           { key: "notes", label: "记忆" },
-          { key: "links", label: "关联话题" },
           { key: "triggers", label: "触发器", hidden: dm },
           { key: "settings", label: "设置" },
         ]}
@@ -142,18 +143,34 @@ export function TopicSidePanel({
         {shown === "computer" ? (
           <TopicComputer topic={topic} maximized={computerMax} onToggleMax={() => onToggleComputerMax?.()} />
         ) : null}
-        {shown === "people" ? <PeopleTab topic={topic} onTopicChange={onTopicChange} /> : null}
-        {shown === "role" ? <DmRoleTab topic={topic} /> : null}
         {shown === "files" ? <FilesTab topic={topic} /> : null}
         {shown === "notes" ? <NotesTab key={topic.id} topic={topic} version={version} /> : null}
-        {shown === "links" ? <TopicLinksTab key={topic.id} topic={topic} /> : null}
         {shown === "triggers" ? <TriggersTab key={topic.id} topic={topic} version={version} /> : null}
         {shown === "settings" ? (
-          dm ? (
-            <DmSettings topic={topic} onCleared={onCleared} />
-          ) : (
-            <SettingsTab topic={topic} onTopicChange={onTopicChange} onCleared={onCleared} />
-          )
+          <div key={topic.id} className="sidebar-settings">
+            <details className="sidebar-settings-section" open>
+              <summary>{dm ? "角色" : "参与者"}</summary>
+              <div className="sidebar-settings-body">
+                {dm ? <DmRoleTab topic={topic} /> : <PeopleTab topic={topic} onTopicChange={onTopicChange} />}
+              </div>
+            </details>
+            <details className="sidebar-settings-section" open>
+              <summary>关联话题</summary>
+              <div className="sidebar-settings-body">
+                <TopicLinksTab topic={topic} />
+              </div>
+            </details>
+            <details className="sidebar-settings-section" open>
+              <summary>{dm ? "私信设置" : "话题设置"}</summary>
+              <div className="sidebar-settings-body">
+                {dm ? (
+                  <DmSettings topic={topic} onCleared={onCleared} />
+                ) : (
+                  <SettingsTab topic={topic} onTopicChange={onTopicChange} onCleared={onCleared} />
+                )}
+              </div>
+            </details>
+          </div>
         ) : null}
       </div>
     </aside>
@@ -606,7 +623,8 @@ function SettingsTab({
     setWorkInstructions(topic.work_instructions);
     setResponseMode(topic.response_mode);
     setRounds(topic.max_auto_rounds?.toString() ?? "");
-  }, [topic]);
+    // Participant updates in the same settings page must not reset the configuration draft.
+  }, [topic.title, topic.goal, topic.work_instructions, topic.response_mode, topic.max_auto_rounds]);
 
   const patch = async (body: Record<string, unknown>, success: string): Promise<boolean> => {
     const t = await run(() => api.patch<Topic>(`/api/topics/${topic.id}`, body), success);

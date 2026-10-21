@@ -9,6 +9,8 @@ const topic = {
   id: "topic-1",
   title: "产品工作台",
   goal: "一起把想法变成可以使用的产品。",
+  work_instructions: "",
+  max_auto_rounds: null,
   kind: "group",
   status: "active",
   source: "internal",
@@ -60,6 +62,15 @@ export async function workspace(
     runDelay: 0,
     memoryDelay: 0,
     memoryRequests: [] as string[],
+    topicUpdates: [] as Record<string, unknown>[],
+    links: [] as {
+      id: string;
+      topic_id: string;
+      title: string;
+      kind: string;
+      status: string;
+      roles: (typeof role)[];
+    }[],
     memories: [
       {
         id: "mem-topic",
@@ -147,8 +158,33 @@ export async function workspace(
       else if (path === "/api/instances/computer-1")
         json = { ...computer, status: "stopped", spec: { kind: "desktop" }, operator: null };
       else if (path === "/api/topics") json = [currentTopic, { ...topic, id: "topic-2", title: "设计讨论" }];
-      else if (path === "/api/topics/topic-1") json = currentTopic;
-      else if (path === "/api/memories") {
+      else if (path === "/api/topics/topic-1") {
+        if (req.method() === "PATCH") {
+          const body = req.postDataJSON();
+          state.topicUpdates.push(body);
+          Object.assign(currentTopic, body);
+        }
+        json = currentTopic;
+      } else if (path === "/api/topics/topic-1/participants/role/role-1" && req.method() === "DELETE") {
+        currentTopic.participants = currentTopic.participants.filter((p) => p.id !== role.id);
+        json = currentTopic;
+      } else if (path === "/api/topics/topic-1/links") {
+        if (req.method() === "POST") {
+          const link = {
+            id: "link-1",
+            topic_id: req.postDataJSON().topic_id,
+            title: "设计讨论",
+            kind: "group",
+            status: "active",
+            roles: [role],
+          };
+          state.links.push(link);
+          json = link;
+        } else json = state.links;
+      } else if (path === "/api/topics/topic-1/links/link-1" && req.method() === "DELETE") {
+        state.links = [];
+        json = { ok: true };
+      } else if (path === "/api/memories") {
         state.memoryRequests.push(url.search);
         if (req.method() === "POST") {
           const body = req.postDataJSON();
@@ -226,12 +262,7 @@ export async function workspace(
                   requester: user,
                 },
               ];
-      } else if (
-        ["/api/approvals", "/api/kill-switches", "/api/topics/topic-1/files", "/api/topics/topic-1/links"].includes(
-          path,
-        )
-      )
-        json = [];
+      } else if (["/api/approvals", "/api/kill-switches", "/api/topics/topic-1/files"].includes(path)) json = [];
       else {
         errors.push(`Unexpected API request: ${req.method()} ${path}`);
         return route.fulfill({ status: 404, json: { error: { message: path } } });

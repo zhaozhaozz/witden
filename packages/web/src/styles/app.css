@@ -3231,6 +3231,25 @@ img.avatar-role.avatar-colored {
   margin-bottom: 10px;
 }
 
+.sidebar-settings {
+  display: grid;
+  gap: 12px;
+}
+.sidebar-settings-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.sidebar-settings-section > summary {
+  padding: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sidebar-settings-body {
+  padding: 0 12px 12px;
+}
 .settings .form {
   margin-bottom: 14px;
 }
