@@ -75,19 +75,19 @@ export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 export const CONSOLE_ONLY_GROUPS = new Set(["profile", "collaborate", "automation"]);
 
 /** Groups a new role does not have until someone turns them on: reading other topics is a permission. */
-export const DEFAULT_OFF_GROUPS = new Set(["topics", "automation"]);
+export const DEFAULT_OFF_GROUPS = new Set(["topics"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
- * into the topic, is always allowed; reaching other roles or platform memory asks a person first; reading
- * other topics is off.
+ * into the topic, is always allowed; reaching other roles or platform memory and changing its own description
+ * or automation rules ask a person first; reading other topics is off.
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter(
   (g) => !ADMIN_TOOL_GROUPS.has(g) && !DEFAULT_OFF_GROUPS.has(g),
 );
 /** A new system administrator: the configuration tools; it needs no computer. */
 export const DEFAULT_ADMIN_TOOLS: string[] = ["config"];
-export const DEFAULT_APPROVAL_REQUIRED: string[] = ["collaborate", "memory", "profile"];
+export const DEFAULT_APPROVAL_REQUIRED: string[] = ["automation", "collaborate", "memory", "profile"];
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];

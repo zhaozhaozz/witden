@@ -232,6 +232,7 @@ describe("permissions and isolation", () => {
     expect(created.status, created.raw).toBe(200);
     // reading other topics is off until someone turns it on
     expect(created.body.allowed_tools).toEqual([
+      "automation",
       "browser",
       "collaborate",
       "desktop",
@@ -243,11 +244,12 @@ describe("permissions and isolation", () => {
       "system_software",
       "terminal",
     ]);
-    expect(created.body.approval_required).toEqual(["collaborate", "memory", "profile"]);
+    expect(created.body.approval_required).toEqual(["automation", "collaborate", "memory", "profile"]);
     const groups = (await w.api("GET", "/api/roles/tool-groups", { token: w.adminToken })).body;
     const files = groups.find((g: any) => g.group === "files");
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
     expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
+    expect(groups.find((g: any) => g.group === "automation").default_level).toBe("ask");
     expect(groups.find((g: any) => g.group === "topics").default_level).toBe("off");
 
     await w.api("POST", "/api/grants", {
