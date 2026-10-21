@@ -647,7 +647,6 @@ export async function delegate(
   materials: string,
 ): Promise<Task> {
   const fromConversation = parent.kind === "conversation";
-  if (fromConversation) await checkAutoRounds(parent);
   const target = await planDelegation(db, parent, sender, targetHandle);
   const topic = await topicSvc.getTopic(db, parent.topicId);
   const { allowed, refusals } = await authorize(db, topic, parent.requesterUserId, [target.id], sender.id);
@@ -665,15 +664,17 @@ export async function delegate(
     title: plainTitle(instruction).slice(0, 120) || "task",
     parent,
     assignment: allowed[0][1],
-    round: parent.round + 1,
+    // Tasks are not bounded by automatic rounds: the delegate keeps the round it was handed out at.
+    round: parent.round,
     waitsForResult: !fromConversation,
     reportSessionId: fromConversation ? parent.sessionId : null,
   });
 }
 
 /**
- * Work a conversation hands out comes back to it and may lead to more: like roles answering each other, the
- * chain is bounded by the automatic rounds limit until a person speaks (their message starts again at 0).
+ * Automatic rounds bound what roles set off for each other without a person (their message starts again at 0):
+ * @-mentions, linked messages, direct conversations and a conversation's own follow-ups. Tasks (start_task,
+ * delegate_task, transfer_task, continue_task) are not counted: they keep the round they started at.
  */
 export async function checkAutoRounds(run: Task): Promise<void> {
   const limit = settings().maxAutoRounds;
@@ -695,7 +696,6 @@ export async function startOwnTask(
   sourceMessageId?: string,
 ): Promise<Task> {
   if (run.depth + 1 > settings().maxDelegationDepth) throw new Forbidden("task depth limit reached");
-  await checkAutoRounds(run);
   const topic = await topicSvc.getTopic(db, run.topicId);
   const sourceId = sourceMessageId ?? run.sourceMessageId;
   const [sourceMessage] = sourceId
@@ -722,7 +722,7 @@ export async function startOwnTask(
     sourceMessage: sourceMessage ?? null,
     parent: run,
     assignment: { summary: `@${role.handle}: separate task of its conversation`, trace: [] },
-    round: run.round + 1,
+    round: run.round,
     reportSessionId: run.sessionId,
     reportOnly: true,
   });

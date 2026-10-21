@@ -833,7 +833,7 @@ async function followUpLater(ctx: ToolContext, args: Record<string, any>): Promi
   const until = new Date(Date.now() + minutes * 60_000);
   if (ctx.mode === "conversation") {
     // A reminder in the conversation's inbox: the conversation is free meanwhile and wakes up then. Waking
-    // itself up again and again without a person counts as automatic rounds, like work it hands out.
+    // itself up again and again without a person counts as automatic rounds, like roles answering each other.
     await transaction(async (db) => {
       const { task, role, topic } = await load(ctx, db);
       await checkAutoRounds(task);

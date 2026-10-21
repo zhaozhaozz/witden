@@ -13,7 +13,6 @@
  * (transferStartedTask).
  */
 import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import {
   approvals,
@@ -155,7 +154,7 @@ async function prepare(db: Db, task: Task, topic: Topic, target: Role, by: By, l
   return { next, assignment: allowed[0][1], parent };
 }
 
-/** Hand the task over (the checks passed). A role's hand-over also counts as a round of automatic work. */
+/** Hand the task over (the checks passed). Tasks are not bounded by automatic rounds: the round stays as it was. */
 async function apply(
   db: Db,
   task: Task,
@@ -164,7 +163,6 @@ async function apply(
   prepared: Awaited<ReturnType<typeof prepare>>,
   by: By,
   note: string,
-  round?: number,
 ): Promise<Task> {
   const previous = await topicSvc.getRole(db, task.ownerRoleId);
   const actor = by.user ? { by: by.user.id } : { by_role_id: by.role.id };
@@ -234,7 +232,6 @@ async function apply(
       budget: taskBudget(target, prepared.parent),
       // The new role has its own step budget; what the previous one used stays in the log and usage records.
       usage: { steps: 0, tokens: 0 },
-      ...(round !== undefined ? { round } : {}),
       assignment: {
         ...assignment,
         ...prepared.assignment,
@@ -320,22 +317,6 @@ async function targetRole(db: Db, handle: string, caller: Role): Promise<Role> {
 }
 
 /**
- * Roles could hand a task back and forth without end. A hand-over is one more round of automatic work, like an
- * @-mention or a delegation, so the global limit on automatic rounds (maxAutoRounds) bounds it until a person
- * steps in: a person's follow-up starts the task again at round 0. A separate per-task counter would be a second
- * limit to configure and explain, and would miss chains that mix hand-overs with @-mentions and delegation.
- */
-function nextRound(task: Task, caller: Task): number {
-  const limit = settings().maxAutoRounds;
-  const next = Math.max(task.round, caller.round) + 1;
-  if (next > limit)
-    throw new Forbidden(
-      `this work already went ${limit} rounds between roles without a person: finish the task yourself, or ask a person who should take it over`,
-    );
-  return next;
-}
-
-/**
  * transfer_task in a task: the role hands over the task it executes. Everything is checked now; the request is
  * recorded and the run ends after this call. The worker applies it when the run is over (finishHandover).
  */
@@ -355,7 +336,6 @@ export async function requestHandover(
   checkCaller(caller, task);
   const topic = await checkTask(db, task);
   const target = await targetRole(db, handle, caller);
-  nextRound(task, task);
   await prepare(db, task, topic, target, { role: caller });
   const request: HandoverRequest = {
     to_role_id: target.id,
@@ -463,10 +443,9 @@ export async function finishHandover(db: Db, id: string, claim: string): Promise
     if (!caller || !target) throw new BadRequest("the role no longer exists");
     // Anything may have changed since the call: check everything again.
     const topic = await checkTask(db, task);
-    const round = nextRound(task, task);
     const prepared = await prepare(db, task, topic, target, { role: caller });
     const note = await requestedNote(db, task, request.tool_call_id);
-    await apply(db, task, topic, target, prepared, { role: caller }, note, round);
+    await apply(db, task, topic, target, prepared, { role: caller }, note);
   } catch (err) {
     if (!(err instanceof WitdenError)) throw err;
     await dropHandover(db, task, request, err.message, true);
@@ -497,8 +476,7 @@ export async function transferStartedTask(
   const topic = await checkTask(db, task);
   checkIdle(task);
   const target = await targetRole(db, handle, caller);
-  const round = nextRound(task, run);
   // The note comes from this conversation's input: the task keeps that input's limits too.
   const prepared = await prepare(db, task, topic, target, { role: caller }, sourceLimits(run.envelope));
-  return apply(db, task, topic, target, prepared, { role: caller }, note, round);
+  return apply(db, task, topic, target, prepared, { role: caller }, note);
 }

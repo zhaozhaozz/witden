@@ -299,21 +299,27 @@ describe("one conversation per role and topic", () => {
 });
 
 describe("work a conversation hands out", () => {
-  it("comes back to it, and the chain is bounded until a person speaks", async () => {
-    // A conversation that starts a new task every time a result comes back.
-    w.scripts.dev = (m, turn) =>
-      lastUser(m).includes("Started by")
-        ? reply("done")
-        : turn === 0
-          ? reply("", [call("start_task", { task: "again" })])
-          : reply(lastToolResult(m));
+  it("comes back to it; tasks are not bounded by automatic rounds", async () => {
+    // A conversation that starts a new task every time a result comes back, past the automatic-round limit.
+    const wanted = w.settings.maxAutoRounds + 3;
+    let started = 0;
+    w.scripts.dev = (m, turn) => {
+      if (lastUser(m).includes("Started by")) return reply("done");
+      if (turn === 0 && started < wanted) {
+        started++;
+        return reply("", [call("start_task", { task: `again ${started}` })]);
+      }
+      return reply(turn === 0 ? "enough" : lastToolResult(m));
+    };
     await w.post(w.alice, w.ids.topic, "@dev keep going");
     await w.drain();
     const own = (await db().select().from(tasks).where(eq(tasks.topicId, w.ids.topic))).filter(
       (t) => t.kind === "task",
     );
-    expect(own.length).toBe(w.settings.maxAutoRounds);
-    expect((await w.messages(w.ids.topic)).at(-1).content).toContain("rounds of automatic work without a person");
+    expect(own.length).toBe(wanted);
+    expect(own.every((t) => t.status === "completed" && t.round === 0)).toBe(true);
+    const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
+    expect(texts.some((t: string) => t.includes("rounds of automatic work without a person"))).toBe(false);
   });
 });
 

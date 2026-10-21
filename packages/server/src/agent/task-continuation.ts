@@ -1,14 +1,13 @@
 /** Persistent independent-task iterations; inputs are consumed only at execution boundaries. */
 
 import { and, asc, eq, isNull } from "drizzle-orm";
-import { settings } from "../config.js";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { type Task, taskInputs, taskIterations, tasks, users } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
-import { assertNextRound, continuationAllowed, narrowEnvelope } from "../services/collaboration-policy.js";
+import { continuationAllowed, narrowEnvelope } from "../services/collaboration-policy.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
 import { clearRunApprovals } from "./approval-scope.js";
@@ -132,7 +131,8 @@ export async function submitTaskInput(db: Db, id: string, instruction: string, o
     envelope.tools = (envelope.tools ?? []).filter(
       (tool: string) => !["config", "profile", "automation"].includes(tool),
     );
-  const nextRound = opts.caller ? assertNextRound(opts.caller.round, settings().maxAutoRounds) : 0;
+  // Tasks are not bounded by automatic rounds: a role's follow-up keeps its conversation's round, a person's starts at 0.
+  const nextRound = opts.caller ? opts.caller.round : 0;
   if (newIteration) {
     envelope = clearRunApprovals(envelope);
     await recordTaskIteration(db, task);

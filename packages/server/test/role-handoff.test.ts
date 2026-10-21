@@ -232,23 +232,29 @@ describe("a role hands the task it works on to a colleague", () => {
     expect(await fresh(task.id)).toMatchObject({ ownerRoleId: w.ids.dev, result: "kept it" });
   });
 
-  it("roles cannot pass a task back and forth beyond the automatic round limit", async () => {
+  it("hand-overs are not bounded by the automatic round limit", async () => {
     w.settings.maxAutoRounds = 2;
     const task = await queued(w.ids.dev);
-    let refused = "";
-    w.scripts.dev = (m, turn) => {
-      if (turn === 0) return reply("", [call("transfer_task", { role: "test", note: "your turn" })]);
-      refused = lastToolResult(m);
-      return reply("finished by dev");
+    let devRuns = 0;
+    w.scripts.dev = (_m, turn) => {
+      if (turn > 0) return reply("handed over");
+      devRuns++;
+      return devRuns < 3
+        ? reply("", [call("transfer_task", { role: "test", note: "your turn" })])
+        : reply("finished by dev");
     };
-    w.scripts.test = () => reply("", [call("transfer_task", { role: "dev", note: "no, yours" })]);
+    w.scripts.test = (_m, turn) =>
+      turn === 0 ? reply("", [call("transfer_task", { role: "dev", note: "no, yours" })]) : reply("handed back");
     await w.drain();
-    // dev -> test (round 1), test -> dev (round 2), the third is refused
-    expect(refused).toMatch(/^error: this work already went 2 rounds between roles without a person/);
-    expect(refused).toContain("ask a person");
+    // dev -> test -> dev -> test -> dev: four hand-overs, twice the limit, then dev finishes
     const after = await fresh(task.id);
-    expect(after).toMatchObject({ ownerRoleId: w.ids.dev, status: "completed", result: "finished by dev", round: 2 });
-    expect(after.assignment.handoffs.map((h: any) => h.to_role_id)).toEqual([w.ids.test, w.ids.dev]);
+    expect(after).toMatchObject({ ownerRoleId: w.ids.dev, status: "completed", result: "finished by dev", round: 0 });
+    expect(after.assignment.handoffs.map((h: any) => h.to_role_id)).toEqual([
+      w.ids.test,
+      w.ids.dev,
+      w.ids.test,
+      w.ids.dev,
+    ]);
   });
 });
 
