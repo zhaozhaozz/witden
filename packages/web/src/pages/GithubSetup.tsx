@@ -914,8 +914,8 @@ function GrantStep({ conn, onDone }: { conn: Connection; onDone: () => void }) {
         <li>多个 GitHub 接入（例如不同的人或组织）分别授权，一个接入的权限不会用到另一个接入上。</li>
       </ol>
       <p className="small muted">
-        AI 员工要把私有仓库或其他话题中的内容写到更多人能看到的地方（例如公开仓库的
-        issue）之前，会先请内容的所有者在控制台批准。
+        AI 员工有权读取的内容，可以在它工作的任何地方使用，包括写到公开仓库的 issue。需要控制时，收紧它的
+        GitHub 工具权限，或把写入设为“需询问”。
       </p>
       <div className="setup-next">
         <button type="button" className="btn btn-primary" onClick={onDone}>
