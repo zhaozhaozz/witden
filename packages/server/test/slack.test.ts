@@ -1,7 +1,9 @@
 /** Slack end to end: signed webhooks and Socket Mode in, Web API calls out. Feishu: feishu.test.ts. */
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { once } from "node:events";
+import { readdirSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -10,6 +12,7 @@ import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import {
   agentSessions,
+  artifacts,
   connections,
   externalConversations,
   externalIdentities,
@@ -81,6 +84,8 @@ class FakeSocketMode {
 const json = (body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", ...headers } });
 
+const MB = 1024 * 1024;
+
 const SCOPES = "app_mentions:read,channels:history,chat:write,chat:write.customize,users:read,files:read,files:write";
 
 /**
@@ -98,6 +103,8 @@ class FakeSlack {
   exchanges: Record<string, string>[] = [];
   /** Socket Mode, when a test uses it. */
   sockets: FakeSocketMode | null = null;
+  /** Files people posted, by download path: their size, sent 1 MB at a time (byte i of chunk n is n % 256). */
+  downloads = new Map<string, number>();
   private ts = 1000;
   /** Bot tokens by workspace: the app's home workspace, and Beta where it can be installed. */
   private readonly bots: Record<string, { team_id: string; user_id: string; team: string }> = {
@@ -109,6 +116,22 @@ class FakeSlack {
     const url = new URL(String(input));
     const method = url.pathname.split("/").pop();
     const headers = (init?.headers ?? {}) as Record<string, string>;
+    // Files people posted are downloaded with the bot token, a piece at a time like any large response.
+    if (url.hostname === "files.slack.com" && url.pathname.startsWith("/files-pri/")) {
+      const size = this.downloads.get(url.pathname);
+      if (size === undefined || headers.authorization !== `Bearer ${BOT_TOKEN}`)
+        return new Response("", { status: 404 });
+      let sent = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (sent >= size) return controller.close();
+          const n = Math.min(MB, size - sent);
+          controller.enqueue(new Uint8Array(n).fill((sent / MB) % 256));
+          sent += n;
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/octet-stream" } });
+    }
     // File bytes go to the address files.getUploadURLExternal handed out, without a token.
     if (url.hostname === "files.slack.com") {
       const upload = this.uploads.find((u) => url.pathname.endsWith(u.id));
@@ -695,6 +718,40 @@ describe("slack", () => {
     await deliverPending();
     expect(slack.uploads.map((u) => u.name)).toEqual(["desktop.png"]);
     expect(slack.posts.at(-1)?.text).toBe("see attached");
+  });
+
+  it("downloads files of any size straight to storage; a failed download is noted, the message kept", async () => {
+    // Larger than the 20 MB above which files used to be skipped.
+    const size = 25 * MB + 123;
+    slack.downloads.set("/files-pri/T1-F9/dump.bin", size);
+    w.scripts.dev = () => reply("got the dump");
+    await send(
+      event(
+        "<@UBOT> @dev here is the dump",
+        { ts: "700.1" },
+        {
+          files: [
+            { name: "dump.bin", size, url_private: "https://files.slack.com/files-pri/T1-F9/dump.bin" },
+            { name: "gone.txt", size: 3, url_private: "https://files.slack.com/files-pri/T1-F10/gone.txt" },
+          ],
+        },
+      ),
+    );
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await settle();
+    const topicId = (await allTasks())[0].topicId;
+    const msg = (await w.messages(topicId)).find((m: any) => m.content.includes("here is the dump"));
+    expect(msg.attachments).toHaveLength(1);
+    const [art] = await db().select().from(artifacts).where(eq(artifacts.id, msg.attachments[0]));
+    const expected = createHash("sha256");
+    for (let sent = 0; sent < size; sent += MB)
+      expected.update(new Uint8Array(Math.min(MB, size - sent)).fill((sent / MB) % 256));
+    expect(art).toMatchObject({ name: "dump.bin", size, sha256: expected.digest("hex"), kind: "upload" });
+    const records = (await w.api("GET", `/api/connections/${conn.id}/diagnostics`, { token: w.adminToken })).body;
+    expect(records.map((r: any) => r.detail.stage)).toEqual(["download"]);
+    expect(records[0].detail.error).toContain("HTTP 404");
+    // The staged download became the stored file; nothing is left behind.
+    expect(readdirSync(join(w.settings.dataDir, "files", ".incoming"))).toEqual([]);
   });
 
   it("without files:write, shared files arrive as links and the reason stays in console diagnostics", async () => {

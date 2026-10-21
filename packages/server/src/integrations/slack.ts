@@ -31,7 +31,8 @@ import { escapeSlack, fromSlack, toSlack } from "./slack-format.js";
 import { noteWebhook } from "./webhook-status.js";
 
 const API = "https://slack.com/api/";
-const MAX_FILE_BYTES = 20 * 1024 * 1024;
+/** Longest wait for the next piece of a file being downloaded before the download counts as stalled. */
+const DOWNLOAD_IDLE_MS = 60_000;
 const MEMBERS_TTL_MS = 10 * 60_000;
 const KIND: Record<string, string> = { channel: "public", group: "private", im: "im", mpim: "mpim" };
 const USER_NAME_TTL_MS = 60 * 60_000;
@@ -108,11 +109,37 @@ export class SlackClient {
     return file_id;
   }
 
-  async download(url: string, limit: number): Promise<Buffer | null> {
-    const res = await slackFetch(url, { headers: { authorization: `Bearer ${this.token}` } });
-    if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.length > limit ? null : buf;
+  /**
+   * A file's bytes as they arrive, whatever its size: the caller streams them to storage (services/files.ts
+   * stageFile). A download that sends nothing for DOWNLOAD_IDLE_MS is abandoned.
+   */
+  async download(url: string): Promise<AsyncIterable<Uint8Array>> {
+    const abort = new AbortController();
+    const stalled = () => abort.abort(new Error(`download stalled: nothing received for ${DOWNLOAD_IDLE_MS / 1000}s`));
+    let timer = setTimeout(stalled, DOWNLOAD_IDLE_MS);
+    let res: Response;
+    try {
+      res = await slackFetch(url, { headers: { authorization: `Bearer ${this.token}` }, signal: abort.signal });
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
+    if (!res.ok || !res.body) {
+      clearTimeout(timer);
+      throw new Error(`download failed: HTTP ${res.status}`);
+    }
+    const body = res.body as unknown as AsyncIterable<Uint8Array>;
+    return (async function* () {
+      try {
+        for await (const chunk of body) {
+          clearTimeout(timer);
+          timer = setTimeout(stalled, DOWNLOAD_IDLE_MS);
+          yield chunk;
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
   }
 }
 
@@ -324,9 +351,10 @@ export class SlackAdapter implements Adapter {
     await this.client(conn).call("chat.postMessage", params);
   }
 
-  async fetchFile(conn: Connection, f: Record<string, any>): Promise<Buffer | null> {
-    if ((f.size ?? 0) > MAX_FILE_BYTES || !f.url_private) return null;
-    return this.client(conn).download(f.url_private, MAX_FILE_BYTES);
+  /** A received file, streamed to storage: none is refused for its size. */
+  async fetchFile(conn: Connection, f: Record<string, any>): Promise<AsyncIterable<Uint8Array> | null> {
+    if (!f.url_private) return null;
+    return this.client(conn).download(f.url_private);
   }
 
   /**

@@ -30,7 +30,8 @@ export interface Adapter {
   parse(db: Db, conn: Connection, payload: any): Promise<InboundAction[]>;
   conversationKind?(db: Db, conn: Connection, channel: string, hint: string | null): Promise<[string, string | null]>;
   syncMembers?(db: Db, conn: Connection, conv: ExternalConversation, force?: boolean): Promise<void>;
-  fetchFile?(conn: Connection, file: Record<string, any>): Promise<Buffer | null>;
+  /** A received file: whole, or streamed as it downloads (stored without being held in memory); null: refused. */
+  fetchFile?(conn: Connection, file: Record<string, any>): Promise<Buffer | AsyncIterable<Uint8Array> | null>;
   reply?(conn: Connection, channel: string, thread: string, text: string): Promise<void>;
 }
 
@@ -44,7 +45,8 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     conversations: ["public channel", "private channel", "direct message", "group DM"],
     threads: "a thread (root message + replies) maps to one topic",
     mentions: "@bot; the bot's role handles everything addressed to it",
-    files: "incoming files are downloaded (size-limited); roles can share files back as links",
+    files:
+      "incoming files are downloaded whatever their size (streamed to storage, files:read); roles' attachments are uploaded (files:write, otherwise links)",
     edits_deletes: "edits update the internal message; deletes remove it and derived memories",
     limits: [
       "bots only see conversations they were invited to",

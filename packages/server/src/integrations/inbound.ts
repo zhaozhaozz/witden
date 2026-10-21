@@ -30,7 +30,7 @@ import {
 } from "../db/schema.js";
 import { runtime } from "../runtime.js";
 import { audit } from "../services/audit.js";
-import { saveArtifact } from "../services/files.js";
+import { discardStaged, type StagedFile, saveArtifact, stageFile } from "../services/files.js";
 import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
 import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
@@ -135,6 +135,14 @@ export async function processInbound(limit = 20): Promise<number> {
   for (const row of rows) {
     let status: string;
     let detail: string | null = null;
+    // A long download keeps the event claimed: another pass would otherwise take it for stalled and redo it.
+    const keep = setInterval(() => {
+      void getDb()
+        .update(processedEvents)
+        .set({ claimedAt: new Date() })
+        .where(and(eq(processedEvents.id, row.id), eq(processedEvents.status, "processing")))
+        .catch(() => {});
+    }, STALLED_MS / 3);
     try {
       ({ status, detail = null } = await processOne(row.kind, row.payload));
     } catch (err) {
@@ -148,6 +156,8 @@ export async function processInbound(limit = 20): Promise<number> {
         continue;
       }
       status = "failed"; // stays visible on the connection page
+    } finally {
+      clearInterval(keep);
     }
     // The message text is not retained once handled.
     await getDb()
@@ -390,6 +400,17 @@ export type Reply = (text: string) => Promise<void>;
 /** Process one inbound message exactly once. ``reply`` posts a direct notice back (e.g. "not linked"). */
 /** Handle one message. Its effects commit in one transaction, so a retry after a crash starts clean. */
 export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise<Record<string, unknown>> {
+  // Files are downloaded first, outside the transaction: a large one must not hold the database meanwhile.
+  const files = msg.files?.length ? await downloadFiles(msg) : [];
+  try {
+    return await handle(msg, files, reply);
+  } finally {
+    // What did not become an artifact (the message was not stored, or the transaction failed).
+    for (const f of files) if (f.data && !Buffer.isBuffer(f.data)) discardStaged(f.data);
+  }
+}
+
+async function handle(msg: InboundMessage, files: Downloaded[], reply?: Reply): Promise<Record<string, unknown>> {
   let notice: string | null = null;
   const result = await transaction(async (db) => {
     const [conn] = await db.select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);
@@ -452,7 +473,7 @@ export async function handleMessage(msg: InboundMessage, reply?: Reply): Promise
         ...(msg.fromBot ? { bot: true, ...(addressed ? { request: true } : {}) } : {}),
       },
     });
-    if (msg.files?.length) stored = await ingestFiles(db, conn, topic, stored, user, msg.files);
+    if (files.length) stored = await ingestFiles(db, conn, topic, stored, user, files);
     if (botLimit) return { status: "bot_limit", topic_id: topic.id };
     if (!addressed) return { status: "stored", topic_id: topic.id };
     if (roleIds.length && !present.length) {
@@ -546,27 +567,47 @@ export async function handleDelete(connectionId: string, conversationId: string,
   });
 }
 
+/** A file of an inbound message: its bytes (in memory, or streamed to a staged file), or why there are none. */
+interface Downloaded {
+  file: Record<string, any>;
+  data?: Buffer | StagedFile;
+  error?: unknown;
+}
+
+/**
+ * The files of a message, fetched before it is handled. Nothing is fetched for messages that are dropped anyway
+ * (unknown or paused connection, the bot's own); a streamed download goes straight to disk.
+ */
+async function downloadFiles(msg: InboundMessage): Promise<Downloaded[]> {
+  const [conn] = await getDb().select().from(connections).where(eq(connections.id, msg.connectionId)).limit(1);
+  if (conn?.status !== "active" || (conn.botUserId && msg.userId === conn.botUserId)) return [];
+  const adapter = await getAdapter(conn);
+  if (!adapter.fetchFile) return [];
+  const out: Downloaded[] = [];
+  for (const file of msg.files ?? []) {
+    try {
+      const got = await adapter.fetchFile(conn, file);
+      if (!got) out.push({ file, error: "文件超过大小限制或不支持导入。" });
+      else out.push({ file, data: Buffer.isBuffer(got) ? got : await stageFile(got) });
+    } catch (err) {
+      out.push({ file, error: err });
+    }
+  }
+  return out;
+}
+
 async function ingestFiles(
   db: Db,
   conn: Connection,
   topic: Topic,
   stored: Message,
   user: User,
-  files: Record<string, any>[],
+  files: Downloaded[],
 ): Promise<Message> {
-  const adapter = await getAdapter(conn);
   const ids: string[] = [];
-  for (const f of files) {
-    if (!adapter.fetchFile) continue;
-    let data: Buffer | null = null;
-    try {
-      data = await adapter.fetchFile(conn, f);
-    } catch (err) {
-      await integrationError(db, conn, stored, "download", err, f);
-      continue;
-    }
+  for (const { file: f, data, error } of files) {
     if (!data) {
-      await integrationError(db, conn, stored, "download", "文件超过大小限制或不支持导入。", f);
+      await integrationError(db, conn, stored, "download", error, f);
       continue;
     }
     const art = await saveArtifact(db, data, {
