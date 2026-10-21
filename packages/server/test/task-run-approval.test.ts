@@ -133,20 +133,25 @@ it.each(["continue", "retry-task", "retry-conversation"])(
   },
 );
 
-it("keeps a paused run paused and retains its tool grant when that same run resumes", async () => {
+it("keeps a run paused by an emergency stop paused and retains its tool grant when that same run resumes", async () => {
   await configure();
   let step = 0;
   w.scripts.dev = () =>
     ++step <= 2 ? reply("", [call("run_command", { command: `command-${step}` })]) : reply("done");
   const id = await conversation();
   await w.drain();
-  await control(id, "pause");
+  const stop = await w.api("POST", "/api/kill-switches", {
+    token: w.adminToken,
+    json: { scope: "task", target_id: id },
+  });
+  expect(stop.status, stop.raw).toBe(200);
   const approval = await pending(id);
   expect(approval.can_allow_for_task_run).toBe(true);
   expect((await decide(approval.id)).status).toBe(200);
   await w.drain();
   expect((await w.task(id)).status).toBe("paused");
   expect(w.manager.computer(w.ids.instance).commands).toEqual([]);
+  await w.api("POST", `/api/kill-switches/${stop.body.id}/release`, { token: w.adminToken });
   await control(id, "resume");
   await w.drain();
   expect((await w.task(id)).status).toBe("completed");

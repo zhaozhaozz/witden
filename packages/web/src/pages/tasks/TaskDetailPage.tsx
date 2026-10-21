@@ -104,7 +104,7 @@ export default function TaskDetailPage() {
             <TaskStatusBanner task={t} />
             {t.content_restricted ? (
               <div className="callout callout-wait">
-                你无权查看这个任务所在的话题：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以暂停或取消它。
+                你无权查看这个任务所在的话题：标题、要求、进度和结果已隐藏，执行日志不可查看。任务的状态、负责角色和执行任务的虚拟电脑仍然可见，你仍可以取消它。
               </div>
             ) : null}
             <TaskSummary task={t} />

@@ -1,4 +1,7 @@
-/** Human control over tasks: resume, cancel, add instructions, retry, reassign; a conversation run can also be paused. */
+/**
+ * Human control over tasks and conversation runs: resume, cancel, add instructions, retry, reassign. Nothing is
+ * paused by hand; a pause comes only from an emergency stop or a takeover, and is resumed here.
+ */
 
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -8,14 +11,14 @@ import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
 import { clearRunApprovals } from "./approval-scope.js";
-import { cancelTree, getTask, pause, resume, setStatus, TERMINAL } from "./control.js";
+import { cancelTree, getTask, resume, setStatus, TERMINAL } from "./control.js";
 import { enqueue, openRun } from "./conversation.js";
 import { activeKillSwitch } from "./revocation.js";
 import { lockTask, submitTaskInput } from "./task-continuation.js";
 import { transferTask } from "./task-handoff.js";
 
 /** Console accounts steer every task (they are all administrators). */
-export async function canControl(db: Db, user: User, task: Task, _action = "pause"): Promise<boolean> {
+export async function canControl(db: Db, user: User, task: Task, _action = "cancel"): Promise<boolean> {
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
   return !!topic && (await topicSvc.canAdminister(db, user, topic));
 }
@@ -38,11 +41,7 @@ export async function control(
   // An independent task takes new requirements as queued input; that records its own audit entry.
   if (action === "continue" || (action === "instruct" && task.kind === "task" && !TERMINAL.has(task.status)))
     return submitTaskInput(db, task.id, note, { userId: user.id, ...opts });
-  if (action === "pause") {
-    // Independent tasks are not paused by hand: cancel them, or hand them over once they stop.
-    if (task.kind === "task") throw new BadRequest("tasks cannot be paused; cancel the task instead");
-    await pause(db, task, `paused by ${user.name}`);
-  } else if (action === "resume") {
+  if (action === "resume") {
     if (task.status !== "paused") throw new BadRequest("task is not paused");
     if (await activeKillSwitch(db, task)) throw new BadRequest("an emergency stop covering this task is still active");
     await resume(db, task);
@@ -81,7 +80,7 @@ export async function control(
       .returning();
     await setStatus(db, reset, "pending", `retried by ${user.name}`);
   } else {
-    throw new BadRequest("action must be pause, resume, cancel, instruct, continue or retry");
+    throw new BadRequest("action must be resume, cancel, instruct, continue or retry");
   }
   await audit(db, `task.${action}`, {
     actorType: "user",

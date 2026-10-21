@@ -159,15 +159,14 @@ describe("handing a task to another role", () => {
     expect((await move(finished.id, admin.id)).status).toBe(403);
   });
 
-  it("tasks are not paused by hand; a conversation run still is", async () => {
+  it("neither tasks nor conversation runs are paused by hand", async () => {
     const t = await taskOf(w.ids.dev, "pending");
-    const paused = await w.api("POST", `/api/tasks/${t.id}/control`, { token: w.alice, json: { action: "pause" } });
-    expect(paused.status).toBe(400);
-    expect((await fresh(t.id)).status).toBe("pending");
     const run = (await w.post(w.alice, w.ids.topic, "@dev hello")).tasks[0].id;
-    const stop = await w.api("POST", `/api/tasks/${run}/control`, { token: w.alice, json: { action: "pause" } });
-    expect(stop.status, stop.raw).toBe(200);
-    expect((await fresh(run)).status).toBe("paused");
+    for (const id of [t.id, run]) {
+      const paused = await w.api("POST", `/api/tasks/${id}/control`, { token: w.alice, json: { action: "pause" } });
+      expect(paused.status).toBe(400);
+      expect((await fresh(id)).status).toBe("pending");
+    }
   });
 
   it("a disabled role's tasks wait for another role; its conversations end", async () => {

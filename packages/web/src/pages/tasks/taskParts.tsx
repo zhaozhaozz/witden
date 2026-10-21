@@ -32,8 +32,8 @@ interface ControlTarget {
 const TRANSFERABLE = ["pending", "waiting_resource", "waiting_role", "completed", "failed"];
 
 /**
- * Resume / cancel / add instructions / retry / reassign, offered according to the task state; only a
- * conversation run can be paused by hand (a task is paused only by an emergency stop or a takeover).
+ * Resume / cancel / add instructions / retry / reassign, offered according to the task state. Nothing is paused
+ * by hand: an emergency stop or a takeover pauses work, and "继续" resumes it afterwards.
  * The backend re-checks permissions; buttons only reflect what makes sense for the state.
  */
 export function TaskControls({
@@ -75,11 +75,6 @@ export function TaskControls({
 
   return (
     <div className="btn-row">
-      {conversation && active && task.status !== "paused" ? (
-        <button type="button" className={cls} disabled={busy} onClick={() => control("pause", "", "任务已暂停")}>
-          暂停
-        </button>
-      ) : null}
       {task.status === "paused" ? (
         <button type="button" className={cls} disabled={busy} onClick={() => control("resume", "", "任务已继续")}>
           继续
