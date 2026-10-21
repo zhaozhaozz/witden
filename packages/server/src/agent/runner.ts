@@ -55,6 +55,7 @@ import type { ChatMessage, ChatModel, LLMResponse, ToolCall } from "./llm.js";
 import { deliver } from "./output.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { consumeTaskInputs, hasTaskInputs, lockTask } from "./task-continuation.js";
+import { handoverDue } from "./task-handoff.js";
 import { needsApproval, SIDE_EFFECT_TOOLS, TOOLS, type ToolResult, toolsFor } from "./tools.js";
 import { withTopicRules } from "./topic-messaging.js";
 import { appendStep, isConversation, loadTranscript } from "./transcript.js";
@@ -116,6 +117,8 @@ export class TaskRunner {
       // Emergency stops and revoked permissions are checked before anything runs, including a call that was
       // approved or interrupted earlier.
       if (!(await this.gateOnly(taskId))) return;
+      // A hand-over asked for before the previous worker stopped: end at once, the worker applies it.
+      if (await transaction((tx) => handoverDue(tx, taskId))) return;
       if (!(await this.recoverInterrupted(taskId))) return;
       const retry = await this.takeRetry(taskId);
       if (retry && !(await this.execute(taskId, retry))) return;
@@ -586,6 +589,12 @@ export class TaskRunner {
           detail: { reason: typeof content === "string" ? content.slice(0, 300) : "" },
         });
         await notifyParent(tx, done);
+        return false;
+      }
+      if (result.control === "handover") {
+        // The role handed the task over: no further steps. The worker applies it once this run is over
+        // (task-handoff.ts finishHandover); until then the task stays running under this run's claim.
+        await appendStep(tx, current, "tool", { tool_call_id: call.id, name: call.name, content });
         return false;
       }
       if (result.control === "wait") {

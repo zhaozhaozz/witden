@@ -80,8 +80,10 @@ function operations(steps: TaskStep[]): Operation[] {
               source: s,
             },
           ];
-    if (s.kind === "event")
-      return [{ key: `step-${s.seq}`, label: "状态", preview: String(p.note ?? p.reason ?? p.type ?? ""), source: s }];
+    if (s.kind === "event") {
+      const preview = p.type === "role_handoff" ? "任务转交给其他角色" : String(p.note ?? p.reason ?? p.type ?? "");
+      return [{ key: `step-${s.seq}`, label: "状态", preview, source: s }];
+    }
     return [
       {
         key: `step-${s.seq}`,

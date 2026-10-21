@@ -15,6 +15,7 @@ import { expireTakeovers, getTask, publishTaskStatus, setStatus } from "./contro
 import { wakeDue } from "./conversation.js";
 import { claimRoutes, routeMessage } from "./router.js";
 import { claimNext, collectChildren, TaskRunner } from "./runner.js";
+import { finishHandover } from "./task-handoff.js";
 import { appendStep } from "./transcript.js";
 
 const POLL_MS = 2000;
@@ -80,6 +81,12 @@ export class Worker {
         if (t) await publishTaskStatus(tx, t);
       });
       const p = new TaskRunner(this.gateway).run(id).finally(async () => {
+        // A role handed the task over with this run's last call: it changes hands now, under this run's claim.
+        try {
+          await transaction((tx) => finishHandover(tx, id, this.id));
+        } catch (err) {
+          console.error(`[witden] handing over task ${id} failed`, err);
+        }
         // The run is over: release the claim now, not when the lease runs out, so the task can be handed over.
         try {
           await getDb()
@@ -89,7 +96,8 @@ export class Worker {
         } catch (err) {
           console.error(`[witden] releasing task ${id} failed`, err);
         }
-        this.running.delete(id);
+        // The task may already run again here (handed over and claimed meanwhile): keep that run's entry.
+        if (this.running.get(id) === p) this.running.delete(id);
         this.notify();
       });
       this.running.set(id, p);

@@ -355,6 +355,7 @@ export const TOOL_LABEL: Record<string, string> = {
   delegate_task: "委派任务",
   start_task: "拆出独立任务",
   continue_task: "给自己拆出的任务补充要求",
+  transfer_task: "把任务转交给其他角色",
   manage_automation: "管理负责的自动化",
   send_message: "向话题发送消息",
   linked_topic_status: "查看关联话题的工作状态",

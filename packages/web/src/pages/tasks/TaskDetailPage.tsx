@@ -410,6 +410,7 @@ function Collapsible({ text, limit = 900 }: { text: string; limit?: number }) {
 
 const EVENT_LABEL: Record<string, string> = {
   wait: "等待",
+  role_handoff: "转交",
   instance_wait: "等待虚拟电脑",
   transcript_removed: "记录已删除",
   compaction_failed: "整理上下文失败",
@@ -431,6 +432,12 @@ const UNCERTAIN_NOTE =
   "虚拟电脑没有确认这个操作是否已经执行（连接中断或等待超时）。角色会先查看当前状态（截图、读文件、看页面）再决定是否重做，以免重复点击或重复提交。";
 
 function ExecutionLog({ steps }: { steps: TaskStep[] }) {
+  const dir = useDirectory();
+  // A hand-over (server: task-handoff.ts) names who passed the task to whom: a person or the role itself.
+  const handoff = (p: Record<string, unknown>) => {
+    const by = p.by_role_id ? dir.roleLabel(p.by_role_id as string) : dir.userName(p.by as string);
+    return `${dir.roleLabel(p.from_role_id as string)} → ${dir.roleLabel(p.to_role_id as string)}，由 ${by} 转交`;
+  };
   return (
     <ol className="steps">
       {steps.map((s) => {
@@ -450,9 +457,13 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
                   ? "新内容（摘要后保留原文）"
                   : p.inbox
                     ? "话题里的新内容"
-                    : c.text.startsWith("Additional instruction")
-                      ? "补充要求"
-                      : "输入";
+                    : p.type === "role_handoff_brief"
+                      ? "交接简报"
+                      : p.type === "handover_dropped"
+                        ? "转交未生效"
+                        : c.text.startsWith("Additional instruction")
+                          ? "补充要求"
+                          : "输入";
           body = (
             <>
               <Collapsible text={c.text} />
@@ -495,7 +506,7 @@ function ExecutionLog({ steps }: { steps: TaskStep[] }) {
         } else if (s.kind === "event") {
           const type = String(p.type ?? "event");
           label = EVENT_LABEL[type] ?? type;
-          const note = (p.note ?? p.reason ?? "") as string;
+          const note = type === "role_handoff" ? handoff(p) : ((p.note ?? p.reason ?? "") as string);
           body = (
             <div className="step-text">
               {p.tool ? <code>{String(p.tool)}</code> : null} {note}

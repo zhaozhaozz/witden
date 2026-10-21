@@ -48,6 +48,7 @@ import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
+import { requestHandover, transferStartedTask } from "./task-handoff.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
 import { sendLinkedMessage } from "./topic-messaging.js";
@@ -92,8 +93,11 @@ export const DEFAULT_APPROVAL_REQUIRED: string[] = ["automation", "memory", "pro
 
 export interface ToolResult {
   content: string | { type: string; [k: string]: any }[];
-  /** "wait": the task must pause (status / wait describe for what). "silent": it ends without a reply. */
-  control?: "wait" | "silent";
+  /**
+   * "wait": the task must pause (status / wait describe for what). "silent": it ends without a reply.
+   * "handover": the run ends here; the worker hands the task over once it is over (task-handoff.ts).
+   */
+  control?: "wait" | "silent" | "handover";
   wait?: Record<string, any>;
   status?: string;
   statusReason?: string;
@@ -122,6 +126,8 @@ export interface ToolSpec {
   modes?: WorkMode[];
   /** What the tool does in a conversation, when that differs from a task. */
   conversation?: string;
+  /** Its parameters in a conversation, when they differ from a task's. */
+  conversationParameters?: Record<string, any>;
   /** Why this call would be refused anyway (or null): checked before a person is asked to approve it. */
   refusal?: (db: Db, task: Task, args: Record<string, any>) => Promise<string | null>;
 }
@@ -664,6 +670,30 @@ async function delegateTask(ctx: ToolContext, args: Record<string, any>): Promis
     status: "waiting_children",
     statusReason: "waiting for delegated work",
     wait: { type: "children", child_ids: [childId], tool_call_id: ctx.toolCallId },
+  };
+}
+
+/**
+ * Hand a whole task to a role of this topic: in a task, that task (it changes hands when this run ends; the note
+ * is read from this call in the log); in a conversation, a task it started.
+ */
+async function handOver(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const handle = String(args.role ?? "").replace(/^@/, "");
+  if (ctx.mode === "conversation") {
+    const moved = await transaction(async (db) => {
+      const { task, role } = await load(ctx, db);
+      return transferStartedTask(db, task, role, String(args.task_id ?? ""), handle, String(args.note ?? ""));
+    });
+    return {
+      content: `task ${moved.id} is now @${handle}'s (status ${moved.status}); its result still comes back to you here.`,
+    };
+  }
+  if (args.task_id && args.task_id !== ctx.taskId)
+    throw new BadRequest("in a task you can hand over only the task you are working on (omit task_id)");
+  const target = await transaction((db) => requestHandover(db, ctx.taskId, ctx.roleId, ctx.toolCallId, handle));
+  return {
+    content: `@${target.handle} takes this task over when this run ends; your work on it stops here.`,
+    control: "handover",
   };
 }
 
@@ -1322,12 +1352,25 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ...spec(
         "delegate_task",
         null,
-        "Hand a piece of work to another role taking part in this topic. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back. Roles outside this topic cannot be given work.",
+        "Hand a piece of work to another role taking part in this topic. Give a self-contained brief, the expected output and only the materials it needs. You wait until it reports back, then go on with your task (to hand over the whole task and stop, use transfer_task). Roles outside this topic cannot be given work.",
         obj({ role: str, task: str, expected_output: str, materials: str }, ["role", "task", "expected_output"]),
         delegateTask,
       ),
       conversation:
         "Hand a piece of work to another role taking part in this topic. Give a self-contained brief, the expected output and only the materials it needs. It works on its own and posts its answer in this topic; its result also comes back to you here, so you can go on or end your turn meanwhile. Roles outside this topic cannot be given work.",
+    },
+    // Like delegate_task: only to a role of this topic, without a permission; here the whole task changes hands.
+    {
+      ...spec(
+        "transfer_task",
+        null,
+        "Hand this whole task over to another role taking part in this topic, when that role should do the rest instead of you. Your work on the task ends with this call. The role continues the same task: it starts from a brief with the requirements, the follow-ups, the last result or progress and your note, not from your steps, and works on its own computer; the result goes where this task's result would have gone. In the note say what is done, where it is (files, branches) and what is left. To get only a part done and keep the task, use delegate_task (you wait for its result); to ask or tell a role something, message_role.",
+        obj({ role: str, note: str }, ["role", "note"]),
+        handOver,
+      ),
+      conversation:
+        "Hand an independent task your conversation here started (start_task, or delegated from here) over to another role taking part in this topic, while nothing runs it: pending, waiting for its computer or for a role, completed or failed. The role continues the same task from a brief with its requirements, last result and your note, on its own computer; the result still comes back here. A completed task stays completed until you give it more work (continue_task); a failed one is retried by a person. To have a role do only a part, use delegate_task; to ask or tell it something, message_role.",
+      conversationParameters: obj({ task_id: str, role: str, note: str }, ["task_id", "role", "note"]),
     },
     spec(
       "remember",
@@ -1594,22 +1637,28 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         // always has the tool (it refuses when the latest message did @-mention the role), a task only when
         // it came that way.
         (t.name !== "stay_silent" || mode === "conversation" || !!envelope.auto) &&
-        // The configuration tools only for a system administrator's own work.
+        // The configuration tools only for a system administrator's own work; it hands no work over either.
         (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
+        (t.name !== "transfer_task" || !envelope.system_admin) &&
         // Some only for work that stays in the console (not in, nor relayed from, an external conversation).
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
         // In a Slack, Feishu or GitHub conversation only the bot's role works: there is no other role to @ or hand
         // work to. A request relayed from there into a console topic may still involve that topic's roles.
-        (!["message_role", "delegate_task"].includes(t.name) || !envelope.external_topic) &&
+        (!["message_role", "delegate_task", "transfer_task"].includes(t.name) || !envelope.external_topic) &&
         // Only that role reports on the linked internal topics; an internal topic has no use for an external one's.
         (t.name !== "linked_topic_status" || !!envelope.external_topic),
     )
-    .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
+    .map((t) =>
+      mode === "conversation" && (t.conversation || t.conversationParameters)
+        ? { ...t, description: t.conversation ?? t.description, parameters: t.conversationParameters ?? t.parameters }
+        : t,
+    );
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
-  // @-mentions and delegation stay within the topic and need no permission (an older per-tool setting is ignored).
-  if (tool.name === "message_role" || tool.name === "delegate_task") return false;
+  // @-mentions, delegation and hand-overs stay within the topic and need no permission (an older per-tool setting
+  // is ignored).
+  if (["message_role", "delegate_task", "transfer_task"].includes(tool.name)) return false;
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
   // A connection tool (Feishu, GitHub) asks when its connection's product asks (the connection comes from the call).
