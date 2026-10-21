@@ -28,6 +28,7 @@ const message = (id: string, content: string, author = "role") => ({
   id,
   content,
   topic_id: topic.id,
+  task_id: null as string | null,
   author_type: author,
   author_id: author === "role" ? role.id : user.id,
   mentions: [],
@@ -59,6 +60,8 @@ export async function workspace(
   });
   const state = {
     runStatus: "running",
+    finishedAt: new Date().toISOString(),
+    otherRuns: new Map<string, { status: string; rounds: number; commands: number; tokens: number }>(),
     activityDelay: 0,
     activityFailure: false,
     activityRequests: [] as string[],
@@ -272,7 +275,7 @@ export async function workspace(
                   requester: user,
                 },
               ];
-      } else if (path === "/api/tasks/task-1/activity") {
+      } else if (/^\/api\/tasks\/[^/]+\/activity$/.test(path)) {
         state.activityRequests.push(url.search);
         if (state.activityFailure)
           return route.fulfill({ status: 503, json: { error: { message: "temporarily unavailable" } } });
@@ -282,11 +285,14 @@ export async function workspace(
         const rows = state.steps.filter(
           (s) => (!after || s.seq > Number(after)) && (!before || s.seq < Number(before)),
         );
+        const id = path.split("/")[3];
+        const run = id === "task-1" ? { ...state.stats, status: state.runStatus } : state.otherRuns.get(id);
+        if (!run) return route.fulfill({ status: 404, json: { error: { message: "task not found" } } });
         json = {
-          id: "task-1",
-          status: state.runStatus,
+          id,
           ...state.stats,
-          finished_at: state.runStatus === "completed" ? new Date().toISOString() : null,
+          ...run,
+          finished_at: ["completed", "failed", "cancelled"].includes(run.status) ? state.finishedAt : null,
           steps: withSteps ? (after ? rows.slice(0, 100) : rows.slice(-100)) : [],
           has_more: withSteps && rows.length > 100,
         };

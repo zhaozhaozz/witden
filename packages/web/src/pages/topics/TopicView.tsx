@@ -407,45 +407,49 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                       }
                     />
                   ) : null}
-                  {messages.map((m, i) => {
-                    const prev = messages[i - 1];
-                    const compact =
-                      !!prev &&
-                      prev.author_type === m.author_type &&
-                      prev.author_id === m.author_id &&
-                      m.author_type !== "system" &&
-                      (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) <
-                        5 * 60_000;
-                    const author = authorOf(m);
-                    // a reply inside a Slack thread shows the thread's first message, as Slack does
-                    const root = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
-                    return (
-                      <MessageItem
-                        key={m.id}
-                        msg={m}
-                        approval={m.approval_id ? approvalMap.get(m.approval_id) : undefined}
-                        approvalError={approvals.error}
-                        approvalLoading={approvals.loading}
-                        onReloadApproval={approvals.reload}
-                        onDecided={onDecided}
-                        author={author}
-                        replyTo={
-                          m.reply_to_id
-                            ? { author: root ? authorOf(root).name : null, excerpt: root?.content.slice(0, 80) ?? null }
-                            : null
-                        }
-                        mentionTokens={mentionTokens(m)}
-                        compact={compact}
-                        files={fileMap}
-                      />
-                    );
-                  })}
                   <RoleActivity
                     topicId={topic.id}
+                    messages={messages}
                     connected={live}
                     feed={activityFeed}
                     authorOf={roleAuthor}
                     onGrow={keepAtBottom}
+                    renderMessage={(m, i) => {
+                      const prev = messages[i - 1];
+                      const compact =
+                        !!prev &&
+                        prev.author_type === m.author_type &&
+                        prev.author_id === m.author_id &&
+                        m.author_type !== "system" &&
+                        (parseTime(m.created_at)?.getTime() ?? 0) - (parseTime(prev.created_at)?.getTime() ?? 0) <
+                          5 * 60_000;
+                      const author = authorOf(m);
+                      // a reply inside a Slack thread shows the thread's first message, as Slack does
+                      const root = m.reply_to_id ? messages.find((x) => x.id === m.reply_to_id) : undefined;
+                      return (
+                        <MessageItem
+                          key={m.id}
+                          msg={m}
+                          approval={m.approval_id ? approvalMap.get(m.approval_id) : undefined}
+                          approvalError={approvals.error}
+                          approvalLoading={approvals.loading}
+                          onReloadApproval={approvals.reload}
+                          onDecided={onDecided}
+                          author={author}
+                          replyTo={
+                            m.reply_to_id
+                              ? {
+                                  author: root ? authorOf(root).name : null,
+                                  excerpt: root?.content.slice(0, 80) ?? null,
+                                }
+                              : null
+                          }
+                          mentionTokens={mentionTokens(m)}
+                          compact={compact}
+                          files={fileMap}
+                        />
+                      );
+                    }}
                   />
                 </>
               )}

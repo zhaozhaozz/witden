@@ -2717,6 +2717,12 @@ img.avatar-role.avatar-colored {
   background: var(--ok);
   box-shadow: 0 0 0 3px var(--ok-bg);
 }
+.msg-execution-attached {
+  padding-top: 0;
+}
+.msg-execution-attached .execution-progress {
+  margin-top: 0;
+}
 /* A single quiet line; only the status text fades during a change. */
 .execution-progress {
   margin-top: 6px;

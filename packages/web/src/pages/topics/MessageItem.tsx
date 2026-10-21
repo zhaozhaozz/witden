@@ -171,7 +171,9 @@ export function MessageItem({
     >
       <div className="msg-gutter">
         {compact ? (
-          <time className="msg-hover-time">{fmtTime(msg.created_at)}</time>
+          <time className="msg-hover-time" dateTime={msg.created_at} title={fmtDateTime(msg.created_at)}>
+            {fmtTime(msg.created_at).split(" ").at(-1)}
+          </time>
         ) : (
           <Avatar
             id={author.id}
@@ -233,7 +235,7 @@ export function MessageItem({
           <MessageText content={msg.content} mentions={mentionTokens} />
         )}
         {msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
-        {/* How a reply came about is in the conversation's runs (the topic's work panel), not under each message. */}
+        {/* The timeline places one execution record after the run's last reply. */}
         <div className="msg-foot">{msg.edited_at ? <span className="small muted">已编辑</span> : null}</div>
       </div>
     </div>

@@ -1,7 +1,7 @@
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { LiveHandler } from "../../api/events";
-import type { Task } from "../../api/types";
+import type { Message, Task } from "../../api/types";
 import { ACTIVE_TASK_STATUSES, isActiveTask, TOOL_LABEL, taskStatus } from "../../lib/format";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 import { ExecutionProgress } from "./ExecutionProgress";
@@ -16,6 +16,8 @@ interface Activity {
   status: string;
   version: number;
   expanded?: boolean;
+  /** Where a run without a posted answer ended in this view. */
+  anchorId?: string;
   phase: Phase;
   tool?: string;
   /** The answer streamed so far in this model call. */
@@ -87,11 +89,9 @@ function apply(prev: Activities, type: string, data: Record<string, unknown>): A
     const status = String(data.status);
     if (!ACTIVE.has(status)) {
       if (!prev.has(id)) return prev;
-      const m = next();
       const cur = prev.get(id)!;
-      if (cur.expanded) m.set(id, { ...cur, status, version: cur.version + 1 });
-      else m.delete(id);
-      return m;
+      if (cur.status === status) return prev;
+      return next().set(id, { ...cur, status, version: cur.version + 1 });
     }
     const cur = prev.get(id);
     if (cur && status === cur.status) return prev;
@@ -107,7 +107,7 @@ function apply(prev: Activities, type: string, data: Record<string, unknown>): A
     return m;
   }
   if (type === "message.created" && data.author_type === "role" && data.task_id && prev.has(String(data.task_id))) {
-    // The persisted message replaces streamed text, while the execution panel stays mounted until the run ends.
+    // The persisted message replaces streamed text; its task ID anchors the execution record afterward.
     const m = next();
     const cur = prev.get(String(data.task_id))!;
     m.set(String(data.task_id), { ...cur, text: "", end: 0, note: "" });
@@ -116,19 +116,19 @@ function apply(prev: Activities, type: string, data: Record<string, unknown>): A
   return prev;
 }
 
-/**
- * Roles working in this topic, shown at the end of the timeline: "thinking", the answer as it streams in
- * with a caret, or the tool being used. Fed by the topic's live events through ``feed``; resynchronised from
- * the task list whenever the stream (re)connects, so a missed "completed" never leaves a stale bubble.
- */
+/** Interleave persisted answers and their execution records, keeping each run's component mounted as it finishes. */
 export function RoleActivity({
   topicId,
+  messages,
+  renderMessage,
   connected,
   feed,
   authorOf,
   onGrow,
 }: {
   topicId: string;
+  messages: Message[];
+  renderMessage: (message: Message, index: number) => ReactNode;
   connected: boolean;
   feed: RefObject<LiveHandler | null>;
   authorOf: (roleId: string) => Author;
@@ -137,12 +137,23 @@ export function RoleActivity({
   const [items, setItems] = useState<Activities>(() => new Map());
   const generation = useRef(0);
   const changes = useRef(new Map<string, number>());
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const updateStatus = (prev: Activities, type: string, data: Record<string, unknown>) => {
+    const next = apply(prev, type, data);
+    const id = String(data.id);
+    const item = next.get(id);
+    if (item && !ACTIVE.has(item.status) && item.status !== "loading" && !item.anchorId) {
+      return new Map(next).set(id, { ...item, anchorId: messagesRef.current.at(-1)?.id });
+    }
+    return next;
+  };
 
   useEffect(() => {
     feed.current = (type, data) => {
       const id = data.task_id ?? (type.startsWith("task.") ? data.id : undefined);
       if (id) changes.current.set(String(id), ++generation.current);
-      setItems((prev) => apply(prev, type, data));
+      setItems((prev) => updateStatus(prev, type, data));
     };
     return () => {
       feed.current = null;
@@ -151,7 +162,37 @@ export function RoleActivity({
 
   useEffect(() => {
     setItems(new Map());
+    changes.current.clear();
   }, [topicId]);
+
+  // Message/task links survive refresh and pagination; load only the summary until a reader expands it.
+  useEffect(() => {
+    setItems((prev) => {
+      const next = new Map(prev);
+      for (const m of messages) {
+        if (
+          m.topic_id !== topicId ||
+          m.author_type !== "role" ||
+          m.deleted ||
+          m.topic_delivery ||
+          !m.task_id ||
+          !m.author_id ||
+          next.has(m.task_id)
+        )
+          continue;
+        next.set(m.task_id, {
+          roleId: m.author_id,
+          status: "loading",
+          version: 0,
+          phase: "queued",
+          text: "",
+          end: 0,
+          note: "",
+        });
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [topicId, messages]);
 
   useEffect(() => {
     if (!connected) return;
@@ -162,9 +203,14 @@ export function RoleActivity({
       .then((tasks) => {
         if (cancelled) return;
         setItems((prev) => {
-          const m: Activities = new Map(
-            [...prev].filter(([id, a]) => a.expanded || (changes.current.get(id) ?? 0) > start),
-          );
+          const m: Activities = new Map(prev);
+          const activeIds = new Set(tasks.filter((t) => ACTIVE.has(t.status)).map((t) => t.id));
+          // A missing active run may have finished while disconnected. Resolve its final state, keeping the row.
+          for (const [id, a] of prev) {
+            if (ACTIVE.has(a.status) && !activeIds.has(id) && (changes.current.get(id) ?? 0) <= start) {
+              m.set(id, { ...a, status: "loading", version: a.version + 1 });
+            }
+          }
           for (const t of tasks) {
             if (!ACTIVE.has(t.status) || (changes.current.get(t.id) ?? 0) > start) continue;
             m.set(
@@ -196,38 +242,53 @@ export function RoleActivity({
     onGrow();
   }, [items, onGrow]);
 
-  if (!items.size) return null;
-  return (
-    <>
-      {[...items.entries()].map(([taskId, a]) => (
-        <ActivityItem
-          key={taskId}
-          taskId={taskId}
-          activity={a}
-          author={authorOf(a.roleId)}
-          connected={connected}
-          onStatus={(status) =>
-            setItems((prev) => apply(prev, "task.status", { id: taskId, status, owner_role_id: a.roleId }))
-          }
-          onToggle={() =>
-            setItems((prev) => {
-              const cur = prev.get(taskId);
-              if (!cur) return prev;
-              const next = new Map(prev);
-              if (cur.expanded && !ACTIVE.has(cur.status)) next.delete(taskId);
-              else next.set(taskId, { ...cur, expanded: !cur.expanded });
-              return next;
-            })
-          }
-        />
-      ))}
-    </>
+  // One record per run, below its last posted reply. Later messages cannot move a finished record to the bottom.
+  const anchors = new Map<string, string>();
+  for (const m of messages) {
+    if (m.author_type === "role" && !m.deleted && !m.topic_delivery && m.task_id) anchors.set(m.task_id, m.id);
+  }
+  const attached = new Map<string, [string, Activity][]>();
+  const pending: [string, Activity][] = [];
+  const messageIds = new Set(messages.map((m) => m.id));
+  for (const [id, a] of items) {
+    const anchor = !ACTIVE.has(a.status) ? (anchors.get(id) ?? a.anchorId) : undefined;
+    if (anchor && messageIds.has(anchor)) attached.set(anchor, [...(attached.get(anchor) ?? []), [id, a]]);
+    else pending.push([id, a]);
+  }
+  const activity = ([taskId, a]: [string, Activity], anchored: boolean) => (
+    <ActivityItem
+      key={`execution-${taskId}`}
+      taskId={taskId}
+      activity={a}
+      anchored={anchored}
+      author={authorOf(a.roleId)}
+      connected={connected}
+      onStatus={(status) => {
+        changes.current.set(taskId, ++generation.current);
+        setItems((prev) => updateStatus(prev, "task.status", { id: taskId, status, owner_role_id: a.roleId }));
+      }}
+      onToggle={() =>
+        setItems((prev) => {
+          const cur = prev.get(taskId);
+          return cur ? new Map(prev).set(taskId, { ...cur, expanded: !cur.expanded }) : prev;
+        })
+      }
+    />
   );
+  // A flat keyed list lets React move the same execution node next to the final reply without losing open details.
+  const timeline: ReactNode[] = [];
+  messages.forEach((m, i) => {
+    timeline.push(renderMessage(m, i));
+    for (const entry of attached.get(m.id) ?? []) timeline.push(activity(entry, true));
+  });
+  for (const entry of pending) timeline.push(activity(entry, false));
+  return <>{timeline}</>;
 }
 
 function ActivityItem({
   taskId,
   activity: a,
+  anchored,
   author,
   connected,
   onToggle,
@@ -235,43 +296,53 @@ function ActivityItem({
 }: {
   taskId: string;
   activity: Activity;
+  anchored: boolean;
   author: Author;
   connected: boolean;
   onToggle: () => void;
   onStatus: (status: string) => void;
 }) {
   const status =
-    a.status !== "running" && a.status !== "pending"
-      ? taskStatus(a.status).label
-      : a.phase === "queued"
-        ? "准备开始"
-        : a.phase === "tool"
-          ? `正在${toolLabel(a.tool)}`
-          : a.phase === "compacting"
-            ? "对话较长，正在整理前面的内容"
-            : a.phase === "writing"
-              ? "正在生成回复"
-              : "正在思考";
+    a.status === "loading"
+      ? "执行记录"
+      : a.status !== "running" && a.status !== "pending"
+        ? taskStatus(a.status).label
+        : a.phase === "queued"
+          ? "准备开始"
+          : a.phase === "tool"
+            ? `正在${toolLabel(a.tool)}`
+            : a.phase === "compacting"
+              ? "对话较长，正在整理前面的内容"
+              : a.phase === "writing"
+                ? "正在生成回复"
+                : "正在思考";
   const content = [a.note, a.text].filter(Boolean).join("\n\n");
   return (
-    <div className="msg msg-role msg-live">
+    <div
+      className={`msg msg-role${ACTIVE.has(a.status) ? " msg-live" : " msg-execution"}${anchored ? " msg-execution-attached" : ""}`}
+      data-execution-task={taskId}
+    >
       <div className="msg-gutter">
-        <Avatar id={author.id} name={author.name} kind="role" size={32} src={author.avatarUrl} color={author.color} />
+        {!anchored ? (
+          <Avatar id={author.id} name={author.name} kind="role" size={32} src={author.avatarUrl} color={author.color} />
+        ) : null}
       </div>
       <div className="msg-main">
-        <div className="msg-head">
-          <RoleBadge
-            role={{
-              id: author.id,
-              name: author.name,
-              handle: author.handle,
-              color: author.color,
-              avatar_url: author.avatarUrl,
-            }}
-          />
-          {author.computer ? <ComputerBadge computer={author.computer} /> : null}
-          <span className="ai-mark">AI 员工</span>
-        </div>
+        {!anchored ? (
+          <div className="msg-head">
+            <RoleBadge
+              role={{
+                id: author.id,
+                name: author.name,
+                handle: author.handle,
+                color: author.color,
+                avatar_url: author.avatarUrl,
+              }}
+            />
+            {author.computer ? <ComputerBadge computer={author.computer} /> : null}
+            <span className="ai-mark">AI 员工</span>
+          </div>
+        ) : null}
         {content ? <MessageText content={content} streaming mentions={[]} /> : null}
         <ExecutionProgress
           taskId={taskId}

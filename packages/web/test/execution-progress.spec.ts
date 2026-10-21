@@ -120,21 +120,101 @@ test("incremental updates preserve open rows and scroll position, and earlier pa
   expect(errors).toEqual([]);
 });
 
-test("completion preserves the opened process until dismissed, while a fresh view restores active history", async ({
+test("a completed record stays with its answer, preserves open details and can be reopened after reload", async ({
   page,
 }) => {
   const { state, errors } = await setup(page);
-  await page.reload();
-  await expect(page.locator(".execution-stats")).toContainText("3.8K");
-  await page.locator(".execution-toggle").click();
-  await expect(page.getByRole("region", { name: "执行过程" })).toContainText("npm test");
+  const panel = page.locator('[data-execution-task="task-1"]');
+  await panel.locator(".execution-toggle").click();
+  const command = panel.locator(".execution-row").filter({ hasText: "npm test" });
+  await command.click();
+  const handle = await command.elementHandle();
+  await expect(panel.locator(".execution-detail")).toContainText("48 tests passed");
+  const answer = { ...state.messages[1], id: "answer-1", task_id: "task-1", content: "发布检查已完成。" };
+  state.messages.push(answer);
+  await emit(page, "message.created", answer);
+  const later = { ...state.messages[0], id: "later", content: "接下来检查另外一个项目。" };
+  state.messages.push(later);
+  await emit(page, "message.created", later);
   state.runStatus = "completed";
   await emit(page, "task.status", { id: "task-1", status: "completed", owner_role_id: "role-1" });
-  await expect(page.locator(".execution-status")).toHaveText("已完成");
-  await expect(page.getByRole("region", { name: "执行过程" })).toBeVisible();
-  await expect(page.locator(".execution-running")).toHaveCount(0);
-  await page.locator(".execution-toggle").click();
-  await expect(page.locator(".execution-progress")).toHaveCount(0);
+  await expect(panel.locator(".execution-status")).toHaveText("已完成");
+  expect(await handle?.evaluate((el) => el.isConnected)).toBe(true);
+  await expect(command).toHaveAttribute("aria-expanded", "true");
+  expect(await panel.evaluate((el) => el.previousElementSibling?.textContent)).toContain("发布检查已完成");
+  expect(await panel.evaluate((el) => el.nextElementSibling?.textContent)).toContain("接下来检查另外一个项目");
+  const total = await panel.locator(".execution-stats").innerText();
+  await page.waitForTimeout(1100);
+  expect(await panel.locator(".execution-stats").innerText()).toBe(total);
+  await panel.locator(".execution-toggle").click();
+  await expect(panel).toBeVisible();
+  await expect(panel.locator(".execution-scroll")).toHaveCount(0);
+  await panel.locator(".execution-toggle").click();
+  await expect(panel.locator(".execution-scroll")).toContainText("npm test");
+  state.activityRequests = [];
+  await page.reload();
+  await expect(panel.locator(".execution-status")).toHaveText("已完成");
+  expect(state.activityRequests.every((q) => !q.includes("steps=true"))).toBe(true);
+  expect(await panel.evaluate((el) => el.previousElementSibling?.textContent)).toContain("发布检查已完成");
+  expect(await panel.evaluate((el) => el.nextElementSibling?.textContent)).toContain("接下来检查另外一个项目");
+  await panel.locator(".execution-toggle").click();
+  await expect(panel.locator(".execution-scroll")).toContainText("npm test");
+  expect(errors).toEqual([]);
+});
+
+test("collapsed completion before the answer remains anchored and later runs keep separate records", async ({
+  page,
+}) => {
+  const { state, errors } = await setup(page);
+  const first = page.locator('[data-execution-task="task-1"]');
+  state.runStatus = "completed";
+  await emit(page, "task.status", { id: "task-1", status: "completed", owner_role_id: "role-1" });
+  await expect(first.locator(".execution-status")).toHaveText("已完成");
+  await expect(first.locator(".execution-toggle")).toHaveAttribute("aria-expanded", "false");
+  const partial = { ...state.messages[1], id: "partial-1", task_id: "task-1", content: "已完成第一项检查。" };
+  const answer = { ...partial, id: "answer-1", content: "全部检查完成。" };
+  for (const message of [partial, answer]) {
+    state.messages.push(message);
+    await emit(page, "message.created", message);
+  }
+  await expect(first).toHaveCount(1);
+  expect(await first.evaluate((el) => el.previousElementSibling?.textContent)).toContain("全部检查完成");
+  state.otherRuns.set("task-2", { status: "running", rounds: 1, commands: 1, tokens: 2500 });
+  await emit(page, "task.created", { id: "task-2", status: "running", owner_role_id: "role-1" });
+  const second = page.locator('[data-execution-task="task-2"]');
+  await expect(second.locator(".execution-stats")).toContainText("2.5K");
+  await expect(first.locator(".execution-stats")).toContainText("3.8K");
+  const nextAnswer = { ...answer, id: "answer-2", task_id: "task-2", content: "第二项工作完成。" };
+  state.messages.push(nextAnswer);
+  await emit(page, "message.created", nextAnswer);
+  state.otherRuns.get("task-2")!.status = "completed";
+  await emit(page, "task.status", { id: "task-2", status: "completed", owner_role_id: "role-1" });
+  await expect(second.locator(".execution-status")).toHaveText("已完成");
+  // Forwarded replies link to their source topic; they must not load an unrelated run here.
+  state.messages.push({
+    ...answer,
+    id: "forwarded",
+    task_id: "remote-task",
+    topic_delivery: { source_topic_id: "elsewhere" },
+  } as typeof answer);
+  await page.reload();
+  await expect(page.locator(".execution-progress")).toHaveCount(2);
+  await expect(first.locator(".execution-status")).toHaveText("已完成");
+  await expect(second.locator(".execution-status")).toHaveText("已完成");
+  expect(await first.evaluate((el) => el.previousElementSibling?.textContent)).toContain("全部检查完成");
+  expect(await second.evaluate((el) => el.previousElementSibling?.textContent)).toContain("第二项工作完成");
+  await page.locator(".md-mermaid svg").waitFor();
+  expect(
+    await first.evaluate(
+      (el) =>
+        el.getBoundingClientRect().top -
+        el.previousElementSibling!.querySelector(".msg-text")!.getBoundingClientRect().bottom,
+    ),
+  ).toBeLessThanOrEqual(12);
+  await page.screenshot({ path: ".tmp/retained-execution-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "关闭工作区" }).click();
+  await page.screenshot({ path: ".tmp/retained-execution-mobile.png" });
   expect(errors).toEqual([]);
 });
 

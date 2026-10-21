@@ -113,6 +113,8 @@ test("stream completion leaves one persisted answer and follows asynchronously r
     task_id: "task-1",
     content,
   };
+  state.messages.push(answer);
+  state.runStatus = "completed";
   await emit(page, "message.created", answer);
   await emit(page, "task.status", { id: "task-1", status: "completed", owner_role_id: "role-1" });
   await expect(page.locator(".msg-live")).toHaveCount(0);
