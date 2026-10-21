@@ -24,7 +24,7 @@ import {
   users,
 } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
-import { type ChannelInfo, channelsOf } from "../integrations/links.js";
+import { type ChannelInfo, channelsOf, externalRoleId } from "../integrations/links.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
@@ -38,6 +38,17 @@ import { authed, body, extractToken, params, query, row } from "./http.js";
 import { sessionOut } from "./sessions.js";
 
 const MAX_UPLOAD = 50 * 1024 * 1024;
+
+/**
+ * A topic linked to a Slack, Feishu or GitHub conversation: its people are the conversation's, and its role is the
+ * one the connection's bot stands for (changed on the connection, which replaces it in every linked topic).
+ */
+async function refuseExternalMembers(db: Db, topic: Topic): Promise<void> {
+  if ((await externalRoleId(db, topic.id)) !== undefined)
+    throw new BadRequest(
+      "members of a Slack, Feishu or GitHub conversation follow the conversation; its role is the one the connection's bot stands for",
+    );
+}
 
 async function participantsOut(db: Db, topic: Topic) {
   const out = [];
@@ -232,6 +243,7 @@ export async function topicRoutes(app: FastifyInstance) {
       if (!(await svc.canAdminister(db, user, topic))) throw new Forbidden("only console accounts can invite");
       if (topic.kind === "dm")
         throw new BadRequest("a DM is between one person and one role; start a topic to work with more");
+      await refuseExternalMembers(db, topic);
       if (b.type === "role") await svc.inviteRole(db, user, topic, String(b.id));
       else if (b.type === "user") {
         const [added] = await db
@@ -249,9 +261,8 @@ export async function topicRoutes(app: FastifyInstance) {
         db,
         topic,
         `${user.name} added ${change ? `@${change.role.handle}` : "a user"} to the topic.`,
-        {
-          participantChange: change,
-        },
+        // Who is in a topic is the console's business, not the linked conversations'.
+        { participantChange: change, mirror: false },
       );
       await audit(db, "topic.participant_add", { actorType: "user", actorId: user.id, topicId: topic.id, detail: b });
       return topicOut(db, topic, user, true);
@@ -264,6 +275,7 @@ export async function topicRoutes(app: FastifyInstance) {
       const p = params(req);
       const topic = await svc.getTopic(db, p.id);
       if (topic.kind === "dm") throw new BadRequest("a DM always keeps its person and its role");
+      await refuseExternalMembers(db, topic);
       if (!((await svc.canAdminister(db, user, topic)) || (p.type === "user" && p.pid === user.id)))
         throw new Forbidden("only topic owners can remove participants");
       if (!(await svc.removeParticipant(db, topic, p.type, p.pid))) throw new NotFound("not a participant");
@@ -274,9 +286,7 @@ export async function topicRoutes(app: FastifyInstance) {
         db,
         topic,
         `${change ? `@${change.role.handle ?? change.role.name}` : "A user"} left the topic.`,
-        {
-          participantChange: change,
-        },
+        { participantChange: change, mirror: false },
       );
       await audit(db, "topic.participant_remove", {
         actorType: "user",

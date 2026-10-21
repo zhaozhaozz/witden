@@ -7,7 +7,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { settings } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
-import { artifacts, connections, externalIdentities, messages, tasks, topics, users } from "../src/db/schema.js";
+import {
+  artifacts,
+  auditLogs,
+  connections,
+  externalIdentities,
+  messages,
+  outboundMessages,
+  tasks,
+  topicParticipants,
+  topics,
+  users,
+} from "../src/db/schema.js";
 import { deliverPending } from "../src/integrations/delivery.js";
 import { FeishuAdapter, messageText, setFeishuFetch } from "../src/integrations/feishu.js";
 import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/integrations/feishu-socket.js";
@@ -391,6 +402,66 @@ describe("feishu long connection", () => {
 describe("feishu groups and names", () => {
   const group = (text: string, id: string, o: { sender?: string; root?: string } = {}) =>
     textEvent(text, { id, chatType: "group", chat: "oc_group", atBot: true, ...o });
+
+  it("a new role for the bot replaces the old one in its conversations; their members are not managed in witden", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    w.scripts.dev = () => reply("好的");
+    await link.push(group("看一下", "om_r1"));
+    await link.push(textEvent("私聊一下", { id: "om_r2" }));
+    await w.waitFor(async () => (await allTasks()).length === 2);
+    await w.drain();
+    await deliverPending();
+    const sent = feishu.sent.length;
+    const topicIds = [...new Set((await allTasks()).map((t) => t.topicId))];
+    const roles = async (topicId: string) =>
+      (await db().select().from(topicParticipants).where(eq(topicParticipants.topicId, topicId)))
+        .filter((p) => p.participantType === "role")
+        .map(
+          (p) =>
+            `${p.participantId === w.ids.dev ? "dev" : p.participantId === w.ids.test ? "test" : "?"}${p.removedAt ? " (left)" : ""}`,
+        )
+        .sort();
+    for (const id of topicIds) expect(await roles(id)).toEqual(["dev"]);
+
+    // the bot now stands for @test: it replaces @dev in the group and the private chat at once
+    expect((await patch(conn.id, { settings: { role_id: w.ids.test } })).status).toBe(200);
+    for (const id of topicIds) expect(await roles(id)).toEqual(["dev (left)", "test"]);
+    // the console shows who left and who joined; Feishu is told nothing
+    const notices = await db().select().from(messages).where(eq(messages.authorType, "system"));
+    expect(notices.map((m) => m.content).sort()).toEqual([
+      "@dev left the topic.",
+      "@dev left the topic.",
+      "admin added @test to the topic.",
+      "admin added @test to the topic.",
+    ]);
+    for (const m of notices)
+      expect(await db().select().from(outboundMessages).where(eq(outboundMessages.messageId, m.id))).toEqual([]);
+    await deliverPending();
+    expect(feishu.sent).toHaveLength(sent);
+    // the first change chose @dev for the new connection; the second is the switch
+    const changes = await db().select().from(auditLogs).where(eq(auditLogs.action, "connection.role_change"));
+    expect(changes.map((c) => c.detail)).toContainEqual(
+      expect.objectContaining({ from: w.ids.dev, to: w.ids.test, topics: 2, removed: 2, added: 2 }),
+    );
+
+    // nobody is invited to or removed from a Feishu conversation here
+    const [groupTopic] = (await db().select().from(topics).where(eq(topics.kind, "group"))).filter((t) =>
+      topicIds.includes(t.id),
+    );
+    const invite = await w.api("POST", `/api/topics/${groupTopic.id}/participants`, {
+      token: w.adminToken,
+      json: { type: "role", id: w.ids.analyst },
+    });
+    expect(invite.status).toBe(400);
+    expect(invite.raw).toMatch(/follow the conversation/);
+    const removal = await w.api("DELETE", `/api/topics/${groupTopic.id}/participants/role/${w.ids.test}`, {
+      token: w.adminToken,
+    });
+    expect(removal.status).toBe(400);
+    expect(await roles(groupTopic.id)).toEqual(["dev (left)", "test"]);
+  });
 
   it("a group is one topic named after it; replies in a thread point at its first message and are answered there", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;

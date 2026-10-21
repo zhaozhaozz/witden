@@ -114,6 +114,8 @@ export async function saveMessage(
     round?: number;
     taskId?: string | null;
     approvalId?: string | null;
+    /** false: the console only, never sent to linked Slack, Feishu or GitHub conversations. */
+    mirror?: boolean;
   } = {},
 ): Promise<Message> {
   const mentions = opts.mentions ?? (await parseMentions(db, topic, content));
@@ -137,7 +139,7 @@ export async function saveMessage(
     .returning();
   await db.update(topics).set({ lastMessageAt: new Date() }).where(eq(topics.id, topic.id));
   await publish(db, "message.created", messageOut(msg), `topic:${topic.id}`);
-  await mirrorMessage(db, msg);
+  if (opts.mirror !== false) await mirrorMessage(db, msg);
   return msg;
 }
 
@@ -151,6 +153,7 @@ export function systemMessage(
     mentions?: Mention[];
     replyToId?: string | null;
     participantChange?: RoleParticipantChange;
+    mirror?: boolean;
   } = {},
 ) {
   return saveMessage(db, topic, "system", null, content, {
@@ -159,6 +162,7 @@ export function systemMessage(
     approvalId: opts.approvalId ?? null,
     replyToId: opts.replyToId ?? null,
     externalRef: opts.participantChange ? { participant_change: opts.participantChange } : null,
+    mirror: opts.mirror,
   });
 }
 

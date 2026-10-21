@@ -295,6 +295,13 @@
       "when": 1792514640690,
       "tag": "0041_webhook_source_secret",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1792566762553,
+      "tag": "0042_external_topic_roles",
+      "breakpoints": true
     }
   ]
 }

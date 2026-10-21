@@ -911,3 +911,63 @@ describe("0040_webhook_sources_only", () => {
     }
   });
 });
+
+describe("0042_external_topic_roles", () => {
+  it("leaves only the role the connection's bot stands for in its linked topics; console topics stay", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0042")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle) values
+        ('role_dev', 'Dev', 'dev'), ('role_review', 'Review', 'review'), ('role_lead', 'Lead', 'lead');
+      insert into connections (id, platform, name, settings) values
+        ('conn_f', 'feishu', 'Sciencediscovery', '{"role_id": "role_lead"}'),
+        ('conn_none', 'slack', 'No role yet', '{}');
+      insert into external_conversations (id, connection_id, external_id, kind) values
+        ('ecv_users', 'conn_f', 'oc_users', 'private'),
+        ('ecv_review', 'conn_f', 'oc_review', 'private'),
+        ('ecv_dm', 'conn_f', 'oc_dm', 'im'),
+        ('ecv_slack', 'conn_none', 'C1', 'public');
+      insert into topics (id, title, kind) values
+        ('top_users', '#users', 'group'), ('top_review', '#review', 'group'), ('top_dm', 'dm', 'dm'),
+        ('top_slack', '#c1', 'group'), ('top_console', 'console', 'group');
+      insert into external_thread_links (id, connection_id, conversation_id, thread_key, topic_id) values
+        ('lnk_1', 'conn_f', 'ecv_users', '__channel__', 'top_users'),
+        ('lnk_2', 'conn_f', 'ecv_review', '__channel__', 'top_review'),
+        ('lnk_3', 'conn_f', 'ecv_dm', '__dm__', 'top_dm'),
+        ('lnk_4', 'conn_none', 'ecv_slack', '__channel__', 'top_slack');
+      insert into topic_participants (id, topic_id, participant_type, participant_id) values
+        ('tp_1', 'top_users', 'role', 'role_dev'),
+        ('tp_2', 'top_review', 'role', 'role_review'),
+        ('tp_3', 'top_review', 'role', 'role_lead'),
+        ('tp_4', 'top_dm', 'role', 'role_dev'),
+        ('tp_5', 'top_dm', 'user', 'usr_wang'),
+        ('tp_6', 'top_slack', 'role', 'role_dev'),
+        ('tp_7', 'top_console', 'role', 'role_dev'),
+        ('tp_8', 'top_console', 'role', 'role_review');
+    `);
+    await apply(db, "0042_external_topic_roles");
+    const active = (
+      await db.query<{ topic_id: string; who: string }>(
+        `select topic_id, participant_type || ':' || participant_id as who from topic_participants
+         where removed_at is null order by topic_id, who`,
+      )
+    ).rows.map((r) => `${r.topic_id} ${r.who}`);
+    expect(active).toEqual([
+      "top_console role:role_dev",
+      "top_console role:role_review",
+      "top_dm role:role_lead",
+      "top_dm user:usr_wang",
+      "top_review role:role_lead",
+      "top_users role:role_lead",
+    ]);
+    // the earlier rows are kept as history, marked removed
+    expect((await db.query("select id from topic_participants where removed_at is not null order by id")).rows).toEqual(
+      [{ id: "tp_1" }, { id: "tp_2" }, { id: "tp_4" }, { id: "tp_6" }],
+    );
+    await db.close();
+  });
+});

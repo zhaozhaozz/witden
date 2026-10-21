@@ -29,6 +29,7 @@ import {
   grantedScopes,
   productStatus,
 } from "../integrations/feishu-tools.js";
+import { connectionRoleId } from "../integrations/links.js";
 import { parseGrant } from "../integrations/platform-tools.js";
 import {
   appCredentials,
@@ -52,6 +53,7 @@ import { webhookStatus } from "../integrations/webhook-status.js";
 import { secretBox } from "../security/crypto.js";
 import { Perm, requirePerm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { rebindConnectionTopics } from "../services/connection-role.js";
 import { wake } from "../services/events.js";
 import { webhookBase } from "../services/public-url.js";
 import { authed, authedNoTx, body, params, query, row } from "./http.js";
@@ -351,7 +353,19 @@ export async function integrationRoutes(app: FastifyInstance) {
       const [updated] = Object.keys(update).length
         ? await db.update(connections).set(update).where(eq(connections.id, conn.id)).returning()
         : [conn];
-      // Roles taken off the external members' list stop their work at once.
+      // A new role for the bot replaces the previous one in every conversation linked to the connection.
+      const roleFrom = connectionRoleId(conn);
+      const roleTo = connectionRoleId(updated);
+      if (roleFrom !== roleTo) {
+        const rebound = await rebindConnectionTopics(db, updated, user.name);
+        await audit(db, "connection.role_change", {
+          actorType: "user",
+          actorId: user.id,
+          connectionId: conn.id,
+          detail: { from: roleFrom, to: roleTo, ...rebound },
+        });
+      }
+      // Roles taken off the external members' list, or out of its conversations, stop their work at once.
       if (b.settings) await recheckActiveTasks(db, "the connection's settings changed");
       await audit(db, "connection.update", {
         actorType: "user",

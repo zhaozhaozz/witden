@@ -2,7 +2,16 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import type { AgentSession, Approval, Artifact, Task, Topic } from "../../api/types";
-import { fmtBytes, fmtRelative, fmtTime, fmtTokens, isActiveTask, isRestricted, RESPONSE_MODE } from "../../lib/format";
+import {
+  fmtBytes,
+  fmtRelative,
+  fmtTime,
+  fmtTokens,
+  isActiveTask,
+  isRestricted,
+  PLATFORM_LABEL,
+  RESPONSE_MODE,
+} from "../../lib/format";
 import { type Resource, useResource } from "../../lib/hooks";
 import { useAuth, useDirectory } from "../../lib/session";
 import { useTopics } from "../../lib/topics";
@@ -379,6 +388,8 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
   const { run } = useAction();
   const [inviting, setInviting] = useState(false);
   const participants = topic.participants ?? [];
+  // A Slack, Feishu or GitHub conversation: its people come with it, and its role is the one its bot stands for.
+  const external = topic.channel ?? null;
 
   const remove = async (type: string, id: string, name: string) => {
     const self = type === "user" && id === me?.id;
@@ -411,12 +422,19 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
           {participants.filter((p) => p.type === "user").length} 位成员 ·{" "}
           {participants.filter((p) => p.type === "role").length} 个角色
         </span>
-        {topic.can_post ? (
+        {topic.can_post && !external ? (
           <button type="button" className="btn btn-xs" onClick={() => setInviting(true)}>
             邀请
           </button>
         ) : null}
       </div>
+      {external ? (
+        <p className="small muted side-note">
+          这是 {PLATFORM_LABEL[external.platform] ?? external.platform} 中的会话：成员就是会话里的人，角色是接入「
+          {external.connection_name}
+          」的机器人代表的角色，不能在这里邀请或移除。要换角色，在接入设置中修改机器人代表的角色，所有关联的会话会一起更换。
+        </p>
+      ) : null}
       <ul className="people">
         {participants.map((p) => (
           <li key={`${p.type}:${p.id}`} className="person">
@@ -430,9 +448,11 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
               </div>
               <div className="small muted">{fmtRelative(p.joined_at)}加入</div>
             </div>
-            <button type="button" className="btn btn-xs btn-ghost" onClick={() => void remove(p.type, p.id, p.name)}>
-              {p.type === "user" && p.id === me?.id ? "离开" : "移除"}
-            </button>
+            {external ? null : (
+              <button type="button" className="btn btn-xs btn-ghost" onClick={() => void remove(p.type, p.id, p.name)}>
+                {p.type === "user" && p.id === me?.id ? "离开" : "移除"}
+              </button>
+            )}
           </li>
         ))}
       </ul>
