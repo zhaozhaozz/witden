@@ -4791,9 +4791,38 @@ body.resizing {
 
 /* A topic's response mode: a small switch in the header, explained on hover; options in settings. */
 .mode-switch {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* Right after switching to auto without a dispatcher model: what that means, and where to set one. */
+.mode-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--wait);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.mode-tip-inline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 .mode-switch .segmented {
   padding: 1px;

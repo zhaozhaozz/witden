@@ -75,7 +75,11 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       { method: "DELETE", path: "/api/models/:id" },
       { method: "POST", path: "/api/models/:id/check", note: "check what the model can do" },
       { method: "GET", path: "/api/settings/dispatcher" },
-      { method: "PUT", path: "/api/settings/dispatcher", note: "model_config_id (a System One model) or null" },
+      {
+        method: "PUT",
+        path: "/api/settings/dispatcher",
+        note: "model_config_id (a System One decision model or a chat model) or null",
+      },
     ],
   },
   {

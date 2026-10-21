@@ -50,7 +50,7 @@ witden 让你拥有一组“AI 员工”。每位 AI 员工（称为**角色**�
 - 模型的上下文长度、思考程度等资料取自 [models.dev](https://models.dev)，在模型页一键更新：优先使用模型厂商官方的资料；服务商本身是 models.dev 收录的第三方（如 OpenRouter）时，使用这家第三方的资料。
 - 添加模型服务时可以直接选择常见服务（OpenAI、Anthropic、DeepSeek、通义千问、Kimi、智谱、OpenRouter 等），只需填写 API Key；首次使用引导与模型页使用同一套界面。
 - 角色可以设置思考程度（effort）：模型服务报告了某个模型支持的等级时（如 Anthropic、DeepSeek、OpenRouter），只列出这些等级；服务不报告时，使用模型资料（[models.dev](https://models.dev)）中列出的等级，或列出常见等级。各种接口按自己的参数发送；DeepSeek 等返回的思考内容会在后续请求中带回。
-- 支持 System 1 决策模型（System One 接口）：TypeSafe Jev 和开源的 Laya。它们针对给定内容回答选择题并给出概率，响应快，用作话题调度模型；Laya 可以作为 Docker Compose 的可选服务一起部署。
+- 支持 System 1 决策模型（System One 接口）：TypeSafe Jev 和开源的 Laya。它们针对给定内容回答选择题并给出概率，响应快，推荐用作话题调度模型；也可以用普通对话模型调度，它会参考前几条消息。Laya 可以作为 Docker Compose 的可选服务一起部署。
 
 ## 系统组成
 

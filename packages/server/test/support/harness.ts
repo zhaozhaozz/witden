@@ -1,5 +1,6 @@
 /** Test harness: a full witden in one process on embedded PostgreSQL, with simulated computers. */
 
+import { DISPATCH_PROMPT } from "../../src/agent/chat-dispatch.js";
 import type { ChatMessage, LLMResponse, OnDelta, ToolCall, ToolSchema } from "../../src/agent/llm.js";
 import { setFetch } from "../../src/agent/llm.js";
 import { Worker } from "../../src/agent/worker.js";
@@ -127,8 +128,8 @@ export function useScripts(scriptFor: (handle: string) => Script | undefined): v
   setModelFactory(() => ({
     async complete(messages: ChatMessage[], tools?: ToolSchema[], onDelta?: OnDelta) {
       const system = String(messages[0]?.content ?? "");
-      // Roles are recognised by the "(@handle)" in their prompt.
-      const m = /\(@([a-z0-9_.-]+)\)/.exec(system);
+      // Roles are recognised by the "(@handle)" in their prompt; a chat-model dispatcher is "dispatcher".
+      const m = system === DISPATCH_PROMPT ? [system, "dispatcher"] : /\(@([a-z0-9_.-]+)\)/.exec(system);
       const script = m ? scriptFor(m[1]) : undefined;
       const out = script ? script(messages, tools) : reply(`${m?.[1] ?? "?"} has nothing to say`);
       // Stream the answer in a few pieces, like a real endpoint.

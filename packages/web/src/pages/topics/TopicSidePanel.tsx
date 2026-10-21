@@ -28,6 +28,7 @@ import { ApprovalCard } from "../approvalParts";
 import { MemoryList } from "../memoryParts";
 import { SessionRuns } from "../sessionParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
+import { NoDispatcherNotice } from "./ResponseMode";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { TopicLinksTab } from "./TopicLinksTab";
 import { TriggersTab } from "./TriggersTab";
@@ -709,6 +710,7 @@ function SettingsTab({
                 </label>
               ))}
             </div>
+            <NoDispatcherNotice auto={responseMode === "auto"} />
           </FieldGroup>
         ) : null}
         {topic.channel ? null : (

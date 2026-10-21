@@ -69,7 +69,9 @@ export async function modelRoutes(app: FastifyInstance) {
       return {
         model_config_id: found ? found.model.id : null,
         model: found ? { id: found.model.id, label: svc.modelLabel(found.model, found.provider) } : null,
-        usable: !!found && svc.isSystemOne(found.provider) && !svc.unusableReason(found.model, found.provider),
+        // A System One decision model (fast, one question) or an ordinary chat model (agent/router.ts).
+        kind: found ? (svc.isSystemOne(found.provider) ? "decision" : "chat") : null,
+        usable: !!found && !svc.unusableReason(found.model, found.provider),
       };
     }),
   );
@@ -81,9 +83,6 @@ export async function modelRoutes(app: FastifyInstance) {
       if (id) {
         const found = await svc.modelWithProvider(db, String(id));
         if (!found) throw new BadRequest("model not found");
-        // The dispatcher asks typed questions (agent/router.ts): only System One decision models answer them.
-        if (!svc.isSystemOne(found.provider))
-          throw new BadRequest("the dispatcher must be a System One decision model (TypeSafe Jev, Laya)");
       }
       await putSetting(db, DISPATCHER, { model_config_id: id }, user.id);
       await audit(db, "settings.dispatcher", { actorType: "user", actorId: user.id, detail: { model_config_id: id } });

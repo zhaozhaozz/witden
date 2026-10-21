@@ -4,7 +4,7 @@
  * to models (rows of model_configs), never to providers.
  *
  * Chat models (OpenAI-compatible and Anthropic protocols) do the roles' work. System One decision models
- * (protocol "systemone": TypeSafe Jev, Laya) answer typed questions only; the topic dispatcher uses them.
+ * (protocol "systemone": TypeSafe Jev, Laya) answer typed questions only. The topic dispatcher uses either kind.
  */
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { buildModel, type ChatModel, listModels, probeCapabilities, type RemoteModel } from "../agent/llm.js";

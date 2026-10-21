@@ -390,9 +390,9 @@ export const RESPONSE_MODE: Record<"mention" | "auto", { label: string; short: s
   },
 };
 
-/** System One decision models (provider protocol "systemone"): the only kind the topic dispatcher uses. */
+/** System One decision models (provider protocol "systemone"): a fast kind of topic dispatcher. */
 export const SYSTEM_ONE_HINT =
-  "System 1 模型（如 TypeSafe Jev、开源的 Laya）不生成文字，而是针对给定内容回答选择、是否、打分等问题并给出概率，一次判断通常只需几十到几百毫秒。witden 用它做话题调度；它不能对话、不能调用工具，因此不能用作角色的模型。";
+  "System 1 模型（如 TypeSafe Jev、开源的 Laya）不生成文字，而是针对给定内容回答选择、是否、打分等问题并给出概率，一次判断通常只需几十到几百毫秒。witden 可以用它做话题调度；它不能对话、不能调用工具，因此不能用作角色的模型。";
 
 export function fmtLatency(ms: number | undefined): string | null {
   if (ms === undefined || ms === null) return null;

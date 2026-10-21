@@ -1,11 +1,13 @@
 /**
- * The dispatcher of "auto" topics with several roles: for a message nobody @-mentioned, a System One decision
- * model (TypeSafe Jev, Laya; agent/systemone.ts) decides which roles take it — none (small talk, people talking
- * to each other), usually one, or several when it needs different responsibilities. The chosen roles may still
- * decline (stay_silent).
+ * The dispatcher of "auto" topics with several roles: for a message nobody @-mentioned, the dispatcher model
+ * decides which roles take it — none (small talk, people talking to each other), usually one, or several when it
+ * needs different responsibilities. The chosen roles may still decline (stay_silent). The model is either a
+ * System One decision model (TypeSafe Jev, Laya; agent/systemone.ts), or an ordinary chat model
+ * (agent/chat-dispatch.ts), which also reads a few earlier messages.
  *
- * One ``choice`` question: which role should handle the message, or nobody. The most likely answer wins; when
- * it is a role, other roles at least ``ALSO`` likely take the message too. The state is the message alone:
+ * A decision model gets one ``choice`` question: which role should handle the message, or nobody. The most
+ * likely answer wins; when it is a role, other roles at least ``ALSO`` likely take the message too. The state is
+ * the message alone:
  * measured on a real Laya server with Chinese chat, separate yes/no questions per role and any earlier
  * messages in the state made the decisions much worse (a role's previous reply drew nearly every message to
  * that role). A reply to a role's question therefore needs an @ to reach it.
@@ -23,9 +25,10 @@ import { audit } from "../services/audit.js";
 import { relayFrom } from "../services/collaboration-policy.js";
 import * as models from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting } from "../services/platform-settings.js";
+import { chatDispatchRequest, chooseWithChat } from "./chat-dispatch.js";
 import { enqueue } from "./conversation.js";
 import { activeRoleIds, authorize, systemMessage } from "./dispatch.js";
-import type { Decision, DecisionModel, Question } from "./systemone.js";
+import type { Decision, Question } from "./systemone.js";
 import { authorName } from "./tools.js";
 import { linkedCandidates } from "./topic-messaging.js";
 
@@ -48,16 +51,24 @@ export async function claimRoutes(db: Db, limit: number): Promise<string[]> {
   return ((rows as any).rows ?? rows).map((r: any) => r.message_id as string);
 }
 
+/** What the dispatcher model chose, why (kept in each assignment's trace), and the tokens it used. */
+interface Dispatch {
+  roles: Role[];
+  reason: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 interface Prepared {
   msg: Message;
   topic: Topic;
   userId: string;
   candidates: Role[];
-  model: DecisionModel | null;
+  /** Calls the dispatcher model (outside any transaction); null when it cannot run. */
+  decide: (() => Promise<Dispatch>) | null;
   modelConfigId: string | null;
   /** Why the dispatcher cannot run (shown to people once in a while). */
   problem: string | null;
-  request: { state: unknown; questions: Record<string, Question> } | null;
 }
 
 /** Route one claimed message. Technical failures stay in the route row and console audit. */
@@ -67,27 +78,20 @@ export async function routeMessage(messageId: string): Promise<void> {
     if (!p) return;
     // Work sent from a linked topic always reaches exactly one role here: the sender expects it handled.
     const linked = p.msg.source === "topic";
-    if (p.candidates.length <= 1 || !p.model || !p.request) {
+    if (p.candidates.length <= 1 || !p.decide) {
       // One usable role: it decides itself. None, or no dispatcher: nobody takes the message (linked work: the
       // first role).
       const take = p.candidates.length === 1 || (linked && p.candidates.length) ? [p.candidates[0]] : [];
       await transaction((tx) => apply(tx, p, take, p.problem ?? ""));
       return;
     }
-    const answer = await p.model.decide(p.request.state, p.request.questions);
-    const decision = readDecision(answer, p.candidates);
-    if (linked) {
-      const odds = answer.answers.who?.probabilities ?? {};
-      const likeliest = [...p.candidates].sort((a, b) => (odds[b.handle] ?? 0) - (odds[a.handle] ?? 0))[0];
-      const top = decision.roles.find((r) => r.handle === answer.answers.who?.choice);
-      decision.roles = [top ?? likeliest];
-    }
+    const decision = await p.decide();
     await transaction(async (tx) => {
       await tx.insert(usageRecords).values({
         id: newId("use"),
         modelConfigId: p.modelConfigId,
-        promptTokens: answer.inputTokens,
-        completionTokens: answer.outputTokens,
+        promptTokens: decision.inputTokens,
+        completionTokens: decision.outputTokens,
       });
       await apply(tx, p, decision.roles, decision.reason);
     });
@@ -147,10 +151,9 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
     topic,
     userId: route.userId,
     candidates,
-    model: null,
+    decide: null,
     modelConfigId: null,
     problem: null,
-    request: null,
   };
   if (candidates.length <= 1) return base;
 
@@ -158,18 +161,40 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
   const found = setting?.model_config_id ? await models.modelWithProvider(db, setting.model_config_id) : null;
   let problem: string | null = null;
   if (!found) problem = "no dispatcher model is set (System administration → dispatcher)";
-  else if (!models.isSystemOne(found.provider)) problem = "the dispatcher model is not a System One decision model";
   else if (models.unusableReason(found.model, found.provider))
     problem = `the dispatcher model is unavailable: ${models.unusableReason(found.model, found.provider)}`;
   else if (topic.allowedModelConfigIds && !topic.allowedModelConfigIds.includes(found.model.id))
     problem = "this topic does not allow the dispatcher model";
   if (problem || !found) return { ...base, problem };
-  return {
-    ...base,
-    model: await models.decisionModelFor(db, found.model),
-    modelConfigId: found.model.id,
-    request: await buildRequest(db, msg, candidates),
-  };
+  const linked = msg.source === "topic";
+  const label = models.modelLabel(found.model, found.provider);
+  let decide: () => Promise<Dispatch>;
+  if (models.isSystemOne(found.provider)) {
+    const model = await models.decisionModelFor(db, found.model);
+    const request = await buildRequest(db, msg, candidates);
+    decide = async () => {
+      const answer = await model.decide(request.state, request.questions);
+      const decision = readDecision(answer, candidates);
+      if (linked) {
+        const odds = answer.answers.who?.probabilities ?? {};
+        const likeliest = [...candidates].sort((a, b) => (odds[b.handle] ?? 0) - (odds[a.handle] ?? 0))[0];
+        const top = decision.roles.find((r) => r.handle === answer.answers.who?.choice);
+        decision.roles = [top ?? likeliest];
+      }
+      return { ...decision, inputTokens: answer.inputTokens, outputTokens: answer.outputTokens };
+    };
+  } else {
+    const model = await models.chatModelFor(db, found.model);
+    const request = await chatDispatchRequest(db, msg, candidates);
+    decide = async () => {
+      const chosen = await chooseWithChat(model, request, candidates);
+      // Linked work always reaches exactly one role: the first chosen, else the first offered.
+      const roles = linked ? [chosen.roles[0] ?? candidates[0]] : chosen.roles;
+      const picked = roles.map((r) => `@${r.handle}`).join(", ") || "no role";
+      return { ...chosen, roles, reason: `${label}: ${picked}${chosen.reason ? ` — ${chosen.reason}` : ""}` };
+    };
+  }
+  return { ...base, decide, modelConfigId: found.model.id };
 }
 
 const clip = (text: string, max: number) => text.replace(/\s+/g, " ").trim().slice(0, max);

@@ -357,7 +357,7 @@ export async function addModels(provider: ModelProvider, choices: ModelChoice[])
   );
 }
 
-/** A model select grouped by service: chat models for roles, decision models for the dispatcher. */
+/** A model select grouped by service: chat models for roles, either kind for the dispatcher. */
 export function ModelSelect({
   models,
   value,
@@ -370,7 +370,7 @@ export function ModelSelect({
   models: ModelConfig[];
   value: string;
   onChange: (id: string) => void;
-  kind: "chat" | "decision";
+  kind: "chat" | "decision" | "all";
   none?: string;
   /** The model in use when it is not in the list (removed, or not visible). */
   current?: { id: string; label: string } | null;
@@ -380,7 +380,7 @@ export function ModelSelect({
   const groups = useMemo(() => {
     const out = new Map<string, ModelConfig[]>();
     for (const m of models) {
-      if ((m.provider?.protocol === "systemone") !== (kind === "decision")) continue;
+      if (kind !== "all" && (m.provider?.protocol === "systemone") !== (kind === "decision")) continue;
       const key = m.provider?.name ?? "";
       out.set(key, [...(out.get(key) ?? []), m]);
     }

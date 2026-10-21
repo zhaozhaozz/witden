@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setFetch } from "../src/agent/llm.js";
 import { db } from "../src/db/client.js";
 import { messageRoutes, usageRecords } from "../src/db/schema.js";
-import { DISPATCHER, putSetting } from "../src/services/platform-settings.js";
 import { call, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
@@ -56,6 +55,21 @@ async function decisionService(pick: (latest: string) => string[] = () => []) {
     json: { name: "Laya", protocol: "systemone", base_url: LAYA, api_key: "laya-key", models: ["multilingual"] },
   });
   return { id: provider.body.models[0].id as string, requests };
+}
+
+/** An ordinary chat model for the dispatcher, apart from the roles' model (its answers: scripts.dispatcher). */
+async function chatDispatcherModel() {
+  const provider = await w.api("POST", "/api/model-providers", {
+    token: w.adminToken,
+    json: {
+      name: "Fast",
+      protocol: "openai",
+      base_url: "https://fast.example/v1",
+      api_key: "sk-fast-1234567890",
+      models: ["fast-chat"],
+    },
+  });
+  return provider.body.models[0].id as string;
 }
 
 describe("mention mode (default)", () => {
@@ -198,27 +212,90 @@ describe("auto mode", () => {
     expect(notes[0].content).toContain("no dispatcher model");
   });
 
-  it("the dispatcher model is a platform setting, and only System One decision models qualify", async () => {
+  it("the dispatcher model is a platform setting: a System One decision model or a chat model", async () => {
     const laya = await decisionService();
     const put = (token: string, id: string) =>
       w.api("PUT", "/api/settings/dispatcher", { token, json: { model_config_id: id } });
-    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.model_config_id).toBeNull();
-    const chat = await put(w.adminToken, w.ids.model);
-    expect([chat.status, chat.raw.includes("System One")]).toEqual([400, true]);
+    const get = async () => (await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body;
+    expect((await get()).model_config_id).toBeNull();
+    expect((await put(w.adminToken, "mdl_missing")).status).toBe(400);
     expect((await put(w.adminToken, laya.id)).status).toBe(200);
-    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body).toMatchObject({
-      model_config_id: laya.id,
-      usable: true,
-    });
-
-    // a chat model left over from an older setting is not used, and people are told why
-    await putSetting(db(), DISPATCHER, { model_config_id: w.ids.model }, w.ids.alice);
-    expect((await w.api("GET", "/api/settings/dispatcher", { token: w.bob })).body.usable).toBe(false);
+    expect(await get()).toMatchObject({ model_config_id: laya.id, kind: "decision", usable: true });
+    const chat = await chatDispatcherModel();
+    expect((await put(w.adminToken, chat)).status).toBe(200);
+    expect(await get()).toMatchObject({ model_config_id: chat, kind: "chat", usable: true });
+    // a disabled model is kept as the setting, but not used, and people are told why
+    await w.api("PATCH", `/api/models/${chat}`, { token: w.adminToken, json: { enabled: false } });
+    expect((await get()).usable).toBe(false);
     await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
     await say(w.alice, w.ids.topic, "有人在吗");
     await w.drain();
+    expect(await tasksIn(w.ids.topic)).toHaveLength(0);
     const note = (await w.messages(w.ids.topic)).find((m: any) => m.author_type === "system");
-    expect(note.content).toContain("not a System One decision model");
+    expect(note.content).toContain("the dispatcher model is unavailable");
+  });
+
+  it("a chat model dispatches with earlier messages as context, by calling choose_roles", async () => {
+    const chat = await chatDispatcherModel();
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: chat } });
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    const asked: { text: string; tools: string[] }[] = [];
+    // "可以" alone means nothing; after test's question it is test's answer
+    w.scripts.dispatcher = (messages, _turn, tools) => {
+      const text = String(messages.at(-1)?.content ?? "");
+      asked.push({ text, tools: (tools ?? []).map((t) => t.name) });
+      const latest = text.split("Latest message:").pop() ?? "";
+      if (latest.includes("一起")) return reply("", [call("choose_roles", { roles: ["@analyst", "dev", "ghost"] })]);
+      if (latest.includes("可以") && text.includes("要不要先跑回归"))
+        return reply("", [call("choose_roles", { roles: ["test"], reason: "answers test's question" })]);
+      if (latest.includes("回归")) return reply('{"roles": ["test"]}'); // a text answer is accepted too
+      return reply("", [call("choose_roles", { roles: [] })]);
+    };
+    w.scripts.dev = () => reply("dev 在");
+    w.scripts.analyst = () => reply("analyst 在");
+    w.scripts.test = (_m, turn) => (turn === 0 ? reply("要不要先跑回归？") : reply("好"));
+
+    await say(w.alice, w.ids.topic, "今天的回归能跑吗？");
+    await w.drain();
+    let tasks = await tasksIn(w.ids.topic);
+    expect(tasks.map((t) => t.owner_role_id)).toEqual([w.ids.test]);
+    expect(asked[0].tools).toEqual(["choose_roles"]);
+    expect(asked[0].text).toContain("- @test:");
+    expect(asked[0].text).toMatch(/Latest message:\n.+: 今天的回归能跑吗？$/);
+
+    await say(w.bob, w.ids.topic, "哈哈，辛苦了");
+    await w.drain();
+    expect(await tasksIn(w.ids.topic)).toHaveLength(1);
+
+    // test asked a question in its reply; the answer reaches it without an @
+    await say(w.alice, w.ids.topic, "可以");
+    await w.drain();
+    tasks = await tasksIn(w.ids.topic);
+    expect(tasks.filter((t) => t.owner_role_id === w.ids.test).length).toBeGreaterThanOrEqual(1);
+    const route = (await db().select().from(messageRoutes)).find((r) => r.result?.reason?.includes("answers test"));
+    expect(route?.result).toMatchObject({ roles: ["test"] });
+    expect(asked.at(-1)!.text).toContain("Earlier messages (oldest first):");
+
+    await say(w.alice, w.ids.topic, "这个问题需要你们一起看看");
+    await w.drain();
+    const routes = await db().select().from(messageRoutes);
+    // unknown handles are dropped; the model's order is kept
+    expect(routes.find((r) => r.result?.roles?.includes("analyst"))?.result?.roles).toEqual(["analyst", "dev"]);
+    expect(routes.every((r) => r.status === "done")).toBe(true);
+    const usage = await db().select().from(usageRecords).where(eq(usageRecords.modelConfigId, chat));
+    expect(usage.map((u) => u.taskId)).toEqual([null, null, null, null]);
+  });
+
+  it("a chat model that does not answer with choose_roles is retried, then people are told", async () => {
+    const chat = await chatDispatcherModel();
+    await w.api("PUT", "/api/settings/dispatcher", { token: w.adminToken, json: { model_config_id: chat } });
+    await w.api("PATCH", `/api/topics/${w.ids.topic}`, { token: w.alice, json: { response_mode: "auto" } });
+    w.scripts.dispatcher = () => reply("I think dev should answer.");
+    await say(w.alice, w.ids.topic, "请处理这个问题");
+    for (let i = 0; i < 3; i++) await w.drain();
+    expect(await tasksIn(w.ids.topic)).toHaveLength(0);
+    const notices = (await w.messages(w.ids.topic)).filter((m: any) => m.author_type === "system");
+    expect(notices.map((m: any) => m.content)).toEqual(["暂时无法自动选择回答的角色，请直接 @ 需要的角色。"]);
   });
 
   it("WITDEN_LAYA_URL adds that Laya server once, as the dispatcher when none is set", async () => {
