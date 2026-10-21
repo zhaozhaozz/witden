@@ -2,7 +2,7 @@
  * What the role of an external conversation (Slack, Feishu, GitHub) may learn about the internal topics linked to
  * it: the state of their work and of the requests it sent there, never their messages, transcripts or files (a
  * conversation run shows no chat text unless this conversation's own request started it). The
- * link is the grant, as for send_message (00 的 D82, D99): no permission and no approval. Like an answer relayed
+ * link is the grant, as for send_message (00 的 D82, D101): no permission and no approval. Like an answer relayed
  * from the internal topic, what this returns may be told to the external conversation's people; the boundaries
  * that remain after D68 still hold: a console DM's own work stays private (D58), the system administrator's
  * configuration work is not shown, and credentials are masked before anything is clipped.
