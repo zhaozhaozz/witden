@@ -28,6 +28,7 @@ import { audit } from "../services/audit.js";
 import { relayFrom } from "../services/collaboration-policy.js";
 import { publish, wake } from "../services/events.js";
 import * as models from "../services/model-configs.js";
+import { participantChangeOf, type RoleParticipantChange } from "../services/participant-notices.js";
 import * as topicSvc from "../services/topics.js";
 import { setStatus } from "./control.js";
 import { enqueue, rolesAwaiting } from "./conversation.js";
@@ -67,6 +68,7 @@ export function messageOut(msg: Message) {
     reply_to_id: msg.replyToId,
     task_id: msg.taskId,
     approval_id: msg.deletedAt ? null : msg.approvalId,
+    participant_change: participantChangeOf(msg),
     attachments: msg.attachments,
     source: msg.source,
     round: msg.round,
@@ -141,13 +143,20 @@ export function systemMessage(
   db: Db,
   topic: Topic,
   content: string,
-  opts: { taskId?: string | null; approvalId?: string; mentions?: Mention[]; replyToId?: string | null } = {},
+  opts: {
+    taskId?: string | null;
+    approvalId?: string;
+    mentions?: Mention[];
+    replyToId?: string | null;
+    participantChange?: RoleParticipantChange;
+  } = {},
 ) {
   return saveMessage(db, topic, "system", null, content, {
     mentions: opts.mentions ?? [],
     taskId: opts.taskId ?? null,
     approvalId: opts.approvalId ?? null,
     replyToId: opts.replyToId ?? null,
+    externalRef: opts.participantChange ? { participant_change: opts.participantChange } : null,
   });
 }
 

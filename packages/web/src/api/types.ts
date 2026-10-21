@@ -102,6 +102,12 @@ export interface Message {
   reply_to_id: string | null;
   task_id: string | null;
   approval_id?: string | null;
+  /** The affected role at the time it joined or left, independent of current topic membership. */
+  participant_change?: {
+    action: "added" | "removed";
+    actor_name: string;
+    role: { id: string; name: string; handle: string | null; color: string | null; avatar_url: string | null };
+  } | null;
   attachments: string[];
   /** Sent from a linked topic: the topic it came from. */
   topic_delivery?: { source_topic_id: string } | null;

@@ -140,9 +140,18 @@ export function MessageItem({
         </div>
       );
     }
+    const change = !msg.deleted ? msg.participant_change : null;
     return (
       <div className="msg-system" title={fmtDateTime(msg.created_at)}>
-        <span>{msg.content}</span>
+        {change ? (
+          <span className="msg-participant-change">
+            {change.action === "added" ? <span>{change.actor_name} 邀请</span> : null}
+            <RoleBadge role={change.role} />
+            <span>{change.action === "added" ? "加入话题" : "离开了话题"}</span>
+          </span>
+        ) : (
+          <span>{msg.content}</span>
+        )}
         {msg.task_id ? (
           <Link to={`/tasks/${msg.task_id}`} className="small">
             任务详情

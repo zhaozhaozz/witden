@@ -30,6 +30,7 @@ import { audit } from "../services/audit.js";
 import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
 import { erased } from "../services/memories.js";
 import { purgeMessage } from "../services/messages.js";
+import { legacyParticipantChanges, roleParticipantChange } from "../services/participant-notices.js";
 import * as svc from "../services/topics.js";
 import { resolveToken } from "../services/users.js";
 import { pruneWebhookReceipts } from "../services/webhook-sources.js";
@@ -243,7 +244,15 @@ export async function topicRoutes(app: FastifyInstance) {
         if (added.externalConnectionId) throw new BadRequest("external members cannot be added to console topics");
         await svc.addParticipant(db, topic, "user", String(b.id), { invitedBy: user.id });
       } else throw new BadRequest("type must be user or role");
-      await systemMessage(db, topic, `${user.name} added a ${b.type} to the topic.`);
+      const change = b.type === "role" ? await roleParticipantChange(db, String(b.id), "added", user.name) : undefined;
+      await systemMessage(
+        db,
+        topic,
+        `${user.name} added ${change ? `@${change.role.handle}` : "a user"} to the topic.`,
+        {
+          participantChange: change,
+        },
+      );
       await audit(db, "topic.participant_add", { actorType: "user", actorId: user.id, topicId: topic.id, detail: b });
       return topicOut(db, topic, user, true);
     }),
@@ -260,7 +269,15 @@ export async function topicRoutes(app: FastifyInstance) {
       if (!(await svc.removeParticipant(db, topic, p.type, p.pid))) throw new NotFound("not a participant");
       const ids = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.topicId, topic.id))).map((t) => t.id);
       const cancelled = await recheckActiveTasks(db, "participant removed", ids);
-      await systemMessage(db, topic, `A ${p.type} left the topic.`);
+      const change = p.type === "role" ? await roleParticipantChange(db, p.pid, "removed", user.name) : undefined;
+      await systemMessage(
+        db,
+        topic,
+        `${change ? `@${change.role.handle ?? change.role.name}` : "A user"} left the topic.`,
+        {
+          participantChange: change,
+        },
+      );
       await audit(db, "topic.participant_remove", {
         actorType: "user",
         actorId: user.id,
@@ -299,7 +316,11 @@ export async function topicRoutes(app: FastifyInstance) {
         limit: Math.min(Number(q.limit ?? 100), 500),
         before: q.before ? new Date(q.before) : null,
       });
-      return msgs.map(messageOut);
+      const legacy = await legacyParticipantChanges(db, msgs);
+      return msgs.map((msg) => ({
+        ...messageOut(msg),
+        ...(legacy.has(msg.id) ? { participant_change: legacy.get(msg.id) } : {}),
+      }));
     }),
   );
 

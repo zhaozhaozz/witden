@@ -2749,6 +2749,22 @@ img.avatar-role.avatar-colored {
 .msg-system time {
   font-size: 11.5px;
 }
+.msg-participant-change {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.msg-participant-change > span {
+  min-width: 0;
+  max-width: 100%;
+}
+.msg-participant-change .badge-handle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .attach {
   display: inline-flex;
