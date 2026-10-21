@@ -7,8 +7,9 @@
  * 2. In the console the roles asked for: named, picked by the dispatcher, or the target of a role's @-mention or
  *    hand-over.
  * 3. Each role is then checked: it exists and is enabled, in a console topic it takes part, the person may use
- *    it (external members only their connection's role; when a role asks another role, its contacts decide
- *    instead), and it has a computer. A system administrator role works only in the console, only for people
+ *    it (external members only their connection's role; when a role asks another role, the person's permission
+ *    is not checked: an @-mention in the topic needs none, a hand-over is bounded by its contacts), and it has a
+ *    computer. A system administrator role works only in the console, only for people
  *    (never for another role) and needs no computer: its tools act on witden itself.
  *
  * The steps are recorded in a trace, kept with the task, so every assignment can be explained.
@@ -27,7 +28,7 @@ export interface RequestContext {
   /** public | private | im | mpim | internal */
   conversationKind: string;
   requestedRoleIds: string[];
-  /** A role asking another role (an @-mention or a hand-over), already limited by its contacts. */
+  /** A role asking another role: an @-mention within the topic, or a hand-over limited by its contacts. */
   byRoleId?: string | null;
 }
 

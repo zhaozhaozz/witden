@@ -553,8 +553,8 @@ async function queueRoute(db: Db, topic: Topic, msg: Message, user: User): Promi
 }
 
 /**
- * A role @-mentioning other roles asks them to respond (in their conversations here), bounded by contacts
- * and round limits.
+ * A role @-mentioning other roles of the topic asks them to respond (in their conversations here); no permission
+ * is needed, only the round limit applies.
  */
 export async function dispatchRoleMessage(
   db: Db,
@@ -590,13 +590,7 @@ export async function dispatchRoleMessage(
   for (const rid of targets) {
     const target = await topicSvc.getRole(db, rid);
     if (!target) continue;
-    const contacts: string[] = task.envelope.contacts ?? [];
-    if (!contacts.includes("*") && !contacts.includes(rid)) {
-      await systemMessage(db, topic, `@${sender.handle} is not allowed to contact @${target.handle}.`, {
-        taskId: task.id,
-      });
-      continue;
-    }
+    // Roles of the same topic @ each other freely; contacts bound delegation and messages to other topics.
     const { allowed, refusals } = await authorize(db, topic, task.requesterUserId, [rid], sender.id);
     if (!allowed.length) {
       await systemMessage(db, topic, `Not forwarded: ${refusals.join("; ")}`, { taskId: task.id });

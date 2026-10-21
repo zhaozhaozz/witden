@@ -204,6 +204,40 @@ describe("permissions and isolation", () => {
     expect(texts.filter((t: string) => t.includes("your turn")).length).toBeLessThanOrEqual(4);
   });
 
+  it("roles of a topic @ each other without a permission; a mention brings in no one", async () => {
+    // test may not delegate or reach other topics; an older per-tool approval of message_role no longer applies.
+    const limited = await w.api("PATCH", `/api/roles/${w.ids.test}`, {
+      token: w.adminToken,
+      json: { allowed_tools: ["shell"], approval_required: ["shell", "message_role"], allowed_contacts: [] },
+    });
+    expect(limited.status, limited.raw).toBe(200);
+    const outsider = await w.api("POST", "/api/roles", {
+      token: w.adminToken,
+      json: { name: "Outsider", handle: "outsider", model_config_id: w.ids.model, instance_id: w.ids.instance },
+    });
+    expect(outsider.status, outsider.raw).toBe(200);
+    let offered: string[] = [];
+    w.scripts.test = (m, turn, tools) => {
+      offered = (tools ?? []).map((t: any) => t.name ?? t.function?.name);
+      if (turn === 0) return reply("", [call("message_role", { role: "dev", message: "please review" })]);
+      if (turn === 1) return reply("", [call("message_role", { role: "outsider", message: "join us" })]);
+      return reply(`outsider: ${lastToolResult(m)}`);
+    };
+    w.scripts.dev = (m) => reply(lastUser(m).includes("please review") ? "reviewed" : "ok");
+    await w.post(w.alice, w.ids.topic, "@test ask dev for a review");
+    await w.drain();
+    expect(offered).toContain("message_role");
+    expect(offered).not.toContain("delegate_task");
+    const texts = (await w.messages(w.ids.topic)).map((m: any) => m.content);
+    expect(texts).toContain("@dev please review");
+    expect(texts).toContain("reviewed");
+    expect(texts.some((t: string) => t.includes("not in this topic"))).toBe(true);
+    expect(texts.some((t: string) => t.includes("join us"))).toBe(false);
+    expect((await w.api("GET", "/api/approvals", { token: w.bob })).body).toEqual([]);
+    const tasks = (await w.api("GET", "/api/tasks", { token: w.adminToken })).body;
+    expect(tasks.filter((t: any) => t.owner_role_id === outsider.body.id)).toHaveLength(0);
+  });
+
   it("tools needing approval wait for a console account to approve", async () => {
     await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
     w.scripts.dev = (m, turn) =>

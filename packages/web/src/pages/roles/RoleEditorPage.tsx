@@ -592,7 +592,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
                   details={{
                     collaborate: (
                       <>
-                        <div className="perm-detail-label">可以联系、委托的角色</div>
+                        <div className="perm-detail-label">可以委托、跨话题联系的角色</div>
                         <Toggle checked={draft.any_contact} onChange={(v) => set("any_contact", v)} label="任意角色" />
                         {!draft.any_contact ? (
                           <MultiPick

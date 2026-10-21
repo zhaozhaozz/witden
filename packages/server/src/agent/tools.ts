@@ -517,9 +517,9 @@ async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise
     const { task, role, topic } = await load(ctx, db);
     const [targetRole] = await db.select().from(roles).where(eq(roles.handle, handle)).limit(1);
     if (!targetRole) throw new BadRequest(`no role @${handle}`);
-    if (!(await topicSvc.participant(db, topic.id, "role", targetRole.id))) {
-      await topicSvc.inviteRole(db, null, topic, targetRole.id, { byRole: role });
-    }
+    // A mention stays within the topic: it brings in no one (a person invites roles; delegating needs collaborate).
+    if (!(await topicSvc.participant(db, topic.id, "role", targetRole.id)))
+      throw new BadRequest(`@${handle} is not in this topic; ask a person to invite it`);
     await deliver(db, task, role, topic, `@${targetRole.handle} ${args.message ?? ""}`, {
       final: false,
       mentions: [{ type: "role", id: targetRole.id }],
@@ -1305,10 +1305,11 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ add: { type: "array", items: str }, remove: { type: "array", items: str } }),
       editList,
     ),
+    // Roles of one topic @ each other without a permission; delegating and other topics stay under collaborate.
     spec(
       "message_role",
-      "collaborate",
-      "Post a message in this topic addressed to another role.",
+      null,
+      "Post a message in this topic addressed to another role of this topic (an @-mention): it reads it and answers here. Only roles taking part in this topic can be mentioned.",
       obj({ role: str, message: str }, ["role", "message"]),
       messageRole,
     ),
@@ -1578,13 +1579,17 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         (t.name !== "stay_silent" || mode === "conversation" || !!envelope.auto) &&
         // The configuration tools only for a system administrator's own work.
         (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
-        // Some only where the conversation stays in the console.
-        (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside),
+        // Some only where the conversation stays in the console; outside it only the bot's role works, so there
+        // is no other role to @ either.
+        (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
+        (t.name !== "message_role" || !envelope.outside),
     )
     .map((t) => (mode === "conversation" && t.conversation ? { ...t, description: t.conversation } : t));
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
+  // @-mentioning a role of the same topic is never a permission (an older per-tool setting is ignored).
+  if (tool.name === "message_role") return false;
   const required = new Set<string>(envelope.approval_required ?? []);
   if (required.has(tool.name)) return true;
   if (tool.name === "send_message" && args?.topic_id && required.has("collaborate")) return true;
