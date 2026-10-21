@@ -33,7 +33,7 @@ async function setup(page: Parameters<typeof workspace>[0]) {
   result.state.stats.commands = 2;
   result.state.stats.tokens = 3840;
   await emit(page, "task.progress", { task_id: "task-1", seq: 4 });
-  await expect(page.locator(".execution-stats")).toContainText("3,840");
+  await expect(page.locator(".execution-stats")).toContainText("3.8K");
   return result;
 }
 
@@ -45,14 +45,18 @@ test("collapsed progress shows live totals and a clock without downloading the t
   expect(state.detailRequests).toEqual([]);
   const summary = await page.locator(".execution-toggle").elementHandle();
   const before = await page.locator(".execution-toggle").boundingBox();
+  const statsBefore = await page.locator(".execution-stats").boundingBox();
+  await expect(page.locator(".execution-progress")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.locator(".execution-progress")).toHaveCSS("border-top-width", "0px");
   await live(page, { phase: "tool", tool: "run_command" });
   await expect(page.locator(".execution-status")).toHaveText("正在执行命令");
   state.stats.tokens = 5820;
   state.stats.rounds = 3;
   await emit(page, "task.progress", { task_id: "task-1", seq: 5 });
-  await expect(page.locator(".execution-stats")).toContainText("5,820");
+  await expect(page.locator(".execution-stats")).toContainText("5.8K");
   expect(await summary?.evaluate((el) => el.isConnected)).toBe(true);
   expect((await page.locator(".execution-toggle").boundingBox())?.height).toBe(before?.height);
+  expect((await page.locator(".execution-stats").boundingBox())?.x).toBe(statsBefore?.x);
   expect(errors).toEqual([]);
 });
 
@@ -121,7 +125,7 @@ test("completion preserves the opened process until dismissed, while a fresh vie
 }) => {
   const { state, errors } = await setup(page);
   await page.reload();
-  await expect(page.locator(".execution-stats")).toContainText("3,840");
+  await expect(page.locator(".execution-stats")).toContainText("3.8K");
   await page.locator(".execution-toggle").click();
   await expect(page.getByRole("region", { name: "执行过程" })).toContainText("npm test");
   state.runStatus = "completed";
@@ -140,23 +144,32 @@ test("desktop and narrow layouts retain a bounded log and respect reduced motion
   const scroll = page.getByRole("region", { name: "执行过程" });
   await scroll.locator(".execution-row").filter({ hasText: "npm test" }).click();
   await expect(scroll.locator(".execution-detail")).toContainText("48 tests passed");
+  await page.locator(".execution-toggle").click();
   await page.screenshot({ path: ".tmp/execution-progress-desktop.png" });
+  await page.locator(".execution-toggle").click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "关闭工作区" }).click();
   await page.locator(".execution-toggle").scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
   expect((await scroll.boundingBox())!.height).toBeLessThanOrEqual(422);
+  await page.locator(".execution-toggle").click();
   await page.screenshot({ path: ".tmp/execution-progress-mobile.png" });
+  await page.locator(".execution-toggle").click();
+  await page.setViewportSize({ width: 320, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  const summary = await page.locator(".execution-toggle").boundingBox();
+  const stats = await page.locator(".execution-stats").boundingBox();
+  const status = await page.locator(".execution-status").boundingBox();
+  expect(Math.abs(stats!.y + stats!.height / 2 - status!.y - status!.height / 2)).toBeLessThan(1);
+  expect(stats!.x + stats!.width).toBeLessThanOrEqual(summary!.x + summary!.width);
   await page.emulateMedia({ reducedMotion: "reduce" });
-  expect(
-    await page.locator(".execution-progress").evaluate((el) => getComputedStyle(el, "::before").animationName),
-  ).toBe("none");
+  expect(await page.locator(".execution-status").evaluate((el) => getComputedStyle(el).transitionDuration)).toBe("0s");
   await scroll.focus();
   await expect(scroll).toBeFocused();
   expect(errors).toEqual([]);
 });
 
-test("waiting stops the animation and failed or uncertain operations are labelled accurately", async ({ page }) => {
+test("waiting updates the status and failed or uncertain operations are labelled accurately", async ({ page }) => {
   const { state, errors } = await setup(page);
   state.steps[2] = {
     ...state.steps[2],
@@ -193,7 +206,7 @@ test("a failed refresh keeps the log readable and retry catches up without closi
   state.activityFailure = false;
   state.stats.tokens = 9000;
   await page.locator(".execution-error").getByRole("button", { name: "重试" }).click();
-  await expect(page.locator(".execution-stats")).toContainText("9,000");
+  await expect(page.locator(".execution-stats")).toContainText("9.0K");
   await expect(page.locator(".execution-error")).toHaveCount(0);
   expect(await handle?.evaluate((el) => el.isConnected)).toBe(true);
   await expect(row).toHaveAttribute("aria-expanded", "true");

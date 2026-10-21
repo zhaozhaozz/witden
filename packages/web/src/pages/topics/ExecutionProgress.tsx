@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { TaskActivity, TaskStep } from "../../api/types";
-import { fmtNumber, TOOL_LABEL } from "../../lib/format";
+import { fmtNumber, fmtTokens, TOOL_LABEL } from "../../lib/format";
 
 interface RecordedCall {
   id: string;
@@ -102,6 +102,30 @@ function elapsed(start: string | undefined, end: number) {
   if (seconds < 60) return `${seconds}秒`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
   return `${Math.floor(seconds / 3600)}时${Math.floor((seconds % 3600) / 60)}分`;
+}
+
+/** Keep the old text mounted while it fades out, then reveal the latest status. */
+function ExecutionStatus({ status }: { status: string }) {
+  const [label, setLabel] = useState(status);
+  const [fading, setFading] = useState(false);
+  useEffect(() => {
+    if (status === label || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setLabel(status);
+      setFading(false);
+      return;
+    }
+    setFading(true);
+    const timer = window.setTimeout(() => {
+      setLabel(status);
+      setFading(false);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [status, label]);
+  return (
+    <span className={`execution-status${fading ? " is-fading" : ""}`} role="status" title={status}>
+      {label}
+    </span>
+  );
 }
 
 export function ExecutionProgress({
@@ -247,13 +271,8 @@ export function ExecutionProgress({
       <button type="button" className="execution-toggle" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
         <span className="execution-heading">
           <span className="live-indicator" aria-hidden />
-          <span key={status} className="execution-status" role="status">
-            {status}
-          </span>
+          <ExecutionStatus status={status} />
           {!connected && active ? <span className="small muted">连接中</span> : null}
-          <span className="execution-chevron" aria-hidden>
-            {expanded ? "⌃" : "⌄"}
-          </span>
         </span>
         <span className="execution-stats">
           <span title="已完成的模型调用次数，包含上下文整理">
@@ -265,9 +284,14 @@ export function ExecutionProgress({
           <span title="已向电脑发起的命令与终端启动次数，包含执行中及失败的调用；被拒绝的审批不计数">
             <b>{snapshot ? fmtNumber(snapshot.commands) : "—"}</b> 条命令
           </span>
-          <span title="模型已返回的输入与输出 token 总量，包含缓存；生成中的用量将在返回后更新">
-            <b>{snapshot ? fmtNumber(snapshot.tokens) : "—"}</b> token
+          <span
+            title={`模型已返回 ${fmtNumber(snapshot?.tokens)} token（输入与输出总量，包含缓存）；生成中的用量将在返回后更新`}
+          >
+            <b>{fmtTokens(snapshot?.tokens)}</b> token
           </span>
+        </span>
+        <span className="execution-chevron" aria-hidden>
+          {expanded ? "⌃" : "⌄"}
         </span>
       </button>
       {error ? (
