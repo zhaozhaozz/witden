@@ -7,11 +7,12 @@ import { BadRequest, Forbidden } from "../errors.js";
 import { audit } from "../services/audit.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
+import { clearRunApprovals } from "./approval-scope.js";
 import { ACTIVE, cancelTree, getTask, pause, resume, setStatus, TERMINAL } from "./control.js";
 import { enqueue, openRun } from "./conversation.js";
 import { authorize, buildEnvelope, createTask, systemMessage } from "./dispatch.js";
 import { activeKillSwitch } from "./revocation.js";
-import { submitTaskInput } from "./task-continuation.js";
+import { lockTask, submitTaskInput } from "./task-continuation.js";
 
 /** Console accounts steer every task (they are all administrators). */
 export async function canControl(db: Db, user: User, task: Task, _action = "pause"): Promise<boolean> {
@@ -58,6 +59,7 @@ export async function control(
         requesterUserId: user.id,
       });
   } else if (action === "retry") {
+    task = (await lockTask(db, task.id)) ?? task;
     if (!["failed", "cancelled"].includes(task.status))
       throw new BadRequest("only failed or cancelled tasks can be retried");
     // A conversation goes on with its next message; only one of its runs is open at a time.
@@ -69,6 +71,7 @@ export async function control(
         status: "pending",
         finishedAt: null,
         error: null,
+        envelope: clearRunApprovals(task.envelope),
         ...(task.kind === "task" ? { revision: task.revision + 1, usage: { steps: 0, tokens: 0 }, result: null } : {}),
       })
       .where(eq(tasks.id, task.id))

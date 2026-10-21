@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, or } from "drizzle-orm";
 import type { FastifyInstance } from "fastify";
+import { canAllowForTaskRun } from "../agent/approval-scope.js";
 import * as approvalSvc from "../agent/approvals.js";
 import { listTaskIterations } from "../agent/task-continuation.js";
 import * as admin from "../agent/tasks-admin.js";
@@ -96,6 +97,9 @@ async function approvalOut(db: Db, a: Approval, user: User) {
         ? { sources: a.detail.sources }
         : { tool: a.detail.tool_call?.name, arguments: "[restricted]" };
   data.can_decide = a.status === "pending" && decide;
+  const [task] = data.can_decide ? await db.select().from(tasks).where(eq(tasks.id, a.taskId)).limit(1) : [];
+  data.can_allow_for_task_run = data.can_decide && canAllowForTaskRun(a, task);
+  data.decision_scope = a.status === "approved" ? (a.detail.decision_scope ?? "once") : null;
   const [role] = await db.select().from(roles).where(eq(roles.id, a.roleId)).limit(1);
   data.role = role
     ? { id: role.id, handle: role.handle, name: role.name, color: role.color, avatar_url: role.avatarUrl }
@@ -255,7 +259,15 @@ export async function taskRoutes(app: FastifyInstance) {
       if (!a) throw new NotFound("approval not found");
       if (!(await approvalSvc.canDecide(db, user, a))) throw new Forbidden("you are not an approver for this request");
       const b = body(req);
-      const decided = await approvalSvc.decide(db, a, user, !!b.approve, String(b.note ?? ""));
+      if (typeof b.approve !== "boolean") throw new BadRequest("approve must be a boolean");
+      const decided = await approvalSvc.decide(
+        db,
+        a,
+        user,
+        b.approve,
+        String(b.note ?? ""),
+        b.scope === undefined ? "once" : b.scope,
+      );
       return approvalOut(db, decided, user);
     }),
   );

@@ -3383,6 +3383,14 @@ img.avatar-role.avatar-colored {
   flex: 1;
   width: auto;
 }
+.approval-scope-hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+.side-panel .approval-decide-run input {
+  flex-basis: 100%;
+  width: 100%;
+}
 
 .msg-approval {
   margin: 12px 0;

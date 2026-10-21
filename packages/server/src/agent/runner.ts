@@ -37,6 +37,7 @@ import { contextLimits } from "../services/context-window.js";
 import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
 import { linkedTopicContext } from "../services/topic-links.js";
+import { hasRunToolApproval } from "./approval-scope.js";
 import { initialMessages, recordSessionNote } from "./context.js";
 import { getTask, setStatus, TERMINAL } from "./control.js";
 import {
@@ -491,7 +492,7 @@ export class TaskRunner {
         });
         return { skip: true as const };
       }
-      const approved = (task.envelope.approved_calls ?? []).includes(call.id);
+      const approved = (task.envelope.approved_calls ?? []).includes(call.id) || hasRunToolApproval(task, call.name);
       if (needsApproval(task.envelope, spec, call.arguments) && !approved) {
         await this.requestApproval(tx, task, call);
         return null;
@@ -740,7 +741,10 @@ export class TaskRunner {
         topicId: task.topicId,
         roleId: task.ownerRoleId,
         action: call.name,
-        detail: { tool_call: { id: call.id, name: call.name, arguments: call.arguments } },
+        detail: {
+          task_revision: task.revision,
+          tool_call: { id: call.id, name: call.name, arguments: call.arguments },
+        },
         approverUserIds: approvers,
       })
       .returning();

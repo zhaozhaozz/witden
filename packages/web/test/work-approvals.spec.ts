@@ -93,3 +93,57 @@ test("the former approval link opens work at the top in a narrow DM", async ({ p
   await page.screenshot({ path: ".tmp/work-approvals-mobile.png" });
   expect(errors).toEqual([]);
 });
+
+test("a run-scoped approval is available in shared cards and its scope remains visible after the decision", async ({
+  page,
+}) => {
+  const { state, errors } = await workspace(page);
+  state.approvals = [
+    approval("approval-run", {
+      action: "run_command",
+      detail: { tool_call: { name: "run_command", arguments: { command: "npm run check" } } },
+      can_allow_for_task_run: true,
+    }),
+  ];
+  const notification = Object.assign(
+    { ...state.messages[0], id: "approval-run-message", author_type: "system", content: "等待审批" },
+    { approval_id: "approval-run" },
+  );
+  state.messages = [notification];
+  await page.reload();
+  const pending = page.getByRole("region", { name: "待审批" });
+  const allow = pending.getByRole("button", { name: "本次运行内允许", exact: true });
+  await expect(allow).toBeVisible();
+  await expect(
+    page.locator(".msg-approval").getByRole("button", { name: "本次运行内允许", exact: true }),
+  ).toBeVisible();
+  await expect(pending).toContainText("包括不同参数");
+  await pending.getByRole("textbox", { name: "审批备注（可选）" }).fill("本轮检查可以继续");
+  await page.screenshot({ path: ".tmp/task-run-approval-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(allow).toBeVisible();
+  expect(await pending.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  await page.screenshot({ path: ".tmp/task-run-approval-mobile.png" });
+  await allow.click();
+  await expect(pending).toHaveCount(0);
+  expect(state.decisions).toEqual([{ id: "approval-run", approve: true, scope: "task_run", note: "本轮检查可以继续" }]);
+  await page.getByRole("button", { name: "关闭工作区", exact: true }).click();
+  await expect(page.locator(".msg-approval")).toContainText("授权范围：本次运行内同一工具");
+  await expect(page.locator(".msg-approval").getByRole("button", { name: "本次运行内允许" })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test("the run grant is not offered for unavailable, read-only or legacy disclosure approvals", async ({ page }) => {
+  const { state, errors } = await workspace(page);
+  state.approvals = [
+    approval("stale", { can_allow_for_task_run: false }),
+    approval("readonly", { can_decide: false, can_allow_for_task_run: false }),
+    approval("disclose", { action: "disclose", can_allow_for_task_run: true, detail: { content: "升级前的消息" } }),
+  ];
+  await emit(page, "approval.changed", { id: "stale", status: "pending" });
+  const pending = page.getByRole("region", { name: "待审批" });
+  await expect(pending.locator(".approval")).toHaveCount(3);
+  await expect(pending.getByRole("button", { name: "本次运行内允许", exact: true })).toHaveCount(0);
+  await expect(pending.getByRole("button", { name: "批准", exact: true })).toHaveCount(2);
+  expect(errors).toEqual([]);
+});

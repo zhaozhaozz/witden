@@ -11,6 +11,7 @@ import { audit } from "../services/audit.js";
 import { assertNextRound, continuationAllowed, narrowEnvelope } from "../services/collaboration-policy.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
+import { clearRunApprovals } from "./approval-scope.js";
 import { publishTaskStatus, setStatus, TERMINAL } from "./control.js";
 import { buildEnvelope, roleSnapshotFor } from "./dispatch.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
@@ -139,6 +140,7 @@ export async function submitTaskInput(db: Db, id: string, instruction: string, o
       )
     : 0;
   if (newIteration) {
+    envelope = clearRunApprovals(envelope);
     await recordTaskIteration(db, task);
     const [next] = await db
       .update(tasks)

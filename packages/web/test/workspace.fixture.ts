@@ -62,7 +62,7 @@ export async function workspace(
     runDelay: 0,
     approvalDelay: 0,
     approvals: [] as Approval[],
-    decisions: [] as { id: string; approve: boolean; note: string }[],
+    decisions: [] as { id: string; approve: boolean; note: string; scope?: "task_run" }[],
     memoryDelay: 0,
     memoryRequests: [] as string[],
     topicUpdates: [] as Record<string, unknown>[],
@@ -277,6 +277,9 @@ export async function workspace(
             ? {
                 ...a,
                 status: body.approve ? "approved" : "rejected",
+                decision_scope: body.approve ? (body.scope ?? "once") : null,
+                can_decide: false,
+                can_allow_for_task_run: false,
                 decided_by: user.id,
                 decided_at: now,
               }

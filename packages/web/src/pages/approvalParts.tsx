@@ -35,10 +35,15 @@ export function ApprovalCard({
   const argsHidden = isRestricted(toolCall?.arguments);
   const content = detail.content as string | undefined;
 
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, scope: "once" | "task_run" = "once") => {
     const out = await run(
-      () => api.post<Approval>(`/api/approvals/${a.id}/decide`, { approve, note }),
-      approve ? "已批准" : "已拒绝",
+      () =>
+        api.post<Approval>(`/api/approvals/${a.id}/decide`, {
+          approve,
+          note,
+          ...(scope === "task_run" ? { scope } : {}),
+        }),
+      approve ? (scope === "task_run" ? "已允许本次运行使用此工具" : "已批准") : "已拒绝",
     );
     if (out) {
       window.dispatchEvent(new Event(APPROVALS_EVENT));
@@ -74,7 +79,7 @@ export function ApprovalCard({
         </div>
       ) : toolCall ? (
         <div className="approval-body">
-          <p className="small">该角色的这类操作被设置为每次都需要人工批准。</p>
+          <p className="small">该角色的这类操作被设置为需要人工批准。</p>
           <div className="muted small">调用 {toolCall.name}</div>
           {toolCall.name === "remember" && !argsHidden ? (
             <p className="small">{memoryScopeHint((toolCall.arguments as { scope?: string } | undefined)?.scope)}</p>
@@ -110,9 +115,12 @@ export function ApprovalCard({
               {dir.userName(a.decided_by)} 于 {fmtTime(a.decided_at)} 处理
             </span>
           ) : null}
+          {a.decision_scope === "task_run" ? <span>授权范围：本次运行内同一工具</span> : null}
         </div>
         {a.status === "pending" && a.can_decide ? (
-          <div className="approval-decide">
+          <div
+            className={`approval-decide${a.can_allow_for_task_run && a.action !== "disclose" ? " approval-decide-run" : ""}`}
+          >
             <input
               aria-label="审批备注（可选）"
               placeholder="备注（可选）"
@@ -125,6 +133,16 @@ export function ApprovalCard({
             <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => decide(true)}>
               批准
             </button>
+            {a.can_allow_for_task_run && a.action !== "disclose" ? (
+              <>
+                <button type="button" className="btn btn-sm" disabled={busy} onClick={() => decide(true, "task_run")}>
+                  本次运行内允许
+                </button>
+                <p className="small muted approval-scope-hint">
+                  本次运行内允许：后续调用同一工具（包括不同参数）不再询问，运行结束后失效。
+                </p>
+              </>
+            ) : null}
           </div>
         ) : a.status === "pending" ? (
           <span className="small muted">等待审批人处理</span>

@@ -12,16 +12,18 @@ import {
   topics,
   type User,
 } from "../db/schema.js";
-import { Conflict, Forbidden } from "../errors.js";
+import { BadRequest, Conflict, Forbidden } from "../errors.js";
 import { hasPermission, Perm } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
 import { approvalChanged } from "../services/events.js";
+import { canAllowForTaskRun, grantRunToolApproval } from "./approval-scope.js";
 import { recordSessionNote } from "./context.js";
 import { deferWhilePaused, setStatus, TERMINAL } from "./control.js";
 import { noteRunEnd, settle } from "./conversation.js";
 import { systemMessage } from "./dispatch.js";
 import { discardHeld, releaseApproved } from "./output.js";
 import { notifyParent } from "./runner.js";
+import { lockTask } from "./task-continuation.js";
 import { appendStep, isConversation } from "./transcript.js";
 
 export async function canDecide(db: Db, user: User, approval: Approval): Promise<boolean> {
@@ -52,12 +54,31 @@ async function endWithAnswer(db: Db, task: Task, result: string, reason: string 
   await notifyParent(db, done);
 }
 
-export async function decide(db: Db, approval: Approval, user: User, approve: boolean, note = ""): Promise<Approval> {
+export async function decide(
+  db: Db,
+  approval: Approval,
+  user: User,
+  approve: boolean,
+  note = "",
+  scope: unknown = "once",
+): Promise<Approval> {
   if (approval.status !== "pending") throw new Conflict(`approval already ${approval.status}`);
   if (!(await canDecide(db, user, approval))) throw new Forbidden("you are not an approver for this request");
+  if (scope !== "once" && scope !== "task_run") throw new BadRequest("scope must be once or task_run");
+  if (scope === "task_run" && (!approve || approval.action === "disclose"))
+    throw new BadRequest("task_run applies only to an approved tool call");
+  // Match the worker's lock order: task first, then approval. Do not grant against a stale run.
+  const task = await lockTask(db, approval.taskId);
+  if (scope === "task_run" && !canAllowForTaskRun(approval, task))
+    throw new Conflict("this approval no longer belongs to the task's current wait; refresh before approving");
   const [decided] = await db
     .update(approvals)
-    .set({ status: approve ? "approved" : "rejected", decidedBy: user.id, decidedAt: new Date() })
+    .set({
+      status: approve ? "approved" : "rejected",
+      decidedBy: user.id,
+      decidedAt: new Date(),
+      detail: { ...approval.detail, decision_scope: approve ? scope : null },
+    })
     .where(and(eq(approvals.id, approval.id), eq(approvals.status, "pending")))
     .returning();
   if (!decided) throw new Conflict("approval already decided; refresh to see the decision");
@@ -68,20 +89,22 @@ export async function decide(db: Db, approval: Approval, user: User, approve: bo
     taskId: approval.taskId,
     topicId: approval.topicId,
     roleId: approval.roleId,
-    detail: { action: approval.action, note },
+    detail: { action: approval.action, note, scope: approve ? scope : null, revision: task?.revision ?? null },
   });
-  const [task] = await db.select().from(tasks).where(eq(tasks.id, approval.taskId)).limit(1);
   const [role] = await db.select().from(roles).where(eq(roles.id, approval.roleId)).limit(1);
   const [topic] = await db.select().from(topics).where(eq(topics.id, approval.topicId)).limit(1);
   if (!task || !role || !topic || TERMINAL.has(task.status)) return decided;
-  const verdict = `${approve ? "approved" : "rejected"} by ${user.name}${note ? `: ${note}` : ""}`;
+  const verdict = `${approve ? (scope === "task_run" ? "approved for this run" : "approved") : "rejected"} by ${user.name}${note ? `: ${note}` : ""}`;
   // Messages held for disclosure exist only from before migration 0032; deciding them still posts or drops them.
   if (approval.action === "disclose") {
     await decideDisclosure(db, decided, task, role, topic, approve, verdict);
   } else {
     const call = approval.detail.tool_call;
     if (approve) {
-      const envelope = { ...task.envelope, approved_calls: [...(task.envelope.approved_calls ?? []), call.id] };
+      const envelope = {
+        ...(scope === "task_run" ? grantRunToolApproval(task, call.name) : task.envelope),
+        approved_calls: [...(task.envelope.approved_calls ?? []), call.id],
+      };
       const [updated] = await db.update(tasks).set({ envelope }).where(eq(tasks.id, task.id)).returning();
       await advance(db, updated, "pending", verdict, { retry_call: call });
     } else {

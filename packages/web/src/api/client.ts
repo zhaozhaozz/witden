@@ -49,6 +49,7 @@ export function buildUrl(path: string, query?: Query): string {
 const MESSAGE_ZH: [RegExp, (m: RegExpMatchArray) => string][] = [
   [/^authentication required$/, () => "登录已失效，请重新登录"],
   [/^invalid email or password$/, () => "邮箱或密码不正确"],
+  [/^this approval no longer belongs to the task's current wait/, () => "这条审批已不属于当前运行，请刷新后重试。"],
   [/^missing permission ([\w.]+)( on (\S+))?$/, (m) => `缺少权限：${m[1]}${m[3] ? `（对象 ${m[3]}）` : ""}`],
   [/^this file draws on material you are not allowed to see$/, () => "这个文件用到了你无权查看的资料，不能下载"],
   [/^this task has read material you are not allowed to see/, () => "该任务读取了你无权查看的资料，执行日志已隐藏"],

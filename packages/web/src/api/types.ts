@@ -322,6 +322,8 @@ export interface Approval {
   decided_at: string | null;
   created_at: string;
   can_decide?: boolean;
+  can_allow_for_task_run?: boolean;
+  decision_scope?: "once" | "task_run" | null;
   role?: { id: string; handle: string; name?: string; color?: string | null; avatar_url?: string | null } | null;
 }
 
