@@ -3497,6 +3497,22 @@ img.avatar-role.avatar-colored {
   color: var(--bad);
 }
 
+/* --- task progress updates --------------------------------------------------------------------- */
+.task-update {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.task-update:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.task-update-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
 /* --- approvals ---------------------------------------------------------------------------------- */
 
 .approval-list {

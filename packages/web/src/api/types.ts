@@ -188,9 +188,22 @@ export interface TaskWait {
   [key: string]: unknown;
 }
 
+/** Progress an AI employee recorded on an independent task (post_progress). */
+export interface TaskUpdate {
+  id: string;
+  task_id: string;
+  revision: number;
+  author_type: "role";
+  author_id: string;
+  content: string;
+  created_at: string;
+}
+
 export interface Task {
   id: string;
   revision?: number;
+  /** Progress history, oldest first (task detail only). */
+  updates?: TaskUpdate[];
   iterations?: {
     id: string;
     revision: number;

@@ -88,7 +88,7 @@ Webhook 触发器都经 Webhook 来源（`/api/hook-sources/<编号>`）接收�
 | 账号、外部成员、AI 员工、话题、消息、AI 员工的对话与上下文、任务、审批、审计、用量 | PostgreSQL |
 | 模型密钥、通讯凭据 | PostgreSQL，使用主密钥加密 |
 | 触发器、Webhook 来源、原始 webhook 请求与处理历史、定时计划 | PostgreSQL；来源密钥保存哈希和加密副本（供校验签名和控制台复制），历史保留至手动清理 |
-| 话题关联、AI 员工之间的对话授权（`roles.allowed_contacts`）、独立任务的补充输入与历次交付 | PostgreSQL |
+| 话题关联、AI 员工之间的对话授权（`roles.allowed_contacts`）、独立任务的补充输入、历次交付与进展记录 | PostgreSQL |
 | AI 员工执行的命令：启动者、虚拟电脑、状态、退出码、时间、日志文件位置和结束通知的去向 | PostgreSQL（`background_commands`）；命令的完整输出在虚拟电脑的日志文件中 |
 | 话题文件、头像 | 平台数据目录 |
 | 虚拟电脑的文件 | 每台虚拟电脑的 Docker 数据卷 |

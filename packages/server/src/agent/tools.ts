@@ -50,10 +50,12 @@ import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { requestHandover, transferStartedTask } from "./task-handoff.js";
+import { recordTaskUpdate } from "./task-updates.js";
 import { boundOutput } from "./tool-output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
 import { sendLinkedMessage } from "./topic-messaging.js";
+import { isConversation } from "./transcript.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
   shell: "Run commands in the role's virtual computer",
@@ -816,11 +818,22 @@ async function rateLimitMentions(db: Db, topicId: string, userIds: string[], per
 
 async function postProgress(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   return transaction(async (db) => {
-    const { task } = await load(ctx, db);
-    const progress = String(args.progress ?? "").slice(0, 2000);
-    const [row] = await db.update(tasks).set({ progress }).where(eq(tasks.id, task.id)).returning();
-    await publishTaskStatus(db, row);
-    return { content: "progress updated" };
+    const { task, role } = await load(ctx, db);
+    const targetId = args.task_id ? String(args.task_id) : null;
+    if (!targetId && isConversation(task)) {
+      // A conversation run's own note, shown with its work in the topic; not a history.
+      const progress = String(args.progress ?? "").slice(0, 2000);
+      const [row] = await db.update(tasks).set({ progress }).where(eq(tasks.id, task.id)).returning();
+      await publishTaskStatus(db, row);
+      return { content: "progress updated" };
+    }
+    const [target] = targetId ? await db.select().from(tasks).where(eq(tasks.id, targetId)).limit(1) : [task];
+    if (!target) throw new BadRequest(`no task ${targetId}`);
+    if (target.kind !== "task") throw new BadRequest("progress is recorded on independent tasks; give a task's id");
+    // Like @-mentions and delegation, it stays within the topic.
+    if (target.topicId !== task.topicId) throw new Forbidden("you may record progress only on tasks in this topic");
+    await recordTaskUpdate(db, target, role, String(args.progress ?? ""), task.id);
+    return { content: target.id === task.id ? "progress recorded" : `progress recorded on task ${target.id}` };
   });
 }
 
@@ -1550,11 +1563,18 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ...spec(
         "post_progress",
         null,
-        "Update the visible progress note of this task.",
-        obj({ progress: str }, ["progress"]),
+        "Record a progress update on this task: what is done, what is next, what blocks it. Updates stay on the task as its progress history, for people and for whoever works on it next; record one at milestones of longer work, not after every step. Give task_id to record it on another task in this topic.",
+        obj(
+          {
+            progress: str,
+            task_id: { type: "string", description: "Another independent task in this topic; omit for this task" },
+          },
+          ["progress"],
+        ),
         postProgress,
       ),
-      conversation: "Update the progress note shown with your current work in this topic.",
+      conversation:
+        "Record a progress update on an independent task in this topic (task_id): what is done, what is next, what blocks it; it stays on the task as its progress history. Without task_id it only updates the note shown with your current work here.",
     },
     spec(
       "stay_silent",

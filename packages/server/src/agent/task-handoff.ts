@@ -36,6 +36,7 @@ import { ACTIVE, getTask, publishTaskStatus, setStatus, TERMINAL } from "./contr
 import { authorize, buildEnvelope, roleSnapshotFor, systemMessage, taskBudget } from "./dispatch.js";
 import { activeKillSwitch, stillAllowed } from "./revocation.js";
 import { lockTask } from "./task-continuation.js";
+import { listTaskUpdates } from "./task-updates.js";
 import { appendStep } from "./transcript.js";
 
 /** Nothing executes these, and nothing is outstanding for the previous role. */
@@ -191,6 +192,20 @@ async function apply(
     .reverse()
     .map((input) => `[revision ${input.revision}] ${input.content.slice(0, 1200)}`)
     .join("\n");
+  // The progress history recorded on the task (older tasks have only their latest note).
+  const updates = await listTaskUpdates(db, task.id, 10);
+  const authors = new Map<string, string>();
+  for (const u of updates) authors.set(u.authorId, (await topicSvc.getRole(db, u.authorId))?.handle ?? "?");
+  const progress = updates.length
+    ? `Progress recorded on this task (latest last):\n${updates
+        .map(
+          (u) =>
+            `[${u.createdAt.toISOString().slice(0, 16).replace("T", " ")}] @${authors.get(u.authorId)}: ${u.content.slice(0, 1200)}`,
+        )
+        .join("\n")}`
+    : task.progress
+      ? `Last recorded progress:\n${task.progress.slice(0, 2000)}`
+      : "";
   const brief = [
     `You are taking over task ${task.id} in topic "${topic.title}" from @${previous?.handle ?? "?"}; it is the same task, only its executor changed.`,
     `Task: ${task.title}\nOriginal instructions:\n${task.instruction}`,
@@ -199,7 +214,7 @@ async function apply(
       : "",
     task.result ? `Last delivered result:\n${task.result.slice(0, 3000)}` : "",
     task.error ? `It last failed with: ${task.error.slice(0, 1000)}` : "",
-    task.progress ? `Last recorded progress:\n${task.progress.slice(0, 2000)}` : "",
+    progress,
     note.trim() ? `Handoff note from ${byName}:\n${note.trim().slice(0, 4000)}` : "",
     "The previous executor's steps were not handed over. You work on your own computer: files, installed software " +
       "and credentials were not copied, so check what is there before changing anything.",

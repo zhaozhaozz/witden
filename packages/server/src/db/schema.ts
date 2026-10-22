@@ -948,6 +948,7 @@ export type TopicParticipant = typeof topicParticipants.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type AgentSession = typeof agentSessions.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type TaskUpdate = typeof taskUpdates.$inferSelect;
 export type TaskStep = typeof taskSteps.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
@@ -1057,6 +1058,29 @@ export const taskInputs = pgTable(
     consumedAt: ts("consumed_at"),
   },
   (t) => [index("ix_task_inputs_pending").on(t.taskId, t.consumedAt)],
+);
+
+/**
+ * Progress recorded on an independent task (post_progress): what is done, what is next, what blocks it. Kept as a
+ * history for people and for whoever works on the task next; the latest one is also the task's progress note.
+ */
+export const taskUpdates = pgTable(
+  "task_updates",
+  {
+    id: id(),
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    /** The task's delivery revision when it was recorded. */
+    revision: integer("revision").notNull(),
+    authorType: text("author_type").notNull(), // role
+    authorId: text("author_id").notNull(),
+    /** The run that recorded it (a run of the task itself, or of a conversation in the same topic). */
+    sourceTaskId: text("source_task_id"),
+    content: text("content").notNull(),
+    createdAt: created(),
+  },
+  (t) => [index("ix_task_updates_task").on(t.taskId, t.createdAt)],
 );
 
 /** Completed iterations stay available when a task resumes; results are delivered by task + revision. */

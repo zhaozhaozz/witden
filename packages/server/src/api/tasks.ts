@@ -4,6 +4,7 @@ import { canAllowForTaskRun } from "../agent/approval-scope.js";
 import * as approvalSvc from "../agent/approvals.js";
 import { taskProgress, taskStepDetail } from "../agent/progress.js";
 import { listTaskIterations } from "../agent/task-continuation.js";
+import { listTaskUpdates } from "../agent/task-updates.js";
 import * as admin from "../agent/tasks-admin.js";
 import { taskLog } from "../agent/transcript.js";
 import type { Db } from "../db/client.js";
@@ -64,9 +65,10 @@ export async function taskOut(db: Db, task: Task, opts: { detail?: boolean; view
   data.topic = topic ? { id: topic.id, title: topic.title, kind: topic.kind } : null;
   data.requester = requester ? { id: requester.id, name: requester.name } : null;
   if (opts.detail) {
-    data.iterations = (await contentVisible(db, opts.viewer ?? null, task))
-      ? (await listTaskIterations(db, task.id)).map((i) => row(i))
-      : [];
+    const visible = await contentVisible(db, opts.viewer ?? null, task);
+    data.iterations = visible ? (await listTaskIterations(db, task.id)).map((i) => row(i)) : [];
+    // Progress recorded on the task, oldest first; its text is the topic's like the rest of the task.
+    data.updates = visible ? (await listTaskUpdates(db, task.id)).map((u) => row(u)) : [];
     // Work it waits for (delegated by a task) or that it started and gets the result of (a conversation).
     data.children = [];
     for (const c of await db

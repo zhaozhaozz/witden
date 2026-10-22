@@ -34,6 +34,7 @@ import {
 } from "../../ui/kit";
 import { AssignmentTrace, type Stop, TraceRail } from "../../ui/trace";
 import { TaskIterations } from "./TaskIterations";
+import { TaskUpdates } from "./TaskUpdates";
 import { TaskControls, TaskStatusChip } from "./taskParts";
 
 export default function TaskDetailPage() {
@@ -70,6 +71,8 @@ export default function TaskDetailPage() {
             }
           : prev,
       );
+      reloadTask();
+    } else if (type === "task.update" && data.task_id === taskId) {
       reloadTask();
     }
   });
@@ -109,6 +112,7 @@ export default function TaskDetailPage() {
               </div>
             ) : null}
             <TaskSummary task={t} />
+            {!t.content_restricted ? <TaskUpdates task={t} /> : null}
             {!t.content_restricted ? <TaskIterations task={t} /> : null}
             <Tabs
               value={tab}
@@ -150,7 +154,7 @@ function TaskStatusBanner({ task }: { task: Task }) {
             <Guarded text={task.status_reason} label="原因已隐藏" />
           </div>
         ) : null}
-        {task.progress && !isRestricted(task.progress) ? <div className="small">进度：{task.progress}</div> : null}
+        {task.progress && !isRestricted(task.progress) ? <div className="small">最新进展：{task.progress}</div> : null}
         <WaitInfo task={task} />
       </div>
     </div>
