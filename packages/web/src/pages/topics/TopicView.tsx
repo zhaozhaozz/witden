@@ -233,7 +233,18 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
     if (m.author_type === "external") {
       return { kind: "external", id, name: `外部成员（${PLATFORM_LABEL[m.source] ?? m.source}）` };
     }
-    return { kind: "system", id, name: "系统" };
+    const source = m.approval_id && !m.deleted ? "approval" : m.source;
+    const name =
+      source === "webhook"
+        ? "Webhook"
+        : source === "schedule"
+          ? "定时触发"
+          : source === "approval"
+            ? "审批"
+            : source !== "web" && source !== "internal"
+              ? (PLATFORM_LABEL[source] ?? "系统")
+              : "系统";
+    return { kind: "system", id: `system:${name}`, name };
   };
 
   const onSent = (msg: PostMessageResult) => {

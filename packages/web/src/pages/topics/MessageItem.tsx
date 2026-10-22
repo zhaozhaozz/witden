@@ -113,56 +113,35 @@ export function MessageItem({
   /** "@" tokens of the participants this message really mentions (highlighted; other "@…" are text). */
   mentionTokens?: string[];
 }) {
-  if (msg.author_type === "system") {
-    if (msg.approval_id && !msg.deleted) {
-      return (
-        <div className="msg-approval">
-          {approval ? (
-            <ApprovalCard approval={approval} showContext={false} onDecided={(next) => onDecided?.(next)} />
-          ) : (
-            <div className="approval">
-              <strong>审批请求</strong>
-              <p className="small muted">
-                {approvalError
-                  ? "审批详情加载失败，请重试。"
-                  : approvalLoading
-                    ? "正在加载审批详情…"
-                    : "审批记录已不存在或你无权查看。"}
-              </p>
-              <div className="btn-row">
-                <button type="button" className="btn btn-xs" onClick={onReloadApproval}>
-                  重新加载
-                </button>
-                <Link to="/approvals">打开审批</Link>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-    const change = !msg.deleted ? msg.participant_change : null;
-    return (
-      <div className="msg-system" title={fmtDateTime(msg.created_at)}>
-        {change ? (
-          <span className="msg-participant-change">
-            {change.action === "added" ? <span>{change.actor_name} 邀请</span> : null}
-            <RoleBadge role={change.role} />
-            <span>{change.action === "added" ? "加入话题" : "离开了话题"}</span>
-          </span>
+  const system = msg.author_type === "system";
+  const change = system && !msg.deleted ? msg.participant_change : null;
+  const approvalBody =
+    system && msg.approval_id && !msg.deleted ? (
+      <div className="msg-approval">
+        {approval ? (
+          <ApprovalCard approval={approval} showContext={false} onDecided={(next) => onDecided?.(next)} />
         ) : (
-          <span>{msg.content}</span>
+          <div className="approval">
+            <strong>审批请求</strong>
+            <p className="small muted">
+              {approvalError
+                ? "审批详情加载失败，请重试。"
+                : approvalLoading
+                  ? "正在加载审批详情…"
+                  : "审批记录已不存在或你无权查看。"}
+            </p>
+            <div className="btn-row">
+              <button type="button" className="btn btn-xs" onClick={onReloadApproval}>
+                重新加载
+              </button>
+              <Link to="/approvals">打开审批</Link>
+            </div>
+          </div>
         )}
-        {msg.task_id ? (
-          <Link to={`/tasks/${msg.task_id}`} className="small">
-            任务详情
-          </Link>
-        ) : null}
-        <time>{fmtTime(msg.created_at)}</time>
       </div>
-    );
-  }
+    ) : null;
 
-  // People's messages sit on the right as bubbles; roles' answers stay on the left as plain text.
+  // People sit on the right; roles and system senders share the ordinary left-aligned message layout.
   const human = author.kind === "user" || author.kind === "external";
 
   return (
@@ -178,7 +157,7 @@ export function MessageItem({
           <Avatar
             id={author.id}
             name={author.name}
-            kind={author.kind === "role" ? "role" : "user"}
+            kind={author.kind === "external" ? "user" : author.kind}
             size={32}
             src={author.avatarUrl}
             color={author.color}
@@ -205,7 +184,8 @@ export function MessageItem({
             ) : author.isMe ? null : (
               <span className="msg-author">{author.name}</span>
             )}
-            {author.kind === "external" || (msg.source && msg.source !== "web" && msg.source !== "internal") ? (
+            {!system &&
+            (author.kind === "external" || (msg.source && msg.source !== "web" && msg.source !== "internal")) ? (
               <span className="tag">来自 {PLATFORM_LABEL[msg.source] ?? msg.source}</span>
             ) : null}
             <time title={fmtDateTime(msg.created_at)}>{fmtTime(msg.created_at)}</time>
@@ -231,12 +211,27 @@ export function MessageItem({
         {/* Messages cannot be edited or deleted in the console; these marks come from Slack or a topic cleanup. */}
         {msg.deleted ? (
           <div className="msg-text muted">消息已删除</div>
+        ) : approvalBody ? (
+          approvalBody
+        ) : change ? (
+          <div className="msg-text msg-participant-change">
+            {change.action === "added" ? <span>{change.actor_name} 邀请</span> : null}
+            <RoleBadge role={change.role} />
+            <span>{change.action === "added" ? "加入话题" : "离开了话题"}</span>
+          </div>
         ) : (
           <MessageText content={msg.content} mentions={mentionTokens} />
         )}
-        {msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
+        {!msg.deleted && msg.attachments?.length ? <MessageAttachments ids={msg.attachments} files={files} /> : null}
         {/* The timeline places one execution record after the run's last reply. */}
-        <div className="msg-foot">{msg.edited_at ? <span className="small muted">已编辑</span> : null}</div>
+        <div className="msg-foot">
+          {system && msg.task_id && !msg.deleted ? (
+            <Link to={`/tasks/${msg.task_id}`} className="small">
+              任务详情
+            </Link>
+          ) : null}
+          {msg.edited_at ? <span className="small muted">已编辑</span> : null}
+        </div>
       </div>
     </div>
   );

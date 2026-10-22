@@ -20,6 +20,9 @@ test("membership notices show role badges for both joined and departed roles, in
   await page.reload();
   const notices = page.locator(".msg-system").filter({ has: page.locator(".badge-role") });
   await expect(notices).toHaveCount(2);
+  await expect(notices.first().locator(".msg-author")).toHaveText("系统");
+  await expect(notices.first().locator(".msg-gutter .avatar-system")).toHaveCount(1);
+  await expect(notices.first()).toHaveCSS("display", "grid");
   await expect(notices.first()).toContainText("admin 邀请");
   await expect(notices.first()).toContainText("加入话题");
   await expect(notices.last()).toContainText("离开了话题");
@@ -50,7 +53,7 @@ test("membership notices show role badges for both joined and departed roles, in
   expect(errors).toEqual([]);
 });
 
-test("long badges fit narrow screens and unrelated or deleted system messages keep plain text", async ({ page }) => {
+test("long badges fit narrow screens and deleted system messages hide their content", async ({ page }) => {
   const { state, errors } = await workspace(page, { noRoles: true });
   const role = {
     id: "long-role",

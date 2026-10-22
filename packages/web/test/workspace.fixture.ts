@@ -47,7 +47,7 @@ const message = (id: string, content: string, author = "role") => ({
   topic_id: topic.id,
   task_id: null as string | null,
   author_type: author,
-  author_id: author === "role" ? role.id : user.id,
+  author_id: (author === "role" ? role.id : user.id) as string | null,
   mentions: [],
   attachments: [],
   source: "internal",

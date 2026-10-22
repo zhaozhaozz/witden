@@ -41,6 +41,9 @@ test("pending approvals come first, survive refresh and disappear after decision
   await emit(page, "approval.changed", { id: "approval-1", status: "pending" });
   const pending = page.getByRole("region", { name: "待审批" });
   await expect(pending.locator(".approval")).toHaveCount(2);
+  const message = page.locator(".msg-system").filter({ has: page.locator(".msg-approval") });
+  await expect(message.locator(".msg-author")).toHaveText("审批");
+  await expect(message.locator(".msg-gutter .avatar-system")).toHaveCount(1);
   await expect(page.locator(".side-body > .work-section").first()).toHaveClass(/work-approvals/);
   await expect(page.locator(".work-approval-indicator")).toHaveAttribute("title", "2 项待审批");
   const note = pending.getByRole("textbox", { name: "审批备注（可选）" }).first();
