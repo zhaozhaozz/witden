@@ -13,6 +13,7 @@ import {
 import { createEnv, type Env, type OpContext, type OpHandler } from "./context.js";
 import { abortError, OpError, toRunnerError } from "./errors.js";
 import { Journal } from "./journal.js";
+import { runnerBuild } from "./live.js";
 import type { Logger } from "./log.js";
 import { ModelProxy } from "./model-proxy.js";
 import { Browsers } from "./ops/browser.js";
@@ -33,6 +34,8 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 24 * 3600_000;
 /** How long an aborted handler may take to wind down (exec needs ~2 s to escalate to SIGKILL). */
 const ABORT_GRACE_MS = 5_000;
+/** The bundle this runner was started from (the same for the whole process). */
+const BUILD = runnerBuild();
 
 /** Where the core sends what it produces; implemented by the WebSocket, stdio and in-memory transports. */
 export interface RunnerTransport {
@@ -192,6 +195,11 @@ export class RunnerCore {
     this.modelProxy.disconnected();
   }
 
+  /** Detaches whichever transport is attached. */
+  detachCurrent(): void {
+    if (this.transport) this.detach(this.transport);
+  }
+
   get inflightCount(): number {
     return this.inflight.size;
   }
@@ -231,6 +239,7 @@ export class RunnerCore {
       browser,
       tools,
       tokenExposed: tokenReadable(this.options.token),
+      ...(BUILD ? { build: BUILD } : {}),
     };
   }
 
@@ -412,13 +421,28 @@ export class RunnerCore {
   }
 
   /**
+   * Resolves true once nothing is running (no request, no model proxy request), false when that has not happened
+   * within `capMs`. Requests keep being accepted meanwhile.
+   */
+  async idle(capMs: number, stepMs = 500): Promise<boolean> {
+    const deadline = Date.now() + capMs;
+    while (this.inflight.size || this.modelProxy.active) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      await new Promise((r) => setTimeout(r, Math.min(stepMs, left)));
+    }
+    return true;
+  }
+
+  /**
    * Stops accepting requests, aborts running ones (exec trees are killed and journaled as killed), closes
    * streams and browser connections. Terminals, commands (command.*) and the desktop browser keep running.
+   * `reason` "update": the runner makes way for another version (main.ts); see `abortError`.
    */
-  async shutdown(): Promise<void> {
+  async shutdown(reason: "shutdown" | "update" = "shutdown"): Promise<void> {
     this.closing = true;
     this.commands.dispose();
-    for (const entry of this.inflight.values()) entry.controller.abort("shutdown");
+    for (const entry of this.inflight.values()) entry.controller.abort(reason);
     await Promise.race([this.drain(), new Promise((r) => setTimeout(r, ABORT_GRACE_MS + 1000))]);
     this.streams.closeAll();
     await this.modelProxy.dispose();

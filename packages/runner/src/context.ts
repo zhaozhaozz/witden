@@ -4,7 +4,7 @@ import type { Logger } from "./log.js";
 /** Per-request context handed to op handlers. */
 export interface OpContext {
   requestId: string;
-  /** Aborted with reason "timeout", "cancel" or "shutdown". */
+  /** Aborted with reason "timeout", "cancel", "shutdown" or "update" (errors.ts). */
   signal: AbortSignal;
   /** Epoch ms by which the operation must be finished. */
   deadline: number;

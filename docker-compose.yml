@@ -38,6 +38,9 @@ services:
       WITDEN_MANAGER_DATA_DIR: /data/manager
     volumes:
       - witden-manager:/data
+      # The runner the computers run: installed here from this image at start, mounted read-only into every
+      # computer by the manager (packages/manager/src/live-runner.ts).
+      - witden-runner:/opt/witden/runner-live
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
     networks: [control]
 
@@ -135,5 +138,6 @@ volumes:
   witden-db:
   witden-data:
   witden-manager:
+  witden-runner:
   witden-laya-cache:
   witden-tunnel:

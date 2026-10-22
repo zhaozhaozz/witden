@@ -161,6 +161,11 @@ export class ModelProxy {
     }
   }
 
+  /** Requests in flight (a program inside the computer is waiting for its answer). */
+  get active(): number {
+    return this.pending.size;
+  }
+
   /** The connection to the platform is gone: requests in flight cannot be answered. */
   disconnected(): void {
     for (const [id, p] of this.pending) {

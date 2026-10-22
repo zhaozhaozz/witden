@@ -77,6 +77,28 @@ function runnerFacts(info: RunnerInfo) {
     ],
     ["浏览器", info.browser ? "可用" : <span className="muted">不可用</span>],
     [
+      "Runner 版本",
+      info.build?.version ? (
+        <span>
+          <code className="id">{info.build.version}</code>
+          {info.build.source === "live" ? (
+            <span className="muted small" title="平台升级后，Runner 在空闲时自动换成新版本">
+              （随平台更新）
+            </span>
+          ) : (
+            <span
+              className="muted small"
+              title="这台虚拟电脑运行镜像中的 Runner，平台升级不会更新它；Compose 部署中，用新版镜像重置后即改为随平台更新"
+            >
+              （镜像自带）
+            </span>
+          )}
+        </span>
+      ) : (
+        <span className="muted small">未报告（Runner 版本较旧）</span>
+      ),
+    ],
+    [
       "Runner 令牌",
       info.tokenExposed === false ? (
         "已保护：电脑内的其他程序读不到"

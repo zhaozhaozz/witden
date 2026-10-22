@@ -17,6 +17,7 @@ import type {
   RemoveComputerRequest,
   RequestMessage,
   RestoreRequest,
+  RunnerBuild,
   RunnerChannel,
   VolumeUsageRequest,
 } from "@witden/shared";
@@ -79,6 +80,8 @@ export class FakeComputer {
   terminalReads: Record<string, unknown>[] = [];
   /** False: a runner from before background commands (exec.run only); takes effect at the next connect. */
   commandOps = true;
+  /** The runner bundle it reports in hello (null: a runner from before builds were reported). */
+  build: RunnerBuild | null = { version: "0123456789ab", source: "image" };
   /** Commands started with command.start, by id. */
   started = new Map<string, FakeCommand>();
   private transport: HubTransport | null = null;
@@ -118,6 +121,7 @@ export class FakeComputer {
           desktop: null,
           browser: true,
           tools: this.commandOps ? ["command"] : [],
+          ...(this.build ? { build: this.build } : {}),
         },
       }),
     );

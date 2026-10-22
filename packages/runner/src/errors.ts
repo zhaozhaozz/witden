@@ -37,9 +37,14 @@ export function toRunnerError(err: unknown): RunnerError {
   return { code: "failed", message };
 }
 
-/** Maps an aborted request signal (reason "timeout" | "cancel" | "shutdown") to the error reported to the hub. */
+/**
+ * Maps an aborted request signal (reason "timeout" | "cancel" | "shutdown" | "update") to the error reported to
+ * the hub.
+ */
 export function abortError(signal: AbortSignal): OpError {
   if (signal.reason === "timeout") return new OpError("timeout", "the operation timed out");
   if (signal.reason === "shutdown") return new OpError("failed", "the runner is shutting down");
+  if (signal.reason === "update")
+    return new OpError("failed", "the runner restarted for an update while this was running; its outcome is uncertain");
   return new OpError("failed", "the operation was cancelled");
 }

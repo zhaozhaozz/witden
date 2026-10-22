@@ -128,11 +128,12 @@ class TestHub {
 
 const containers: string[] = [];
 
-function startComputer(image: string, hub: TestHub, instanceId: string, token: string): string {
+function startComputer(image: string, hub: TestHub, instanceId: string, token: string, extra: string[] = []): string {
   const name = `witden-e2e-${instanceId}`;
   execFileSync("docker", [
     "run",
     "-d",
+    ...extra,
     "--name",
     name,
     "--hostname",
@@ -176,7 +177,7 @@ const b64 = (s: string) => Buffer.from(s).toString("base64");
  */
 const TOKEN_SCAN = [
   'for f in /proc/[0-9]*/environ; do tr "\\0" "\\n" 2>/dev/null <"$f" | grep -q "^WITDEN_RUNNER_TOKEN=." && echo "$f"; done',
-  'pid=$(pgrep -f "^/opt/witden/bin/node /opt/witden/runner/witden-runner.mjs" | head -1)',
+  'pid=$(pgrep -f "^/opt/witden/bin/node /opt/witden/runner[^ ]*/witden-runner.mjs" | head -1)',
   'cat "/proc/$pid/environ" >/dev/null 2>&1 && echo "readable /proc/$pid/environ"',
   'head -c1 "/proc/$pid/mem" >/dev/null 2>&1 && echo "readable /proc/$pid/mem"',
   "cat /proc/1/environ >/dev/null 2>&1 && echo readable /proc/1/environ",
@@ -333,6 +334,117 @@ describe.skipIf(!enabled)("computer images (docker)", () => {
       child.stdin.end();
       const code = await new Promise((resolve) => child.on("exit", resolve));
       expect(code).toBe(0);
+    }, 30_000);
+  });
+
+  describe("the platform's runner (shell image, read-only runner volume)", () => {
+    const instanceId = `live-${randomBytes(3).toString("hex")}`;
+    const token = randomBytes(16).toString("hex");
+    const volume = `witden-e2e-runner-${instanceId}`;
+    let name = "";
+    let conn: Connection;
+    // What the Docker Manager's installer leaves (packages/manager/src/live-runner.ts), as root: the image's
+    // bundle as another version, then `current` switched to it.
+    const install = (version: string) => {
+      const script = [
+        "set -e",
+        'd="/live/versions/$1"',
+        'mkdir -p /live/versions && cp -r /opt/witden/runner "$d.tmp"',
+        'printf "\\n// %s\\n" "$1" >>"$d.tmp/witden-runner.mjs"',
+        `node -e 'const fs = require("fs"); const f = process.argv[1]; fs.writeFileSync(f, JSON.stringify({ ...JSON.parse(fs.readFileSync(f)), version: process.argv[2] }))' "$d.tmp/manifest.json" "$1"`,
+        'chmod -R go-w "$d.tmp" && mv "$d.tmp" "$d"',
+        'ln -s "versions/$1" /live/.current && mv -T /live/.current /live/current',
+      ].join("\n");
+      execFileSync("docker", [
+        "run",
+        "--rm",
+        "-u",
+        "0",
+        "--network",
+        "none",
+        "-v",
+        `${volume}:/live`,
+        "--entrypoint",
+        "/bin/sh",
+        SHELL_IMAGE,
+        "-c",
+        script,
+        "sh",
+        version,
+      ]);
+    };
+
+    beforeAll(async () => {
+      execFileSync("docker", ["volume", "create", volume], { stdio: "ignore" });
+      install("e2e000000001");
+      name = startComputer(SHELL_IMAGE, hub, instanceId, token, [
+        "--mount",
+        `type=volume,src=${volume},dst=/opt/witden/runner-live,readonly,volume-nocopy`,
+      ]);
+      conn = await hub.connection(instanceId);
+    }, 90_000);
+
+    afterAll(() => {
+      try {
+        execFileSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+        execFileSync("docker", ["volume", "rm", volume], { stdio: "ignore" });
+      } catch {
+        // already gone
+      }
+    });
+
+    it("runs it instead of the image's copy, as protected, from a volume nobody inside can change", async () => {
+      expect(conn.hello.info.build).toEqual({ version: "e2e000000001", source: "live" });
+      expect((await conn.ok("exec.run", { command: TOKEN_SCAN })).output.trim()).toBe("scanned");
+      expect(conn.hello.info.tokenExposed).toBe(false);
+      const ps = await conn.ok("exec.run", { command: "pgrep -af witden-runner.mjs" });
+      expect(ps.output).toContain(
+        "/opt/witden/bin/node /opt/witden/runner-live/versions/e2e000000001/witden-runner.mjs",
+      );
+      const write = await conn.ok("exec.run", {
+        command: "touch /opt/witden/runner-live/current/x /opt/witden/runner-live/x 2>&1; echo $?",
+      });
+      expect(write.output).toMatch(/Read-only file system[\s\S]*\n1\n$/);
+    });
+
+    it("restarts into a new version once idle; commands and terminals carry on", async () => {
+      await conn.ok("command.start", { id: "keep-running", command: "sleep 600" });
+      const { sessionId } = await conn.ok("terminal.create", { command: "export KEEP=yes" });
+      const index = hub.count(instanceId);
+      install("e2e000000002");
+      // witden-init looks every 20 s
+      const fresh = await hub.connection(instanceId, index, 60_000);
+      expect(fresh.hello.info.build).toEqual({ version: "e2e000000002", source: "live" });
+      const list = await fresh.ok("command.list", { ids: ["keep-running"] });
+      expect(list.commands[0]).toMatchObject({ id: "keep-running", running: true });
+      await fresh.ok("terminal.input", { sessionId, text: 'echo "keep=$KEEP"' });
+      let output = "";
+      for (let i = 0; i < 40 && !output.includes("keep=yes"); i++) {
+        output = (await fresh.ok("terminal.read", { sessionId })).output;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      expect(output).toContain("keep=yes");
+      const logs = spawnSync("docker", ["logs", name], { encoding: "utf8" }).stderr;
+      expect(logs).toContain("the platform's runner e2e000000002 is ready");
+      expect(logs).toContain("runner exited with status 75; restarting\n");
+      conn = fresh;
+    }, 90_000);
+
+    it("picks it for the --stdio channel too", async () => {
+      const command = ["/opt/witden/bin/node", "/opt/witden/runner/witden-init.mjs", "--stdio"];
+      const child = spawn("docker", ["exec", "-i", "-e", "WITDEN_RUNNER_TOKEN=", name, ...command], {
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+      const frames = new StdioFrameDecoder();
+      let hello: HelloMessage | undefined;
+      child.stdout.on("data", (chunk: Buffer) => {
+        for (const f of frames.push(chunk))
+          if (f.kind === "text") hello ??= JSON.parse(Buffer.from(f.payload).toString());
+      });
+      for (let i = 0; i < 100 && !hello; i++) await new Promise((r) => setTimeout(r, 100));
+      expect(hello?.info.build).toEqual({ version: "e2e000000002", source: "live" });
+      child.stdin.end();
+      await new Promise((resolve) => child.on("exit", resolve));
     }, 30_000);
   });
 

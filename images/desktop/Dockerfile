@@ -9,6 +9,7 @@
 # packages/runner/src/init.ts for how the token is kept from the rest of the computer, and for system packages.
 
 # --- runner bundle ------------------------------------------------------------------------------------------
+# The image's own copy of the runner, built as in images/shell/Dockerfile (and the platform image).
 FROM node:22-bookworm-slim AS runner
 WORKDIR /build
 COPY package-lock.json /build/lock.json
@@ -19,9 +20,7 @@ RUN npm init -y >/dev/null \
 COPY packages/shared/src packages/shared/src
 COPY packages/runner/src packages/runner/src
 COPY packages/runner/build.mjs packages/runner/
-RUN node packages/runner/build.mjs --outdir /opt/witden/runner \
- && mkdir -p /opt/witden/runner/node_modules \
- && cp -r node_modules/playwright-core /opt/witden/runner/node_modules/
+RUN node packages/runner/build.mjs --outdir /opt/witden/runner --with-playwright-core
 
 # --- computer -----------------------------------------------------------------------------------------------
 FROM debian:bookworm-slim

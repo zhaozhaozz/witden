@@ -182,6 +182,28 @@ describe("instances", () => {
     expect(pc.connected).toBe(false);
   });
 
+  it("keeps the runner version each computer reported, live and after it disconnects", async () => {
+    const tpl = await template();
+    const inst = await instance(tpl.id, "box-version");
+    expect(inst.runner.info.build).toEqual({ version: "0123456789ab", source: "image" });
+    // The platform installed another version; the runner restarted into it and reconnected.
+    const pc = h.manager.computer(inst.id);
+    pc.disconnect();
+    pc.build = { version: "ba9876543210", source: "live" };
+    pc.connect(h.manager.hub!);
+    const after = await h.waitFor(async () => {
+      const r = (await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body;
+      return r.runner.connected && r.runner.info.build?.source === "live" && r;
+    });
+    expect(after.runner_info.build).toEqual({ version: "ba9876543210", source: "live" });
+    pc.disconnect();
+    await h.waitFor(
+      async () => !(await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body.runner.connected,
+    );
+    const offline = (await h.api("GET", `/api/instances/${inst.id}`, { token: h.adminToken })).body;
+    expect(offline.runner_info.build).toEqual({ version: "ba9876543210", source: "live" });
+  });
+
   it("a stdio channel the Docker Manager opened is its own credential; elsewhere a runner needs the token", async () => {
     const tpl = await template();
     const inst = await instance(tpl.id, "box-stdio");

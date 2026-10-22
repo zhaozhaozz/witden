@@ -19,6 +19,7 @@ import {
   type PackagesResult,
   type RemoveComputerRequest,
   type RestoreRequest,
+  RUNNER_LIVE_DIR,
   type RunnerChannel,
   type VolumeUsageRequest,
 } from "@witden/shared";
@@ -26,6 +27,7 @@ import Docker from "dockerode";
 import { filterArchive } from "./archive.js";
 import { RelayChannel, StdoutDemuxer } from "./channel.js";
 import { ManagerError } from "./errors.js";
+import { LiveRunner, type LiveRunnerStatus } from "./live-runner.js";
 import {
   DEFAULT_ALLOWED_RUNTIMES,
   validateBackupId,
@@ -53,12 +55,16 @@ export const LABEL_INIT = "witden.init";
 export const BACKUP_REPOSITORY = "witden-backup";
 export const DEFAULT_BRIDGE_NETWORK = "witden-computers";
 export const DEFAULT_INTERNAL_NETWORK = "witden-computers-internal";
+/** The stdio runner of other images (older witden ones among them): the image's own runner, as their main one. */
 export const DEFAULT_RUNNER_COMMAND: readonly string[] = [
   "/usr/local/bin/node",
   "/opt/witden/runner/witden-runner.mjs",
   "--stdio",
 ];
-/** The stdio runner of protected images: through witden-init, which keeps the runner's environment clean. */
+/**
+ * The stdio runner of protected images: through witden-init, which keeps the runner's environment clean and
+ * picks the runner as for the main one (the platform's up-to-date copy when the computer has it).
+ */
 export const PROTECTED_RUNNER_COMMAND: readonly string[] = [
   "/opt/witden/bin/node",
   "/opt/witden/runner/witden-init.mjs",
@@ -100,6 +106,11 @@ export interface DockerManagerOptions {
   runnerUser?: string;
   /** Host name that bridge computers resolve to the Docker host, where the hub is published. */
   hubHost?: string;
+  /**
+   * Keep the computers' runner up to date from this bundle (the platform image's), through the runner volume
+   * mounted into the manager's own container (live-runner.ts). Off by default: computers run their image's copy.
+   */
+  liveRunner?: { bundleDir?: string; liveDir?: string; mountinfo?: () => string; hostname?: () => string };
 }
 
 function statusOf(err: unknown): number | undefined {
@@ -175,6 +186,7 @@ export class DockerManager implements ManagerApi {
   private readonly hubHost: string;
   private readonly networkLocks = new Map<string, Promise<void>>();
   private quotaIgnored: Promise<boolean> | null = null;
+  private readonly live: LiveRunner | null;
 
   constructor(options: DockerManagerOptions) {
     this.docker = options.docker ?? new Docker();
@@ -187,6 +199,14 @@ export class DockerManager implements ManagerApi {
     this.runnerUser = options.runnerUser || DEFAULT_RUNNER_USER;
     this.hubHost = options.hubHost || DEFAULT_HUB_HOST;
     if (!this.runnerCommand.length) throw new Error("runnerCommand must not be empty");
+    this.live = options.liveRunner
+      ? new LiveRunner(this.docker, { ...options.liveRunner, exec: (c, cmd) => this.rootExec(c, cmd) })
+      : null;
+  }
+
+  /** Finds the runner volume and installs this image's runner into it (once; computers wait for it). */
+  async setUpLiveRunner(): Promise<LiveRunnerStatus | null> {
+    return this.live ? this.live.setUp() : null;
   }
 
   async health(): Promise<{ ok: boolean; docker: string }> {
@@ -315,7 +335,11 @@ export class DockerManager implements ManagerApi {
   async backup(containerId: string, request: BackupRequest): Promise<BackupResult> {
     const { backupId, mounts } = validateBackupRequest(request);
     const { container, info } = await this.managedContainer(containerId);
-    const volumeMounts = new Set((info.Mounts ?? []).filter((m) => m.Type === "volume").map((m) => m.Destination));
+    const volumeMounts = new Set(
+      (info.Mounts ?? [])
+        .filter((m) => m.Type === "volume" && m.Destination !== RUNNER_LIVE_DIR)
+        .map((m) => m.Destination),
+    );
     const other = mounts.filter((m) => !volumeMounts.has(m));
     if (other.length) throw new ManagerError("invalid", `not volume mounts of this computer: ${other.join(", ")}`);
     const imageRef = `${BACKUP_REPOSITORY}:${backupId}`;
@@ -391,7 +415,9 @@ export class DockerManager implements ManagerApi {
     }
     // Old volumes are wiped so the archives are restored into empty volumes.
     const stale = new Set(Object.values(spec.volumes));
-    for (const m of replaced?.Mounts ?? []) if (m.Type === "volume" && m.Name) stale.add(m.Name);
+    // (the runner volume is the platform's, shared by all computers)
+    for (const m of replaced?.Mounts ?? [])
+      if (m.Type === "volume" && m.Name && m.Destination !== RUNNER_LIVE_DIR) stale.add(m.Name);
     await this.existingVolumes([...stale], spec.instanceId);
 
     if (replaced) await this.removeContainer(replaced.Id);
@@ -499,7 +525,8 @@ export class DockerManager implements ManagerApi {
   /**
    * Runs a fixed command as root. `/usr/bin/env -i` (by absolute path: the computer's PATH starts in the
    * user's home) gives it a clean environment, so nothing from the computer's environment (the runner token,
-   * LD_PRELOAD, PYTHONPATH, that PATH) reaches a root process.
+   * LD_PRELOAD, PYTHONPATH, that PATH) reaches a root process. Also runs the runner installer in the manager's
+   * own container (live-runner.ts).
    */
   private async rootExec(container: Docker.Container, cmd: string[]): Promise<{ code: number; output: string }> {
     const exec = await container.exec({
@@ -579,6 +606,7 @@ export class DockerManager implements ManagerApi {
     await this.ensureImage(spec.image);
     const image = await this.inspectImage(spec.image);
     const networkMode = await this.networkFor(spec.network);
+    const runnerVolume = this.live ? await this.live.volume() : null;
     const res = spec.resources;
     const hostConfig: Docker.HostConfig = {
       CapDrop: ["ALL"],
@@ -598,6 +626,17 @@ export class DockerManager implements ManagerApi {
         ReadOnly: false,
       })),
     };
+    if (runnerVolume) {
+      // The one volume computers share: the platform's runner, read-only, root's files only, and nothing of any
+      // computer in it. NoCopy: an image's own files at that path must never be copied into it.
+      hostConfig.Mounts!.push({
+        Type: "volume",
+        Source: runnerVolume,
+        Target: RUNNER_LIVE_DIR,
+        ReadOnly: true,
+        VolumeOptions: { NoCopy: true } as Docker.MountSettings["VolumeOptions"],
+      });
+    }
     if (spec.network === "bridge") hostConfig.ExtraHosts = [`${this.hubHost}:host-gateway`];
     if (res.cpus) hostConfig.NanoCpus = Math.round(res.cpus * 1e9);
     if (res.memoryMb) {

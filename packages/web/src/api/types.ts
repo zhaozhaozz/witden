@@ -407,6 +407,8 @@ export interface RunnerInfo {
   tools?: string[];
   /** Other processes in the computer could read the runner token (absent: a runner too old to check). */
   tokenExposed?: boolean;
+  /** The runner's bundle: "live" is the copy the platform keeps up to date, "image" the image's own. */
+  build?: { version?: string; source?: "live" | "image" | string };
 }
 
 /** Live connection of the computer's runner to the hub of the API process answering the request. */

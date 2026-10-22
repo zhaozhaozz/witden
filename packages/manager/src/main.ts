@@ -13,6 +13,9 @@
  *   WITDEN_MANAGER_RUNNER_COMMAND     stdio runner command, JSON array or space-separated
  *   WITDEN_MANAGER_RUNNER_USER        user the stdio runner runs as (default witden)
  *   WITDEN_MANAGER_LOG_LEVEL          pino log level (default info)
+ *
+ * In a container with the runner volume mounted at /opt/witden/runner-live (docker-compose.yml), it installs
+ * the image's runner bundle there and mounts the volume read-only into the computers (live-runner.ts).
  */
 import path from "node:path";
 import { DockerManager } from "./docker-manager.js";
@@ -52,6 +55,7 @@ async function main(): Promise<void> {
     allowedRuntimes: list(env.WITDEN_MANAGER_ALLOWED_RUNTIMES),
     runnerCommand: command(env.WITDEN_MANAGER_RUNNER_COMMAND),
     runnerUser: env.WITDEN_MANAGER_RUNNER_USER,
+    liveRunner: {},
   });
   const app = createManagerServer(manager, { token, logger: { level: env.WITDEN_MANAGER_LOG_LEVEL || "info" } });
   await app.listen({ host: env.WITDEN_MANAGER_HOST || "127.0.0.1", port });
@@ -59,6 +63,13 @@ async function main(): Promise<void> {
   const health = await manager.health();
   if (health.ok) app.log.info(`docker ${health.docker}`);
   else app.log.warn(`docker is not reachable yet: ${health.docker}`);
+  manager.setUpLiveRunner().then((live) => {
+    if (!live) return;
+    if (live.retry) app.log.warn(live.problem);
+    else if (!live.volume) app.log.info(`computers run their image's runner: ${live.problem}`);
+    else if (live.problem) app.log.warn(`runner volume ${live.volume}: ${live.problem}`);
+    else app.log.info({ install: live.install }, `computers run runner ${live.version} from volume ${live.volume}`);
+  });
 
   const shutdown = () => {
     app.close().finally(() => process.exit(0));

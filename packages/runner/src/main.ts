@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { createRunnerCore } from "./core.js";
+import { RESTART_NOW, UPDATE_SIGNAL } from "./live.js";
 import { createStderrLogger, parseLogLevel } from "./log.js";
 import { serveStdio } from "./transports/stdio.js";
 import { WebSocketClient } from "./transports/websocket.js";
@@ -30,6 +31,9 @@ if (process.getuid?.() === 0 && process.env.WITDEN_RUNNER_ALLOW_ROOT !== "1") {
 process.on("uncaughtException", (err) => logger.error("uncaught exception", { error: err.stack ?? String(err) }));
 process.on("unhandledRejection", (err) => logger.error("unhandled rejection", { error: String(err) }));
 
+/** How long a runner asked to make way for another version waits for running operations (they are interrupted then). */
+const UPDATE_WAIT_MS = 10 * 60_000;
+
 const core = createRunnerCore({ logger });
 let client: WebSocketClient | null = null;
 
@@ -44,6 +48,25 @@ const stop = async (signal: string) => {
 };
 process.on("SIGTERM", () => void stop("SIGTERM"));
 process.on("SIGINT", () => void stop("SIGINT"));
+
+// witden-init asks for this when the platform installed another runner version (live.ts): once nothing is running,
+// the hub connection is closed first (anything still running at the cap is then "outcome uncertain" to the
+// platform, which asks the next runner's journal), and witden-init starts the new version at once. Commands,
+// terminals and the desktop browser run outside this process and are taken over by the next one.
+let updating = false;
+process.on(UPDATE_SIGNAL, async () => {
+  if (updating || stopping) return;
+  updating = true;
+  logger.info("another runner version is ready; restarting once no operation is running");
+  const idle = await core.idle(UPDATE_WAIT_MS);
+  if (stopping) return;
+  stopping = true;
+  if (!idle) logger.warn("operations still running; interrupting them for the update", { running: core.inflightCount });
+  client?.stop();
+  core.detachCurrent();
+  await core.shutdown("update");
+  process.exit(RESTART_NOW);
+});
 
 if (args.includes("--stdio")) {
   await serveStdio(core);

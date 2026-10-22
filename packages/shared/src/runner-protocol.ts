@@ -41,6 +41,15 @@ export interface RunnerInfo {
    * Absent from runners that predate the check.
    */
   tokenExposed?: boolean;
+  /** The runner bundle answering. Absent from runners that predate it, and from runners not run from a bundle. */
+  build?: RunnerBuild;
+}
+
+export interface RunnerBuild {
+  /** The bundle's version (manifest.json: a hash of its files). */
+  version: string;
+  /** "live": the copy the platform keeps up to date (RUNNER_LIVE_DIR); "image": the computer image's own. */
+  source: "live" | "image";
 }
 
 export interface WelcomeMessage {

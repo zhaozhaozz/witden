@@ -116,6 +116,34 @@ export const MAX_PACKAGES = 100;
  */
 export const IMAGE_PACKAGES_FILE = "/opt/witden/image-packages";
 
+/**
+ * The runner the platform keeps up to date: a volume every computer mounts read-only, filled only by the Docker
+ * Manager's installer, as root. `current` links to `versions/<version>/`, a complete runner bundle with its
+ * manifest.json; witden-init runs it when it is compatible, else the image's own copy (/opt/witden/runner).
+ */
+export const RUNNER_LIVE_DIR = "/opt/witden/runner-live";
+
+/** manifest.json of a runner bundle (packages/runner/build.mjs). */
+export interface RunnerManifest {
+  /** Hash of the bundle's files; also the bundle's directory name under `versions/`. */
+  version: string;
+  /** Lowest Node.js major version the bundle runs on. */
+  node: number;
+  /** Lowest witden-init protocol the bundle needs (packages/runner/src/live.ts). */
+  init: number;
+}
+
+export const RUNNER_VERSION_PATTERN = /^[0-9a-f]{12}$/;
+
+/** The manifest when it is well-formed, else null. */
+export function parseRunnerManifest(value: unknown): RunnerManifest | null {
+  const m = value as Partial<RunnerManifest> | null;
+  if (!m || typeof m !== "object") return null;
+  if (typeof m.version !== "string" || !RUNNER_VERSION_PATTERN.test(m.version)) return null;
+  if (!Number.isInteger(m.node) || !Number.isInteger(m.init)) return null;
+  return { version: m.version, node: m.node as number, init: m.init as number };
+}
+
 export interface RestoreRequest {
   /** Spec of the computer to (re)create; its image is replaced by the backup image. */
   spec: ComputerSpec;
