@@ -40,8 +40,10 @@ import { TaskControls, TaskStatusChip } from "./taskParts";
 export default function TaskDetailPage() {
   const { taskId = "" } = useParams();
   const nav = useNavigate();
-  const [tab, setTab] = useState("log");
+  const [picked, setTab] = useState<string | null>(null);
   const task = useResource(() => api.get<Task>(`/api/tasks/${taskId}`), [taskId]);
+  // An independent task opens on its progress history; a conversation run on its execution log.
+  const tab = picked ?? (task.data && task.data.kind !== "conversation" ? "progress" : "log");
   const log = useResource(() => api.get<TaskStep[]>(`/api/tasks/${taskId}/log`), [taskId]);
   const trace = useResource(() => api.get<TaskTrace>(`/api/tasks/${taskId}/trace`), [taskId], tab === "trace");
   // Tasks that read material this viewer may not see: no log, no step stream (both are refused).
@@ -112,17 +114,26 @@ export default function TaskDetailPage() {
               </div>
             ) : null}
             <TaskSummary task={t} />
-            {!t.content_restricted ? <TaskUpdates task={t} /> : null}
             {!t.content_restricted ? <TaskIterations task={t} /> : null}
             <Tabs
               value={tab}
               onChange={setTab}
               tabs={[
+                {
+                  key: "progress",
+                  label: "进展",
+                  badge: restricted ? undefined : t.updates?.length || undefined,
+                  hidden: t.kind === "conversation",
+                },
                 { key: "log", label: "执行记录", badge: restricted ? undefined : log.data?.length },
                 { key: "trace", label: "链路追溯" },
               ]}
             />
-            {tab === "log" && restricted ? (
+            {tab === "progress" && restricted ? (
+              <Empty title="你无权查看这个任务所在的话题，进展记录已隐藏" hint="能查看这个话题的人可以看到进展记录。" />
+            ) : tab === "progress" ? (
+              <TaskUpdates task={t} />
+            ) : tab === "log" && restricted ? (
               <Empty title="你无权查看这个任务所在的话题，执行日志已隐藏" hint="能查看这个话题的人可以看到执行记录。" />
             ) : tab === "log" ? (
               <Loaded res={log}>

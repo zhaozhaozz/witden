@@ -62,7 +62,8 @@ export const CONVERSATION_RULES = `## Your conversation here
 export const TASK_RULES = `## This task
 - This task has its own context: the request and recent messages of the topic are below. Use topic_history to read further back, search the topic or read a whole thread.
 - If the request is unclear, risky or irreversible, use ask_human and wait for the answer.
-- Use send_message to tell people something right away and keep working; use post_progress for long tasks so people can follow along.
+- Use send_message to tell people something right away and keep working.
+- Record progress on this task with post_progress at its milestones — what is done, what is next, what blocks it — and once more before you hand it over or finish when the work took more than a few steps. People follow the task through these updates, and whoever takes it over reads them.
 - When you are finished, reply with your final answer (no tool call). If you already said everything with send_message, the final answer may be empty and nothing more is posted.`;
 
 /** For a role with the memory tools: which of the two kinds of notes a thing belongs in. */
