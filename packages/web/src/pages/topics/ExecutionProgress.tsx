@@ -323,32 +323,67 @@ export function ExecutionProgress({
           ))}
         </div>
       ) : null}
-      <button type="button" className="execution-toggle" aria-expanded={expanded} aria-controls={id} onClick={onToggle}>
-        <span className="execution-heading">
-          <span className="live-indicator" aria-hidden />
-          <ExecutionStatus status={status} />
-          {!connected && active ? <span className="small muted">连接中</span> : null}
-        </span>
-        <span className="execution-stats">
-          <span title="已完成的模型调用次数，包含上下文整理">
-            <b>{snapshot ? fmtNumber(snapshot.rounds) : "—"}</b> 轮
+      <div
+        className="execution-summary"
+        role="region"
+        aria-label="执行状态与用量，可横向滚动"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: Keyboard users can scroll the single-line summary on narrow screens.
+        tabIndex={0}
+      >
+        <button
+          type="button"
+          className="execution-toggle"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={onToggle}
+        >
+          <span className="execution-heading">
+            <span className="live-indicator" aria-hidden />
+            <ExecutionStatus status={status} />
+            {!connected && active ? <span className="small muted">连接中</span> : null}
           </span>
-          <span title="从运行开始到现在的经过时间，包含等待">
-            <b>{elapsed(snapshot?.started_at, end)}</b>
+          <span className="execution-stats">
+            <span title="已完成的模型调用次数，包含上下文整理">
+              <b>{snapshot ? fmtNumber(snapshot.rounds) : "—"}</b> 轮
+            </span>
+            <span title="从运行开始到现在的经过时间，包含等待">
+              <b>{elapsed(snapshot?.started_at, end)}</b>
+            </span>
+            <span title="已向电脑发起的命令与终端启动次数，包含执行中及失败的调用；被拒绝的审批不计数">
+              <b>{snapshot ? fmtNumber(snapshot.commands) : "—"}</b> 条命令
+            </span>
+            <span
+              title={`模型已返回 ${fmtNumber(snapshot?.tokens)} token（输入与输出总量，包含缓存）；生成中的用量将在返回后更新`}
+            >
+              <b>{fmtTokens(snapshot?.tokens)}</b> token
+            </span>
+            <span
+              title={`上行：模型已返回的输入用量 ${fmtNumber(snapshot?.prompt_tokens)} token，包含缓存命中和缓存写入`}
+            >
+              上行 <b>{fmtTokens(snapshot?.prompt_tokens)}</b>
+            </span>
+            <span title={`下行：模型已返回的输出用量 ${fmtNumber(snapshot?.completion_tokens)} token`}>
+              下行 <b>{fmtTokens(snapshot?.completion_tokens)}</b>
+            </span>
+            <span
+              title={`缓存：模型报告命中的输入 ${fmtNumber(snapshot?.cached_tokens)} token，已包含在上行中；未报告时按 0 统计`}
+            >
+              缓存 <b>{fmtTokens(snapshot?.cached_tokens)}</b>
+            </span>
+            <span title="缓存命中率 = 本次运行累计命中的输入 token ÷ 累计上行 token；尚无上行用量时显示 —">
+              缓存命中率{" "}
+              <b>
+                {snapshot?.cache_hit_rate == null
+                  ? "—"
+                  : `${(snapshot.cache_hit_rate * 100).toFixed(1).replace(/\.0$/, "")}%`}
+              </b>
+            </span>
           </span>
-          <span title="已向电脑发起的命令与终端启动次数，包含执行中及失败的调用；被拒绝的审批不计数">
-            <b>{snapshot ? fmtNumber(snapshot.commands) : "—"}</b> 条命令
+          <span className="execution-chevron" aria-hidden>
+            {expanded ? "⌃" : "⌄"}
           </span>
-          <span
-            title={`模型已返回 ${fmtNumber(snapshot?.tokens)} token（输入与输出总量，包含缓存）；生成中的用量将在返回后更新`}
-          >
-            <b>{fmtTokens(snapshot?.tokens)}</b> token
-          </span>
-        </span>
-        <span className="execution-chevron" aria-hidden>
-          {expanded ? "⌃" : "⌄"}
-        </span>
-      </button>
+        </button>
+      </div>
       {error ? (
         <div className="execution-error" role="status">
           {error}{" "}

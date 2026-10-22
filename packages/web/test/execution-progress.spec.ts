@@ -327,3 +327,69 @@ test("a result on a page boundary shows its request and stays expanded when the 
   await expect(scroll.locator(".execution-detail")).toContainText("complete result");
   expect(errors).toEqual([]);
 });
+
+test("the preview shows input, output, cache and a weighted hit rate, including zero usage and narrow screens", async ({
+  page,
+}) => {
+  const { state, errors } = await setup(page);
+  const stats = page.locator(".execution-stats");
+  await expect(stats).toContainText("上行 0");
+  await expect(stats).toContainText("下行 0");
+  await expect(stats).toContainText("缓存 0");
+  await expect(stats).toContainText("缓存命中率 —");
+  Object.assign(state.stats, {
+    prompt_tokens: 12000,
+    completion_tokens: 340,
+    cached_tokens: 9060,
+    cache_hit_rate: 0.755,
+    tokens: 12340,
+  });
+  await emit(page, "task.progress", { task_id: "task-1", seq: 4 });
+  await expect(stats).toContainText("上行 12K");
+  await expect(stats).toContainText("下行 340");
+  await expect(stats).toContainText("缓存 9.1K");
+  await expect(stats).toContainText("缓存命中率 75.5%");
+  await expect(stats.locator("[title^='上行']")).toHaveAttribute("title", /12,000 token/);
+  await expect(stats.locator("[title^='缓存：']")).toHaveAttribute("title", /9,060 token/);
+  await expect(page.locator(".execution-toggle")).toHaveAttribute("aria-expanded", "false");
+  await page.screenshot({ path: ".tmp/execution-tokens-desktop.png" });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.getByRole("button", { name: "关闭工作区" }).click();
+  const summary = page.getByRole("region", { name: "执行状态与用量，可横向滚动" });
+  await summary.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  expect(await summary.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  const height = (await summary.boundingBox())!.height;
+  await summary.focus();
+  await page.keyboard.press("End");
+  // Horizontal keyboard scrolling works while the execution process stays collapsed.
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => summary.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+  await summary.evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+  });
+  await page.screenshot({ path: ".tmp/execution-tokens-mobile.png" });
+  const hit = stats.locator("[title^='缓存命中率']");
+  const hitBox = (await hit.boundingBox())!;
+  const summaryBox = (await summary.boundingBox())!;
+  expect(hitBox.x).toBeGreaterThanOrEqual(summaryBox.x);
+  expect(hitBox.x + hitBox.width).toBeLessThanOrEqual(summaryBox.x + summaryBox.width);
+  expect((await summary.boundingBox())!.height).toBe(height);
+  await expect(page.locator(".execution-toggle")).toHaveAttribute("aria-expanded", "false");
+  await page.locator(".execution-toggle").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("region", { name: "执行过程", exact: true })).toBeVisible();
+  state.stats.cached_tokens = 0;
+  state.stats.cache_hit_rate = 0;
+  state.runStatus = "completed";
+  const answer = { ...state.messages[1], id: "token-answer", task_id: "task-1", content: "检查完成。" };
+  state.messages.push(answer);
+  await emit(page, "message.created", answer);
+  await emit(page, "task.status", { id: "task-1", status: "completed", owner_role_id: "role-1" });
+  await expect(stats).toContainText("缓存命中率 0%");
+  await page.reload();
+  await expect(stats).toContainText("上行 12K");
+  await expect(stats).toContainText("下行 340");
+  await expect(stats).toContainText("缓存命中率 0%");
+  expect(errors).toEqual([]);
+});

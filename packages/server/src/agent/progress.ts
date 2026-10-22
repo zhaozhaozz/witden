@@ -58,6 +58,9 @@ export async function taskProgress(
   const [usage] = await db
     .select({
       rounds: sql<number>`count(*)::int`,
+      prompt_tokens: sql<number>`coalesce(sum(${usageRecords.promptTokens}::bigint), 0)`.mapWith(Number),
+      completion_tokens: sql<number>`coalesce(sum(${usageRecords.completionTokens}::bigint), 0)`.mapWith(Number),
+      cached_tokens: sql<number>`coalesce(sum(${usageRecords.cachedTokens}::bigint), 0)`.mapWith(Number),
       tokens:
         sql<number>`coalesce(sum(${usageRecords.promptTokens}::bigint + ${usageRecords.completionTokens}), 0)`.mapWith(
           Number,
@@ -75,6 +78,8 @@ export async function taskProgress(
     started_at: (task.startedAt ?? task.createdAt).toISOString(),
     finished_at: task.finishedAt?.toISOString() ?? null,
     ...usage,
+    // Weight all calls by their input size; an empty run has no meaningful hit rate yet.
+    cache_hit_rate: usage.prompt_tokens > 0 ? usage.cached_tokens / usage.prompt_tokens : null,
     commands: commands.count,
     steps: [] as { seq: number; kind: string; payload: Record<string, any>; created_at: string }[],
     has_more: false,

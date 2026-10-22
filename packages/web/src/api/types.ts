@@ -264,6 +264,10 @@ export interface TaskActivity {
   rounds: number;
   commands: number;
   tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  cache_hit_rate: number | null;
   steps: TaskStep[];
   has_more: boolean;
 }

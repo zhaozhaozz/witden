@@ -2766,11 +2766,18 @@ img.avatar-role.avatar-colored {
   overflow: auto;
   overscroll-behavior: contain;
 }
+.execution-summary {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
 .execution-toggle {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
+  min-width: max-content;
   min-height: 32px;
   padding: 4px 0;
   text-align: left;
@@ -2782,7 +2789,7 @@ img.avatar-role.avatar-colored {
 }
 .execution-heading {
   display: flex;
-  flex: 0 1 7.5em;
+  flex: 0 0 7.5em;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -2823,7 +2830,7 @@ img.avatar-role.avatar-colored {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   font-size: 11.5px;
   color: var(--ink-3);
   font-variant-numeric: tabular-nums;

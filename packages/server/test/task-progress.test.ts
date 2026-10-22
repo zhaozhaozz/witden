@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { db, transaction } from "../src/db/client.js";
-import { taskSteps, users } from "../src/db/schema.js";
+import { taskSteps, usageRecords, users } from "../src/db/schema.js";
 import { runtime } from "../src/runtime.js";
 import type { BusEvent } from "../src/services/events.js";
 import { issueToken } from "../src/services/users.js";
@@ -224,4 +224,69 @@ it("filters before pagination, omits reasoning and computer calls, and preserves
   expect(JSON.stringify(full)).not.toContain("supersecret");
   const earlier = (await get(id, "/activity?steps=platform&before=122")).body;
   expect(earlier.steps.map((s: any) => s.seq)).toEqual([1]);
+});
+
+it("totals input, output and cache tokens per run and weights the cache hit rate by input", async () => {
+  const id = (await w.post(w.alice, w.ids.topic, "@dev work")).tasks[0].id;
+  expect((await get(id)).body).toMatchObject({
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    cached_tokens: 0,
+    cache_hit_rate: null,
+  });
+  await db()
+    .insert(usageRecords)
+    .values([
+      { id: "usage-small", taskId: id, promptTokens: 100, completionTokens: 20, cachedTokens: 90 },
+      { id: "usage-large", taskId: id, promptTokens: 900, completionTokens: 80, cachedTokens: 90 },
+      { id: "usage-other", taskId: "another-run", promptTokens: 9999, completionTokens: 111, cachedTokens: 8888 },
+    ]);
+  for (const mode of ["", "?steps=true", "?steps=platform"]) {
+    expect((await get(id, `/activity${mode}`)).body).toMatchObject({
+      rounds: 2,
+      tokens: 1100,
+      prompt_tokens: 1000,
+      completion_tokens: 100,
+      cached_tokens: 180,
+      cache_hit_rate: 0.18,
+    });
+  }
+  // Cumulative totals can exceed PostgreSQL's 32-bit integer limit even when each call fits it.
+  await db()
+    .insert(usageRecords)
+    .values([
+      {
+        id: "usage-bulk-1",
+        taskId: id,
+        promptTokens: 2_000_000_000,
+        completionTokens: 2_000_000_000,
+        cachedTokens: 2_000_000_000,
+      },
+      {
+        id: "usage-bulk-2",
+        taskId: id,
+        promptTokens: 2_000_000_000,
+        completionTokens: 2_000_000_000,
+        cachedTokens: 2_000_000_000,
+      },
+    ]);
+  expect((await get(id)).body).toMatchObject({
+    prompt_tokens: 4_000_001_000,
+    completion_tokens: 4_000_000_100,
+    cached_tokens: 4_000_000_180,
+    tokens: 8_000_001_100,
+  });
+});
+
+it("shows zero cache hits when a completed model call reports no cache usage", async () => {
+  w.scripts.dev = () => reply("done");
+  const id = (await w.post(w.alice, w.ids.topic, "@dev work")).tasks[0].id;
+  await w.drain();
+  expect((await get(id)).body).toMatchObject({
+    status: "completed",
+    prompt_tokens: 10,
+    completion_tokens: 5,
+    cached_tokens: 0,
+    cache_hit_rate: 0,
+  });
 });
