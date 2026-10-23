@@ -5,6 +5,7 @@
 ## 1. 系统要求
 
 - Linux 主机，已安装 Docker（Docker Compose 部署还需要 Compose 插件）。
+- 使用预构建镜像部署时不需要其他软件；镜像目前只提供 linux/amd64（x86-64），其他架构的主机请从源码构建镜像（见 2.2）。
 - 从源码构建需要 Node.js 22 或更高版本。
 - 资源：平台本身占用较少；每台虚拟电脑按模板中的资源限制占用 CPU、内存和磁盘，桌面虚拟电脑建议至少 1 个 CPU、2 GB 内存。
 
@@ -12,8 +13,8 @@
 
 | 方式 | 适用场景 | 数据库 |
 |---|---|---|
-| 单进程 | 试用、开发 | 内置的嵌入式 PostgreSQL（数据保存在 `./data`） |
-| Docker Compose | 团队使用 | 独立的 PostgreSQL 容器 |
+| 单进程 | 开发；从源码运行 | 内置的嵌入式 PostgreSQL（数据保存在 `./data`） |
+| Docker Compose | 试用和团队使用；直接使用预构建镜像，不需要从源码构建 | 独立的 PostgreSQL 容器 |
 
 ### 2.1 单进程
 
@@ -43,33 +44,70 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
 
 部署步骤：
 
-1. 复制配置文件并填写必填项：
+1. 获取 witden，复制配置文件：
 
    ```bash
+   git clone https://github.com/zhaozhaozz/witden.git
+   cd witden
    cp .env.example .env
    ```
 
-   - `WITDEN_SECRET_KEY`：主密钥，用于加密模型密钥和通讯凭据。可用 `docker compose run --rm api node packages/server/dist/cli.js gen-key` 生成。
+   使用预构建镜像时，部署只需要其中的 `docker-compose.yml` 和 `.env.example`，也可以只下载这两个文件：
+
+   ```bash
+   mkdir witden && cd witden
+   curl -fsSLO https://raw.githubusercontent.com/zhaozhaozz/witden/main/docker-compose.yml
+   curl -fsSL -o .env https://raw.githubusercontent.com/zhaozhaozz/witden/main/.env.example
+   ```
+
+2. 在 `.env` 中填写必填项：
+
+   - `WITDEN_SECRET_KEY`：主密钥，用于加密模型密钥和通讯凭据，为 32 字节的随机数据经 base64 编码，可用 `openssl rand -base64 32` 生成。平台启动后不要更换。
    - `WITDEN_MANAGER_TOKEN`、`WITDEN_INTERNAL_TOKEN`、`POSTGRES_PASSWORD`：任意足够长的随机字符串，例如 `openssl rand -hex 24`。
    - `DOCKER_GID`：Docker socket 所属的组，`stat -c %g /var/run/docker.sock`。
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
    - `WITDEN_PUBLIC_URL`：在内网访问控制台的地址，消息中的链接指向这里。GitHub，以及使用事件地址的 Slack、飞书接入需要的公网事件地址在控制台中设置和检查，见 2.4。
 
-2. 构建虚拟电脑镜像和平台镜像：
+   前三项（密钥、令牌和 `DOCKER_GID`）可以用 [README](../README.md#快速开始) 中的命令一次生成，它只填写还空着的项。
+
+3. 拉取镜像：
 
    ```bash
-   make images platform
+   docker compose --profile images pull
    ```
 
-3. 启动：
+   `images` 让 Compose 同时拉取两个虚拟电脑镜像。它们不作为服务运行，由 Docker Manager 用来创建虚拟电脑；不预先拉取时，Docker Manager 在第一次创建虚拟电脑时拉取，桌面镜像较大，需要等待几分钟。在命令行指定 `--profile` 时，Compose 不再读取 `.env` 中的 `COMPOSE_PROFILES`，因此启用了 Laya（见 2.3）时，执行 `docker compose --profile images --profile laya pull`。
+
+4. 启动：
 
    ```bash
    docker compose up -d
    ```
 
-4. 访问 `WITDEN_PUBLIC_URL`，用管理员账号登录，按第 3 节完成首次配置。
+5. 访问 `WITDEN_PUBLIC_URL`，用管理员账号登录，按第 3 节完成首次配置。
 
 生产环境建议在控制台前放置 HTTPS 反向代理（见 2.4），并把 8330 端口只绑定到 Docker 网桥地址（设置 `WITDEN_HUB_BIND`，例如 `172.17.0.1`）。
+
+**镜像。** 本项目的 GitHub Actions 构建以下镜像，发布到 GitHub Container Registry。Compose 默认使用它们，不需要登录即可拉取：
+
+| 镜像 | 用途 |
+|---|---|
+| `ghcr.io/zhaozhaozz/witden/platform` | `api`、`worker`、`manager` 三个服务 |
+| `ghcr.io/zhaozhaozz/witden/computer-shell` | 内置模板 `dev-shell` 的虚拟电脑 |
+| `ghcr.io/zhaozhaozz/witden/computer-desktop` | 内置模板 `desktop-browser` 的虚拟电脑 |
+| `ghcr.io/zhaozhaozz/witden/tunnel` | `tunnel` 服务 |
+| `ghcr.io/zhaozhaozz/witden/laya` | 可选的 `laya` 服务 |
+
+标签 `latest` 跟随 main 分支的最新提交；每个提交另有 `sha-<提交号前 7 位>`，发布的版本有 `<版本号>`（如 `0.3.0`）和 `<主版本>.<次版本>`（如 `0.3`）。在 `.env` 中设置 `WITDEN_IMAGE_TAG` 即可固定版本，生产环境建议这样做，升级时再修改。从内置模板创建的虚拟电脑使用同一个仓库和标签（见 4.1 的 `WITDEN_IMAGE_REPO`、`WITDEN_IMAGE_TAG`）。
+
+**从源码构建镜像。** 需要修改镜像、自行审核镜像来源，或主机不是 x86-64 时，在源码目录中构建镜像，并在 `.env` 中设置 `WITDEN_IMAGE_REPO=witden`，Compose 和内置模板就会使用本机构建的 `witden/*` 镜像：
+
+```bash
+make images platform   # 虚拟电脑镜像、平台镜像和 tunnel 镜像；启用 Laya 时再执行 make laya
+docker compose up -d
+```
+
+使用自己的镜像仓库时，把 `WITDEN_IMAGE_REPO` 设为该仓库的地址（例如 `registry.example.com/witden`），并按上表的名称推送镜像。
 
 ### 2.3 可选：Laya 调度模型
 
@@ -164,7 +202,7 @@ server {
 
 ## 3. 首次配置
 
-平台启动时会自动创建内置的系统管理员（@admin，见[使用指南](user-guide.md#43-系统管理员)）。除它之外还没有其他 AI 员工时，管理员第一次登录会进入“欢迎使用 witden”引导：连接一个模型服务（填写 API Key）、选择一个模型，witden 就会导入内置模板，创建一台桌面虚拟电脑（`desktop`，使用 `desktop-browser` 模板，需要已构建或拉取 `witden/computer-desktop` 镜像）和一个在这台电脑上工作的助手（@assistant），系统管理员还没有模型时也使用这个模型，然后打开与助手的私信。引导可以跳过；完成或跳过后不再出现。之后也可以按下面的步骤手动配置：
+平台启动时会自动创建内置的系统管理员（@admin，见[使用指南](user-guide.md#43-系统管理员)）。除它之外还没有其他 AI 员工时，管理员第一次登录会进入“欢迎使用 witden”引导：连接一个模型服务（填写 API Key）、选择一个模型，witden 就会导入内置模板，创建一台桌面虚拟电脑（`desktop`，使用 `desktop-browser` 模板，镜像为 `<WITDEN_IMAGE_REPO>/computer-desktop`，见 2.2）和一个在这台电脑上工作的助手（@assistant），系统管理员还没有模型时也使用这个模型，然后打开与助手的私信。引导可以跳过；完成或跳过后不再出现。之后也可以按下面的步骤手动配置：
 
 1. **模型**：在“设置 → 模型”中点击“添加服务商”，选择常见服务（自动填好地址和协议）或“其他服务”，填写 API Key，再在“添加模型”中从模型列表选择或填写名称；对模型点击“检测能力”。
 2. **话题调度**（可选）：如果要在“自动”模式的话题中使用多位 AI 员工，需要一个调度模型：System 1 模型（TypeSafe Jev，或开源模型 Laya，推荐），或已添加的普通对话模型。启用 Compose 中的 Laya 服务（见 2.3）后，它会被自动添加并设为调度模型；否则在“设置 → 系统管理 → 话题调度”中选择（System 1 模型要先在“设置 → 模型”中添加接口协议为“System One”的服务商和模型）。详见[使用指南](user-guide.md#8-话题调度)。
@@ -205,6 +243,7 @@ server {
 | `WITDEN_INSTANCE_WAIT_SECONDS` | `300` | 虚拟电脑不可用时任务的最长等待时间。 |
 | `WITDEN_TOOL_OUTPUT_LIMIT` | `12000` | 一次工具输出交给模型的最大字符数。超过时模型读到开头和结尾，完整内容保存为 AI 员工虚拟电脑中的文件（`~/.witden/tool-output/`）；读取文件时按这个长度分页。见[使用指南](user-guide.md#41-工具权限)。 |
 | `WITDEN_ALLOWED_RUNTIMES` | `runc,runsc,sysbox-runc,kata-runtime` | 模板可以选择的容器运行时。 |
+| `WITDEN_IMAGE_REPO` / `WITDEN_IMAGE_TAG` | `witden` / `latest`（Compose 中为 `ghcr.io/zhaozhaozz/witden` / `latest`） | 镜像的仓库地址和标签。内置模板创建虚拟电脑时使用 `<仓库>/computer-shell:<标签>` 和 `<仓库>/computer-desktop:<标签>`；Compose 部署中，这两项同时决定各服务拉取的镜像（见 2.2）。只影响之后导入的内置模板，已有模板中的镜像在模板页修改。 |
 | `WITDEN_MODEL_PROXY_PORT` | `8686` | 虚拟电脑内模型访问接口的端口。 |
 | `WITDEN_LAYA_URL` | — | Laya 服务的地址。设置后，平台启动时把它添加为 System 1 模型（见 2.3）。 |
 | `WITDEN_MODEL_CATALOG_URL` | `https://models.dev/api.json` | 模型资料（各模型的上下文长度、思考程度）的获取地址。平台第一次启动时获取一次，之后在“设置 → 模型”中点击“更新模型资料”时获取。无法访问外网时可以指向格式相同的内部镜像；设为 `off` 不获取，模型的上下文长度按服务商报告的值、在模型上填写的值或默认的 6.4 万计算。 |
@@ -244,8 +283,9 @@ witden gen-key                                     生成新的主密钥
 
 ## 6. 升级
 
-1. 更新代码，重新构建镜像：`make images platform`（同时构建 `witden/tunnel`；启用了 Laya 时再执行 `make laya`）。
+1. 更新镜像：使用预构建镜像时执行 `docker compose --profile images pull`（启用了 Laya 时再加上 `--profile laya`；固定了 `WITDEN_IMAGE_TAG` 时，先把它改为新的版本）；从源码构建时，更新代码后执行 `make images platform`（同时构建 `witden/tunnel`；启用了 Laya 时再执行 `make laya`）。
 2. 重新启动服务：`docker compose up -d`。
+3. 修改了 `WITDEN_IMAGE_TAG` 时，在“设置 → 虚拟电脑 → 模板”中把内置模板的镜像改为新的标签，之后新建的虚拟电脑使用新版本的镜像；已有的虚拟电脑继续使用创建时的镜像，执行代理仍随平台更新（见下文）。使用 `latest` 时不需要修改模板。
 
 平台启动时会自动执行数据库迁移。升级前请先备份数据库。
 

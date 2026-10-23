@@ -52,6 +52,10 @@ export interface Settings {
   instanceWaitSeconds: number;
   toolOutputLimit: number;
   allowedRuntimes: string[];
+  /** The built-in templates' computer images are <imageRepo>/computer-shell:<imageTag> (and computer-desktop);
+   * Compose points these at the published images, a source checkout keeps the local `make images` names. */
+  imageRepo: string;
+  imageTag: string;
   webDist: string | null;
 }
 
@@ -115,6 +119,8 @@ export function loadSettings(overrides: Partial<Settings> = {}): Settings {
     instanceWaitSeconds: int("INSTANCE_WAIT_SECONDS", 300),
     toolOutputLimit: int("TOOL_OUTPUT_LIMIT", 12_000),
     allowedRuntimes: list("ALLOWED_RUNTIMES", ["runc", "runsc", "sysbox-runc", "kata-runtime"]),
+    imageRepo: (env("IMAGE_REPO") ?? "witden").replace(/\/+$/, ""),
+    imageTag: env("IMAGE_TAG") ?? "latest",
     webDist: env("WEB_DIST") ?? null,
   };
   return { ...base, ...overrides };

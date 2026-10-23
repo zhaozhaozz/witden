@@ -28,6 +28,7 @@
 
 - 修改 `packages/server/src/db/schema.ts` 后，在 `packages/server` 目录运行 `npx drizzle-kit generate --name <说明>` 生成迁移，与代码一起提交。迁移在平台启动时自动执行。
 - 测试和临时文件写在仓库内的 `.tmp/` 目录（已加入忽略列表），不要写到系统临时目录。
+- `.github/workflows/docker.yml` 在 pull request 中构建全部镜像（平台、两个虚拟电脑、tunnel、laya）但不发布；合并到 main 或推送 `v*` 标签时发布到 `ghcr.io/<owner>/witden/<镜像>`，即 `docker-compose.yml` 默认拉取的镜像。新增镜像时，同时加入工作流的矩阵和 `docker-compose.yml`，镜像名在两处保持一致；内置模板的虚拟电脑镜像由 `WITDEN_IMAGE_REPO`、`WITDEN_IMAGE_TAG` 拼出（`services/templates.ts`）。
 
 ## 3. 代码约定
 

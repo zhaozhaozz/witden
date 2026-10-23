@@ -58,6 +58,25 @@ describe("templates", () => {
     expect(res.body.error.message).toContain(message);
   });
 
+  it("built-in templates take their images from the configured repository and tag", async () => {
+    const seededImages = async () => {
+      expect((await h.api("POST", "/api/templates/seed-builtin", { token: h.adminToken })).status).toBe(200);
+      const list = (await h.api("GET", "/api/templates", { token: h.adminToken })).body;
+      return Object.fromEntries(list.map((t: any) => [t.name, t.image]));
+    };
+    expect(await seededImages()).toEqual({
+      "dev-shell": "witden/computer-shell:latest",
+      "desktop-browser": "witden/computer-desktop:latest",
+    });
+
+    await h.close();
+    h = await startHarness({ imageRepo: "ghcr.io/acme/witden", imageTag: "sha-1a2b3c4" });
+    expect(await seededImages()).toEqual({
+      "dev-shell": "ghcr.io/acme/witden/computer-shell:sha-1a2b3c4",
+      "desktop-browser": "ghcr.io/acme/witden/computer-desktop:sha-1a2b3c4",
+    });
+  });
+
   it("versions templates without moving existing computers; protects templates in use", async () => {
     const tpl = await template();
     const inst = await instance(tpl.id, "box-1");

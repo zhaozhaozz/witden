@@ -198,7 +198,10 @@ export async function deleteTemplate(db: Db, tpl: ComputerTemplate): Promise<voi
   await db.delete(computerTemplates).where(eq(computerTemplates.id, tpl.id));
 }
 
-/** Same descriptions as migration 0034 gives the built-in templates of earlier versions. */
+/**
+ * Same descriptions as migration 0034 gives the built-in templates of earlier versions. `image` is the name
+ * under the configured image repository; seeding turns it into <imageRepo>/<image>:<imageTag>.
+ */
 export const BUILTIN_TEMPLATES: Record<string, any>[] = [
   {
     name: "dev-shell",
@@ -207,7 +210,7 @@ export const BUILTIN_TEMPLATES: Record<string, any>[] = [
       "The runner and every AI action run as the unprivileged user 'witden'. System packages are installed by " +
       "the platform: roles ask for them, and the software list is installed whenever the computer starts. " +
       "Other tools go under ~/.local.",
-    image: "witden/computer-shell:latest",
+    image: "computer-shell",
     kind: "shell",
     workdir: "/home/witden",
     user: "witden",
@@ -220,7 +223,7 @@ export const BUILTIN_TEMPLATES: Record<string, any>[] = [
       "Linux desktop (Xvfb + Fluxbox) with Chromium and the same development tools as dev-shell. AI actions and " +
       "people watching over noVNC use the same desktop; background browser sessions are shown separately. " +
       "System packages are installed by the platform.",
-    image: "witden/computer-desktop:latest",
+    image: "computer-desktop",
     kind: "desktop",
     workdir: "/home/witden",
     user: "witden",
@@ -232,6 +235,8 @@ export const BUILTIN_TEMPLATES: Record<string, any>[] = [
 
 export async function seedBuiltinTemplates(db: Db, settings: Settings): Promise<void> {
   for (const data of BUILTIN_TEMPLATES) {
-    if (!(await nameTaken(db, data.name))) await createTemplate(db, data, settings, null);
+    if (await nameTaken(db, data.name)) continue;
+    const image = `${settings.imageRepo}/${data.image}:${settings.imageTag}`;
+    await createTemplate(db, { ...data, image }, settings, null);
   }
 }

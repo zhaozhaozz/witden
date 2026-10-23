@@ -50,6 +50,7 @@
 7. **配置 Slack。** 优先使用 Socket Mode：它不需要公网地址，App-Level Token 只授予 `connections:write`；使用事件地址时必须设置 Signing Secret；只把机器人邀请到需要的频道。
 8. **配置飞书。** 优先使用长连接：它不需要公网地址，只用 App ID 和 App Secret 主动连到飞书；同一个飞书应用只接到一个 witden，否则消息会被另一个部署分走。使用事件地址时必须设置 Verification Token，并保持 Encrypt Key 为空。 飞书工具只给需要的 AI 员工、需要的公司和需要的功能，写入可以设为需要批准；以应用身份访问时，应用只能接触在飞书中授权给它的文档、表格和日历，请只把需要的内容授权给应用。从飞书读到的内容只在这家公司的飞书会话和控制台中自由流动，发往别处需要批准。
 9. **配置 GitHub。** 作为机器人时必须设置 Webhook Secret；优先使用 GitHub App，只安装到需要的仓库，私钥只保存在 witden 中；使用机器人账号时，用专用账号，令牌只授予需要接入的仓库。只作为认证的账号（例如某个人自己的账号）不接收消息、不需要 Webhook，但 AI 员工能以这个人的身份操作：令牌只给需要的仓库和权限，并设置有效期；GitHub 工具只给需要的 AI 员工、需要的接入和需要的类别，写入（尤其是合并 pull request、提交文件、触发工作流）建议设为需要批准。经飞书、GitHub 工具写入前，witden 会检查写入的内容会被谁看到，带有他们看不到的资料时由资料的所有者批准。
+10. **确定镜像来源。** Compose 默认从 GitHub Container Registry 拉取本项目 GitHub Actions 构建的镜像（`ghcr.io/zhaozhaozz/witden`），标签 `latest` 跟随 main 分支。生产环境建议用 `WITDEN_IMAGE_TAG` 固定到发布的版本或某个提交（`sha-<提交号>`），确认后再升级；需要自行审核镜像内容时，从源码构建镜像并设置 `WITDEN_IMAGE_REPO=witden`，见[部署与配置](deployment.md#22-docker-compose)。
 
 ## 3. 已知限制
 

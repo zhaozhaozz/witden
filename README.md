@@ -71,18 +71,40 @@ Slack / 飞书 / 网页控制台
 
 ## 快速开始
 
-以下步骤在一台机器上以单进程方式运行 witden，适合试用和开发。需要 Node.js 22 或更高版本以及 Docker；数据库默认使用内置的嵌入式 PostgreSQL，无需另外安装。
+使用 Docker Compose 和预先构建好的镜像启动 witden，不需要安装 Node.js，也不需要从源码构建。需要一台 x86-64 Linux 主机，已安装 Docker 和 Docker Compose 插件。
 
-```bash
-npm ci
-make images            # 构建虚拟电脑镜像
-npm run build          # 编译平台与网页控制台
-export WITDEN_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
-export WITDEN_BOOTSTRAP_ADMIN_PASSWORD=change-me-please
-node packages/server/dist/cli.js serve
-```
+1. 获取 witden，创建配置文件：
 
-启动后访问 <http://localhost:8320>，用上面设置的管理员账号登录。第一次登录时，控制台会打开“欢迎使用 witden”引导：
+   ```bash
+   git clone https://github.com/zhaozhaozz/witden.git
+   cd witden
+   cp .env.example .env
+   ```
+
+2. 生成必填的密钥和 Docker socket 的组号，写入 `.env`：
+
+   ```bash
+   sed -i \
+     -e "s|^WITDEN_SECRET_KEY=\$|WITDEN_SECRET_KEY=$(openssl rand -base64 32)|" \
+     -e "s|^WITDEN_MANAGER_TOKEN=\$|WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)|" \
+     -e "s|^WITDEN_INTERNAL_TOKEN=\$|WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)|" \
+     -e "s|^POSTGRES_PASSWORD=\$|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" \
+     -e "s|^DOCKER_GID=\$|DOCKER_GID=$(stat -c %g /var/run/docker.sock)|" \
+     .env
+   ```
+
+   这条命令只填写还空着的项，重复执行不会替换已有的值。然后编辑 `.env`，把首次登录使用的管理员账号 `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD` 改成自己的。请离线保存 `WITDEN_SECRET_KEY`：丢失后，已保存的模型密钥和通讯凭据无法解密。
+
+3. 拉取镜像并启动：
+
+   ```bash
+   docker compose --profile images pull   # 平台镜像和两个虚拟电脑镜像
+   docker compose up -d
+   ```
+
+镜像由本项目的 GitHub Actions 构建，发布在 `ghcr.io/zhaozhaozz/witden`。升级时重新执行第 3 步的两条命令（已有虚拟电脑的更新方式见[升级](docs/deployment.md#6-升级)）。
+
+启动后访问 <http://localhost:8320>，用 `.env` 中的管理员账号登录。第一次登录时，控制台会打开“欢迎使用 witden”引导：
 
 1. **连接模型服务**：选择 OpenAI、Anthropic、DeepSeek、通义千问、Kimi、智谱、OpenRouter 或其他兼容服务，填写 API Key。
 2. **选择模型**：从服务返回的列表中选择，或直接填写模型名称。witden 会检测模型能否对话、调用工具和理解图片。
@@ -94,7 +116,7 @@ node packages/server/dist/cli.js serve
 - 在“设置”中手动配置模型、虚拟电脑和 AI 员工，或新建话题并邀请 AI 员工协作。
 - 接入 Slack，让 AI 员工作为机器人在 Slack 中工作，参见[接入 Slack](docs/slack.md)。
 
-团队部署请使用 Docker Compose，参见[部署与配置](docs/deployment.md)。
+固定镜像版本、从源码构建镜像、以单进程方式试用和开发，以及生产环境的端口与 HTTPS 设置，参见[部署与配置](docs/deployment.md)。
 
 ## 文档
 

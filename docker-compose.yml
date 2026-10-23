@@ -1,5 +1,9 @@
 # Single-host deployment: PostgreSQL, the API, the worker and the Docker Manager.
-# Copy .env.example to .env and fill it in first; build the computer images with `make images`.
+# Copy .env.example to .env and fill it in first, then:
+#   docker compose --profile images pull    # the platform and computer images, published by .github/workflows
+#   docker compose up -d
+# WITDEN_IMAGE_REPO / WITDEN_IMAGE_TAG choose where the images come from (default: ghcr.io/zhaozhaozz/witden,
+# latest). To build them from this checkout instead, set WITDEN_IMAGE_REPO=witden and run `make images platform`.
 #
 # Only the manager mounts the Docker socket. The API asks it for computer lifecycle over HTTP; the worker
 # has no Docker access at all and reaches computers only through the API's execution gateway. Computers
@@ -8,7 +12,7 @@
 
 x-platform: &platform
   build: .
-  image: witden/platform:latest
+  image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/platform:${WITDEN_IMAGE_TAG:-latest}
   restart: unless-stopped
 
 services:
@@ -60,6 +64,9 @@ services:
       WITDEN_TUNNEL_METRICS_URL: http://tunnel:2000
       # the tunnel forwards to the webhook listener only, never to the console
       WITDEN_TUNNEL_ORIGIN: http://api:8325
+      # the built-in templates create computers from <repo>/computer-shell:<tag> and computer-desktop
+      WITDEN_IMAGE_REPO: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}
+      WITDEN_IMAGE_TAG: ${WITDEN_IMAGE_TAG:-latest}
     ports:
       # Console and API: keep it on the internal network.
       - "${WITDEN_PORT:-8320}:8320"
@@ -96,7 +103,7 @@ services:
   # under Models (and as the dispatcher when none is set). Reachable only on the control network.
   laya:
     build: { context: images/laya }
-    image: witden/laya:latest
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/laya:${WITDEN_IMAGE_TAG:-latest}
     profiles: ["laya"]
     restart: unless-stopped
     environment:
@@ -113,7 +120,7 @@ services:
   # connects, and follows a replaced or removed token by itself. Reachable only on the control network.
   tunnel:
     build: { context: images/tunnel }
-    image: witden/tunnel:latest
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/tunnel:${WITDEN_IMAGE_TAG:-latest}
     restart: unless-stopped
     volumes:
       - witden-tunnel:/etc/witden-tunnel:ro
@@ -121,14 +128,15 @@ services:
       api: { condition: service_started }
     networks: [control]
 
-  # Build-only services for the computer images used by the built-in templates.
+  # The computer images used by the built-in templates; never started, only pulled or built with
+  # `--profile images`. The manager also pulls a missing image when it creates a computer.
   computer-shell:
     build: { context: ., dockerfile: images/shell/Dockerfile }
-    image: witden/computer-shell:latest
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/computer-shell:${WITDEN_IMAGE_TAG:-latest}
     profiles: ["images"]
   computer-desktop:
     build: { context: ., dockerfile: images/desktop/Dockerfile }
-    image: witden/computer-desktop:latest
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/computer-desktop:${WITDEN_IMAGE_TAG:-latest}
     profiles: ["images"]
 
 networks:

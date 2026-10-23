@@ -1,0 +1,86 @@
+# Builds the Docker images and publishes them to GitHub's container registry as
+# ghcr.io/<owner>/witden/<image>, the images docker-compose.yml pulls by default.
+#   push to main   latest, sha-<7 characters>
+#   tag v1.2.3     1.2.3, 1.2
+#   pull request   built to check the Dockerfiles, not pushed
+name: Docker images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  image:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # api, worker and manager
+          - image: platform
+            context: .
+            file: Dockerfile
+          # computers of the built-in templates; built from the repository root like the platform
+          - image: computer-shell
+            context: .
+            file: images/shell/Dockerfile
+          - image: computer-desktop
+            context: .
+            file: images/desktop/Dockerfile
+          # optional compose services
+          - image: tunnel
+            context: images/tunnel
+            file: images/tunnel/Dockerfile
+          - image: laya
+            context: images/laya
+            file: images/laya/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+
+      # Registry paths must be lower case; forks publish under their own owner.
+      - id: repo
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/witden/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.repo.outputs.name }}
+          # latest follows main only, so tagging an older commit never moves it back
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

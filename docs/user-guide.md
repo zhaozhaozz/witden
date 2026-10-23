@@ -296,7 +296,7 @@ AI 员工就像团队中的同事。除了在同一个话题中协作，一位 A
 
 | 来源 | 说明 |
 |---|---|
-| 镜像 | witden 自带的两个镜像都带有常用的开发工具：git、Python 3（含 pip 和 venv）、Node.js 22（含 npm、npx 和 corepack）、build-essential、ripgrep、jq、curl、tmux 等；`witden/computer-desktop` 另外带有桌面（Xvfb、Fluxbox）、Chromium 和 VNC。 |
+| 镜像 | witden 自带的两个镜像都带有常用的开发工具：git、Python 3（含 pip 和 venv）、Node.js 22（含 npm、npx 和 corepack）、build-essential、ripgrep、jq、curl、tmux 等；桌面镜像 `computer-desktop` 另外带有桌面（Xvfb、Fluxbox）、Chromium 和 VNC。 |
 | 软件清单 | 每台虚拟电脑有自己的软件清单，列出 Debian 软件包名称（与 `apt-get install` 使用的名称相同）。虚拟电脑每次启动时，平台安装清单中缺少的软件包，因此重置后也会装回。 |
 | AI 员工临时安装 | 有“系统软件”权限的 AI 员工可以请平台立即安装或卸载软件包。不在软件清单中的软件包，停止、重启后仍在，重置或从备份恢复后会消失。 |
 | 用户目录 | `npm install -g`、`pip install` 等安装到 `~/.local`，不需要平台参与。`~/.local` 位于持久化目录 `/home/witden` 中，重置时选择保留数据即可保留。 |
@@ -310,7 +310,7 @@ AI 员工就像团队中的同事。除了在同一个话题中协作，一位 A
 
 两组工具在 AI 员工权限的“虚拟电脑”部分，新建的 AI 员工默认始终允许，可以改为“询问”或“禁用”。
 
-每台虚拟电脑都需要的大量软件，也可以基于 `witden/computer-shell` 或 `witden/computer-desktop` 编写 Dockerfile 构建镜像，再新建使用该镜像的模板，这样启动时不需要等待安装。
+每台虚拟电脑都需要的大量软件，也可以基于内置模板的镜像（例如 Compose 部署默认使用的 `ghcr.io/zhaozhaozz/witden/computer-shell`、`ghcr.io/zhaozhaozz/witden/computer-desktop`，见[部署与配置](deployment.md#22-docker-compose)）编写 Dockerfile 构建镜像，再新建使用该镜像的模板，这样启动时不需要等待安装。
 
 ### 3.6 命令与后台命令
 
