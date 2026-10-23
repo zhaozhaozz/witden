@@ -52,7 +52,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
    cp .env.example .env
    ```
 
-   使用预构建镜像时，部署只需要其中的 `docker-compose.yml` 和 `.env.example`，也可以只下载这两个文件：
+   使用预构建镜像时，部署只需要其中的 `docker-compose.yml` 和 `.env.example`。也可以只下载这两个文件，或者不下载任何文件、按 [README 快速开始](../README.md#快速开始)直接生成 `docker-compose.yml` 和只含必填项的 `.env`：
 
    ```bash
    mkdir witden && cd witden
@@ -68,7 +68,17 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
    - `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD`：首次启动时创建的管理员账号。
    - `WITDEN_PUBLIC_URL`：在内网访问控制台的地址，消息中的链接指向这里。GitHub，以及使用事件地址的 Slack、飞书接入需要的公网事件地址在控制台中设置和检查，见 2.4。
 
-   前三项（密钥、令牌和 `DOCKER_GID`）可以用 [README](../README.md#快速开始) 中的命令一次生成，它只填写还空着的项。
+   前三项（密钥、令牌和 `DOCKER_GID`）可以用下面的命令一次生成。它只填写还空着的项，重复执行不会替换已有的值：
+
+   ```bash
+   sed -i \
+     -e "s|^WITDEN_SECRET_KEY=\$|WITDEN_SECRET_KEY=$(openssl rand -base64 32)|" \
+     -e "s|^WITDEN_MANAGER_TOKEN=\$|WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)|" \
+     -e "s|^WITDEN_INTERNAL_TOKEN=\$|WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)|" \
+     -e "s|^POSTGRES_PASSWORD=\$|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" \
+     -e "s|^DOCKER_GID=\$|DOCKER_GID=$(stat -c %g /var/run/docker.sock)|" \
+     .env
+   ```
 
 3. 拉取镜像：
 

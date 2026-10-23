@@ -71,38 +71,199 @@ Slack / 飞书 / 网页控制台
 
 ## 快速开始
 
-使用 Docker Compose 和预先构建好的镜像启动 witden，不需要安装 Node.js，也不需要从源码构建。需要一台 x86-64 Linux 主机，已安装 Docker 和 Docker Compose 插件。
+使用 Docker Compose 和预先构建好的镜像启动 witden，不需要下载源码，也不需要安装 Node.js。需要一台 x86-64 Linux 主机，已安装 Docker 和 Docker Compose 插件。下面三步的命令都可以直接复制到终端执行。
 
-1. 获取 witden，创建配置文件：
+**第一步：生成配置文件 `.env`。** 先把其中的管理员邮箱和密码改成自己的，再粘贴执行。密钥、令牌和 Docker socket 的组号由命令自动生成；目录中已经有 `.env` 时，命令不会覆盖它，以免替换正在使用的密钥。
 
-   ```bash
-   git clone https://github.com/zhaozhaozz/witden.git
-   cd witden
-   cp .env.example .env
-   ```
+```bash
+mkdir -p witden && cd witden
+(set -C; cat > .env) <<EOF
+WITDEN_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+WITDEN_BOOTSTRAP_ADMIN_PASSWORD=change-me-please
+WITDEN_PUBLIC_URL=http://localhost:8320
+WITDEN_SECRET_KEY=$(openssl rand -base64 32)
+WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)
+WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+EOF
+```
 
-2. 生成必填的密钥和 Docker socket 的组号，写入 `.env`：
+请离线保存 `.env` 中的 `WITDEN_SECRET_KEY`：丢失后，已保存的模型密钥和通讯凭据无法解密。其他可选配置（固定镜像版本、虚拟电脑连接端口的绑定地址、Laya 调度模型等）见 [`.env.example`](.env.example) 和[部署与配置](docs/deployment.md)。
 
-   ```bash
-   sed -i \
-     -e "s|^WITDEN_SECRET_KEY=\$|WITDEN_SECRET_KEY=$(openssl rand -base64 32)|" \
-     -e "s|^WITDEN_MANAGER_TOKEN=\$|WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)|" \
-     -e "s|^WITDEN_INTERNAL_TOKEN=\$|WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)|" \
-     -e "s|^POSTGRES_PASSWORD=\$|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" \
-     -e "s|^DOCKER_GID=\$|DOCKER_GID=$(stat -c %g /var/run/docker.sock)|" \
-     .env
-   ```
+**第二步：生成 `docker-compose.yml`。** 展开后复制整段执行，内容与仓库中的 [`docker-compose.yml`](docker-compose.yml) 相同。
 
-   这条命令只填写还空着的项，重复执行不会替换已有的值。然后编辑 `.env`，把首次登录使用的管理员账号 `WITDEN_BOOTSTRAP_ADMIN_EMAIL`、`WITDEN_BOOTSTRAP_ADMIN_PASSWORD` 改成自己的。请离线保存 `WITDEN_SECRET_KEY`：丢失后，已保存的模型密钥和通讯凭据无法解密。
+<details>
+<summary>docker-compose.yml</summary>
 
-3. 拉取镜像并启动：
+```bash
+cat > docker-compose.yml <<'EOF'
+# Single-host deployment: PostgreSQL, the API, the worker and the Docker Manager.
+# Write .env first (the README quick start generates one; .env.example lists every setting), then:
+#   docker compose --profile images pull    # the platform and computer images, published by .github/workflows
+#   docker compose up -d
+# WITDEN_IMAGE_REPO / WITDEN_IMAGE_TAG choose where the images come from (default: ghcr.io/zhaozhaozz/witden,
+# latest). To build them from this checkout instead, set WITDEN_IMAGE_REPO=witden and run `make images platform`.
+#
+# Only the manager mounts the Docker socket. The API asks it for computer lifecycle over HTTP; the worker
+# has no Docker access at all and reaches computers only through the API's execution gateway. Computers
+# dial back to the runner hub (port 8330) through the host gateway. Read docs/security.md before exposing
+# this to a team (rootless Docker, a dedicated host or VM, or gVisor are recommended).
 
-   ```bash
-   docker compose --profile images pull   # 平台镜像和两个虚拟电脑镜像
-   docker compose up -d
-   ```
+x-platform: &platform
+  build: .
+  image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/platform:${WITDEN_IMAGE_TAG:-latest}
+  restart: unless-stopped
 
-镜像由本项目的 GitHub Actions 构建，发布在 `ghcr.io/zhaozhaozz/witden`。升级时重新执行第 3 步的两条命令（已有虚拟电脑的更新方式见[升级](docs/deployment.md#6-升级)）。
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: witden
+      POSTGRES_USER: witden
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - witden-db:/var/lib/postgresql/data
+    networks: [control]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U witden -d witden"]
+      interval: 5s
+      retries: 20
+
+  manager:
+    <<: *platform
+    command: ["node", "packages/manager/dist/main.js"]
+    # Only its own settings (no platform secrets) plus the Docker socket's group: DOCKER_GID=$(stat -c %g /var/run/docker.sock)
+    group_add: ["${DOCKER_GID:?set DOCKER_GID in .env}"]
+    environment:
+      WITDEN_MANAGER_TOKEN: ${WITDEN_MANAGER_TOKEN:?set WITDEN_MANAGER_TOKEN in .env}
+      WITDEN_MANAGER_HOST: 0.0.0.0
+      WITDEN_MANAGER_DATA_DIR: /data/manager
+    volumes:
+      - witden-manager:/data
+      # The runner the computers run: installed here from this image at start, mounted read-only into every
+      # computer by the manager (packages/manager/src/live-runner.ts).
+      - witden-runner:/opt/witden/runner-live
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    networks: [control]
+
+  api:
+    <<: *platform
+    command: ["node", "packages/server/dist/cli.js", "serve", "--role", "api"]
+    env_file: .env
+    environment:
+      WITDEN_DATABASE_URL: postgres://witden:${POSTGRES_PASSWORD}@db:5432/witden
+      WITDEN_MANAGER_URL: http://manager:8340
+      # fixed inside the container; WITDEN_PORT only chooses the published host port
+      WITDEN_PORT: "8320"
+      WITDEN_WEBHOOK_PORT: "8325"
+      WITDEN_HUB_PORT: "8330"
+      # Cloudflare Tunnel (the "tunnel" service below): the console writes its token here
+      WITDEN_TUNNEL_TOKEN_FILE: /tunnel/token
+      WITDEN_TUNNEL_METRICS_URL: http://tunnel:2000
+      # the tunnel forwards to the webhook listener only, never to the console
+      WITDEN_TUNNEL_ORIGIN: http://api:8325
+      # the built-in templates create computers from <repo>/computer-shell:<tag> and computer-desktop
+      WITDEN_IMAGE_REPO: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}
+      WITDEN_IMAGE_TAG: ${WITDEN_IMAGE_TAG:-latest}
+    ports:
+      # Console and API: keep it on the internal network.
+      - "${WITDEN_PORT:-8320}:8320"
+      # Event webhooks only (Slack, GitHub, Feishu): the one port a public address may forward to. Bound to
+      # loopback for a reverse proxy on this host; set WITDEN_WEBHOOK_BIND to publish it elsewhere.
+      - "${WITDEN_WEBHOOK_BIND:-127.0.0.1}:8325:8325"
+      # Runner hub: computers reach it as witden-hub (host gateway). Bind to the Docker bridge address to
+      # keep it off other interfaces, e.g. WITDEN_HUB_BIND=172.17.0.1
+      - "${WITDEN_HUB_BIND:-0.0.0.0}:8330:8330"
+    volumes:
+      - witden-data:/data
+      - witden-tunnel:/tunnel
+    depends_on:
+      db: { condition: service_healthy }
+      manager: { condition: service_started }
+    networks: [control]
+
+  worker:
+    <<: *platform
+    command: ["node", "packages/server/dist/cli.js", "serve", "--role", "worker"]
+    env_file: .env
+    environment:
+      WITDEN_DATABASE_URL: postgres://witden:${POSTGRES_PASSWORD}@db:5432/witden
+      WITDEN_API_URL_FOR_WORKER: http://api:8320
+    volumes:
+      - witden-data:/data
+    depends_on:
+      db: { condition: service_healthy }
+      api: { condition: service_started }
+    networks: [control]
+
+  # Optional: the open-source Laya decision model (a System 1 model) for the topic dispatcher, on CPU.
+  # Turned on by COMPOSE_PROFILES=laya in .env; with WITDEN_LAYA_URL=http://laya:8000 the platform adds it
+  # under Models (and as the dispatcher when none is set). Reachable only on the control network.
+  laya:
+    build: { context: images/laya }
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/laya:${WITDEN_IMAGE_TAG:-latest}
+    profiles: ["laya"]
+    restart: unless-stopped
+    environment:
+      LAYA_API_KEY: ${WITDEN_LAYA_API_KEY:-}
+      LAYA_MODELS: ${LAYA_MODELS:-multilingual}
+      LAYA_THREADS: ${LAYA_THREADS:-4}
+    volumes:
+      - witden-laya-cache:/home/laya/.cache/huggingface
+    networks: [control]
+
+  # Optional Cloudflare Tunnel: a public HTTPS address for the platform (Slack, GitHub and Feishu send events
+  # to it) without opening ports or managing certificates. Idle until a tunnel token is pasted in the console
+  # (Connections → Slack guide → public address), which writes it to the witden-tunnel volume; it then
+  # connects, and follows a replaced or removed token by itself. Reachable only on the control network.
+  tunnel:
+    build: { context: images/tunnel }
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/tunnel:${WITDEN_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    volumes:
+      - witden-tunnel:/etc/witden-tunnel:ro
+    depends_on:
+      api: { condition: service_started }
+    networks: [control]
+
+  # The computer images used by the built-in templates; never started, only pulled or built with
+  # `--profile images`. The manager also pulls a missing image when it creates a computer.
+  computer-shell:
+    build: { context: ., dockerfile: images/shell/Dockerfile }
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/computer-shell:${WITDEN_IMAGE_TAG:-latest}
+    profiles: ["images"]
+  computer-desktop:
+    build: { context: ., dockerfile: images/desktop/Dockerfile }
+    image: ${WITDEN_IMAGE_REPO:-ghcr.io/zhaozhaozz/witden}/computer-desktop:${WITDEN_IMAGE_TAG:-latest}
+    profiles: ["images"]
+
+networks:
+  control: {}
+
+volumes:
+  witden-db:
+  witden-data:
+  witden-manager:
+  witden-runner:
+  witden-laya-cache:
+  witden-tunnel:
+EOF
+```
+
+</details>
+
+**第三步：拉取镜像并启动。**
+
+```bash
+docker compose --profile images pull   # 平台镜像和两个虚拟电脑镜像
+docker compose up -d
+```
+
+已经克隆了仓库时，`docker-compose.yml` 就在仓库中：在仓库目录里执行第一步（去掉第一行）和第三步即可。
+
+镜像由本项目的 GitHub Actions 构建，发布在 `ghcr.io/zhaozhaozz/witden`。升级时，按第二步重新生成 `docker-compose.yml`，再执行第三步（已有虚拟电脑的更新方式见[升级](docs/deployment.md#6-升级)）。
 
 启动后访问 <http://localhost:8320>，用 `.env` 中的管理员账号登录。第一次登录时，控制台会打开“欢迎使用 witden”引导：
 
