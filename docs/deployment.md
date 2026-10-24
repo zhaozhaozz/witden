@@ -52,7 +52,7 @@ Compose 部署包含以下服务，其中 `laya` 默认不启动，`tunnel` 在�
    cp .env.example .env
    ```
 
-   使用预构建镜像时，部署只需要其中的 `docker-compose.yml` 和 `.env.example`。也可以只下载这两个文件，或者不下载任何文件、按 [README 快速开始](../README.md#快速开始)直接生成 `docker-compose.yml` 和只含必填项的 `.env`：
+   使用预构建镜像时，部署只需要其中的 `docker-compose.yml` 和 `.env.example`。也可以只下载这两个文件，或者不下载任何文件、从 [README 快速开始](../README.md#快速开始)复制 `docker-compose.yml` 和只含必填项的 `.env` 的内容：
 
    ```bash
    mkdir witden && cd witden

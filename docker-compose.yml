@@ -1,5 +1,5 @@
 # Single-host deployment: PostgreSQL, the API, the worker and the Docker Manager.
-# Write .env first (the README quick start generates one; .env.example lists every setting), then:
+# Write .env first (the README quick start shows the required settings; .env.example lists them all), then:
 #   docker compose --profile images pull    # the platform and computer images, published by .github/workflows
 #   docker compose up -d
 # WITDEN_IMAGE_REPO / WITDEN_IMAGE_TAG choose where the images come from (default: ghcr.io/zhaozhaozz/witden,

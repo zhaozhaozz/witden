@@ -1,6 +1,6 @@
 /**
- * The README quick start writes docker-compose.yml and a minimal .env from here-documents, so people can start
- * witden without downloading anything. Keep those copies in step with the repository's files.
+ * The README quick start shows docker-compose.yml and a minimal .env in full, so people can start witden
+ * without downloading anything. Keep those copies in step with the repository's files.
  */
 
 import fs from "node:fs";
@@ -8,30 +8,29 @@ import { describe, expect, it } from "vitest";
 
 const read = (name: string) => fs.readFileSync(new URL(`../../../${name}`, import.meta.url), "utf8");
 const readme = read("README.md");
+const quickStart = readme.slice(readme.indexOf("## 快速开始"), readme.indexOf("\n## ", readme.indexOf("## 快速开始")));
 
-/** The body of the README's here-document that writes `file` (`cat > file <<EOF` or `(...; cat > file) <<EOF`). */
-function heredoc(file: string): string {
-  const name = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`cat > ${name}\\)? <<'?EOF'?\\n([\\s\\S]*?)\\nEOF\\n`).exec(readme);
-  if (!match) throw new Error(`README has no here-document writing ${file}`);
-  return match[1];
+/** The quick start's one fenced block in `lang`. */
+function block(lang: string): string {
+  const blocks = [...quickStart.matchAll(new RegExp(`^\`\`\`${lang}\\n([\\s\\S]*?)^\`\`\`$`, "gm"))];
+  expect(blocks, `${lang} blocks in the quick start`).toHaveLength(1);
+  return blocks[0][1];
 }
 
 describe("README quick start", () => {
-  it("writes the repository's docker-compose.yml verbatim", () => {
-    expect(`${heredoc("docker-compose.yml")}\n`).toBe(read("docker-compose.yml"));
+  it("shows the repository's docker-compose.yml verbatim", () => {
+    expect(block("yaml")).toBe(read("docker-compose.yml"));
   });
 
-  it("sets every value docker-compose.yml requires, under the names .env.example documents", () => {
-    const env = new Map(
-      heredoc(".env")
-        .split("\n")
-        .map((line) => line.split(/=(.*)/s, 2) as [string, string]),
-    );
+  it("lists every value docker-compose.yml requires, under the names .env.example documents", () => {
+    const names = block("dotenv")
+      .split("\n")
+      .filter((line) => /^\w+=/.test(line))
+      .map((line) => line.slice(0, line.indexOf("=")));
     const required = [...read("docker-compose.yml").matchAll(/\$\{(\w+):\?/g)].map((m) => m[1]);
     expect(required.length).toBeGreaterThan(0);
-    for (const name of new Set(required)) expect(env.get(name), name).toBeTruthy();
+    for (const name of required) expect(names, name).toContain(name);
     const example = read(".env.example");
-    for (const name of env.keys()) expect(example, name).toMatch(new RegExp(`^(# )?${name}=`, "m"));
+    for (const name of names) expect(example, name).toMatch(new RegExp(`^(# )?${name}=`, "m"));
   });
 });

@@ -71,35 +71,16 @@ Slack / 飞书 / 网页控制台
 
 ## 快速开始
 
-使用 Docker Compose 和预先构建好的镜像启动 witden，不需要下载源码，也不需要安装 Node.js。需要一台 x86-64 Linux 主机，已安装 Docker 和 Docker Compose 插件。下面三步的命令都可以直接复制到终端执行。
+使用 Docker Compose 和预先构建好的镜像启动 witden，不需要下载源码，也不需要安装 Node.js。需要一台 x86-64 Linux 主机，已安装 Docker 和 Docker Compose 插件。
 
-**第一步：生成配置文件 `.env`。** 先把其中的管理员邮箱和密码改成自己的，再粘贴执行。密钥、令牌和 Docker socket 的组号由命令自动生成；目录中已经有 `.env` 时，命令不会覆盖它，以免替换正在使用的密钥。
-
-```bash
-mkdir -p witden && cd witden
-(set -C; cat > .env) <<EOF
-WITDEN_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
-WITDEN_BOOTSTRAP_ADMIN_PASSWORD=change-me-please
-WITDEN_PUBLIC_URL=http://localhost:8320
-WITDEN_SECRET_KEY=$(openssl rand -base64 32)
-WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)
-WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-DOCKER_GID=$(stat -c %g /var/run/docker.sock)
-EOF
-```
-
-请离线保存 `.env` 中的 `WITDEN_SECRET_KEY`：丢失后，已保存的模型密钥和通讯凭据无法解密。其他可选配置（固定镜像版本、虚拟电脑连接端口的绑定地址、Laya 调度模型等）见 [`.env.example`](.env.example) 和[部署与配置](docs/deployment.md)。
-
-**第二步：生成 `docker-compose.yml`。** 展开后复制整段执行，内容与仓库中的 [`docker-compose.yml`](docker-compose.yml) 相同。
+**第一步：创建 `docker-compose.yml`。** 新建一个目录（例如 `witden`），在其中创建 `docker-compose.yml`，内容如下（展开后复制），与仓库中的 [`docker-compose.yml`](docker-compose.yml) 相同。
 
 <details>
 <summary>docker-compose.yml</summary>
 
-```bash
-cat > docker-compose.yml <<'EOF'
+```yaml
 # Single-host deployment: PostgreSQL, the API, the worker and the Docker Manager.
-# Write .env first (the README quick start generates one; .env.example lists every setting), then:
+# Write .env first (the README quick start shows the required settings; .env.example lists them all), then:
 #   docker compose --profile images pull    # the platform and computer images, published by .github/workflows
 #   docker compose up -d
 # WITDEN_IMAGE_REPO / WITDEN_IMAGE_TAG choose where the images come from (default: ghcr.io/zhaozhaozz/witden,
@@ -249,21 +230,53 @@ volumes:
   witden-runner:
   witden-laya-cache:
   witden-tunnel:
-EOF
 ```
 
 </details>
 
-**第三步：拉取镜像并启动。**
+**第二步：创建 `.env`。** 在同一目录中创建 `.env`，内容如下。把管理员邮箱和密码改成自己的，并填写空着的五项：
+
+```dotenv
+# 首次启动时创建的管理员账号
+WITDEN_BOOTSTRAP_ADMIN_EMAIL=admin@example.com
+WITDEN_BOOTSTRAP_ADMIN_PASSWORD=change-me-please
+# 在内网访问控制台的地址，消息中的链接指向这里
+WITDEN_PUBLIC_URL=http://localhost:8320
+
+# 主密钥，加密模型密钥和通讯凭据：openssl rand -base64 32
+WITDEN_SECRET_KEY=
+# 进程之间的令牌和数据库密码，任意足够长的随机字符串：openssl rand -hex 24
+WITDEN_MANAGER_TOKEN=
+WITDEN_INTERNAL_TOKEN=
+POSTGRES_PASSWORD=
+# Docker socket 所属的组：stat -c %g /var/run/docker.sock
+DOCKER_GID=
+```
+
+空着的五项也可以在这个目录中执行下面的命令一次填好。它只填写还空着的项，重复执行不会替换已有的值：
+
+```bash
+sed -i \
+  -e "s|^WITDEN_SECRET_KEY=\$|WITDEN_SECRET_KEY=$(openssl rand -base64 32)|" \
+  -e "s|^WITDEN_MANAGER_TOKEN=\$|WITDEN_MANAGER_TOKEN=$(openssl rand -hex 24)|" \
+  -e "s|^WITDEN_INTERNAL_TOKEN=\$|WITDEN_INTERNAL_TOKEN=$(openssl rand -hex 24)|" \
+  -e "s|^POSTGRES_PASSWORD=\$|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" \
+  -e "s|^DOCKER_GID=\$|DOCKER_GID=$(stat -c %g /var/run/docker.sock)|" \
+  .env
+```
+
+请离线保存 `WITDEN_SECRET_KEY`：丢失后，已保存的模型密钥和通讯凭据无法解密；平台启动后也不要更换它和 `POSTGRES_PASSWORD`。其他可选配置（固定镜像版本、虚拟电脑连接端口的绑定地址、Laya 调度模型等）见 [`.env.example`](.env.example) 和[部署与配置](docs/deployment.md)。
+
+**第三步：拉取镜像并启动。** 在这个目录中执行：
 
 ```bash
 docker compose --profile images pull   # 平台镜像和两个虚拟电脑镜像
 docker compose up -d
 ```
 
-已经克隆了仓库时，`docker-compose.yml` 就在仓库中：在仓库目录里执行第一步（去掉第一行）和第三步即可。
+已经克隆了仓库时，`docker-compose.yml` 就在仓库中，在仓库目录里完成第二步和第三步即可。
 
-镜像由本项目的 GitHub Actions 构建，发布在 `ghcr.io/zhaozhaozz/witden`。升级时，按第二步重新生成 `docker-compose.yml`，再执行第三步（已有虚拟电脑的更新方式见[升级](docs/deployment.md#6-升级)）。
+镜像由本项目的 GitHub Actions 构建，发布在 `ghcr.io/zhaozhaozz/witden`。升级时，按第一步更新 `docker-compose.yml`，再执行第三步（已有虚拟电脑的更新方式见[升级](docs/deployment.md#6-升级)）。
 
 启动后访问 <http://localhost:8320>，用 `.env` 中的管理员账号登录。第一次登录时，控制台会打开“欢迎使用 witden”引导：
 
