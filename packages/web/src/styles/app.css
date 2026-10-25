@@ -3485,6 +3485,72 @@ img.avatar-role.avatar-colored {
   font-family: var(--mono);
   font-size: 12.5px;
 }
+.skill-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* The files of an opened skill: path, size and executable mark per row; a text file opens below its row. */
+.skill-files {
+  margin: 0 0 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-2);
+}
+.skill-files-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.skill-file-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+.skill-file-list li {
+  padding: 4px 0;
+}
+.skill-file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.skill-file-path {
+  min-width: 0;
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+.skill-file-actions {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.skill-file-text {
+  max-height: 360px;
+  margin: 4px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  background: var(--paper-2);
+  font-size: 12px;
+  white-space: pre;
+}
+.skill-file-form {
+  align-items: stretch;
+  margin: 6px 0;
+}
+.skill-file-form .btn-row,
+.skill-file-form .check {
+  align-self: flex-end;
+}
+.skill-file-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
 .note-form {
   display: flex;
   flex-direction: column;

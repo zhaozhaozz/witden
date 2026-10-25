@@ -148,6 +148,10 @@ export async function workspace(
       ...m,
     })) as Memory[],
     skillRequests: [] as string[],
+    /** The contents of skill files, by URL path. */
+    skillFileText: {
+      "/api/roles/role-1/skills/skill-release/files/scripts/check.sh": "#!/bin/sh\nmake check\n",
+    } as Record<string, string>,
     skills: [
       {
         id: "skill-release",
@@ -157,6 +161,20 @@ export async function workspace(
         content: "## 步骤\n\n1. 运行完整测试\n2. 更新变更记录",
         created_by_type: "role",
         created_by_id: role.id,
+        files: [
+          {
+            id: "skf-check",
+            skill_id: "skill-release",
+            path: "scripts/check.sh",
+            size: 21,
+            sha256: "",
+            executable: true,
+            updated_by_type: "role",
+            updated_by_id: role.id,
+            created_at: now,
+            updated_at: now,
+          },
+        ],
       },
       {
         id: "skill-review",
@@ -166,6 +184,7 @@ export async function workspace(
         content: "先看测试，再看实现。",
         created_by_type: "user",
         created_by_id: user.id,
+        files: [],
       },
     ].map((s) => ({
       ...s,
@@ -292,6 +311,34 @@ export async function workspace(
           );
           json = state.memories.find((m) => m.id === id);
         }
+      } else if (/^\/api\/roles\/[^/]+\/skills\/[^/]+\/(files\/|archive$)/.test(path)) {
+        // a skill's files (by path) and its package
+        const [, , , , , skillId, kind, ...rest] = path.split("/");
+        const filePath = rest.map(decodeURIComponent).join("/");
+        state.skillRequests.push(`${req.method()} ${path}`);
+        const skill = state.skills.find((s) => s.id === skillId)!;
+        if (kind === "archive")
+          return route.fulfill({ body: Buffer.from([0x1f, 0x8b, 0x08]), contentType: "application/gzip" });
+        if (req.method() === "GET")
+          return route.fulfill({ body: state.skillFileText[path] ?? "", contentType: "application/octet-stream" });
+        if (req.method() === "PUT") {
+          const body = req.postDataBuffer()?.toString("latin1") ?? "";
+          const file = {
+            ...skill.files[0],
+            id: `skf-${filePath}`,
+            skill_id: skillId,
+            path: filePath,
+            size: 12,
+            executable: /name="executable"\r\n\r\ntrue/.test(body),
+            updated_by_type: "user" as const,
+            updated_by_id: user.id,
+          };
+          skill.files = [...skill.files.filter((f) => f.path !== filePath), file];
+          json = file;
+        } else {
+          skill.files = skill.files.filter((f) => f.path !== filePath);
+          json = { ok: true };
+        }
       } else if (/^\/api\/roles\/[^/]+\/skills(\/[^/]+)?$/.test(path)) {
         const [, , , roleId, , skillId] = path.split("/");
         state.skillRequests.push(`${req.method()} ${path}`);
@@ -299,6 +346,7 @@ export async function workspace(
           const s = {
             ...state.skills[0],
             ...req.postDataJSON(),
+            files: [],
             id: `skill-new-${state.skills.length}`,
             role_id: roleId,
             created_by_type: "user",

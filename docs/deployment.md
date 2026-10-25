@@ -231,7 +231,7 @@ server {
 |---|---|---|
 | `WITDEN_SECRET_KEY` | — | 主密钥（必填）。丢失后已保存的密钥无法解密，请离线备份。 |
 | `WITDEN_DATABASE_URL` | 嵌入式数据库 | PostgreSQL 连接地址，例如 `postgres://user:pass@db:5432/witden`。 |
-| `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像）。 |
+| `WITDEN_DATA_DIR` | `./data` | 数据目录（嵌入式数据库、话题文件、头像、技能文件）。 |
 | `WITDEN_HOST` / `WITDEN_PORT` | `0.0.0.0` / `8320` | 控制台与 API 的监听地址和端口。 |
 | `WITDEN_PUBLIC_URL` | `http://localhost:8320` | 在内网访问控制台的地址，消息中的链接指向这里。控制台中没有保存公网事件地址时，事件地址也按它生成（见 2.4）。 |
 | `WITDEN_WEBHOOK_HOST` / `WITDEN_WEBHOOK_PORT` | 同 `WITDEN_HOST` / `8325` | 事件端口：只提供事件接口、地址检查、Slack 安装回调和 AI 员工头像，公网地址只转发到这里。设为 `0` 时不开启。 |
@@ -313,7 +313,7 @@ witden gen-key                                     生成新的主密钥
 |---|---|
 | 数据库 | 使用 `pg_dump` 定期备份 `db` 服务中的数据库。 |
 | 主密钥 | 离线保存 `WITDEN_SECRET_KEY`；没有它，备份中的模型密钥和通讯凭据无法解密。 |
-| 平台数据卷 | `witden-data`（话题文件和头像），与数据库一起备份。 |
+| 平台数据卷 | `witden-data`（话题文件、头像和技能文件），与数据库一起备份。 |
 | 虚拟电脑 | 在虚拟电脑页面的“备份与复制”中创建备份，备份文件保存在 Docker Manager 的数据卷 `witden-manager` 中。 |
 | 执行代理数据卷 | `witden-runner` 无需备份，丢失后 Docker Manager 启动时会从平台镜像重新安装。虚拟电脑的备份不包含它。 |
 | Laya 模型文件 | 数据卷 `witden-laya-cache` 无需备份，丢失后会重新下载。 |

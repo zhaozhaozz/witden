@@ -29,7 +29,7 @@ import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
 import { EFFORT_LEVELS, effortChoices } from "./effort.js";
 import { getProvider, isSystemOne, modelWithProvider } from "./model-configs.js";
-import { copySkills } from "./role-skills.js";
+import { copySkills, type SkillBlobs } from "./role-skills.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
@@ -277,8 +277,8 @@ export async function updateRole(db: Db, user: User, role: Role, input: Record<s
 }
 
 /**
- * Same job on another computer: independent identity and sessions, the same prompt, settings and skills (how it
- * works); its role memory stays with the original.
+ * Same job on another computer: independent identity and sessions, the same prompt, settings and skills with their
+ * files (how it works); its role memory stays with the original. The copied files' content goes through ``blobs``.
  */
 export async function copyRole(
   db: Db,
@@ -287,6 +287,7 @@ export async function copyRole(
   handle: string,
   name: string | null,
   instanceId: string | null,
+  blobs: SkillBlobs,
 ) {
   if (role.systemAdmin) throw new BadRequest("the system administrator is built in and cannot be copied");
   const clone = await createRole(db, user, {
@@ -307,7 +308,7 @@ export async function copyRole(
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,
   });
-  const skills = await copySkills(db, role, clone, { type: "user", id: user.id });
+  const skills = await copySkills(db, role, clone, { type: "user", id: user.id }, blobs);
   return { clone, skills };
 }
 

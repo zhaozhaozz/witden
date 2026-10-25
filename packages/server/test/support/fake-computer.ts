@@ -50,6 +50,10 @@ export interface FakeCommand {
 
 export class FakeComputer {
   files = new Map<string, Buffer>();
+  /** Permission bits of files written with a mode (file.write), by path; others count as 0644. */
+  modes = new Map<string, number>();
+  /** Symbolic links, by path: file.tree reports them and never follows them. */
+  links = new Map<string, string>();
   /** System packages installed by the platform (FakeManager.packages); a new container has none. */
   packages = new Set<string>();
   commands: string[] = [];
@@ -80,6 +84,8 @@ export class FakeComputer {
   terminalReads: Record<string, unknown>[] = [];
   /** False: a runner from before background commands (exec.run only); takes effect at the next connect. */
   commandOps = true;
+  /** False: a runner from before whole-directory operations (file.tree, file.remove, file.write's mode). */
+  fileTreeOps = true;
   /** The runner bundle it reports in hello (null: a runner from before builds were reported). */
   build: RunnerBuild | null = { version: "0123456789ab", source: "image" };
   /** Commands started with command.start, by id. */
@@ -120,7 +126,7 @@ export class FakeComputer {
           workdir: this.spec.workdir,
           desktop: null,
           browser: true,
-          tools: this.commandOps ? ["command"] : [],
+          tools: [...(this.commandOps ? ["command"] : []), ...(this.fileTreeOps ? ["file_tree"] : [])],
           ...(this.build ? { build: this.build } : {}),
         },
       }),
@@ -311,7 +317,41 @@ export class FakeComputer {
       case "file.write": {
         const data = Buffer.from(p.contentBase64, "base64");
         this.files.set(this.path(p.path), data);
+        if (typeof p.mode === "number" && this.fileTreeOps) this.modes.set(this.path(p.path), p.mode);
         return { path: this.path(p.path), size: data.length };
+      }
+      case "file.tree": {
+        if (!this.fileTreeOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const root = this.path(p.path);
+        const exclude = new Set<string>(p.exclude ?? []);
+        const under = (keys: Iterable<string>) =>
+          [...keys]
+            .filter((k) => k.startsWith(`${root}/`))
+            .map((k) => k.slice(root.length + 1))
+            .filter((rel) => !rel.split("/").some((part) => exclude.has(part)))
+            .sort();
+        const files = under(this.files.keys());
+        const skipped = under(this.links.keys());
+        if (!files.length && !skipped.length)
+          throw Object.assign(new Error(`no such directory ${p.path}`), { code: "not_found" });
+        return {
+          path: root,
+          files: files.map((rel) => ({
+            path: rel,
+            size: this.files.get(`${root}/${rel}`)!.length,
+            mode: (this.modes.get(`${root}/${rel}`) ?? 0o644).toString(8).padStart(4, "0"),
+          })),
+          skipped: skipped.map((rel) => ({ path: rel, type: "link" })),
+        };
+      }
+      case "file.remove": {
+        if (!this.fileTreeOps) throw Object.assign(new Error(`unknown op "${req.op}"`), { code: "unsupported" });
+        const target = this.path(p.path);
+        let removed = false;
+        for (const map of [this.files, this.modes, this.links])
+          for (const k of [...map.keys()])
+            if (k === target || k.startsWith(`${target}/`)) removed = map.delete(k) || removed;
+        return { path: target, removed };
       }
       case "file.list":
         return {

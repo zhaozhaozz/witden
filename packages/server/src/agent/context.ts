@@ -30,7 +30,7 @@ import {
 import { channelsOf } from "../integrations/links.js";
 import { memoryLine } from "../services/memories.js";
 import { ROLE_MEMORY_SHOWN, roleMemories } from "../services/role-memory.js";
-import { skillsOf } from "../services/role-skills.js";
+import { fileCounts, SKILLS_DIR, skillsOf } from "../services/role-skills.js";
 import * as topicSvc from "../services/topics.js";
 import { allowedContacts, contactLine } from "./contacts.js";
 import type { ChatMessage } from "./llm.js";
@@ -93,21 +93,31 @@ async function roleMemorySection(db: Db, role: Role, canRecall: boolean): Promis
 }
 
 /**
- * Its skills by name and description, for every prompt of the role; it reads one whole with read_skill. Read live,
- * like role memory: it changes when a skill is added, changed or deleted, never from one message to the next.
- * Nothing when there are none (and a system administrator has none).
+ * Its skills by name and description (and how many files come with each), for every prompt of the role; it reads one
+ * whole with read_skill. Read live, like role memory: it changes when a skill or its files are added, changed or
+ * deleted, never from one message to the next. Nothing when there are none (and a system administrator has none).
  */
 async function skillsSection(db: Db, role: Role, canWrite: boolean): Promise<string> {
   if (role.systemAdmin) return "";
   const skills = await skillsOf(db, role.id);
   if (!skills.length) return "";
+  const files = await fileCounts(
+    db,
+    skills.map((s) => s.id),
+  );
+  const n = (id: string) => files.get(id) ?? 0;
   return [
     "## Your skills",
     "Instructions for kinds of work you do, written by you or by people of the team. When a request matches a skill's description, read the skill with read_skill before you start, and follow it.",
+    files.size
+      ? `Some come with files (scripts, templates, reference documents): read_skill puts the whole skill into your virtual computer, in ${SKILLS_DIR}/<name>/, where you run its scripts with run_command.`
+      : "",
     canWrite
       ? "When you learn something that would make a skill better (a missing step, a mistake to avoid, a better way), improve it with save_skill; skills can be changed only while you work for a witden administrator."
       : "",
-    ...skills.map((s) => `- ${s.name}: ${s.description}`),
+    ...skills.map(
+      (s) => `- ${s.name}: ${s.description}${n(s.id) ? ` (${n(s.id)} file${n(s.id) === 1 ? "" : "s"})` : ""}`,
+    ),
   ]
     .filter(Boolean)
     .join("\n");

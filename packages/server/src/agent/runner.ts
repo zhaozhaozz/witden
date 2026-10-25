@@ -838,8 +838,10 @@ const AUDITED_ARGS = new Set([
   "to",
   // which note update_memory / forget touched (not its text)
   "id",
-  // which skill read_skill / save_skill / delete_skill touched (not its text)
+  // which skill read_skill / save_skill / delete_skill touched (not its text), which of its files, from where
   "name",
+  "file",
+  "directory",
 ]);
 
 /** Operationally relevant arguments only (redacted); free text such as messages or notes is left out. */

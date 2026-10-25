@@ -1,7 +1,14 @@
 import type { Stats } from "node:fs";
-import { appendFile, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, chmod, cp, lstat, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { FileEntry, FileReadResult, FileWriteResult } from "@witden/shared";
+import type {
+  FileEntry,
+  FileReadResult,
+  FileRemoveResult,
+  FileTreeEntry,
+  FileTreeResult,
+  FileWriteResult,
+} from "@witden/shared";
 import type { Env } from "../context.js";
 import { OpError } from "../errors.js";
 import { optBool, optInt, reqString } from "../params.js";
@@ -46,11 +53,58 @@ export class Files {
     const file = this.resolve(params, "path");
     const encoded = reqString(params, "contentBase64", Math.ceil((MAX_WRITE * 4) / 3) + 4);
     const append = optBool(params, "append") ?? false;
+    const mode = optInt(params, "mode", 0, 0o777);
     const data = Buffer.from(encoded, "base64");
     await mkdir(path.dirname(file), { recursive: true });
     if (append) await appendFile(file, data);
     else await writeFile(file, data);
+    // writeFile keeps an existing file's mode, so the bits are set explicitly.
+    if (mode !== undefined) await chmod(file, mode);
     return { path: file, size: (await stat(file)).size };
+  }
+
+  /** A directory's regular files at any depth; symbolic links are reported, never followed. */
+  async tree(params: Record<string, unknown>): Promise<FileTreeResult> {
+    const root = this.resolve(params, "path");
+    const raw = params.exclude ?? [];
+    if (!Array.isArray(raw) || raw.some((n) => typeof n !== "string"))
+      throw new OpError("invalid", "params.exclude must be a list of names");
+    const exclude = new Set(raw as string[]);
+    if (!(await stat(root)).isDirectory()) throw new OpError("invalid", `${root} is not a directory`);
+    const files: FileTreeEntry[] = [];
+    const skipped: FileTreeResult["skipped"] = [];
+    const walk = async (dir: string, prefix: string): Promise<void> => {
+      for (const name of (await readdir(dir)).sort()) {
+        if (exclude.has(name)) continue;
+        const rel = prefix ? `${prefix}/${name}` : name;
+        let st: Stats;
+        try {
+          st = await lstat(path.join(dir, name));
+        } catch {
+          continue; // removed meanwhile
+        }
+        if (st.isDirectory()) await walk(path.join(dir, name), rel);
+        else if (st.isFile())
+          files.push({ path: rel, size: st.size, mode: (st.mode & 0o7777).toString(8).padStart(4, "0") });
+        else skipped.push({ path: rel, type: typeOf(st) });
+      }
+    };
+    await walk(root, "");
+    return { path: root, files, skipped };
+  }
+
+  /** A file, or a directory with everything in it; nothing there is not an error. */
+  async remove(params: Record<string, unknown>): Promise<FileRemoveResult> {
+    const target = this.resolve(params, "path");
+    // A slip in a path must not empty the computer.
+    if (target === path.parse(target).root || target === this.env.home || target === this.env.workdir)
+      throw new OpError("invalid", `refusing to remove ${target}`);
+    const there = await lstat(target).then(
+      () => true,
+      () => false,
+    );
+    await rm(target, { recursive: true, force: true });
+    return { path: target, removed: there };
   }
 
   async list(params: Record<string, unknown>): Promise<{ path: string; entries: FileEntry[]; truncated: boolean }> {

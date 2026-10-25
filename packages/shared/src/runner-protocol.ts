@@ -215,6 +215,8 @@ export type RunnerOp =
   | "file.list"
   | "file.move"
   | "file.stat"
+  | "file.tree"
+  | "file.remove"
   | "screen.capture"
   | "screen.size"
   | "input.mouse"
@@ -372,6 +374,8 @@ export interface FileWriteParams {
   contentBase64: string;
   /** Default: overwrite. */
   append?: boolean;
+  /** Permission bits (e.g. 0o755) set after writing (FILE_TREE_TOOL runners; older ones keep the file's mode). */
+  mode?: number;
 }
 export interface FileWriteResult {
   path: string;
@@ -389,6 +393,41 @@ export interface FileEntry {
 export interface FileMoveParams {
   from: string;
   to: string;
+}
+
+/**
+ * Whole directories (runners whose ``info.tools`` include FILE_TREE_TOOL; older runners have neither op nor
+ * file.write's ``mode``): ``file.tree`` lists a directory's regular files at any depth, ``file.remove`` deletes a
+ * file or a directory with everything in it. The platform keeps AI employees' skills this way (a skill's directory
+ * is read whole and written whole).
+ */
+export const FILE_TREE_TOOL = "file_tree";
+
+export interface FileTreeParams {
+  path: string;
+  /** Names left out at any depth, with everything below them (e.g. ".git"). */
+  exclude?: string[];
+}
+export interface FileTreeEntry {
+  /** Relative to the listed directory, "/"-separated. */
+  path: string;
+  size: number;
+  /** Permission bits in octal, e.g. "0755". */
+  mode: string;
+}
+export interface FileTreeResult {
+  path: string;
+  files: FileTreeEntry[];
+  /** Entries that are neither regular files nor directories: symbolic links are never followed. */
+  skipped: { path: string; type: FileEntry["type"] }[];
+}
+export interface FileRemoveParams {
+  path: string;
+}
+export interface FileRemoveResult {
+  path: string;
+  /** False when there was nothing there. */
+  removed: boolean;
 }
 
 export interface ScreenCaptureResult {
@@ -489,6 +528,7 @@ export const READ_ONLY_OPS: ReadonlySet<RunnerOp> = new Set<RunnerOp>([
   "file.read",
   "file.list",
   "file.stat",
+  "file.tree",
   "screen.capture",
   "screen.size",
   "browser.snapshot",

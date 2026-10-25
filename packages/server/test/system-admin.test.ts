@@ -252,6 +252,19 @@ describe("system administrator role", () => {
     const [audited] = (await w.api("GET", "/api/audit?action=skill.create", { token: w.adminToken })).body;
     expect(audited).toMatchObject({ actor_type: "user", actor_id: w.ids.alice });
     expect(audited.detail.by_role_id).toBe(adminId);
+    // a text file of the skill, written and read back under its path
+    const filed = await runAdmin([
+      call("change_config", {
+        method: "PUT",
+        path: `/api/roles/${w.ids.dev}/skills/${skill.id}/files/scripts/check.sh`,
+        body: { content: "#!/bin/sh\nmake check\n", executable: true },
+      }),
+      call("read_config", { path: `/api/roles/${w.ids.dev}/skills/${skill.id}/files/scripts/check.sh` }),
+      call("read_config", { path: `/api/roles/${w.ids.dev}/skills/${skill.id}/files` }),
+    ]);
+    expect(filed[0]).toMatch(/^HTTP 200\n.*"path":"scripts\/check.sh".*"executable":true/);
+    expect(filed[1]).toBe("HTTP 200\n#!/bin/sh\nmake check\n");
+    expect(filed[2]).toContain('"size":21');
     const changed = await runAdmin([
       call("change_config", {
         method: "PATCH",

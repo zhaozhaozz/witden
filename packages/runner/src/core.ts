@@ -1,6 +1,7 @@
 import os from "node:os";
 import {
   COMMAND_TOOL,
+  FILE_TREE_TOOL,
   type HelloMessage,
   type ModelProxyConfig,
   READ_ONLY_OPS,
@@ -153,6 +154,8 @@ export class RunnerCore {
       "file.list": async (p) => f.list(p),
       "file.move": async (p) => f.move(p),
       "file.stat": async (p) => f.stat(p),
+      "file.tree": async (p) => f.tree(p),
+      "file.remove": async (p) => f.remove(p),
       "screen.capture": (p, ctx) => d.capture(p, ctx),
       "screen.size": async (_p, ctx) => d.size(ctx),
       "input.mouse": (p, ctx) => d.mouse(p, ctx),
@@ -224,7 +227,7 @@ export class RunnerCore {
     }
     const desktop = await this.desktop.describe();
     const browser = await this.browsers.available();
-    const tools = ["exec", COMMAND_TOOL, "file", "process", "journal"];
+    const tools = ["exec", COMMAND_TOOL, "file", FILE_TREE_TOOL, "process", "journal"];
     if (this.options.streamPorts.length) tools.push("stream");
     if (which("tmux")) tools.push("terminal");
     if (desktop && which("import")) tools.push("screen");

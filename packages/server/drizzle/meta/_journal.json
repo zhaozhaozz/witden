@@ -358,6 +358,13 @@
       "when": 1792904029146,
       "tag": "0050_role_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1792919537130,
+      "tag": "0051_role_skill_files",
+      "breakpoints": true
     }
   ]
 }

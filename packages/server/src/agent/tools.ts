@@ -20,6 +20,8 @@ import {
   memories,
   messages,
   modelConfigs,
+  type RoleSkill,
+  type RoleSkillFile,
   roles,
   type Task,
   tasks,
@@ -43,12 +45,20 @@ import {
   changeSkill,
   createSkill,
   deleteSkill,
+  filesOf,
+  parseSkillMarkdown,
+  replaceSkillFiles,
   roleSkillRefusal,
   SKILL_CONTENT_MAX_CHARS,
   SKILL_DESCRIPTION_MAX_CHARS,
+  SKILL_FILE,
+  SKILLS_DIR,
+  SkillBlobs,
   type SkillFields,
   skillByName,
   skillFields,
+  skillFileData,
+  skillFilePath,
   skillsOf,
 } from "../services/role-skills.js";
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
@@ -60,6 +70,7 @@ import { publishTaskStatus } from "./control.js";
 import { awaitAnswer, enqueue, lastBatchExplicit } from "./conversation.js";
 import { checkAutoRounds, delegate, startOwnTask } from "./dispatch.js";
 import { deliver } from "./output.js";
+import { type DirectoryRead, putSkillDirectory, readSkillDirectory } from "./skill-dirs.js";
 import { submitTaskInput } from "./task-continuation.js";
 import { requestHandover, transferStartedTask } from "./task-handoff.js";
 import { recordTaskUpdate } from "./task-updates.js";
@@ -1040,7 +1051,12 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
 
 // --- skills ----------------------------------------------------------------------------------------------
 
-/** One of the role's skills, whole: the system prompt lists only their names and descriptions. */
+const fileLine = (f: RoleSkillFile) => `- ${f.path} (${f.size} bytes${f.executable ? ", executable" : ""})`;
+
+/**
+ * One of the role's skills, whole: the system prompt lists only their names and descriptions. With a computer it
+ * also writes the skill's directory there (agent/skill-dirs.ts) and says where; ``file`` returns one file's text.
+ */
 async function readSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const name = String(args.name ?? "")
     .trim()
@@ -1053,7 +1069,48 @@ async function readSkill(ctx: ToolContext, args: Record<string, any>): Promise<T
         ? `you have no skill named "${name}"; yours are: ${skills.map((s) => s.name).join(", ")}`
         : "you have no skills",
     );
-  return { content: await boundOutput(ctx, "read_skill", `# ${skill.name}\n${skill.description}\n\n${skill.content}`) };
+  const files = await filesOf(ctx.db(), skill.id);
+  if (args.file !== undefined && args.file !== null && args.file !== "")
+    return readSkillFile(ctx, skill, files, args.file);
+  const placed = await putSkillDirectory(ctx, skill, files);
+  const [task] = await ctx.db().select({ envelope: tasks.envelope }).from(tasks).where(eq(tasks.id, ctx.taskId));
+  const canSave = ((task?.envelope as { tools?: string[] } | undefined)?.tools ?? []).includes("skills");
+  const listed = files.length ? `\n\nFiles of this skill:\n${files.map(fileLine).join("\n")}` : "";
+  let note = "";
+  if ("dir" in placed && files.length)
+    note = `\nThe whole skill is in ${placed.dir} in your computer: ${SKILL_FILE} (these instructions) and the files above, executable bits kept. Run its scripts there with run_command; relative paths in the instructions are relative to that directory. Every read_skill writes that directory anew from the saved skill${canSave ? ": to change the skill, edit it there and save it with save_skill (directory) before you read it again" : ""}.`;
+  else if ("dir" in placed)
+    note = `\n\nThis skill is also in ${placed.dir}/${SKILL_FILE} in your computer, written anew from the saved skill at every read_skill${canSave ? "; to give it scripts or other files, put them in that directory and save it with save_skill (directory)" : ""}.`;
+  else if (files.length)
+    note = `\n${placed.why}, so the files were not put into a computer for you; read a text file with read_skill (name and file).`;
+  const text = `# ${skill.name}\n${skill.description}\n\n${skill.content}`;
+  return { content: `${await boundOutput(ctx, "read_skill", text)}${listed}${note}` };
+}
+
+/** One file of a skill as text; a binary file is for the computer. */
+async function readSkillFile(
+  ctx: ToolContext,
+  skill: RoleSkill,
+  files: RoleSkillFile[],
+  path: unknown,
+): Promise<ToolResult> {
+  const wanted = skillFilePath(path);
+  const file = files.find((f) => f.path === wanted);
+  if (!file)
+    throw new BadRequest(
+      files.length
+        ? `skill ${skill.name} has no file ${wanted}; its files are: ${files.map((f) => f.path).join(", ")}`
+        : `skill ${skill.name} has no files`,
+    );
+  const data = skillFileData(file);
+  const text = data.toString("utf8");
+  if (data.includes(0) || text.includes("�"))
+    return {
+      content: `${file.path} is a binary file (${file.size} bytes): it is used in a virtual computer, where read_skill without file puts the whole skill.`,
+    };
+  return {
+    content: `[${skill.name}/${file.path}: ${file.size} bytes${file.executable ? ", executable" : ""}]\n${await boundOutput(ctx, "read_skill", text)}`,
+  };
 }
 
 /** Changing its skills changes how the role works everywhere: the same check as for its role memory. */
@@ -1070,14 +1127,40 @@ async function skillRefusal(db: Db, task: Task): Promise<string | null> {
   return role ? roleSkillRefusal(db, task, role) : "role not found";
 }
 
-/** Create one of the role's own skills, or replace the one of that name whole. */
+/**
+ * Create one of the role's own skills, or replace the one of that name whole. With ``directory`` the skill's files
+ * become those of that directory of the computer, and its SKILL.md gives the content and description not given;
+ * without, the files stay as they are.
+ */
 async function saveSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  const fields = skillFields(args) as SkillFields;
+  const directory = typeof args.directory === "string" ? args.directory.trim() : "";
+  if (!directory) return writeSkill(ctx, skillFields(args) as SkillFields, null);
+  // A refused save, or one with a bad name, reads nothing from the computer.
+  skillFields({ name: args.name }, { partial: true });
+  await transaction((db) => ownSkills(ctx, db));
+  const blobs = new SkillBlobs();
+  return blobs.run(async () => {
+    const read = await readSkillDirectory(ctx, directory, blobs);
+    const md = read.markdown === null ? null : parseSkillMarkdown(read.markdown);
+    const content = args.content ?? md?.content;
+    if (content === undefined)
+      throw new BadRequest(`${read.dir} has no ${SKILL_FILE}: put the instructions there, or give content`);
+    const fields = skillFields({ name: args.name, description: args.description ?? md?.description, content });
+    return writeSkill(ctx, fields as SkillFields, { read, blobs });
+  });
+}
+
+async function writeSkill(
+  ctx: ToolContext,
+  fields: SkillFields,
+  from: { read: DirectoryRead; blobs: SkillBlobs } | null,
+): Promise<ToolResult> {
   return transaction(async (db) => {
     const { task, role, topic } = await ownSkills(ctx, db);
     const by = { type: "role", id: role.id } as const;
     const current = await skillByName(db, role.id, fields.name);
     const skill = current ? await changeSkill(db, current, fields, by) : await createSkill(db, role, fields, by);
+    if (from) await replaceSkillFiles(db, skill, from.read.files, by, from.blobs);
     await audit(db, current ? "skill.update" : "skill.create", {
       actorType: "role",
       actorId: role.id,
@@ -1086,30 +1169,44 @@ async function saveSkill(ctx: ToolContext, args: Record<string, any>): Promise<T
       roleId: role.id,
       taskId: task.id,
       topicId: topic.id,
-      detail: { skill: skill.name, tool: "save_skill", ...(current ? { fields: ["description", "content"] } : {}) },
+      detail: {
+        skill: skill.name,
+        tool: "save_skill",
+        ...(current ? { fields: ["description", "content", ...(from ? ["files"] : [])] } : {}),
+        ...(from ? { files: from.read.files.length } : {}),
+      },
     });
-    return { content: `${current ? "replaced" : "created"} your skill ${skill.name}` };
+    let text = `${current ? "replaced" : "created"} your skill ${skill.name}`;
+    if (from) {
+      const n = from.read.files.length;
+      text += ` from ${from.read.dir}, with ${n} file${n === 1 ? "" : "s"}${n ? `: ${from.read.files.map((f) => f.path).join(", ")}` : ""}`;
+      if (from.read.skipped.length) text += `; left out (not regular files): ${from.read.skipped.join(", ")}`;
+    }
+    return { content: text };
   });
 }
 
 async function deleteOwnSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
-  return transaction(async (db) => {
-    const { task, role, topic } = await ownSkills(ctx, db);
-    const skill = await skillByName(db, role.id, String(args.name ?? ""));
-    if (!skill) throw new BadRequest(`you have no skill named "${String(args.name ?? "")}"`);
-    await deleteSkill(db, skill);
-    await audit(db, "skill.delete", {
-      actorType: "role",
-      actorId: role.id,
-      resourceType: "skill",
-      resourceId: skill.id,
-      roleId: role.id,
-      taskId: task.id,
-      topicId: topic.id,
-      detail: { skill: skill.name, tool: "delete_skill" },
-    });
-    return { content: `deleted your skill ${skill.name}` };
-  });
+  const blobs = new SkillBlobs();
+  return blobs.run(() =>
+    transaction(async (db) => {
+      const { task, role, topic } = await ownSkills(ctx, db);
+      const skill = await skillByName(db, role.id, String(args.name ?? ""));
+      if (!skill) throw new BadRequest(`you have no skill named "${String(args.name ?? "")}"`);
+      await deleteSkill(db, skill, blobs);
+      await audit(db, "skill.delete", {
+        actorType: "role",
+        actorId: role.id,
+        resourceType: "skill",
+        resourceId: skill.id,
+        roleId: role.id,
+        taskId: task.id,
+        topicId: topic.id,
+        detail: { skill: skill.name, tool: "delete_skill" },
+      });
+      return { content: `deleted your skill ${skill.name}` };
+    }),
+  );
 }
 
 async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
@@ -1564,28 +1661,41 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "read_skill",
       null,
-      'Read one of your skills by name (listed under "Your skills" in your instructions): when to use it and its full instructions. Read it before you start work its description matches, then follow it.',
-      obj({ name: str }, ["name"]),
+      `Read one of your skills by name (listed under "Your skills" in your instructions): when to use it, its full instructions and the files that come with it (scripts, templates, reference documents). Read it before you start work its description matches, then follow it. When you have a virtual computer and may use files, it also writes the whole skill there, in ${SKILLS_DIR}/<name>/ (${SKILL_FILE} and the files, executable bits kept), so you run its scripts with run_command; that directory is written anew from the saved skill at every read. With file: one file of the skill as text, e.g. when you have no computer.`,
+      obj(
+        {
+          name: str,
+          file: {
+            type: "string",
+            description: "optional: the path of one of the skill's files, e.g. scripts/check.sh",
+          },
+        },
+        ["name"],
+      ),
       readSkill,
     ),
     {
       ...spec(
         "save_skill",
         "skills",
-        `Create or replace one of your own skills: instructions for a kind of work you will do again (how to cut a release here, how this team reviews a pull request, how to use an internal tool), so you do it well every time. An existing skill of the same name is replaced whole: read it first and keep what still holds. Your skills are listed in every prompt of yours, wherever you work, and may come up in front of anyone you talk to: nothing confidential, personal or about one place only. Only while you work for a witden administrator (a console account).`,
+        `Create or replace one of your own skills: instructions for a kind of work you will do again (how to cut a release here, how this team reviews a pull request, how to use an internal tool), so you do it well every time. An existing skill of the same name is replaced whole: read it first and keep what still holds. A skill can come with files (scripts, templates, reference documents): develop it as a directory in your computer (read_skill puts an existing one in ${SKILLS_DIR}/<name>/) with the instructions in ${SKILL_FILE} and the files next to it, then save it with directory; the skill's files become exactly that directory's regular files (symbolic links and .git left out, executable bits kept), and its instructions refer to them by relative path. Without directory the skill's files stay as they are. Your skills are listed in every prompt of yours, wherever you work, and may come up in front of anyone you talk to: nothing confidential, personal or about one place only, and no credentials in its files. Only while you work for a witden administrator (a console account).`,
         obj(
           {
             name: { type: "string", description: "a short slug: lowercase letters, digits, . _ -, e.g. release-check" },
             description: {
               type: "string",
-              description: `when to use it, in a sentence or two (at most ${SKILL_DESCRIPTION_MAX_CHARS} characters)`,
+              description: `when to use it, in a sentence or two (at most ${SKILL_DESCRIPTION_MAX_CHARS} characters); with directory, taken from the front matter of ${SKILL_FILE} when not given`,
             },
             content: {
               type: "string",
-              description: `the instructions, in Markdown (at most ${SKILL_CONTENT_MAX_CHARS} characters)`,
+              description: `the instructions, in Markdown (at most ${SKILL_CONTENT_MAX_CHARS} characters); with directory, ${SKILL_FILE} there (after its front matter) when not given`,
+            },
+            directory: {
+              type: "string",
+              description: `optional: a directory in your computer holding the whole skill, e.g. ${SKILLS_DIR}/release-check`,
             },
           },
-          ["name", "description", "content"],
+          ["name"],
         ),
         saveSkill,
       ),

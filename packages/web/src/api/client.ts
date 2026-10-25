@@ -143,7 +143,8 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => json<T>("PATCH", path, body ?? {}),
   put: <T>(path: string, body?: unknown) => json<T>("PUT", path, body ?? {}),
   del: <T>(path: string, body?: unknown) => json<T>("DELETE", path, body),
-  upload: <T>(path: string, form: FormData) => json<T>("POST", path, form),
+  upload: <T>(path: string, form: FormData, method: "POST" | "PUT" = "POST", query?: Query) =>
+    json<T>(method, path, form, query),
   /** Authenticated binary download (files, screenshots); the caller owns the returned object URL. */
   blob: async (path: string, query?: Query): Promise<Blob> => {
     const res = await sendWithRetry("GET", path, undefined, query);
@@ -153,7 +154,11 @@ export const api = {
 
 /** Download an authenticated file by streaming it into an object URL and clicking a temporary link. */
 export async function downloadFile(fileId: string, name: string): Promise<void> {
-  const blob = await api.blob(`/api/files/${encodeURIComponent(fileId)}`);
+  saveBlob(await api.blob(`/api/files/${encodeURIComponent(fileId)}`), name);
+}
+
+/** Hand a downloaded blob to the browser as a file. */
+export function saveBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

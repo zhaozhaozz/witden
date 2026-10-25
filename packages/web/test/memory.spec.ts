@@ -159,3 +159,61 @@ test("each AI employee's skills show name and description, open to rendered inst
   expect(state.skillRequests).toContain("DELETE /api/roles/role-1/skills/skill-release");
   expect(errors).toEqual([]);
 });
+
+test("a skill's files are listed with size and executable mark, viewed inline, uploaded and deleted; the skill downloads as a package", async ({
+  page,
+}) => {
+  const { state, errors } = await workspace(page, { multipleRoles: true });
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const skills = page.locator(".memory-group").filter({ has: page.locator("summary", { hasText: "AI 员工技能" }) });
+  const dev = skills.locator(".skill-role").filter({ hasText: "研发助手" });
+  await dev.getByRole("button", { name: /release-check/ }).click();
+  const detail = page.locator("#skill-skill-release");
+  const files = detail.locator(".skill-files");
+  await expect(files).toContainText("文件 1 个");
+  const check = files.locator("li").filter({ hasText: "scripts/check.sh" });
+  await expect(check).toContainText("21 B");
+  await expect(check.locator(".tag")).toHaveText("可执行");
+
+  await check.getByRole("button", { name: "查看 scripts/check.sh", exact: true }).click();
+  await expect(check.locator(".skill-file-text")).toHaveText("#!/bin/sh\nmake check\n");
+  await check.getByRole("button", { name: "收起 scripts/check.sh", exact: true }).click();
+  await expect(check.locator(".skill-file-text")).toHaveCount(0);
+
+  // Upload: the path starts as the file's name and can be changed; a script is marked executable.
+  await files.getByRole("button", { name: "上传文件", exact: true }).click();
+  await files.locator('input[type="file"]').setInputFiles({
+    name: "tag.sh",
+    mimeType: "text/x-sh",
+    buffer: Buffer.from("#!/bin/sh\ngit tag\n"),
+  });
+  const path = files.getByRole("textbox", { name: "文件路径", exact: true });
+  await expect(path).toHaveValue("tag.sh");
+  await expect(files.getByRole("checkbox", { name: "可执行（脚本）" })).toBeChecked();
+  await path.fill("../tag.sh");
+  await expect(files).toContainText("路径中不能有空的部分");
+  await expect(files.getByRole("button", { name: "上传", exact: true })).toBeDisabled();
+  await path.fill("scripts/tag.sh");
+  await files.getByRole("button", { name: "上传", exact: true }).click();
+  const tag = files.locator("li").filter({ hasText: "scripts/tag.sh" });
+  await expect(tag.locator(".tag")).toHaveText("可执行");
+  await expect(files).toContainText("文件 2 个");
+  expect(state.skillRequests).toContain("PUT /api/roles/role-1/skills/skill-release/files/scripts/tag.sh");
+
+  await check.getByRole("button", { name: "删除 scripts/check.sh", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();
+  await expect(check).toHaveCount(0);
+  expect(state.skillRequests).toContain("DELETE /api/roles/role-1/skills/skill-release/files/scripts/check.sh");
+
+  const download = page.waitForEvent("download");
+  await detail.getByRole("button", { name: "下载技能包", exact: true }).click();
+  expect((await download).suggestedFilename()).toBe("release-check.tar.gz");
+  // the other AI employee's skill has no files
+  await skills
+    .locator(".skill-role")
+    .filter({ hasText: "质量助手" })
+    .getByRole("button", { name: /review-pr/ })
+    .click();
+  await expect(page.locator("#skill-skill-review .skill-files")).toContainText("文件 无");
+  expect(errors).toEqual([]);
+});

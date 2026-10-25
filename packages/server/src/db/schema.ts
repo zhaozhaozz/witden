@@ -778,6 +778,32 @@ export const roleSkills = pgTable(
   (t) => [uniqueIndex("ux_role_skill_name").on(t.roleId, t.name).where(sql`${t.deletedAt} is null`)],
 );
 
+/**
+ * A file that comes with a skill (services/role-skills.ts): a script, a template, a reference document. read_skill
+ * puts the skill's files next to its instructions in the role's computer; the content is kept in the platform's data
+ * directory (services/files.ts), under a key that is new for every version of the file.
+ */
+export const roleSkillFiles = pgTable(
+  "role_skill_files",
+  {
+    id: id(),
+    skillId: text("skill_id")
+      .notNull()
+      .references(() => roleSkills.id, { onDelete: "cascade" }),
+    /** Relative to the skill's directory, "/"-separated, without "." or ".." parts. */
+    path: text("path").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    executable: boolean("executable").notNull().default(false),
+    storageKey: text("storage_key").notNull(),
+    updatedByType: text("updated_by_type").notNull(), // user | role
+    updatedById: text("updated_by_id"),
+    createdAt: created(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ux_role_skill_file_path").on(t.skillId, t.path)],
+);
+
 // --- integrations ----------------------------------------------------------------------------------------
 
 /**
@@ -982,6 +1008,7 @@ export type Approval = typeof approvals.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
 export type Memory = typeof memories.$inferSelect;
 export type RoleSkill = typeof roleSkills.$inferSelect;
+export type RoleSkillFile = typeof roleSkillFiles.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type ExternalConversation = typeof externalConversations.$inferSelect;
 export type KillSwitch = typeof killSwitches.$inferSelect;

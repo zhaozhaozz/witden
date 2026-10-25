@@ -22,13 +22,34 @@ const MIME: Record<string, string> = {
   ".zip": "application/zip",
 };
 
+/** Largest file people upload (topic files, skill files); a request as a whole stops at 60 MB (app.ts). */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 export function safeName(name: string): string {
   const base = name.trim().split("/").pop() ?? "file";
   return (base.replace(/[^A-Za-z0-9._\- 一-鿿]+/g, "_") || "file").slice(0, 200);
 }
 
+export const mimeOf = (name: string) => MIME[path.extname(name).toLowerCase()] || "application/octet-stream";
+
 export const filesDir = () => path.join(settings().dataDir, "files");
 export const artifactPath = (art: Artifact) => path.join(filesDir(), art.storageKey);
+
+/**
+ * Content kept under a storage key of the data directory, outside any artifact (skill files). Writing is not part
+ * of a database transaction: callers write under a new key before the rows naming it commit, and remove replaced
+ * content only after (services/role-skills.ts).
+ */
+export function writeStored(storageKey: string, data: Buffer): { size: number; sha256: string } {
+  const file = path.join(filesDir(), storageKey);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, data);
+  return { size: data.length, sha256: createHash("sha256").update(data).digest("hex") };
+}
+
+export const storedPath = (storageKey: string) => path.join(filesDir(), storageKey);
+export const readStored = (storageKey: string) => fs.readFileSync(storedPath(storageKey));
+export const removeStored = (storageKey: string) => fs.rmSync(storedPath(storageKey), { force: true });
 
 /** A file streamed into the data directory, not yet an artifact: saveArtifact moves it into place. */
 export interface StagedFile {
@@ -102,7 +123,7 @@ export async function saveArtifact(
     .values({
       id,
       name: safeName(opts.name),
-      mime: opts.mime || MIME[path.extname(opts.name).toLowerCase()] || "application/octet-stream",
+      mime: opts.mime || mimeOf(opts.name),
       size,
       sha256,
       storageKey,

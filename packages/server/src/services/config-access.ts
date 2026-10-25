@@ -70,7 +70,20 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
         path: "/api/roles/:id/skills/:skill_id",
         note: "name, description, content (only those to change)",
       },
-      { method: "DELETE", path: "/api/roles/:id/skills/:skill_id" },
+      { method: "DELETE", path: "/api/roles/:id/skills/:skill_id", note: "with its files" },
+      {
+        method: "GET",
+        path: "/api/roles/:id/skills/:skill_id/files",
+        note: "the files that come with a skill (scripts, templates, reference documents): path, size, executable; the role finds them next to the instructions in its computer and runs the scripts there",
+      },
+      { method: "GET", path: "/api/roles/:id/skills/:skill_id/files/*path", note: "one file's content" },
+      {
+        method: "PUT",
+        path: "/api/roles/:id/skills/:skill_id/files/*path",
+        note: "add or replace a text file: content (the text), executable (true for a script); path relative to the skill, e.g. scripts/check.sh; binary files are uploaded by a person",
+      },
+      { method: "PATCH", path: "/api/roles/:id/skills/:skill_id/files/*path", note: "executable" },
+      { method: "DELETE", path: "/api/roles/:id/skills/:skill_id/files/*path" },
     ],
   },
   {
@@ -223,9 +236,10 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
   },
 ];
 
+// ":name" is one path segment, "*name" the rest of the path (a skill file's path).
 const ENDPOINTS = AREAS.flatMap((a) => a.endpoints).map((e) => ({
   ...e,
-  pattern: new RegExp(`^${e.path.replace(/:[a-z_]+/g, "[^/]+")}$`),
+  pattern: new RegExp(`^${e.path.replace(/:[a-z_]+/g, "[^/]+").replace(/\*[a-z_]+$/, ".+")}$`),
 }));
 
 /** Team knowledge and role memory are configuration; topic notes are conversation material. */

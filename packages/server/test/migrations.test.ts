@@ -1167,3 +1167,41 @@ describe("0050_role_skills", () => {
     await db.close();
   });
 });
+
+describe("0051_role_skill_files", () => {
+  it("adds the files of skills: one per path in a skill, going with their skill", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0051")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into role_skills (id, role_id, name, description, content, created_by_type, updated_by_type)
+        values ('skill_release', 'role_dev', 'release', 'When releasing.', 'Run scripts/check.sh.', 'user', 'user'),
+               ('skill_deploy', 'role_dev', 'deploy', 'When deploying.', 'Run deploy.sh.', 'user', 'user');
+    `);
+    await apply(db, "0051_role_skill_files");
+    // existing skills keep their text and have no files
+    expect((await db.query("select id, content from role_skills order by id")).rows).toEqual([
+      { id: "skill_deploy", content: "Run deploy.sh." },
+      { id: "skill_release", content: "Run scripts/check.sh." },
+    ]);
+    await db.exec(`
+      insert into role_skill_files (id, skill_id, path, size, sha256, executable, storage_key, updated_by_type)
+        values ('skf_a', 'skill_release', 'scripts/check.sh', 9, 'aa', true, 'skills/a', 'role'),
+               ('skf_b', 'skill_deploy', 'scripts/check.sh', 9, 'aa', false, 'skills/b', 'user');
+    `);
+    expect((await db.query("select executable, updated_by_id from role_skill_files where id = 'skf_b'")).rows).toEqual([
+      { executable: false, updated_by_id: null },
+    ]);
+    await expect(
+      db.exec(`insert into role_skill_files (id, skill_id, path, size, sha256, storage_key, updated_by_type)
+        values ('skf_twin', 'skill_release', 'scripts/check.sh', 1, 'bb', 'skills/c', 'user')`),
+    ).rejects.toThrow(/ux_role_skill_file_path/);
+    await db.exec("delete from role_skills where id = 'skill_release'");
+    expect((await db.query("select id from role_skill_files order by id")).rows).toEqual([{ id: "skf_b" }]);
+    await db.close();
+  });
+});

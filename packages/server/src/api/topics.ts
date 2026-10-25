@@ -27,7 +27,7 @@ import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
 import { type ChannelInfo, channelsOf, externalRoleId } from "../integrations/links.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
-import { artifactPath, deleteArtifactData, saveArtifact } from "../services/files.js";
+import { artifactPath, deleteArtifactData, MAX_UPLOAD_BYTES, saveArtifact } from "../services/files.js";
 import { erased } from "../services/memories.js";
 import { purgeMessage } from "../services/messages.js";
 import { legacyParticipantChanges, roleParticipantChange } from "../services/participant-notices.js";
@@ -36,8 +36,6 @@ import { resolveToken } from "../services/users.js";
 import { pruneWebhookReceipts } from "../services/webhook-sources.js";
 import { authed, body, extractToken, params, query, row } from "./http.js";
 import { sessionOut } from "./sessions.js";
-
-const MAX_UPLOAD = 50 * 1024 * 1024;
 
 /**
  * A topic linked to a Slack, Feishu or GitHub conversation: its people are the conversation's, and its role is the
@@ -416,10 +414,10 @@ export async function topicRoutes(app: FastifyInstance) {
 
   // --- files ---
   app.post("/api/topics/:id/files", async (req) => {
-    const file = await req.file({ limits: { fileSize: MAX_UPLOAD + 1 } });
+    const file = await req.file({ limits: { fileSize: MAX_UPLOAD_BYTES + 1 } });
     if (!file) throw new BadRequest("file is required");
     const data = await file.toBuffer();
-    if (data.length > MAX_UPLOAD) throw new BadRequest("file too large (50 MB max)");
+    if (data.length > MAX_UPLOAD_BYTES) throw new BadRequest("file too large (50 MB max)");
     return transaction(async (db) => {
       const user = await resolveToken(db, extractToken(req));
       if (!user) throw new Unauthorized("authentication required");

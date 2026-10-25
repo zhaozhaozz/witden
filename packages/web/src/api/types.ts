@@ -840,6 +840,23 @@ export interface RoleSkill {
   updated_by_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Scripts, templates and other files that come with it, by path. */
+  files: RoleSkillFile[];
+}
+
+/** A file of a skill: the AI employee finds it next to the instructions in its computer when it reads the skill. */
+export interface RoleSkillFile {
+  id: string;
+  skill_id: string;
+  /** Relative to the skill's directory, e.g. scripts/check.sh */
+  path: string;
+  size: number;
+  sha256: string;
+  executable: boolean;
+  updated_by_type: "user" | "role";
+  updated_by_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 /** A Slack app: shared by the workspaces it is installed in, each of which is a connection. */
