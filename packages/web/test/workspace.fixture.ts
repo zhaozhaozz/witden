@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import type { Approval, Memory, TaskStep } from "../src/api/types";
+import type { Approval, Memory, RoleSkill, TaskStep } from "../src/api/types";
 
 const now = "2026-10-20T12:00:00Z";
 const computer = { id: "computer-1", name: "workspace", status: "running", color: "#527568" };
@@ -147,6 +147,33 @@ export async function workspace(
       updated_at: null,
       ...m,
     })) as Memory[],
+    skillRequests: [] as string[],
+    skills: [
+      {
+        id: "skill-release",
+        role_id: role.id,
+        name: "release-check",
+        description: "发布新版本时使用。",
+        content: "## 步骤\n\n1. 运行完整测试\n2. 更新变更记录",
+        created_by_type: "role",
+        created_by_id: role.id,
+      },
+      {
+        id: "skill-review",
+        role_id: otherRole.id,
+        name: "review-pr",
+        description: "审查拉取请求时使用。",
+        content: "先看测试，再看实现。",
+        created_by_type: "user",
+        created_by_id: user.id,
+      },
+    ].map((s) => ({
+      ...s,
+      updated_by_type: s.created_by_type,
+      updated_by_id: s.created_by_id,
+      created_at: now,
+      updated_at: now,
+    })) as RoleSkill[],
     sent: [] as Record<string, unknown>[],
     messages: [
       message("m1", "帮我梳理产品发布流程，并检查交付前需要完成的工作。", "user"),
@@ -265,6 +292,39 @@ export async function workspace(
           );
           json = state.memories.find((m) => m.id === id);
         }
+      } else if (/^\/api\/roles\/[^/]+\/skills(\/[^/]+)?$/.test(path)) {
+        const [, , , roleId, , skillId] = path.split("/");
+        state.skillRequests.push(`${req.method()} ${path}`);
+        if (req.method() === "POST") {
+          const s = {
+            ...state.skills[0],
+            ...req.postDataJSON(),
+            id: `skill-new-${state.skills.length}`,
+            role_id: roleId,
+            created_by_type: "user",
+            created_by_id: user.id,
+            updated_by_type: "user",
+            updated_by_id: user.id,
+          };
+          state.skills.push(s);
+          json = s;
+        } else if (req.method() === "PATCH") {
+          state.skills = state.skills.map((s) =>
+            s.id === skillId
+              ? {
+                  ...s,
+                  ...req.postDataJSON(),
+                  updated_by_type: "user",
+                  updated_by_id: user.id,
+                  updated_at: "2026-10-21T01:00:00Z",
+                }
+              : s,
+          );
+          json = state.skills.find((s) => s.id === skillId);
+        } else if (req.method() === "DELETE") {
+          state.skills = state.skills.filter((s) => s.id !== skillId);
+          json = { ok: true };
+        } else json = state.skills.filter((s) => s.role_id === roleId);
       } else if (path === "/api/topics/topic-1/messages") {
         if (req.method() === "POST") {
           const body = req.postDataJSON();

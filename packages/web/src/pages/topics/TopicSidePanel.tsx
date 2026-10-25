@@ -34,6 +34,7 @@ import {
 import { ApprovalCard } from "../approvalParts";
 import { MemoryList } from "../memoryParts";
 import { SessionRuns } from "../sessionParts";
+import { SkillList } from "../skillParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
 import { TopicLinksTab } from "./TopicLinksTab";
@@ -638,7 +639,10 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
   const dm = topic.kind === "dm";
   const pair = topic.kind === "pair";
   const { can } = useAuth();
+  const dir = useDirectory();
   const roles = (topic.participants ?? []).filter((p) => p.type === "role");
+  // A system administrator has no skills.
+  const skilled = roles.filter((r) => !dir.roleById.get(r.id)?.system_admin);
   return (
     <div className="memory-groups">
       <details className="memory-group" open>
@@ -688,6 +692,28 @@ function NotesTab({ topic, version }: { topic: Topic; version: number }) {
               ))
             ) : (
               <Empty title="这个话题还没有 AI 员工参与" />
+            )}
+          </div>
+        </details>
+      ) : null}
+      {can("role.manage") ? (
+        <details className="memory-group" open>
+          <summary>AI 员工技能</summary>
+          <div className="memory-group-body">
+            <p className="small muted side-note">
+              每位 AI 员工做某类工作的方法，名称和说明随它的系统提示词给出，需要时读取全文。
+            </p>
+            {skilled.length ? (
+              skilled.map((role) => (
+                <details key={role.id} className="skill-role" open>
+                  <summary>
+                    <RoleBadge role={role} />
+                  </summary>
+                  <SkillList roleId={role.id} compact version={version} />
+                </details>
+              ))
+            ) : (
+              <Empty title={roles.length ? "系统管理员没有技能" : "这个话题还没有 AI 员工参与"} />
             )}
           </div>
         </details>

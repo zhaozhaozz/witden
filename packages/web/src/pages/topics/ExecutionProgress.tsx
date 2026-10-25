@@ -49,6 +49,7 @@ function callPreview(value: unknown): string {
         p?.question ??
         p?.text ??
         p?.role ??
+        p?.name ??
         p?.id ??
         args(value),
     );

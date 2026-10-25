@@ -232,7 +232,7 @@ describe("permissions and isolation", () => {
     expect(w.manager.computer(w.ids.instance).commands).toEqual(["kubectl apply -f prod.yaml"]);
   });
 
-  it("new roles: work in their virtual computer (and sharing its files) runs, reaching outside asks first", async () => {
+  it("new roles: work in their virtual computer (sharing its files too) and on their own skills runs, reaching outside asks first", async () => {
     const created = await w.api("POST", "/api/roles", {
       token: w.adminToken,
       json: { name: "Fresh", handle: "fresh", model_config_id: w.ids.model, instance_id: w.ids.instance },
@@ -247,6 +247,7 @@ describe("permissions and isolation", () => {
       "memory",
       "profile",
       "shell",
+      "skills",
       "software_list",
       "system_software",
       "terminal",
@@ -256,6 +257,12 @@ describe("permissions and isolation", () => {
     const files = groups.find((g: any) => g.group === "files");
     expect([files.default_level, files.default_ask]).toEqual(["allow", []]);
     expect(groups.find((g: any) => g.group === "memory").default_level).toBe("ask");
+    expect(groups.find((g: any) => g.group === "skills")).toMatchObject({
+      default_level: "allow",
+      default_ask: [],
+      tools: ["save_skill", "delete_skill"],
+    });
+    expect(groups.find((g: any) => g.group === null).tools).toContain("read_skill");
     expect(groups.find((g: any) => g.group === "automation").default_level).toBe("ask");
     expect(groups.find((g: any) => g.group === "config").default_level).toBe("off");
 

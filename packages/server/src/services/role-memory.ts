@@ -22,14 +22,21 @@ export async function roleMemories(db: Db, roleId: string): Promise<Memory[]> {
     .orderBy(asc(memories.createdAt));
 }
 
-/** Why this task may not add to, change or delete its role's memory, or null when it may. */
-export async function roleMemoryRefusal(db: Db, task: Task): Promise<string | null> {
+/**
+ * Whether this work may change how its role works everywhere (its role memory, its skills): only work a console
+ * account asked for. Someone outside the console must not be able to change it for everyone else, nor input from
+ * outside or from an automation that reaches a run a console account asked for.
+ */
+export async function forConsoleAccount(db: Db, task: Task): Promise<boolean> {
   const [requester] = task.requesterUserId
     ? await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1)
     : [];
-  // Someone outside the console must not be able to change how the role works for everyone else, nor input
-  // from outside or from an automation that reaches a run a console account asked for.
-  if (!isConsoleUser(requester) || task.envelope?.automation_event || task.envelope?.untrusted_input)
+  return isConsoleUser(requester) && !task.envelope?.automation_event && !task.envelope?.untrusted_input;
+}
+
+/** Why this task may not add to, change or delete its role's memory, or null when it may. */
+export async function roleMemoryRefusal(db: Db, task: Task): Promise<string | null> {
+  if (!(await forConsoleAccount(db, task)))
     return "role memory changes how you work everywhere, so it can be added to, changed or deleted only while you work for a witden administrator (a console account); use scope 'topic' for a new note";
   return null;
 }

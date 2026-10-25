@@ -823,6 +823,25 @@ export interface Memory {
   updated_at: string | null;
 }
 
+/** A role's skill: instructions for a kind of work, listed by name and description in every prompt of the role. */
+export interface RoleSkill {
+  id: string;
+  role_id: string;
+  /** Lowercase letters, digits, . _ - */
+  name: string;
+  /** When to use it. */
+  description: string;
+  /** The instructions (Markdown). */
+  content: string;
+  /** A person ("user") or the AI employee itself ("role"). */
+  created_by_type: "user" | "role";
+  created_by_id: string | null;
+  updated_by_type: "user" | "role";
+  updated_by_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** A Slack app: shared by the workspaces it is installed in, each of which is a connection. */
 export interface SlackApp {
   id: string;

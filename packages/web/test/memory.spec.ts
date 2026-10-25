@@ -115,3 +115,47 @@ test("memory panel handles no participants and narrow screens with long content"
   expect([...new Set(state.memoryRequests)]).toEqual(["?scope=topic&topic_id=topic-1"]);
   expect(errors).toEqual([]);
 });
+
+test("each AI employee's skills show name and description, open to rendered instructions, and can be changed", async ({
+  page,
+}) => {
+  const { state, errors } = await workspace(page, { multipleRoles: true });
+  await page.getByRole("tab", { name: "记忆", exact: true }).click();
+  const skills = page.locator(".memory-group").filter({ has: page.locator("summary", { hasText: "AI 员工技能" }) });
+  const dev = skills.locator(".skill-role").filter({ hasText: "研发助手" });
+  const release = dev.getByRole("button", { name: /release-check/ });
+  await expect(release).toContainText("发布新版本时使用。");
+  await expect(skills.locator(".skill-role").filter({ hasText: "质量助手" })).toContainText("review-pr");
+  const detail = page.locator("#skill-skill-release");
+  await expect(detail).toBeHidden();
+  await release.click();
+  await expect(detail.getByRole("heading", { name: "步骤" })).toBeVisible();
+  await expect(detail).toContainText("AI 员工自己写下");
+
+  await detail.getByRole("button", { name: "编辑", exact: true }).click();
+  await detail.getByRole("textbox", { name: "内容", exact: true }).fill("1. 运行完整测试\n2. 打标签");
+  await detail.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(detail).toContainText("打标签");
+  await expect(detail).toContainText("林 修改");
+
+  await dev.getByRole("button", { name: "添加技能" }).click();
+  await dev.getByRole("textbox", { name: "名称", exact: true }).fill("Bad Name");
+  await expect(dev).toContainText("名称只能用小写字母");
+  await expect(dev.getByRole("button", { name: "添加", exact: true })).toBeDisabled();
+  await dev.getByRole("textbox", { name: "名称", exact: true }).fill("deploy");
+  await dev.getByRole("textbox", { name: "说明", exact: true }).fill("部署到预发环境时使用。");
+  await dev.getByRole("textbox", { name: "内容", exact: true }).fill("先确认迁移。");
+  await dev.getByRole("button", { name: "添加", exact: true }).click();
+  await expect(dev.getByRole("button", { name: /deploy/ })).toContainText("部署到预发环境时使用。");
+  expect(state.skills.find((s) => s.name === "deploy")).toMatchObject({ role_id: "role-1" });
+
+  await release.click();
+  await expect(detail).toBeHidden();
+  await release.click();
+  await detail.getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click();
+  await expect(release).toHaveCount(0);
+  expect(state.skills.map((s) => s.id)).toEqual(["skill-review", "skill-new-2"]);
+  expect(state.skillRequests).toContain("DELETE /api/roles/role-1/skills/skill-release");
+  expect(errors).toEqual([]);
+});

@@ -750,6 +750,34 @@ export const memories = pgTable("memories", {
   deletedAt: ts("deleted_at"),
 });
 
+/**
+ * A role's skill (services/role-skills.ts): named instructions for a kind of work. Every prompt of the role lists
+ * the names and descriptions; the role reads the content when a request matches (read_skill). Written by people
+ * in the console or by the role itself; a deleted skill keeps its name but none of its text.
+ */
+export const roleSkills = pgTable(
+  "role_skills",
+  {
+    id: id(),
+    roleId: text("role_id")
+      .notNull()
+      .references(() => roles.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /** When to use it: shown in every prompt of the role. */
+    description: text("description").notNull(),
+    /** The instructions (Markdown). */
+    content: text("content").notNull(),
+    createdByType: text("created_by_type").notNull(), // user | role
+    createdById: text("created_by_id"),
+    updatedByType: text("updated_by_type").notNull(),
+    updatedById: text("updated_by_id"),
+    createdAt: created(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+    deletedAt: ts("deleted_at"),
+  },
+  (t) => [uniqueIndex("ux_role_skill_name").on(t.roleId, t.name).where(sql`${t.deletedAt} is null`)],
+);
+
 // --- integrations ----------------------------------------------------------------------------------------
 
 /**
@@ -953,6 +981,7 @@ export type TaskStep = typeof taskSteps.$inferSelect;
 export type Approval = typeof approvals.$inferSelect;
 export type Artifact = typeof artifacts.$inferSelect;
 export type Memory = typeof memories.$inferSelect;
+export type RoleSkill = typeof roleSkills.$inferSelect;
 export type Connection = typeof connections.$inferSelect;
 export type ExternalConversation = typeof externalConversations.$inferSelect;
 export type KillSwitch = typeof killSwitches.$inferSelect;

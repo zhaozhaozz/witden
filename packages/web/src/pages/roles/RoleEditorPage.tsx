@@ -40,6 +40,7 @@ import { ResizeHandle } from "../../ui/resize";
 import { MemoryList } from "../memoryParts";
 import { ModelSelect } from "../modelParts";
 import { AgentSessionList } from "../sessionParts";
+import { SkillList } from "../skillParts";
 import { ConnectionToolPermissions, type FeishuGranted } from "./ConnectionToolPermissions";
 import { defaultPermissions, PermissionList } from "./PermissionList";
 import { RoleAutomations } from "./RoleAutomations";
@@ -293,9 +294,11 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
   };
   const leaving = useUnsavedChanges(unsaved, () => save({ stay: true }));
 
-  // The built-in system administrator (services/system-admin.ts) alone has the configuration tools.
+  // The built-in system administrator (services/system-admin.ts) alone has the configuration tools, and no skills.
   const isAdmin = !!role?.system_admin;
-  const groups = (toolGroups.data ?? []).filter((g) => g.group && (g.group !== "config" || isAdmin));
+  const groups = (toolGroups.data ?? []).filter(
+    (g) => g.group && (g.group !== "config" || isAdmin) && (g.group !== "skills" || !isAdmin),
+  );
   const alwaysTools = (toolGroups.data ?? []).find((g) => !g.group)?.tools ?? [];
   const selectedInstance = (instances.data ?? []).find((i) => i.id === draft.instance_id) ?? null;
 
@@ -575,7 +578,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             <p className="small muted perm-intro">
               每一项可以设为「始终允许」「询问」或「禁用」。「询问」表示每次使用前要由有审批权限的人批准，AI
               员工不能批准自己的请求；点左侧箭头可以逐个工具设置。新建的 AI
-              员工默认：虚拟电脑里的操作始终允许，自动化管理、记忆和修改职责说明需要询问。与同一话题中的其他 AI
+              员工默认：虚拟电脑里的操作和技能始终允许，自动化管理、记忆和修改职责说明需要询问。与同一话题中的其他 AI
               员工协作（@、委托）不需要权限；在话题之外直接与其他 AI 员工对话，要在「协作」中逐个允许。
             </p>
             <Loaded res={toolGroups}>
@@ -741,6 +744,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
               </Section>
             ) : null}
             <RoleMemories role={role} />
+            {!role.system_admin ? <RoleSkills role={role} /> : null}
             <RoleSessions role={role} />
             {!role.system_admin ? <RoleAutomations roleId={role.id} /> : null}
           </aside>
@@ -827,7 +831,7 @@ function CopyRoleDialog({
       }}
     >
       <p className="muted small">
-        复制出的 AI 员工沿用职责说明、人设与工作方式等设置，但身份独立：AI
+        复制出的 AI 员工沿用职责说明、人设与工作方式、技能等设置，但身份独立：AI
         员工记忆、话题记忆、私信和进行中的任务不会被复制。
       </p>
       <div className="form-row">
@@ -909,6 +913,21 @@ function RoleMemories({ role }: { role: Role }) {
         itemName="AI 员工记忆"
         maxChars={ROLE_MEMORY_MAX_CHARS}
       />
+    </Section>
+  );
+}
+
+/** Instructions for kinds of work, listed in every prompt of the role (server: services/role-skills.ts). */
+function RoleSkills({ role }: { role: Role }) {
+  return (
+    <Section title="技能">
+      <p className="small muted">
+        技能是这位 AI
+        员工做某类工作的方法，例如怎样发布版本、怎样审查这个项目的代码、怎样使用某个内部工具。每个技能的名称和说明随系统提示词给出，它在所有话题、私信以及
+        Slack、飞书、GitHub
+        中都会看到；遇到说明所描述的工作时，它先读取技能的全文再按其中的方法去做。它可以在控制台账号请求的工作中自己新建和修改技能（需要「技能」权限），你也可以在这里添加、编辑和删除。技能可能出现在与它对话的任何人面前，不要写入密钥、个人信息或机密。
+      </p>
+      <SkillList roleId={role.id} />
     </Section>
   );
 }

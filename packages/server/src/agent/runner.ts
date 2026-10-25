@@ -816,6 +816,7 @@ function opBacked(name: string): boolean {
   return (
     TOOLS.get(name)?.group !== null &&
     TOOLS.get(name)?.group !== "memory" &&
+    TOOLS.get(name)?.group !== "skills" &&
     name !== "share_file" &&
     name !== "release_desktop"
   );
@@ -837,6 +838,8 @@ const AUDITED_ARGS = new Set([
   "to",
   // which note update_memory / forget touched (not its text)
   "id",
+  // which skill read_skill / save_skill / delete_skill touched (not its text)
+  "name",
 ]);
 
 /** Operationally relevant arguments only (redacted); free text such as messages or notes is left out. */

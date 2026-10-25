@@ -12,8 +12,10 @@ import {
   type ModelConfig,
   type ModelProvider,
   type Role,
+  type RoleSkill,
   roles,
   topics,
+  type User,
 } from "../db/schema.js";
 import { BadRequest } from "../errors.js";
 import { FEISHU_PRODUCTS } from "../integrations/feishu-tools.js";
@@ -23,6 +25,7 @@ import { avatarFile, MAX_AVATAR_BYTES, saveAvatar } from "../services/appearance
 import { audit } from "../services/audit.js";
 import { effortChoices } from "../services/effort.js";
 import { modelLabel, modelWithProvider, tokensToday, unusableReason } from "../services/model-configs.js";
+import * as skills from "../services/role-skills.js";
 import * as svc from "../services/roles.js";
 import { canView } from "../services/topics.js";
 import { authed, authedNoTx, body, params, row } from "./http.js";
@@ -263,6 +266,80 @@ export async function roleRoutes(app: FastifyInstance) {
     }),
   );
 
+  // --- skills: instructions for kinds of work, listed in every prompt of the role (services/role-skills.ts) ---
+  const skillOut = (s: RoleSkill) => row(s, ["deletedAt"]);
+  /** Role managers keep skills, as they keep role memory. */
+  async function skillRole(db: Db, user: User, id: string): Promise<Role> {
+    await requirePerm(db, user, Perm.ROLE_MANAGE);
+    return svc.getRole(db, id);
+  }
+  app.get(
+    "/api/roles/:id/skills",
+    authed(async ({ db, user, req }) => {
+      const role = await skillRole(db, user, params(req).id);
+      return (await skills.skillsOf(db, role.id)).map(skillOut);
+    }),
+  );
+  app.get(
+    "/api/roles/:id/skills/:skillId",
+    authed(async ({ db, user, req }) => {
+      const role = await skillRole(db, user, params(req).id);
+      return skillOut(await skills.getSkill(db, role.id, params(req).skillId));
+    }),
+  );
+  app.post(
+    "/api/roles/:id/skills",
+    authed(async ({ db, user, req }) => {
+      const role = await skillRole(db, user, params(req).id);
+      const fields = skills.skillFields(body(req)) as skills.SkillFields;
+      const skill = await skills.createSkill(db, role, fields, { type: "user", id: user.id });
+      await audit(db, "skill.create", {
+        actorType: "user",
+        actorId: user.id,
+        resourceType: "skill",
+        resourceId: skill.id,
+        roleId: role.id,
+        detail: { skill: skill.name },
+      });
+      return skillOut(skill);
+    }),
+  );
+  app.patch(
+    "/api/roles/:id/skills/:skillId",
+    authed(async ({ db, user, req }) => {
+      const role = await skillRole(db, user, params(req).id);
+      const skill = await skills.getSkill(db, role.id, params(req).skillId);
+      const fields = skills.skillFields(body(req), { partial: true });
+      const updated = await skills.changeSkill(db, skill, fields, { type: "user", id: user.id });
+      await audit(db, "skill.update", {
+        actorType: "user",
+        actorId: user.id,
+        resourceType: "skill",
+        resourceId: skill.id,
+        roleId: role.id,
+        detail: { skill: updated.name, fields: Object.keys(fields) },
+      });
+      return skillOut(updated);
+    }),
+  );
+  app.delete(
+    "/api/roles/:id/skills/:skillId",
+    authed(async ({ db, user, req }) => {
+      const role = await skillRole(db, user, params(req).id);
+      const skill = await skills.getSkill(db, role.id, params(req).skillId);
+      await skills.deleteSkill(db, skill);
+      await audit(db, "skill.delete", {
+        actorType: "user",
+        actorId: user.id,
+        resourceType: "skill",
+        resourceId: skill.id,
+        roleId: role.id,
+        detail: { skill: skill.name },
+      });
+      return { ok: true };
+    }),
+  );
+
   app.post(
     "/api/roles",
     authed(async ({ db, user, req }) => {
@@ -300,7 +377,7 @@ export async function roleRoutes(app: FastifyInstance) {
     "/api/roles/:id/copy",
     authed(async ({ db, user, req }) => {
       const b = body(req);
-      const clone = await svc.copyRole(
+      const { clone, skills } = await svc.copyRole(
         db,
         user,
         await svc.getRole(db, params(req).id),
@@ -314,7 +391,7 @@ export async function roleRoutes(app: FastifyInstance) {
         resourceType: "role",
         resourceId: clone.id,
         roleId: clone.id,
-        detail: { from: params(req).id },
+        detail: { from: params(req).id, skills },
       });
       return roleOut(db, clone, true);
     }),

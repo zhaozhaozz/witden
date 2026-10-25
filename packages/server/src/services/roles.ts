@@ -4,6 +4,7 @@ import {
   ADMIN_TOOL_GROUPS,
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_APPROVAL_REQUIRED,
+  ORDINARY_ROLE_GROUPS,
   TOOL_GROUPS,
   TOOLS,
 } from "../agent/tools.js";
@@ -28,6 +29,7 @@ import { hasPermission, Perm, requirePerm } from "../security/permissions.js";
 import { parseAvatarUrl, parseColor } from "./appearance.js";
 import { EFFORT_LEVELS, effortChoices } from "./effort.js";
 import { getProvider, isSystemOne, modelWithProvider } from "./model-configs.js";
+import { copySkills } from "./role-skills.js";
 
 const HANDLE = /^[a-z0-9][a-z0-9_.-]{0,31}$/;
 /** Changing these alters how a role behaves; running work keeps its snapshot, new work uses the new one. */
@@ -140,6 +142,8 @@ async function validate(db: Db, user: User, data: Record<string, any>, current?:
   }
   if (!admin && (out.allowedTools ?? current?.allowedTools ?? []).some((t) => ADMIN_TOOL_GROUPS.has(t)))
     throw new BadRequest("the config tools are only for system administrator roles");
+  if (admin && (out.allowedTools ?? current?.allowedTools ?? []).some((t) => ORDINARY_ROLE_GROUPS.has(t)))
+    throw new BadRequest("system administrator roles have no skills");
   if ("approvalRequired" in data) {
     await checkConnectionGrants(db, data.approvalRequired ?? []);
     const unknown = (data.approvalRequired ?? []).filter(
@@ -272,7 +276,10 @@ export async function updateRole(db: Db, user: User, role: Role, input: Record<s
   return { role: updated, changes: changes.map(apiName), impact: report };
 }
 
-/** Same job on another computer: independent identity and sessions, the same prompt and settings. */
+/**
+ * Same job on another computer: independent identity and sessions, the same prompt, settings and skills (how it
+ * works); its role memory stays with the original.
+ */
 export async function copyRole(
   db: Db,
   user: User,
@@ -300,7 +307,8 @@ export async function copyRole(
     maxTokensPerTask: role.maxTokensPerTask,
     dailyTokenLimit: role.dailyTokenLimit,
   });
-  return clone;
+  const skills = await copySkills(db, role, clone, { type: "user", id: user.id });
+  return { clone, skills };
 }
 
 /**

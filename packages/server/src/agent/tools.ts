@@ -39,6 +39,19 @@ import { releaseTask } from "../services/leases.js";
 import { linkedTopicStatus } from "../services/linked-status.js";
 import { erased, memoryFields, memoryLine, memoryScore } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
+import {
+  changeSkill,
+  createSkill,
+  deleteSkill,
+  ROLE_SKILLS_MAX,
+  roleSkillRefusal,
+  SKILL_CONTENT_MAX_CHARS,
+  SKILL_DESCRIPTION_MAX_CHARS,
+  type SkillFields,
+  skillByName,
+  skillFields,
+  skillsOf,
+} from "../services/role-skills.js";
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
 import * as topicSvc from "../services/topics.js";
 import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../services/triggers.js";
@@ -67,12 +80,15 @@ export const TOOL_GROUPS: Record<string, string> = {
   software_list: "Change the virtual computer's software list: packages installed whenever it starts",
   automation: "Manage your own automation rules across topics (no access to secrets)",
   memory: "Remember and recall scoped notes on the platform",
+  skills: "Create, change and delete the role's own skills (instructions for kinds of work)",
   config: "Read and change witden's configuration like an administrator in the console (system administrators only)",
   profile: "Change the role's own description, in console conversations only",
 };
 
 /** Groups only system administrator roles may have. */
 export const ADMIN_TOOL_GROUPS = new Set(["config"]);
+/** Groups system administrator roles never have: they have no skills (services/role-skills.ts). */
+export const ORDINARY_ROLE_GROUPS = new Set(["skills"]);
 /**
  * Groups offered only for work a console account asked for in the console: not in conversations linked to Slack,
  * Feishu or GitHub, nor for requests relayed from them; changing the role or its automation stays in the console.
@@ -81,9 +97,10 @@ export const CONSOLE_ONLY_GROUPS = new Set(["profile", "automation"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
- * into the topic, is always allowed; platform memory and changing its own description or automation rules ask
- * a person first. Working with the other roles of a topic needs no permission. No tool reads another topic: a
- * role learns of one by taking part in it, through a link, or from a colleague it talks to directly.
+ * into the topic, and writing its own skills are always allowed; platform memory and changing its own description
+ * or automation rules ask a person first. Working with the other roles of a topic needs no permission. No tool
+ * reads another topic: a role learns of one by taking part in it, through a link, or from a colleague it talks to
+ * directly.
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
 /** A new system administrator: the configuration tools; it needs no computer. */
@@ -1022,6 +1039,80 @@ async function recall(ctx: ToolContext, args: Record<string, any>): Promise<Tool
   return { content: await boundOutput(ctx, "recall", text) };
 }
 
+// --- skills ----------------------------------------------------------------------------------------------
+
+/** One of the role's skills, whole: the system prompt lists only their names and descriptions. */
+async function readSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const name = String(args.name ?? "")
+    .trim()
+    .toLowerCase();
+  const skills = await skillsOf(ctx.db(), ctx.roleId);
+  const skill = skills.find((s) => s.name === name);
+  if (!skill)
+    throw new BadRequest(
+      skills.length
+        ? `you have no skill named "${name}"; yours are: ${skills.map((s) => s.name).join(", ")}`
+        : "you have no skills",
+    );
+  return { content: await boundOutput(ctx, "read_skill", `# ${skill.name}\n${skill.description}\n\n${skill.content}`) };
+}
+
+/** Changing its skills changes how the role works everywhere: the same check as for its role memory. */
+async function ownSkills(ctx: ToolContext, db: Db) {
+  const loaded = await load(ctx, db);
+  const refusal = await roleSkillRefusal(db, loaded.task, loaded.role);
+  if (refusal) throw new Forbidden(refusal);
+  return loaded;
+}
+
+/** A refused skill change is not put to a person for approval: the role learns why at once. */
+async function skillRefusal(db: Db, task: Task): Promise<string | null> {
+  const [role] = await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1);
+  return role ? roleSkillRefusal(db, task, role) : "role not found";
+}
+
+/** Create one of the role's own skills, or replace the one of that name whole. */
+async function saveSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  const fields = skillFields(args) as SkillFields;
+  return transaction(async (db) => {
+    const { task, role, topic } = await ownSkills(ctx, db);
+    const by = { type: "role", id: role.id } as const;
+    const current = await skillByName(db, role.id, fields.name);
+    const skill = current ? await changeSkill(db, current, fields, by) : await createSkill(db, role, fields, by);
+    await audit(db, current ? "skill.update" : "skill.create", {
+      actorType: "role",
+      actorId: role.id,
+      resourceType: "skill",
+      resourceId: skill.id,
+      roleId: role.id,
+      taskId: task.id,
+      topicId: topic.id,
+      detail: { skill: skill.name, tool: "save_skill", ...(current ? { fields: ["description", "content"] } : {}) },
+    });
+    return { content: `${current ? "replaced" : "created"} your skill ${skill.name}` };
+  });
+}
+
+async function deleteOwnSkill(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  return transaction(async (db) => {
+    const { task, role, topic } = await ownSkills(ctx, db);
+    const skill = await skillByName(db, role.id, String(args.name ?? ""));
+    if (!skill) throw new BadRequest(`you have no skill named "${String(args.name ?? "")}"`);
+    await deleteSkill(db, skill);
+    await audit(db, "skill.delete", {
+      actorType: "role",
+      actorId: role.id,
+      resourceType: "skill",
+      resourceId: skill.id,
+      roleId: role.id,
+      taskId: task.id,
+      topicId: topic.id,
+      detail: { skill: skill.name, tool: "delete_skill" },
+    });
+    return { content: `deleted your skill ${skill.name}` };
+  });
+}
+
 async function readWebhookHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
   await requireWebhookHistory(db, ctx.topicId, ctx.roleId);
@@ -1469,6 +1560,48 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ id: str }, ["id"]),
       forget,
     ),
+    // Every role but a system administrator reads its skills without a permission; the list stays the same
+    // whether or not it has any (a stable tool list keeps the prompt start cacheable).
+    spec(
+      "read_skill",
+      null,
+      'Read one of your skills by name (listed under "Your skills" in your instructions): when to use it and its full instructions. Read it before you start work its description matches, then follow it.',
+      obj({ name: str }, ["name"]),
+      readSkill,
+    ),
+    {
+      ...spec(
+        "save_skill",
+        "skills",
+        `Create or replace one of your own skills: instructions for a kind of work you will do again (how to cut a release here, how this team reviews a pull request, how to use an internal tool), so you do it well every time. An existing skill of the same name is replaced whole: read it first and keep what still holds. Your skills are listed in every prompt of yours, wherever you work, and may come up in front of anyone you talk to: nothing confidential, personal or about one place only. At most ${ROLE_SKILLS_MAX} skills. Only while you work for a witden administrator (a console account).`,
+        obj(
+          {
+            name: { type: "string", description: "a short slug: lowercase letters, digits, . _ -, e.g. release-check" },
+            description: {
+              type: "string",
+              description: `when to use it, in a sentence or two (at most ${SKILL_DESCRIPTION_MAX_CHARS} characters)`,
+            },
+            content: {
+              type: "string",
+              description: `the instructions, in Markdown (at most ${SKILL_CONTENT_MAX_CHARS} characters)`,
+            },
+          },
+          ["name", "description", "content"],
+        ),
+        saveSkill,
+      ),
+      refusal: skillRefusal,
+    },
+    {
+      ...spec(
+        "delete_skill",
+        "skills",
+        "Delete one of your own skills by name when it is wrong or no longer needed. Only while you work for a witden administrator (a console account).",
+        obj({ name: str }, ["name"]),
+        deleteOwnSkill,
+      ),
+      refusal: skillRefusal,
+    },
     spec(
       "read_webhook_history",
       null,
@@ -1706,6 +1839,8 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         // The configuration tools only for a system administrator's own work; it hands no work over either.
         (!t.group || !ADMIN_TOOL_GROUPS.has(t.group) || !!envelope.system_admin) &&
         (t.name !== "transfer_task" || !envelope.system_admin) &&
+        // A system administrator has no skills.
+        (!envelope.system_admin || (t.name !== "read_skill" && !ORDINARY_ROLE_GROUPS.has(t.group ?? ""))) &&
         // Some only for work that stays in the console (not in, nor relayed from, an external conversation).
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
         // In a Slack, Feishu or GitHub conversation only the bot's role works: there is no other role to @ or hand

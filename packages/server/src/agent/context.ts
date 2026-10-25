@@ -7,7 +7,8 @@
  *   earlier part. Keeping the start identical lets model services reuse their prompt cache.
  * - In an independent task: the same kind of system prompt plus who asked and when, then the brief with
  *   recent topic messages.
- * Both system prompts end with the role's own memory (services/role-memory.ts), the same wherever it works.
+ * Both system prompts end with the role's skills (services/role-skills.ts) and its own memory
+ * (services/role-memory.ts), the same wherever it works.
  * Nothing from other topics is included, and no tool reads one: the role reads only this topic (topic_history).
  */
 import { COMMAND_TOOL } from "@witden/shared";
@@ -29,6 +30,7 @@ import {
 import { channelsOf } from "../integrations/links.js";
 import { memoryLine } from "../services/memories.js";
 import { ROLE_MEMORY_SHOWN, roleMemories } from "../services/role-memory.js";
+import { skillsOf } from "../services/role-skills.js";
 import * as topicSvc from "../services/topics.js";
 import { allowedContacts, contactLine } from "./contacts.js";
 import type { ChatMessage } from "./llm.js";
@@ -85,6 +87,27 @@ async function roleMemorySection(db: Db, role: Role, canRecall: boolean): Promis
     "What you keep as this role (some notes may come from administrators). It holds wherever you work.",
     ...lines,
     older ? `(${older} older notes are not listed here${canRecall ? "; recall searches them" : ""}.)` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * Its skills by name and description, for every prompt of the role; it reads one whole with read_skill. Read live,
+ * like role memory: it changes when a skill is added, changed or deleted, never from one message to the next.
+ * Nothing when there are none (and a system administrator has none).
+ */
+async function skillsSection(db: Db, role: Role, canWrite: boolean): Promise<string> {
+  if (role.systemAdmin) return "";
+  const skills = await skillsOf(db, role.id);
+  if (!skills.length) return "";
+  return [
+    "## Your skills",
+    "Instructions for kinds of work you do, written by you or by people of the team. When a request matches a skill's description, read the skill with read_skill before you start, and follow it.",
+    canWrite
+      ? "When you learn something that would make a skill better (a missing step, a mistake to avoid, a better way), improve it with save_skill; skills can be changed only while you work for a witden administrator."
+      : "",
+    ...skills.map((s) => `- ${s.name}: ${s.description}`),
   ]
     .filter(Boolean)
     .join("\n");
@@ -244,7 +267,9 @@ export async function systemPrompt(db: Db, task: Task, role: Role, topic: Topic)
   if (task.envelope?.contacts && !task.envelope.external_topic && !role.systemAdmin)
     parts.push(await contactsSection(db, role));
   parts.push(role.systemAdmin ? ADMIN_RULES : "");
-  // Role memory is read live: a new note changes the prompt (and its cache) from the next model call on.
+  // Skills and role memory are read live: a change shows in the prompt (and changes its cache) from the next model
+  // call on. Skills change less often than notes, so they come first.
+  parts.push(await skillsSection(db, role, (task.envelope?.tools ?? []).includes("skills")));
   const memoryTools = (task.envelope?.tools ?? []).includes("memory");
   parts.push(memoryTools ? MEMORY_RULES : "", await roleMemorySection(db, role, memoryTools));
   return parts.filter(Boolean).join("\n");

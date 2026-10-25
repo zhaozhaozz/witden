@@ -3395,7 +3395,8 @@ img.avatar-role.avatar-colored {
   background: var(--surface);
 }
 .memory-group > summary,
-.memory-role > summary {
+.memory-role > summary,
+.skill-role > summary {
   padding: 12px;
   font-size: 13px;
   font-weight: 600;
@@ -3405,14 +3406,17 @@ img.avatar-role.avatar-colored {
 .memory-group-body {
   padding: 0 12px 12px;
 }
-.memory-role + .memory-role {
+.memory-role + .memory-role,
+.skill-role + .skill-role {
   margin-top: 12px;
   border-top: 1px solid var(--line-2);
 }
-.memory-role > summary {
+.memory-role > summary,
+.skill-role > summary {
   padding: 8px 0;
 }
-.memory-role > summary .badge-role {
+.memory-role > summary .badge-role,
+.skill-role > summary .badge-role {
   display: inline-flex;
   vertical-align: middle;
 }
@@ -3454,6 +3458,32 @@ img.avatar-role.avatar-colored {
 }
 .memory-detail .memory-text {
   margin: 8px 0;
+}
+/* A skill: its name and when to use it; opened, its instructions as Markdown. */
+.skill-head {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.skill-name {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.skill-description {
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.skill-meta {
+  padding-left: 20px;
+}
+.skill-content {
+  max-height: 480px;
+  margin: 4px 0 8px;
+  overflow: auto;
+}
+.skill-form textarea[aria-label="内容"] {
+  font-family: var(--mono);
+  font-size: 12.5px;
 }
 .note-form {
   display: flex;

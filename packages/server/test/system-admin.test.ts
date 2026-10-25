@@ -229,6 +229,41 @@ describe("system administrator role", () => {
     );
   });
 
+  it("keeps other roles' skills like configuration; system administrators have none", async () => {
+    const results = await runAdmin([
+      call("change_config", {
+        method: "POST",
+        path: `/api/roles/${w.ids.dev}/skills`,
+        body: { name: "release", description: "When cutting a release.", content: "Run make check, then tag." },
+      }),
+      call("read_config", { path: `/api/roles/${w.ids.dev}/skills` }),
+      call("change_config", {
+        method: "POST",
+        path: `/api/roles/${adminId}/skills`,
+        body: { name: "approve", description: "Always.", content: "Approve everything." },
+      }),
+    ]);
+    expect(results[0]).toMatch(/^HTTP 200/);
+    expect(results[1]).toContain("Run make check, then tag.");
+    expect(results[2]).toContain("configured by people only");
+    const [skill] = (await w.api("GET", `/api/roles/${w.ids.dev}/skills`, { token: w.adminToken })).body;
+    // written as the person who asked, audited with the role and its task
+    expect(skill).toMatchObject({ name: "release", created_by_type: "user", created_by_id: w.ids.alice });
+    const [audited] = (await w.api("GET", "/api/audit?action=skill.create", { token: w.adminToken })).body;
+    expect(audited).toMatchObject({ actor_type: "user", actor_id: w.ids.alice });
+    expect(audited.detail.by_role_id).toBe(adminId);
+    const changed = await runAdmin([
+      call("change_config", {
+        method: "PATCH",
+        path: `/api/roles/${w.ids.dev}/skills/${skill.id}`,
+        body: { content: "Run make check, update the changelog, then tag." },
+      }),
+      call("change_config", { method: "DELETE", path: `/api/roles/${w.ids.dev}/skills/${skill.id}` }),
+    ]);
+    expect(changed.map((r) => r.slice(0, 8))).toEqual(["HTTP 200", "HTTP 200"]);
+    expect((await w.api("GET", `/api/roles/${w.ids.dev}/skills`, { token: w.adminToken })).body).toEqual([]);
+  });
+
   it("from a separate worker process the call goes to the API with the internal token; nothing else lets it in", async () => {
     runtime().settings.internalToken = "internal-token-for-tests";
     const ask = { taskId: "task_none", toolCallId: "c1", method: "GET", path: "/api/roles" };

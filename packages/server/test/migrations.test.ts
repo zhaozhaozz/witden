@@ -1130,3 +1130,40 @@ describe("0046_drop_read_topic", () => {
     await db.close();
   });
 });
+
+describe("0050_role_skills", () => {
+  it("adds the skills table and allows every role but the system administrator to write its own skills", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0050")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle, allowed_tools, approval_required, system_admin) values
+        ('role_admin', 'Admin', 'admin', '["config"]', '[]', true),
+        ('role_dev', 'Dev', 'dev', '["memory", "shell"]', '["memory"]', false),
+        ('role_chat', 'Chat', 'chat', '[]', '[]', false);
+    `);
+    await apply(db, "0050_role_skills");
+    expect((await db.query("select id, allowed_tools, approval_required from roles order by id")).rows).toEqual([
+      { id: "role_admin", allowed_tools: ["config"], approval_required: [] },
+      { id: "role_chat", allowed_tools: ["skills"], approval_required: [] },
+      { id: "role_dev", allowed_tools: ["memory", "shell", "skills"], approval_required: ["memory"] },
+    ]);
+    // one live skill of a name per role; a deleted one frees the name; a role's skills go with it
+    await db.exec(`
+      insert into role_skills (id, role_id, name, description, content, created_by_type, updated_by_type, deleted_at)
+        values ('skill_old', 'role_dev', 'release', '', '', 'role', 'role', now()),
+               ('skill_new', 'role_dev', 'release', 'When releasing.', 'Run make check.', 'user', 'user', null),
+               ('skill_chat', 'role_chat', 'release', 'When releasing.', 'Ask dev.', 'user', 'user', null);
+    `);
+    await expect(
+      db.exec(`insert into role_skills (id, role_id, name, description, content, created_by_type, updated_by_type)
+        values ('skill_twin', 'role_dev', 'release', 'Twin.', 'x', 'user', 'user')`),
+    ).rejects.toThrow(/ux_role_skill_name/);
+    await db.exec("delete from roles where id = 'role_dev'");
+    expect((await db.query("select id from role_skills order by id")).rows).toEqual([{ id: "skill_chat" }]);
+    await db.close();
+  });
+});

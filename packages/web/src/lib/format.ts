@@ -213,13 +213,14 @@ export const TOOL_GROUP_LABEL: Record<string, string> = {
   software_list: "软件清单",
   automation: "自动化管理",
   memory: "记忆",
+  skills: "技能",
   config: "witden 配置",
   profile: "职责说明",
 };
 
 /**
  * How permissions are ordered and grouped wherever a role's are shown: where the role works, what it automates,
- * what it reads, and the role itself. Working with the roles of a topic needs no permission; the AI employees a
+ * what it reads and keeps (memory, its own skills), and the role itself. Working with the roles of a topic needs no permission; the AI employees a
  * role may talk to directly are listed in the role editor's 协作 section, right after 自动化 (not a tool group).
  * Groups not listed (none yet) go last.
  */
@@ -231,7 +232,12 @@ export const PERMISSION_SECTIONS: { key: string; label: string; hint: string; gr
     groups: ["shell", "terminal", "files", "browser", "desktop", "system_software", "software_list"],
   },
   { key: "automation", label: "自动化", hint: "在参与的话题里管理自己负责的触发器", groups: ["automation"] },
-  { key: "knowledge", label: "记忆", hint: "平台上的记忆和可读取的知识空间", groups: ["memory"] },
+  {
+    key: "knowledge",
+    label: "记忆与技能",
+    hint: "平台上的记忆、可读取的知识空间，以及 AI 员工自己的技能",
+    groups: ["memory", "skills"],
+  },
   {
     key: "self",
     label: "AI 员工与平台",
@@ -273,6 +279,8 @@ export const TOOL_GROUP_HINT: Record<string, string> = {
   automation:
     "在它参与的话题里新建和修改自己负责的触发器；不能读取密钥，也不能扩大 Webhook 来源的授权。只在控制台账号请求的工作中可用",
   memory: "在平台上记下和检索记忆与知识，不在虚拟电脑里",
+  skills:
+    "新建、修改和删除自己的技能（某类工作的做法）；读取技能不需要权限。技能改变它在所有地方的工作方式，只在控制台账号请求的工作中可用",
   profile:
     "修改自己的职责说明（成员和其他 AI 员工看到的介绍），不能改其他设置；只在控制台的对话中可用，Slack、飞书、GitHub 的会话中没有",
   config:
@@ -370,6 +378,9 @@ export const TOOL_LABEL: Record<string, string> = {
   recall: "检索记忆",
   update_memory: "修改记忆",
   forget: "删除记忆",
+  read_skill: "读取技能",
+  save_skill: "保存技能",
+  delete_skill: "删除技能",
   read_webhook_history: "查阅本话题的 webhook 历史",
   ask_human: "向人提问",
   post_progress: "汇报进度",
@@ -442,6 +453,9 @@ const AUDIT_LABEL: Record<string, string> = {
   "memory.create": "写入记忆",
   "memory.update": "修改记忆",
   "memory.delete": "删除记忆",
+  "skill.create": "新建技能",
+  "skill.update": "修改技能",
+  "skill.delete": "删除技能",
   "emergency.stop": "紧急停止",
   "emergency.release": "解除紧急停止",
   "topic.publish": "发布到外部频道",

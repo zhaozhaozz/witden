@@ -6,7 +6,7 @@ import { TOOLS } from "./tools.js";
 import { stepPreview } from "./transcript.js";
 
 // Keep computer operations in the full execution log; platform actions also appear directly in chat.
-const platformGroups = new Set(["memory", "config", "profile", "automation", "software_list"]);
+const platformGroups = new Set(["memory", "skills", "config", "profile", "automation", "software_list"]);
 const platformNames = new Set([
   ...[...TOOLS.values()].filter((t) => t.group === null || platformGroups.has(t.group)).map((t) => t.name),
   "share_file",

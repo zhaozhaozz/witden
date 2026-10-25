@@ -54,6 +54,23 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
       { method: "POST", path: "/api/roles/:id/copy", note: "name, handle" },
       { method: "POST", path: "/api/roles/:id/disable", note: "on_tasks: keep | cancel" },
       { method: "POST", path: "/api/roles/:id/enable" },
+      {
+        method: "GET",
+        path: "/api/roles/:id/skills",
+        note: "a role's skills: instructions for kinds of work; every prompt of the role lists their names and descriptions, and it reads one whole when a request matches",
+      },
+      { method: "GET", path: "/api/roles/:id/skills/:skill_id" },
+      {
+        method: "POST",
+        path: "/api/roles/:id/skills",
+        note: "name (lowercase letters, digits, . _ -), description (when to use it, one or two sentences), content (Markdown instructions); system administrator roles have none",
+      },
+      {
+        method: "PATCH",
+        path: "/api/roles/:id/skills/:skill_id",
+        note: "name, description, content (only those to change)",
+      },
+      { method: "DELETE", path: "/api/roles/:id/skills/:skill_id" },
     ],
   },
   {
