@@ -445,7 +445,8 @@ describe("sessions and data lifecycle", () => {
     const other = (
       await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Other project", role_ids: [w.ids.dev] } })
     ).body;
-    w.scripts.dev = () => reply("the launch code is 4242");
+    // The code has a hyphen, which random message ids never contain: it cannot show up by chance.
+    w.scripts.dev = () => reply("the launch code is 42-42");
     await w.post(w.alice, w.ids.topic, "@dev what is the launch code?");
     await w.drain();
     let seen: any[] = [];
@@ -455,16 +456,16 @@ describe("sessions and data lifecycle", () => {
     };
     await w.post(w.alice, other.id, "@dev anything to report?");
     await w.drain();
-    expect(JSON.stringify(seen)).not.toContain("4242");
+    expect(JSON.stringify(seen)).not.toContain("42-42");
     await w.post(w.alice, w.ids.topic, "@dev and again?");
     await w.drain();
     // The same context: the earlier question and dev's own answer, then what is new.
     expect(seen.map((m) => m.role)).toEqual(["system", "user", "assistant", "user"]);
-    expect(seen[2].content).toBe("the launch code is 4242");
+    expect(seen[2].content).toBe("the launch code is 42-42");
     expect(seen[3].content).toContain("New in this topic since you last looked");
     expect(seen[3].content).toContain("alice → you: @dev and again?");
     // its own answer is in the context already, not repeated among the new messages
-    expect(seen[3].content).not.toContain("4242");
+    expect(seen[3].content).not.toContain("42-42");
     const sessions = (await w.api("GET", `/api/roles/${w.ids.dev}/sessions`, { token: w.alice })).body;
     expect(sessions.length).toBe(2);
     expect(sessions.find((s: any) => s.topic.id === w.ids.topic).runs).toBe(2);
@@ -474,12 +475,12 @@ describe("sessions and data lifecycle", () => {
   it("deleting a message removes derived memory and the work it started", async () => {
     w.scripts.dev = (_m, turn) =>
       turn === 0
-        ? reply("", [call("remember", { title: "Launch code", content: "the launch code is 4242", scope: "topic" })])
+        ? reply("", [call("remember", { title: "Launch code", content: "the launch code is 42-42", scope: "topic" })])
         : reply("noted");
-    const posted = await w.post(w.alice, w.ids.topic, "@dev the launch code is 4242, remember it");
+    const posted = await w.post(w.alice, w.ids.topic, "@dev the launch code is 42-42, remember it");
     await w.drain();
     const mems = (await w.api("GET", `/api/memories?scope=topic&topic_id=${w.ids.topic}`, { token: w.alice })).body;
-    expect(mems.some((m: any) => m.content.includes("4242"))).toBe(true);
+    expect(mems.some((m: any) => m.content.includes("42-42"))).toBe(true);
     // the console offers no editing or deleting of single messages
     for (const method of ["PATCH", "DELETE"])
       expect((await w.api(method, `/api/messages/${posted.id}`, { token: w.alice, json: {} })).status).toBe(404);
@@ -492,13 +493,13 @@ describe("sessions and data lifecycle", () => {
     );
     expect(
       JSON.stringify((await w.api("GET", `/api/tasks/${posted.tasks[0].id}/log`, { token: w.alice })).body),
-    ).not.toContain("4242");
+    ).not.toContain("42-42");
     // nor does the role's session in this topic still carry it into its next run
     const sessions = await w.api("GET", `/api/topics/${w.ids.topic}/sessions`, { token: w.alice });
-    expect(sessions.raw).not.toContain("4242");
+    expect(sessions.raw).not.toContain("42-42");
     expect(
       JSON.stringify((await w.api("GET", `/api/tasks/${posted.tasks[0].id}`, { token: w.alice })).body),
-    ).not.toContain("4242");
+    ).not.toContain("42-42");
   });
 
   it("follow_up_later reminds the conversation on time; it is free meanwhile", async () => {
