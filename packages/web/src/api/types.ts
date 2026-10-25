@@ -108,6 +108,8 @@ export interface Message {
     role: { id: string; name: string; handle: string | null; color: string | null; avatar_url: string | null };
   } | null;
   attachments: string[];
+  /** A card a role posted (shown instead of ``content``, its Markdown version). */
+  card?: StoredCard | null;
   /** Sent from a linked topic: the topic it came from. */
   topic_delivery?: { source_topic_id: string } | null;
   source: string;
@@ -115,6 +117,63 @@ export interface Message {
   created_at: string;
   edited_at: string | null;
   deleted: boolean;
+}
+
+/** Cards (the server's services/cards.ts): blocks and buttons a role posts; people act on them. */
+export type CardInputKind = "text" | "textarea" | "number" | "date" | "select" | "multiselect" | "checkbox";
+export interface CardInput {
+  type: "input";
+  name: string;
+  label: string;
+  kind: CardInputKind;
+  options?: { value: string; label: string }[];
+  required?: boolean;
+  placeholder?: string;
+  default?: string | number | boolean | string[];
+}
+export type CardLeafBlock =
+  | { type: "text"; text: string }
+  | { type: "fields"; items: { label: string; value: string }[] }
+  | {
+      type: "table";
+      columns: { key: string; label: string; align?: "left" | "center" | "right" }[];
+      rows: Record<string, string | number | boolean | null>[];
+    }
+  | {
+      type: "chart";
+      kind: "bar" | "line" | "pie";
+      title?: string;
+      labels: string[];
+      series: { name: string; values: number[] }[];
+      unit?: string;
+    }
+  | { type: "list"; items: { title: string; subtitle?: string; badge?: string }[] }
+  | { type: "progress"; label?: string; value: number; max?: number }
+  | { type: "divider" }
+  | CardInput;
+export type CardBlock = CardLeafBlock | { type: "tabs"; tabs: { label: string; blocks: CardLeafBlock[] }[] };
+export interface CardSpec {
+  title?: string;
+  subtitle?: string;
+  color?: "default" | "blue" | "green" | "orange" | "red" | "purple" | "grey";
+  blocks: CardBlock[];
+  actions?: { id: string; label: string; style?: "primary" | "default" | "danger"; url?: string }[];
+  once?: boolean;
+}
+export interface StoredCard {
+  spec: CardSpec;
+  state: {
+    actions: {
+      action: string;
+      label: string;
+      values: Record<string, unknown>;
+      user_id: string;
+      user_name: string;
+      at: string;
+      via: string;
+    }[];
+    closed: boolean;
+  };
 }
 
 export interface PostMessageResult extends Message {

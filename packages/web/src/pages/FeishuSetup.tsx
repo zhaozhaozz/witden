@@ -525,6 +525,11 @@ function SocketEventsStep({ conn: initial, num, onNext }: { conn: Connection; nu
           点击 <b>添加事件</b>，搜索“接收消息”，勾选 <b>接收消息 v2.0</b>（<code>im.message.receive_v1</code>），点击{" "}
           <b>确认添加</b>。
         </li>
+        <li>
+          打开同页的 <b>回调配置</b>，订阅方式同样选择 <b>使用长连接接收回调</b> 并保存，再点击 <b>添加回调</b>，勾选{" "}
+          <b>卡片回传交互</b>（<code>card.action.trigger</code>
+          ）。这样大家在飞书中点击角色发的卡片按钮、提交卡片表单时，witden 才能收到。
+        </li>
       </ol>
       <div className="callout">
         同一个飞书应用只接到一个 witden：飞书把每条消息只交给一个连着的程序，同一个应用再接到另一个
@@ -578,6 +583,11 @@ function EventsStep({
         <li>
           点击 <b>添加事件</b>，搜索“接收消息”，勾选 <b>接收消息 v2.0</b>（<code>im.message.receive_v1</code>），点击{" "}
           <b>确认添加</b>。
+        </li>
+        <li>
+          打开同页的 <b>回调配置</b>，订阅方式选择 <b>将回调发送至开发者服务器</b>
+          ，请求地址同样填上面的事件地址并保存，再点击 <b>添加回调</b>，勾选 <b>卡片回传交互</b>（
+          <code>card.action.trigger</code>），这样卡片按钮和表单才能用。
         </li>
       </ol>
       <WebhookStatus

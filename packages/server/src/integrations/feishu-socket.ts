@@ -23,7 +23,7 @@ export interface FeishuClientOptions {
   appId: string;
   appSecret: string;
   /** Each event as Feishu sent it (the body the events URL would receive); throwing has it pushed again. */
-  onEvent: (payload: unknown) => Promise<void>;
+  onEvent: (payload: unknown) => Promise<unknown>;
   onReady: () => void;
   onReconnecting: () => void;
   onReconnected: () => void;
@@ -44,10 +44,10 @@ const sdkClient: FeishuClientFactory = async (o) => {
   if (!APP_ID.test(o.appId)) throw new Error("app_id is not a Feishu App ID (cli_ and 16 hex digits)");
   const lark = await import("@larksuiteoapi/node-sdk");
   // Every event goes to onEvent as it came, instead of to per-type handlers.
+  // What onEvent returns (a card click's answer) goes back to Feishu as the event's response.
   class Dispatcher extends lark.EventDispatcher {
-    override async invoke(data: unknown): Promise<undefined> {
-      await o.onEvent(data);
-      return undefined;
+    override async invoke(data: unknown): Promise<any> {
+      return (await o.onEvent(data)) ?? undefined;
     }
   }
   const quiet = () => {};
@@ -189,7 +189,7 @@ class FeishuSocket {
     // Switched to the events URL or deleted since: the next sync closes this client.
     if (!conn || feishuMode(conn) !== "socket") return;
     try {
-      await acceptFeishuEvent(conn, payload);
+      return await acceptFeishuEvent(conn, payload);
     } catch (err) {
       console.error("[witden] Feishu event not queued", err);
       throw err;

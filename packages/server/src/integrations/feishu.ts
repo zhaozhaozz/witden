@@ -84,9 +84,14 @@ export function checkCredentials(creds: Record<string, string>, mode: FeishuMode
 }
 
 /** A Feishu event from the events URL (verified there) or the long connection: queued for processing. */
-export async function acceptFeishuEvent(conn: Connection, payload: any): Promise<void> {
+export async function acceptFeishuEvent(conn: Connection, payload: any): Promise<object | undefined> {
   noteWebhook(conn.id, "received");
   if (conn.status !== "active") return;
+  // A click on a witden card: answered at once (Feishu waits up to 3 s), with a toast and the card's new form.
+  if (payload?.header?.event_type === "card.action.trigger") {
+    const { cardTrigger } = await import("./feishu-cards.js");
+    return cardTrigger(conn, payload);
+  }
   const { acceptEvents } = await import("./inbound.js");
   await acceptEvents(conn.id, await new FeishuAdapter().parse(getDb(), conn, payload));
 }
@@ -231,7 +236,8 @@ export class FeishuAdapter implements Adapter {
    * A person's name: from the group's member list, or else from the contact directory, which needs the
    * contact permissions and the person within the app's contact range (the only way in a private chat).
    */
-  private async userName(conn: Connection, openId: string, chatId: string | null): Promise<string | null> {
+  /** A person's name, from the chat's member list or the contact directory (kept a while). */
+  async userName(conn: Connection, openId: string, chatId: string | null): Promise<string | null> {
     const key = `${conn.id}:${openId}`;
     const hit = known(names, key, NAME_TTL_MS);
     if (hit?.name) return hit.name;
@@ -370,6 +376,16 @@ export class FeishuAdapter implements Adapter {
     }
     let plain = { msg_type: "text", content: JSON.stringify({ text: who ? `${who}: ${msg.content}` : msg.content }) };
     if (msg.authorType === "system") return this.post(conn, out, plain);
+    // A card goes as a Feishu card; one Feishu will not take goes as its Markdown, like any message.
+    if (msg.card) {
+      const card = await this.feishuCard(msg, who);
+      try {
+        return await this.post(conn, out, { msg_type: "interactive", content: JSON.stringify(card) });
+      } catch (err) {
+        if (!/failed \(\d+\)/.test((err as Error).message)) throw err;
+        await integrationError(db, conn, msg, "format", err);
+      }
+    }
     // Attachments are uploaded first: images go into the post, other files follow it; what Feishu will not take
     // is linked instead. Failure details stay in the console.
     const { images, files, refused } = await this.uploadAll(db, conn, msg);
@@ -536,6 +552,22 @@ export class FeishuAdapter implements Adapter {
       .innerJoin(users, eq(users.id, externalIdentities.userId))
       .where(and(eq(externalIdentities.connectionId, conn.id), inArray(externalIdentities.userId, ids)));
     return new Map(rows.map((r) => [r.name, r.openId]));
+  }
+
+  /** A card message as a Feishu card; another role's card says whose it is. */
+  private async feishuCard(msg: Message, who: string | null): Promise<any> {
+    const { toFeishuCard } = await import("./feishu-cards.js");
+    const card: any = toFeishuCard(msg.card as any, msg.id);
+    if (who) card.body.elements.unshift({ tag: "markdown", content: `*${who}*` });
+    return card;
+  }
+
+  /** The card changed: its Feishu copy shows the new form (the card was sent with update_multi). */
+  async updateCard(_db: Db, conn: Connection, externalId: string, msg: Message): Promise<void> {
+    // Cards are roles', and the role of a Feishu conversation is the bot's own: no name to add.
+    await this.call(conn, "PATCH", `im/v1/messages/${externalId}`, {
+      body: { content: JSON.stringify(await this.feishuCard(msg, null)) },
+    });
   }
 
   private async post(

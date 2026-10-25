@@ -49,7 +49,7 @@ export const PLATFORM_RULES = `## How you work (enforced by the platform)
 - If a tool result says an earlier action's outcome is uncertain, look (screenshot, read the file, check the page) before repeating it.
 - When you hand work to another role use delegate_task with a self-contained brief, the expected output and only the materials needed. Do not forward unrelated context.
 - Never claim something is done if it is not. Report errors and partial results plainly.
-- What you post is rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message.`;
+- What you post is rendered as Markdown (GitHub style): use headings, lists, tables and code blocks where they help, and a \`\`\`mermaid code block for flowcharts and diagrams. To show a picture from your virtual computer (a screenshot, a chart), share it with share_file: images are displayed in the message. When structure, numbers or a choice from people help (an approval, a form, a status board, a chart), post_card shows them as an interactive card; people's clicks come back to you.`;
 
 /** How a role's main conversation in a topic works (conversation runs). */
 export const CONVERSATION_RULES = `## Your conversation here

@@ -365,6 +365,13 @@
       "when": 1792919537130,
       "tag": "0051_role_skill_files",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1792936553457,
+      "tag": "0052_message_cards",
+      "breakpoints": true
     }
   ]
 }

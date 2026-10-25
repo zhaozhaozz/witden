@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { downloadFile } from "../../api/client";
 import type { Approval, Artifact, Message } from "../../api/types";
 import { fmtBytes, fmtDateTime, fmtTime, PLATFORM_LABEL } from "../../lib/format";
+import { CardView } from "../../ui/CardView";
 import { useAction } from "../../ui/feedback";
 import { Avatar, ComputerBadge, RoleBadge } from "../../ui/kit";
 import { isPreviewableImage, Markdown, MessageImage } from "../../ui/Markdown";
@@ -98,8 +99,14 @@ export function MessageItem({
   approvalLoading,
   onReloadApproval,
   onDecided,
+  canAct,
+  onChange,
 }: {
   msg: Message;
+  /** Cards: the reader may act on them (a participant of an open topic). */
+  canAct?: boolean;
+  /** A card changed by the reader's action: the message in its new form. */
+  onChange?: (m: Message) => void;
   approval?: Approval;
   approvalError?: string | null;
   approvalLoading?: boolean;
@@ -219,6 +226,8 @@ export function MessageItem({
             <RoleBadge role={change.role} />
             <span>{change.action === "added" ? "加入话题" : "离开了话题"}</span>
           </div>
+        ) : msg.card ? (
+          <CardView card={msg.card} messageId={msg.id} topicId={msg.topic_id} canAct={!!canAct} onChange={onChange} />
         ) : (
           <MessageText content={msg.content} mentions={mentionTokens} />
         )}

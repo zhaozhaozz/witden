@@ -5163,3 +5163,262 @@ body.resizing {
   overflow-wrap: anywhere;
   font-size: 12px;
 }
+
+/* Cards a role posts (ui/CardView.tsx): blocks, a form and buttons in one panel; the accent shows its colour. */
+.wcard {
+  max-width: 640px;
+  margin: 4px 0;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--wcard-accent, var(--line));
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.wcard-blue {
+  --wcard-accent: #2a78d6;
+}
+.wcard-green {
+  --wcard-accent: var(--ok);
+}
+.wcard-orange {
+  --wcard-accent: #eb6834;
+}
+.wcard-red {
+  --wcard-accent: var(--bad);
+}
+.wcard-purple {
+  --wcard-accent: #6250d6;
+}
+.wcard-grey {
+  --wcard-accent: var(--off);
+}
+.wcard-head {
+  padding: 10px 14px 0;
+}
+.wcard-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.wcard-subtitle {
+  color: var(--ink-3);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.wcard-blocks {
+  display: grid;
+  gap: 10px;
+  padding: 10px 14px;
+}
+.wcard-blocks > .md > :first-child {
+  margin-top: 0;
+}
+.wcard-blocks > .md > :last-child {
+  margin-bottom: 0;
+}
+.wcard-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+.wcard-fields dt {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.wcard-fields dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+.wcard-table {
+  max-height: 320px;
+  overflow: auto;
+}
+.wcard-sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.wcard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.wcard-list li {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--paper-2);
+}
+.wcard-list-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.wcard-progress-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.wcard-progress-track {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+.wcard-progress-bar {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--wcard-accent, var(--harbor));
+}
+.wcard-divider {
+  border: 0;
+  border-top: 1px solid var(--line-2);
+  margin: 0;
+}
+.wcard-tabs {
+  display: grid;
+  gap: 8px;
+}
+.wcard-tabs .wcard-blocks {
+  padding: 0;
+}
+.wcard-field {
+  display: grid;
+  gap: 4px;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.wcard-field > input,
+.wcard-field > select,
+.wcard-field > textarea {
+  width: 100%;
+}
+.wcard-label {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.wcard-required {
+  color: var(--bad);
+}
+.wcard-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.wcard-check {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+.wcard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 0 14px 12px;
+}
+.wcard-done {
+  list-style: none;
+  margin: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line-2);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* Card charts (ui/CardChart.tsx): recessive grid and ticks, ink text, colour only on the marks. */
+.wchart {
+  margin: 0;
+}
+.wchart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.wchart-plot {
+  position: relative;
+}
+.wchart-plot svg,
+.wchart-pie svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.wchart-grid {
+  stroke: var(--line-2);
+  stroke-width: 1;
+}
+.wchart-cross {
+  stroke: var(--ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.wchart-tick {
+  fill: var(--ink-3);
+  font-size: 11px;
+}
+.wchart-center {
+  fill: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+.wchart-tip {
+  position: absolute;
+  top: 8px;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+  z-index: 2;
+}
+.wchart-tip-head {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.wchart-tip-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+.wchart-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+.wchart-tip-row .wchart-swatch {
+  margin-right: 0;
+}
+.wchart-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.wchart-pie {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.wchart-pie .wchart-legend {
+  flex-direction: column;
+}

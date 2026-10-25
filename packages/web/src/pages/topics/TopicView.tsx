@@ -179,6 +179,13 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
       // Participant changes and archive notices arrive as system messages.
       if (m.author_type === "system") reloadTopic();
       if (m.task_id) bumpTasks();
+    } else if (type === "message.card") {
+      // A card changed (someone acted, its role updated it): fetch that message in its new form.
+      if (data.topic_id !== topicId) return;
+      void api
+        .get<Message>(`/api/topics/${topicId}/messages/${String(data.id)}`)
+        .then(appendMessage)
+        .catch(() => {});
     } else if (type.startsWith("task.") || type === "trigger.changed") {
       bumpTasks();
     }
@@ -459,6 +466,8 @@ export function TopicView({ topicId, onTopicUpdated }: { topicId: string; onTopi
                           approvalLoading={approvals.loading}
                           onReloadApproval={approvals.reload}
                           onDecided={onDecided}
+                          canAct={!!topicRes.data?.can_post}
+                          onChange={appendMessage}
                           author={author}
                           replyTo={
                             m.reply_to_id

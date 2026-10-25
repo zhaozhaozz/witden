@@ -34,6 +34,8 @@ import { grantNeedsApproval, groupOffered, isConnectionToolGroup } from "../inte
 import { findCredential } from "../security/crypto.js";
 import { audit } from "../services/audit.js";
 import { manageAutomation } from "../services/automation-rules.js";
+import { changeCard, newCard, refreshCardCopies, storedCard } from "../services/card-actions.js";
+import { cardMarkdown, parseCard } from "../services/cards.js";
 import { sourceLimits } from "../services/collaboration-policy.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
@@ -628,6 +630,64 @@ async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise
     await deliver(db, task, role, topic, text.slice(0, 20_000), { final: false, ...(replyToId ? { replyToId } : {}) });
     return { content: "sent" };
   });
+}
+
+/** A card for people to read and act on (services/cards.ts); their actions come back as messages. */
+async function postCard(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  let spec: ReturnType<typeof parseCard>;
+  try {
+    spec = parseCard(args.card);
+  } catch (err) {
+    throw new BadRequest((err as Error).message);
+  }
+  return transaction(async (db) => {
+    const { task, role, topic } = await load(ctx, db);
+    let replyToId: string | undefined;
+    if (args.thread) {
+      const [m] = await db
+        .select()
+        .from(messages)
+        .where(and(eq(messages.id, String(args.thread)), eq(messages.topicId, topic.id)))
+        .limit(1);
+      if (!m) throw new BadRequest(`no message ${args.thread} in this topic`);
+      replyToId = m.replyToId ?? m.id;
+    }
+    const card = newCard(spec);
+    const msg = await deliver(db, task, role, topic, cardMarkdown(spec, card.state), {
+      final: false,
+      card,
+      ...(replyToId ? { replyToId } : {}),
+    });
+    return { content: `posted card ${msg.id}` };
+  });
+}
+
+/** The role changes a card it posted: a new form of it (e.g. showing the outcome), or closed to more actions. */
+async function updateCard(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
+  let spec: ReturnType<typeof parseCard> | null = null;
+  if (args.card !== undefined)
+    try {
+      spec = parseCard(args.card);
+    } catch (err) {
+      throw new BadRequest((err as Error).message);
+    }
+  if (!spec && args.close !== true) throw new BadRequest("give card (its new form) or close: true");
+  const id = String(args.message_id ?? "");
+  await transaction(async (db) => {
+    const { role, topic } = await load(ctx, db);
+    const [msg] = await db
+      .select()
+      .from(messages)
+      .where(and(eq(messages.id, id), eq(messages.topicId, topic.id)))
+      .limit(1);
+    if (!msg || !storedCard(msg)) throw new BadRequest(`no card ${id} in this topic`);
+    if (msg.authorType !== "role" || msg.authorId !== role.id)
+      throw new BadRequest("you can only change your own cards");
+    await changeCard(db, msg, spec, args.close === true);
+  });
+  // Its copies on Feishu follow (after the change is committed).
+  void refreshCardCopies(id);
+  return { content: `updated card ${id}` };
 }
 
 /** Write to another AI employee directly (agent/contacts.ts), only to one a person allowed; its answer comes back. */
@@ -1779,6 +1839,33 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
         ["text"],
       ),
       sendMessage,
+    ),
+    spec(
+      "post_card",
+      null,
+      "Post a card: a message with more than text — fields, tables, charts, lists, progress, tabs, form inputs and buttons — shown as a card in the console and in Feishu (as Markdown elsewhere). Use one when structure, numbers or a choice help (an approval, a form to fill, a status board, a comparison); plain answers stay plain text. A button click, with the values of the card's inputs, comes back to you as a message from that person in the card's thread; then answer, act, or change the card with update_card.\ncard = {title?, subtitle?, color?: blue|green|orange|red|purple|grey, once?: true (one answer, then closed), blocks: [...], actions?: [{id, label, style?: primary|danger, url? (a link instead of a button)}]}. Blocks: {type:'text', text (Markdown)} · {type:'fields', items:[{label, value}]} · {type:'table', columns:[{key, label, align?}], rows:[{<key>: value}]} · {type:'chart', kind: bar|line|pie, labels:[...], series:[{name, values:[numbers]}], unit?, title?} · {type:'list', items:[{title, subtitle?, badge?}]} · {type:'progress', label?, value, max?} · {type:'divider'} · {type:'tabs', tabs:[{label, blocks:[...]}]} · {type:'input', name (a_z0_9), label, kind: text|textarea|number|date|select|multiselect|checkbox, options?:[{value, label}], required?, placeholder?, default?}. A card with inputs needs a button: any button sends all the inputs.",
+      obj(
+        {
+          card: { type: "object", description: "the card, as described above", additionalProperties: true },
+          thread: { type: "string", description: "Message ID whose thread to post in (default: where you were asked)" },
+        },
+        ["card"],
+      ),
+      postCard,
+    ),
+    spec(
+      "update_card",
+      null,
+      "Change a card you posted: card = its whole new form (show the outcome, a new status, the next step), and/or close: true so nobody can act on it any more. People see the change at once, in the console and in Feishu.",
+      obj(
+        {
+          message_id: str,
+          card: { type: "object", description: "the card's new form (as for post_card)", additionalProperties: true },
+          close: { type: "boolean" },
+        },
+        ["message_id"],
+      ),
+      updateCard,
     ),
     // The link is the permission: an external conversation's role sees linked internal topics' work, not messages.
     spec(

@@ -25,7 +25,7 @@ import { type FeishuClientOptions, feishuTiming, setFeishuClient } from "../src/
 import { resolveIdentity } from "../src/integrations/inbound.js";
 import { secretBox } from "../src/security/crypto.js";
 import { saveArtifact } from "../src/services/files.js";
-import { reply } from "./support/harness.js";
+import { call, lastUser, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const APP_ID = "cli_a1b2c3d4e5f60789";
@@ -40,6 +40,8 @@ const json = (body: unknown) =>
  */
 class FakeFeishu {
   sent: { path: string; body: any }[] = [];
+  /** Cards updated in place (PATCH of a message the bot sent). */
+  patched: { path: string; body: any }[] = [];
   asked: string[] = [];
   /** Refuse rich-text posts, as Feishu does with content it cannot render. */
   refusePosts = false;
@@ -107,6 +109,10 @@ class FakeFeishu {
         status: 200,
         headers: { "content-type": image ? "image/jpeg" : "application/octet-stream" },
       });
+    }
+    if (init?.method === "PATCH" && /^im\/v1\/messages\/[^/]+$/.test(path)) {
+      this.patched.push({ path, body });
+      return json({ code: 0, data: {} });
     }
     if (path === "im/v1/messages" || /^im\/v1\/messages\/[^/]+\/reply$/.test(path)) {
       if (this.refuseAttachments && ["file", "image"].includes(body.msg_type))
@@ -402,6 +408,85 @@ describe("feishu long connection", () => {
 describe("feishu groups and names", () => {
   const group = (text: string, id: string, o: { sender?: string; root?: string } = {}) =>
     textEvent(text, { id, chatType: "group", chat: "oc_group", atBot: true, ...o });
+
+  it("a card goes as a Feishu card; a click there is the person's action, answered with the card's new form", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    const card = {
+      title: "选环境",
+      once: true,
+      blocks: [
+        {
+          type: "input",
+          name: "env",
+          label: "环境",
+          kind: "select",
+          required: true,
+          options: [{ value: "prod", label: "生产" }],
+        },
+      ],
+      actions: [{ id: "go", label: "部署", style: "primary" }],
+    };
+    let heard = "";
+    w.scripts.dev = (m, turn) => {
+      const said = lastUser(m);
+      if (said.includes("点击了卡片")) {
+        heard = said;
+        const id = /\[on card (msg_[a-z0-9]+)/.exec(said)?.[1];
+        return turn === 0 && id
+          ? reply("", [
+              call("update_card", {
+                message_id: id,
+                card: { title: "已部署", blocks: [{ type: "text", text: "生产" }] },
+              }),
+            ])
+          : reply("好");
+      }
+      return turn === 0 ? reply("", [call("post_card", { card })]) : reply("请选择");
+    };
+    await link.push(group("部署一下", "om_c1"));
+    await w.waitFor(async () => (await allTasks()).length === 1);
+    await w.drain();
+    await deliverPending();
+    const sent = feishu.sent.find((s) => s.body.msg_type === "interactive");
+    expect(sent).toBeTruthy();
+    const feishuCard = JSON.parse(sent!.body.content);
+    const button = feishuCard.body.elements.at(-1).elements.at(-1).columns[0].elements[0];
+    const value = button.behaviors[0].value;
+    expect(value).toMatchObject({ witden: "card", a: "go" });
+    const sentId = `om_out_${feishu.sent.indexOf(sent!) + 1}`;
+    const click = (openId: string, form: Record<string, unknown>) =>
+      link.push({
+        schema: "2.0",
+        header: { event_id: `ev_click_${openId}_${Math.random()}`, event_type: "card.action.trigger" },
+        event: {
+          operator: { open_id: openId },
+          action: { tag: "button", value, form_value: form, name: "a_go" },
+          context: { open_message_id: sentId, open_chat_id: "oc_group" },
+        },
+      });
+
+    // someone witden does not know may not act
+    expect(await click("ou_stranger", { env: "prod" })).toMatchObject({ toast: { type: "error" } });
+    // alice (linked): her action, answered with the closed card
+    const answer: any = await click("ou_alice", { env: "prod" });
+    expect(answer.toast).toEqual({ type: "success", content: "已提交" });
+    expect(answer.card.type).toBe("raw");
+    expect(JSON.stringify(answer.card.data)).toContain("alice 选择了「部署」");
+    // once: closed for the next click
+    expect(await click("ou_alice", { env: "prod" })).toMatchObject({
+      toast: { type: "error", content: "这张卡片已经关闭，不能再操作" },
+    });
+    await w.drain();
+    expect(heard).toContain("点击了卡片「选环境」的「部署」\n环境：生产");
+    // the role changed the card: its Feishu copy is updated in place
+    await w.waitFor(async () => feishu.patched.length > 0);
+    expect(feishu.patched.at(-1)!.path).toBe(`im/v1/messages/${sentId}`);
+    expect(JSON.parse(feishu.patched.at(-1)!.body.content).header.title.content).toBe("已部署");
+    // the action message is not sent back to Feishu
+    expect(feishu.sent.filter((s) => JSON.stringify(s.body).includes("点击了卡片"))).toEqual([]);
+  });
 
   it("a new role for the bot replaces the old one in its conversations; their members are not managed in witden", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;

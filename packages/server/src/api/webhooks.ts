@@ -160,8 +160,8 @@ export async function webhookRoutes(app: FastifyInstance, listener: "console" | 
       noteWebhook(conn.id, "verified");
       return reply.send({ challenge: payload.challenge });
     }
-    await acceptFeishuEvent(conn, payload);
-    return { ok: true };
+    // a card click is answered with the toast and card Feishu shows
+    return (await acceptFeishuEvent(conn, payload)) ?? { ok: true };
   });
 }
 

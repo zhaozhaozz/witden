@@ -39,6 +39,8 @@ export async function deliver(
     round?: number;
     /** Post in this thread instead of where the request was asked. */
     replyToId?: string | null;
+    /** A card (services/cards.ts); ``content`` is its Markdown version. */
+    card?: { spec: unknown; state: unknown };
   },
 ): Promise<Message> {
   // Roles address others only through explicit mentions (message_role / ask_human); an "@dev" quoted in an
@@ -49,6 +51,7 @@ export async function deliver(
     round: opts.round ?? task.round + 1,
     taskId: task.id,
     replyToId: opts.replyToId ?? (await answeredThread(db, task, topic.id)),
+    card: opts.card ?? null,
   });
   await audit(db, "message.post", {
     actorType: "role",

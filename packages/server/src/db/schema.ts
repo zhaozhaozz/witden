@@ -425,6 +425,8 @@ export const messages = pgTable(
     attachments: json<string[]>("attachments").notNull().default([]),
     source: text("source").notNull().default("web"),
     externalRef: json<Json | null>("external_ref"),
+    /** A card (services/cards.ts): ``{spec, state}``; the message's text is its Markdown version. */
+    card: json<{ spec: any; state: any } | null>("card"),
     round: integer("round").notNull().default(0),
     createdAt: created(),
     editedAt: ts("edited_at"),

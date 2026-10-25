@@ -17,6 +17,7 @@ import { announceOverdue, watchCommands } from "./agent/commands.js";
 import { Worker } from "./agent/worker.js";
 import { adminRoutes } from "./api/admin.js";
 import { authRoutes } from "./api/auth.js";
+import { cardRoutes } from "./api/cards.js";
 import { computerRoutes } from "./api/computers.js";
 import { eventRoutes } from "./api/events.js";
 import { sendError } from "./api/http.js";
@@ -118,6 +119,7 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
     computerRoutes,
     roleRoutes,
     topicRoutes,
+    cardRoutes,
     triggerRoutes,
     taskRoutes,
     sessionRoutes,

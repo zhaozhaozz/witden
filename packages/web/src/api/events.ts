@@ -6,6 +6,8 @@ export const APPROVALS_EVENT = "witden:approvals-changed";
 
 export type LiveEventType =
   | "message.created"
+  /** A card changed (someone acted on it, or its role updated it): fetch the message again. */
+  | "message.card"
   | "approval.changed"
   | "task.created"
   | "task.status"
@@ -26,6 +28,7 @@ export type LiveEventType =
 
 const EVENT_TYPES: LiveEventType[] = [
   "message.created",
+  "message.card",
   "approval.changed",
   "task.created",
   "task.status",

@@ -70,6 +70,7 @@ export function messageOut(msg: Message) {
     approval_id: msg.deletedAt ? null : msg.approvalId,
     participant_change: participantChangeOf(msg),
     attachments: msg.attachments,
+    card: msg.deletedAt ? null : (msg.card ?? null),
     source: msg.source,
     round: msg.round,
     topic_delivery: msg.deletedAt ? null : sourceTopicOf(msg),
@@ -114,6 +115,8 @@ export async function saveMessage(
     approvalId?: string | null;
     /** false: the console only, never sent to linked Slack, Feishu or GitHub conversations. */
     mirror?: boolean;
+    /** A card (services/cards.ts); ``content`` is then its Markdown version. */
+    card?: { spec: unknown; state: unknown } | null;
   } = {},
 ): Promise<Message> {
   const mentions = opts.mentions ?? (await parseMentions(db, topic, content));
@@ -133,6 +136,7 @@ export async function saveMessage(
       round: opts.round ?? 0,
       taskId: opts.taskId ?? null,
       approvalId: opts.approvalId ?? null,
+      card: opts.card ?? null,
     })
     .returning();
   await db.update(topics).set({ lastMessageAt: new Date() }).where(eq(topics.id, topic.id));

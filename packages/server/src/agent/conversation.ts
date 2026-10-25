@@ -33,6 +33,7 @@ import {
   taskSteps,
   tasks,
 } from "../db/schema.js";
+import { cardSummaryForRoles, type StoredCard } from "../services/cards.js";
 import { relayFrom, type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
 import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
@@ -301,7 +302,14 @@ async function line(db: Db, m: Message, forYou: boolean): Promise<string> {
   const text =
     m.content.length > limit ? `${m.content.slice(0, limit)}… [cut; topic_history shows it whole]` : m.content;
   const thread = m.replyToId ? ` (in the thread of ${m.replyToId})` : "";
-  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${triggerContext(m)}${relayDescription(m.externalRef)}`;
+  // A card reads as its Markdown, then its buttons and inputs by id (for update_card and its actions).
+  const acted = m.externalRef?.card_action as { card: string; action: string } | undefined;
+  const card = m.card
+    ? ` ${cardSummaryForRoles(m.card as StoredCard)}`
+    : acted
+      ? ` [on card ${acted.card}: button ${acted.action}]`
+      : "";
+  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${card}${triggerContext(m)}${relayDescription(m.externalRef)}`;
 }
 
 /**

@@ -33,6 +33,8 @@ export interface Adapter {
   /** A received file: whole, or streamed as it downloads (stored without being held in memory); null: refused. */
   fetchFile?(conn: Connection, file: Record<string, any>): Promise<Buffer | AsyncIterable<Uint8Array> | null>;
   reply?(conn: Connection, channel: string, thread: string, text: string): Promise<void>;
+  /** A card message changed (services/card-actions.ts): show its current form on the platform's copy. */
+  updateCard?(db: Db, conn: Connection, externalId: string, msg: Message): Promise<void>;
 }
 
 export const CAPABILITIES: Record<string, Record<string, any>> = {
