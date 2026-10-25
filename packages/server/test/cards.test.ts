@@ -2,13 +2,15 @@
  * Cards: a role posts one (post_card), people act on it in the console, the action reaches the role in the card's
  * thread, and the role changes the card (update_card). The card format, its Markdown version and its Feishu form.
  */
+import fs from "node:fs";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/client.js";
 import { auditLogs, messages, outboundMessages } from "../src/db/schema.js";
 import { toFeishuCard } from "../src/integrations/feishu-cards.js";
 import { actionText, cardMarkdown, checkValues, parseCard } from "../src/services/cards.js";
-import { call, lastUser, reply } from "./support/harness.js";
+import { call, lastUser, reply, startHarness } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
 
 const approval = {
@@ -303,5 +305,25 @@ describe("card apps", () => {
     expect(done.status, done.raw).toBe(200);
     expect(done.body.message.card.state.actions[0]).toMatchObject({ action: "ok", app_data: { n: 4, each: 187 } });
     expect(done.body.reply.content).toBe('点击了卡片「分账」的「确认」\n小应用提交的数据：{"n":4,"each":187}');
+  });
+
+  it("cannot navigate their frame anywhere: the console's pages allow no frame to load", async () => {
+    const dist = path.resolve(`.tmp/test-data/web-${process.pid}-${Date.now()}`);
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(path.join(dist, "index.html"), "<!doctype html><title>witden</title>");
+    fs.writeFileSync(path.join(dist, "app.js"), "");
+    const h = await startHarness({ webDist: dist });
+    try {
+      for (const url of ["/", "/topics/t_1"]) {
+        const res = await h.witden.app!.inject({ method: "GET", url });
+        expect(res.statusCode).toBe(200);
+        expect(res.headers["content-security-policy"]).toBe("frame-src 'none'");
+      }
+      const script = await h.witden.app!.inject({ method: "GET", url: "/app.js" });
+      expect(script.headers["content-security-policy"]).toBeUndefined();
+    } finally {
+      await h.close();
+      fs.rmSync(dist, { recursive: true, force: true });
+    }
   });
 });

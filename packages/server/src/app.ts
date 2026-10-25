@@ -135,7 +135,15 @@ export async function buildApp(rt: Runtime): Promise<FastifyInstance> {
   }
   const dist = webDist(rt.settings);
   if (dist) {
-    await app.register(fastifyStatic, { root: dist, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: dist,
+      wildcard: false,
+      // The console loads no page into a frame; cards' apps are srcdoc frames, which this does not govern. So an
+      // app cannot navigate its own frame anywhere (another site, a data: page) to carry what it holds out.
+      setHeaders: (res, file) => {
+        if (file.endsWith(".html")) res.setHeader("content-security-policy", "frame-src 'none'");
+      },
+    });
     // Single-page console: unknown non-API paths fall back to index.html.
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith("/api/") || req.url.startsWith("/internal/")) {

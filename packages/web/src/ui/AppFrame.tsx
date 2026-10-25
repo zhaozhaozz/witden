@@ -7,8 +7,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
  * The frame is ``sandbox="allow-scripts"`` without ``allow-same-origin``: an opaque origin that cannot read the
  * console's storage (its login), call its API or touch its page; no forms, pop-ups, dialogs or top-level
  * navigation. Its content security policy allows no network at all — no fetch, no outside scripts, styles, fonts
- * or images (data: URLs only) — so nothing it holds or is told can leave it. Loading another page in the frame
- * is caught (a second load) and the app is reset.
+ * or images (data: URLs only). Nor can it navigate its frame to another page to carry data out: the console's pages
+ * allow no frame to load anything (``frame-src 'none'``, set by the server; srcdoc is not loaded, so apps run). A
+ * navigation all the same (blocked, it loads an error page) is caught as a second load and the app is reset.
+ *
+ * The policy does not cover WebRTC, which can reach any STUN / TURN server. The bridge removes it from the app's
+ * window and, since a frame of the app's own would have a fresh window with WebRTC again, removes any frame the app
+ * adds, disables the ways to add one the removal would not see (shadow roots, document.write, setHTMLUnsafe), and
+ * stops the app if a frame exists all the same. This is the console's best effort, not a boundary the browser keeps.
  *
  * The app talks to the console only through ``window.witden`` (a bridge injected before its own code):
  * ``state`` / ``setState`` keep its state for this reader (in this browser), ``send(action, data)`` asks to submit
@@ -50,6 +56,22 @@ th { color: var(--ink-3); font-size: 12px; font-weight: 500; } td.num, th.num { 
 /** Runs in the frame before the app's own code: the only way it talks to the console. */
 const BRIDGE = `(function () {
   var post = function (type, extra) { parent.postMessage(Object.assign({ witden: 1, type: type }, extra || {}), "*"); };
+  // No WebRTC, and no frame of the app's own (its window would have WebRTC again): frames are removed as they are
+  // added, before they load; the ways to add one out of the observer's sight are disabled.
+  window.RTCPeerConnection = window.webkitRTCPeerConnection = undefined;
+  var no = function () { throw new Error("not available in a witden app"); };
+  Element.prototype.attachShadow = no;
+  Document.prototype.write = Document.prototype.writeln = no;
+  if (Element.prototype.setHTMLUnsafe) Element.prototype.setHTMLUnsafe = no;
+  if (window.ShadowRoot && ShadowRoot.prototype.setHTMLUnsafe) ShadowRoot.prototype.setHTMLUnsafe = no;
+  if (Document.parseHTMLUnsafe) Document.parseHTMLUnsafe = no;
+  var FRAMES = "iframe,frame,object,embed";
+  var unframe = function () {
+    document.querySelectorAll(FRAMES).forEach(function (f) { f.remove(); });
+    if (window.length > 0) post("stop");
+  };
+  new MutationObserver(unframe).observe(document, { childList: true, subtree: true });
+  setInterval(unframe, 500);
   // Saves only count once the saved state was handed over: an app that renders (and saves) while it starts
   // must not overwrite what the reader had.
   var ready = false;
@@ -81,7 +103,9 @@ export function appDocument(html: string): string {
   const body = html
     .replace(/<!doctype[^>]*>/gi, "")
     .replace(/<\/?(html|head|body)[^>]*>/gi, "")
-    .replace(/<meta[^>]*http-equiv[^>]*>/gi, "");
+    .replace(/<meta[^>]*http-equiv[^>]*>/gi, "")
+    // declarative shadow roots are made by the parser, out of the bridge's sight
+    .replace(/\bshadowroot(mode)?\s*=/gi, "data-shadowroot=");
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CSP}"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${BASE_CSS}</style><script>${BRIDGE}</script></head><body>${body}</body></html>`;
 }
 
@@ -104,9 +128,10 @@ export function AppFrame({
   const [full, setFull] = useState(false);
   const [generation, setGeneration] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
-  // an app that navigates away each time it starts is stopped after a couple of tries
+  // an app that navigates away each time it starts is stopped after a couple of tries; one that has a frame of its
+  // own (the bridge could not remove it) at once
   const restarts = useRef(0);
-  const [stopped, setStopped] = useState(false);
+  const [stopped, setStopped] = useState<string | null>(null);
   const doc = useMemo(() => appDocument(app.html), [app.html]);
   const send = useRef(onSend);
   send.current = onSend;
@@ -143,6 +168,8 @@ export function AppFrame({
         }
       } else if (d.type === "action" && typeof d.action === "string") {
         send.current(d.action.slice(0, 40), d.data);
+      } else if (d.type === "stop") {
+        setStopped("这个小应用试图在自己里面再打开页面，已停止运行。");
       }
     };
     window.addEventListener("message", onMessage);
@@ -152,7 +179,10 @@ export function AppFrame({
   return (
     <div className={full ? "wapp wapp-full" : "wapp"}>
       <div className="wapp-bar">
-        <span className="small muted" title="由 AI 员工编写，在隔离的沙箱中运行：不能联网，不能访问你的账号和控制台">
+        <span
+          className="small muted"
+          title="由 AI 员工编写，在隔离的沙箱中运行：拿不到你的账号和控制台里的数据，不能请求网络。不要在小应用中输入密码或密钥。"
+        >
           小应用 · 沙箱中运行
         </span>
         <span className="wapp-tools">
@@ -174,7 +204,7 @@ export function AppFrame({
       </div>
       {notice && !stopped ? <div className="wapp-notice small">{notice}</div> : null}
       {stopped ? (
-        <div className="wapp-notice small">这个小应用反复试图打开别的页面，已停止运行。</div>
+        <div className="wapp-notice small">{stopped}</div>
       ) : (
         <iframe
           key={generation}
@@ -190,7 +220,7 @@ export function AppFrame({
             loads.current += 1;
             if (loads.current <= 1) return;
             restarts.current += 1;
-            if (restarts.current > 2) setStopped(true);
+            if (restarts.current > 2) setStopped("这个小应用反复试图打开别的页面，已停止运行。");
             else restart("小应用试图打开别的页面，已阻止并重新载入。");
           }}
         />
