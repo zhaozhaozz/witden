@@ -116,6 +116,9 @@ function element(b: CardBlock): object[] {
       }));
     case "input":
       return [];
+    case "app":
+      // Feishu runs no code: what the app is for, and where it runs
+      return [md(`${b.fallback}\n\n*（交互小应用：在 witden 控制台中打开这张卡片使用）*`)];
   }
 }
 

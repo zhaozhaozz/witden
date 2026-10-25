@@ -41,7 +41,16 @@ export async function cardRoutes(app: FastifyInstance) {
       if (!msg) throw new NotFound("message not found");
       const b = body(req);
       const values = b.values && typeof b.values === "object" && !Array.isArray(b.values) ? b.values : {};
-      const { message } = await applyCardAction(db, topic, msg, user, String(b.action ?? ""), values, "console");
+      const { message } = await applyCardAction(
+        db,
+        topic,
+        msg,
+        user,
+        String(b.action ?? ""),
+        values,
+        "console",
+        b.appData,
+      );
       after(() => void refreshCardCopies(msg.id));
       const [updated] = await db.select().from(messages).where(eq(messages.id, msg.id)).limit(1);
       return { message: messageOut(updated), reply: messageOut(message) };

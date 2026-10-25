@@ -81,6 +81,12 @@ describe("card format", () => {
       parseCard({ blocks: [{ type: "input", name: "Bad Name", label: "X" }], actions: [{ id: "go", label: "Go" }] }),
     ).toThrow(/lower-case/);
     expect(() => parseCard({ blocks: [{ type: "text", text: "x" }], extra: 1 })).toThrow(/invalid card/);
+    expect(() =>
+      parseCard({
+        blocks: [{ type: "input", name: "x", label: "X", kind: "select" }],
+        actions: [{ id: "go", label: "Go" }],
+      }),
+    ).toThrow(/the select x needs options/);
   });
 
   it("reads as Markdown where cards are not shown", () => {
@@ -247,5 +253,55 @@ describe("cards in a topic", () => {
     await w.drain();
     expect(result).toMatch(/invalid card — blocks\.0/);
     expect((await w.messages(w.ids.topic)).some((m: any) => m.card)).toBe(false);
+  });
+});
+
+describe("card apps", () => {
+  const app = {
+    type: "app",
+    html: '<input id="n" type="range"><b id="out"></b><script>n.oninput = () => (out.textContent = n.value);</script>',
+    fallback: "一个滑杆，显示选中的值。",
+  };
+
+  it("are checked; their code does not count toward the size other platforms take", () => {
+    const big = { ...app, html: `<p>${"x".repeat(40_000)}</p>` };
+    expect(parseCard({ title: "App", blocks: [big] }).blocks).toHaveLength(1);
+    expect(() => parseCard({ blocks: [{ ...app, html: "x".repeat(70_000) }] })).toThrow(/invalid card/);
+    expect(() => parseCard({ blocks: [app, app, app, app] })).toThrow(/at most 3 apps/);
+    expect(() => parseCard({ blocks: [{ type: "app", html: "<p>x</p>" }] })).toThrow(/fallback/);
+  });
+
+  it("read as their fallback where they cannot run, in Markdown and on Feishu", () => {
+    const card = parseCard({ title: "滑杆", blocks: [app] });
+    expect(cardMarkdown(card)).toContain("一个滑杆，显示选中的值。");
+    expect(cardMarkdown(card)).toContain("交互小应用");
+    const feishu: any = toFeishuCard({ spec: card, state: { actions: [], closed: false } }, "msg_1");
+    expect(JSON.stringify(feishu)).not.toContain("<script>");
+    expect(feishu.body.elements[0].content).toContain("一个滑杆，显示选中的值。");
+  });
+
+  it("send an action with their data; the role reads it with the action", async () => {
+    w.scripts.dev = (_m, turn) =>
+      turn === 0
+        ? reply("", [
+            call("post_card", { card: { title: "分账", blocks: [app], actions: [{ id: "ok", label: "确认" }] } }),
+          ])
+        : reply("好");
+    await w.post(w.alice, w.ids.topic, "@dev 做个分账器");
+    await w.drain();
+    const card = (await w.messages(w.ids.topic)).find((m: any) => m.card);
+    const url = `/api/topics/${w.ids.topic}/messages/${card.id}/card-actions`;
+    const tooBig = await w.api("POST", url, {
+      token: w.alice,
+      json: { action: "ok", values: {}, app_data: { blob: "x".repeat(5000) } },
+    });
+    expect(tooBig.status).toBe(400);
+    const done = await w.api("POST", url, {
+      token: w.alice,
+      json: { action: "ok", values: {}, app_data: { n: 4, each: 187 } },
+    });
+    expect(done.status, done.raw).toBe(200);
+    expect(done.body.message.card.state.actions[0]).toMatchObject({ action: "ok", app_data: { n: 4, each: 187 } });
+    expect(done.body.reply.content).toBe('点击了卡片「分账」的「确认」\n小应用提交的数据：{"n":4,"each":187}');
   });
 });

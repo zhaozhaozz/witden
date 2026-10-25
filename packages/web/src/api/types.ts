@@ -150,6 +150,8 @@ export type CardLeafBlock =
   | { type: "list"; items: { title: string; subtitle?: string; badge?: string }[] }
   | { type: "progress"; label?: string; value: number; max?: number }
   | { type: "divider" }
+  /** A small app the role wrote (HTML, CSS, JS), run sandboxed in the console (ui/AppFrame.tsx). */
+  | { type: "app"; html: string; fallback: string; height?: number }
   | CardInput;
 export type CardBlock = CardLeafBlock | { type: "tabs"; tabs: { label: string; blocks: CardLeafBlock[] }[] };
 export interface CardSpec {
@@ -171,6 +173,7 @@ export interface StoredCard {
       user_name: string;
       at: string;
       via: string;
+      app_data?: unknown;
     }[];
     closed: boolean;
   };

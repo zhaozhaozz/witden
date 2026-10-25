@@ -7,6 +7,11 @@
  *
  * Every card also reads as Markdown (cardMarkdown): that is the message's text, so Slack, GitHub, search and the
  * roles' own context see it without knowing cards.
+ *
+ * An ``app`` block is a small interactive application the role writes as self-contained HTML, CSS and JavaScript.
+ * The console runs it in a sandboxed frame (ui/AppFrame.tsx): it updates on its own as people use it, without the
+ * role; it has no network and no access to the console, and it may keep its state for the reader and, once the
+ * person confirms, send a card action with its data. Platforms that cannot run it show its ``fallback`` text.
  */
 import { z } from "zod";
 
@@ -17,23 +22,19 @@ const short = z.string().trim().min(1).max(200);
 const long = z.string().max(4000);
 const cell = z.union([z.string().max(500), z.number(), z.boolean(), z.null()]);
 
-const inputBlock = z
-  .object({
-    type: z.literal("input"),
-    name,
-    label: short,
-    kind: z.enum(["text", "textarea", "number", "date", "select", "multiselect", "checkbox"]).default("text"),
-    options: z
-      .array(z.object({ value: z.string().min(1).max(100), label: short }))
-      .max(30)
-      .optional(),
-    required: z.boolean().optional(),
-    placeholder: z.string().max(200).optional(),
-    default: z.union([z.string().max(2000), z.number(), z.boolean(), z.array(z.string().max(100))]).optional(),
-  })
-  .refine((b) => !["select", "multiselect"].includes(b.kind) || (b.options?.length ?? 0) > 0, {
-    message: "a select needs options",
-  });
+const inputBlock = z.object({
+  type: z.literal("input"),
+  name,
+  label: short,
+  kind: z.enum(["text", "textarea", "number", "date", "select", "multiselect", "checkbox"]).default("text"),
+  options: z
+    .array(z.object({ value: z.string().min(1).max(100), label: short }))
+    .max(30)
+    .optional(),
+  required: z.boolean().optional(),
+  placeholder: z.string().max(200).optional(),
+  default: z.union([z.string().max(2000), z.number(), z.boolean(), z.array(z.string().max(100))]).optional(),
+});
 
 const leafBlocks = [
   z.object({ type: z.literal("text"), text: long }),
@@ -84,10 +85,20 @@ const leafBlocks = [
   }),
   z.object({ type: z.literal("divider") }),
   inputBlock,
+  z.object({
+    type: z.literal("app"),
+    /** The app's page body: inline <style> and <script> only (no network, no outside files). */
+    html: z.string().min(1).max(64_000),
+    /** What Feishu, Slack and GitHub show instead (they cannot run it). */
+    fallback: z.string().max(2000),
+    /** Starting height in pixels; the app grows to fit its content. */
+    height: z.number().int().min(80).max(1200).optional(),
+  }),
 ] as const;
 
-const leaf = z.union(leafBlocks);
-const block = z.union([
+// Keyed by type, so an error names the field of the block that was meant.
+const leaf = z.discriminatedUnion("type", leafBlocks);
+const block = z.discriminatedUnion("type", [
   ...leafBlocks,
   z.object({
     type: z.literal("tabs"),
@@ -134,6 +145,8 @@ export interface CardState {
     action: string;
     label: string;
     values: Record<string, unknown>;
+    /** Data a card's app sent with the action (the person confirmed it). */
+    app_data?: unknown;
     user_id: string;
     user_name: string;
     at: string;
@@ -158,8 +171,13 @@ export function parseCard(value: unknown): Card {
     throw new Error(`invalid card — ${first.join("; ")}`);
   }
   const card = parsed.data;
-  if (Buffer.byteLength(JSON.stringify(card)) > MAX_CARD_BYTES)
+  // Apps are not sent to platforms with card size limits; the rest is (Feishu takes 30 KB).
+  const withoutApps = JSON.stringify(card, (k, v) => (k === "html" ? "" : v));
+  if (Buffer.byteLength(withoutApps) > MAX_CARD_BYTES)
     throw new Error(`invalid card — larger than ${MAX_CARD_BYTES / 1000} KB; shorten it or split it`);
+  if (cardApps(card).length > 3) throw new Error("invalid card — at most 3 apps in a card");
+  const noOptions = cardInputs(card).find((i) => ["select", "multiselect"].includes(i.kind) && !i.options?.length);
+  if (noOptions) throw new Error(`invalid card — the select ${noOptions.name} needs options`);
   const inputs = cardInputs(card).map((i) => i.name);
   const dup = inputs.find((n, i) => inputs.indexOf(n) !== i);
   if (dup) throw new Error(`invalid card — two inputs are named ${dup}`);
@@ -169,6 +187,17 @@ export function parseCard(value: unknown): Card {
   if (inputs.length && !(card.actions ?? []).some((a) => !a.url))
     throw new Error("invalid card — a card with inputs needs a button (an action without url) to submit them");
   return card;
+}
+
+export function cardApps(card: Card): Extract<CardBlock, { type: "app" }>[] {
+  const out: Extract<CardBlock, { type: "app" }>[] = [];
+  const walk = (blocks: CardBlock[]) => {
+    for (const b of blocks)
+      if (b.type === "app") out.push(b);
+      else if (b.type === "tabs") for (const t of b.tabs) walk(t.blocks as CardBlock[]);
+  };
+  walk(card.blocks);
+  return out;
 }
 
 export function cardInputs(card: Card): CardInput[] {
@@ -224,6 +253,8 @@ function blockMarkdown(b: CardBlock): string {
         .join("\n\n");
     case "input":
       return `*（表单：${b.label}${b.required ? "，必填" : ""}）*`;
+    case "app":
+      return `${b.fallback}\n\n*（这里是一个交互小应用，在 witden 控制台中打开卡片即可使用）*`;
   }
 }
 
@@ -245,9 +276,10 @@ export function cardMarkdown(card: Card, state?: CardState): string {
 export function cardSummaryForRoles(stored: StoredCard): string {
   const actions = (stored.spec.actions ?? []).filter((a) => !a.url).map((a) => `${a.id} (${a.label})`);
   const inputs = cardInputs(stored.spec).map((i) => `${i.name} (${i.kind})`);
+  const apps = cardApps(stored.spec).length;
   const done = stored.state.actions.map((a) => `${a.user_name} chose ${a.action}`);
   return [
-    `[card${actions.length ? `; buttons: ${actions.join(", ")}` : ""}${inputs.length ? `; inputs: ${inputs.join(", ")}` : ""}${stored.state.closed ? "; closed" : ""}${done.length ? `; ${done.join(", ")}` : ""}]`,
+    `[card${actions.length ? `; buttons: ${actions.join(", ")}` : ""}${inputs.length ? `; inputs: ${inputs.join(", ")}` : ""}${apps ? `; ${apps} app(s)` : ""}${stored.state.closed ? "; closed" : ""}${done.length ? `; ${done.join(", ")}` : ""}]`,
   ].join("");
 }
 
@@ -301,7 +333,7 @@ export function checkValues(card: Card, raw: Record<string, unknown>): Record<st
 }
 
 /** How an action reads, for the role and the topic's history. */
-export function actionText(card: Card, label: string, values: Record<string, unknown>): string {
+export function actionText(card: Card, label: string, values: Record<string, unknown>, appData?: unknown): string {
   const labels = new Map(cardInputs(card).map((i) => [i.name, i] as const));
   const shown = Object.entries(values).map(([k, v]) => {
     const input = labels.get(k);
@@ -314,5 +346,7 @@ export function actionText(card: Card, label: string, values: Record<string, unk
         : (input?.options?.find((o) => o.value === v)?.label ?? String(v));
     return `${input?.label ?? k}：${text}`;
   });
+  // what an app sent with the action, as it sent it
+  if (appData !== undefined) shown.push(`小应用提交的数据：${JSON.stringify(appData)}`);
   return `点击了卡片${card.title ? `「${card.title}」` : ""}的「${label}」${shown.length ? `\n${shown.join("\n")}` : ""}`;
 }

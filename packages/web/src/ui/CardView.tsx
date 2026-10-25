@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { api } from "../api/client";
 import type { CardBlock, CardInput, CardLeafBlock, Message, StoredCard } from "../api/types";
 import { fmtTime } from "../lib/format";
+import { AppFrame } from "./AppFrame";
 import { CardChart } from "./CardChart";
-import { useAction } from "./feedback";
+import { useAction, useFeedback } from "./feedback";
 import { Markdown } from "./Markdown";
 
 /**
@@ -224,14 +225,38 @@ export function CardView({
   const { spec, state } = card;
   const [values, setValues] = useState<Values>(() => initialValues(spec.blocks));
   const { run, busy } = useAction();
+  const { confirm, toast } = useFeedback();
   const closed = state.closed;
   const disabled = closed || !canAct || busy;
 
-  const act = async (action: string) => {
+  const act = async (action: string, appData?: unknown) => {
     const out = await run(() =>
-      api.post<{ message: Message }>(`/api/topics/${topicId}/messages/${messageId}/card-actions`, { action, values }),
+      api.post<{ message: Message }>(`/api/topics/${topicId}/messages/${messageId}/card-actions`, {
+        action,
+        values,
+        ...(appData !== undefined ? { app_data: appData } : {}),
+      }),
     );
     if (out) onChange?.(out.message);
+  };
+
+  // An app asks to submit one of the card's actions: the person sees what it sends and decides.
+  const fromApp = async (actionId: string, data: unknown) => {
+    const action = (spec.actions ?? []).find((a) => a.id === actionId && !a.url);
+    if (!action) return toast(`小应用请求的操作「${actionId}」不在这张卡片上`, "bad");
+    if (closed || !canAct) return toast(closed ? "这张卡片已经关闭" : "你只能查看这张卡片", "bad");
+    const shown = JSON.stringify(data, null, 2) ?? "null";
+    const ok = await confirm({
+      title: `小应用请求提交「${action.label}」`,
+      body: (
+        <>
+          <p>提交后会记录在卡片上，并交给发卡片的 AI 员工。随附的数据：</p>
+          <pre className="wapp-data">{shown.length > 2000 ? `${shown.slice(0, 2000)}…` : shown}</pre>
+        </>
+      ),
+      confirmLabel: "提交",
+    });
+    if (ok) await act(action.id, data);
   };
 
   const render = (b: CardLeafBlock | CardBlock, key: string): React.ReactNode => {
@@ -292,6 +317,15 @@ export function CardView({
         return <hr key={key} className="wcard-divider" />;
       case "tabs":
         return <Tabs key={key} block={b} render={render} />;
+      case "app":
+        return (
+          <AppFrame
+            key={key}
+            app={b}
+            storageKey={`witden.app.${messageId}.${key}`}
+            onSend={(action, data) => void fromApp(action, data)}
+          />
+        );
       case "input":
         return (
           <Field

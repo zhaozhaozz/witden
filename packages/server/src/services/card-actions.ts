@@ -44,6 +44,8 @@ export async function applyCardAction(
   actionId: string,
   rawValues: Record<string, unknown>,
   via: string,
+  /** Data the card's app sent with the action (console only; the person confirmed it). */
+  appData?: unknown,
 ): Promise<{ card: StoredCard; message: Message }> {
   const card = storedCard(msg);
   if (!card || msg.deletedAt) throw new NotFound("this message has no card");
@@ -56,6 +58,8 @@ export async function applyCardAction(
   } catch (err) {
     throw new BadRequest((err as Error).message);
   }
+  if (appData !== undefined && Buffer.byteLength(JSON.stringify(appData) ?? "") > 4000)
+    throw new BadRequest("小应用提交的数据太大（最多 4 KB）");
   const state: CardState = {
     actions: [
       ...card.state.actions,
@@ -67,6 +71,7 @@ export async function applyCardAction(
         user_name: user.name,
         at: new Date().toISOString(),
         via,
+        ...(appData !== undefined ? { app_data: appData } : {}),
       },
     ],
     closed: !!card.spec.once,
@@ -82,7 +87,7 @@ export async function applyCardAction(
   // To the role that posted it, in the card's thread; the card itself shows the choice everywhere.
   const roleId = msg.authorType === "role" && msg.authorId ? msg.authorId : null;
   const present = roleId && (await participant(db, topic.id, "role", roleId));
-  const said = await saveMessage(db, topic, "user", user.id, actionText(card.spec, action.label, values), {
+  const said = await saveMessage(db, topic, "user", user.id, actionText(card.spec, action.label, values, appData), {
     mentions: present ? [{ type: "role", id: roleId }] : [],
     replyToId: msg.replyToId ?? msg.id,
     source: via === "console" ? "web" : via,

@@ -5422,3 +5422,54 @@ body.resizing {
 .wchart-pie .wchart-legend {
   flex-direction: column;
 }
+
+/* Card apps (ui/AppFrame.tsx): a sandboxed frame under a thin bar saying what it is. */
+.wapp {
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.wapp-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 4px 2px 10px;
+  background: var(--paper-2);
+  border-bottom: 1px solid var(--line-2);
+}
+.wapp-tools {
+  display: flex;
+  gap: 2px;
+}
+.wapp-notice {
+  padding: 4px 10px;
+  background: var(--wait-bg);
+  color: var(--wait);
+}
+.wapp-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: var(--surface);
+}
+.wapp-full {
+  position: fixed;
+  inset: 24px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-pop);
+}
+.wapp-full .wapp-frame {
+  flex: 1;
+  height: auto;
+}
+.wapp-data {
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--paper-2);
+  font-size: 12px;
+}
