@@ -17,6 +17,7 @@ import { Readable } from "node:stream";
 import { createGzip, gunzipSync } from "node:zlib";
 import { and, asc, count, eq, inArray, isNull } from "drizzle-orm";
 import tar from "tar-stream";
+import yauzl from "yauzl";
 import type { Db } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { type Role, type RoleSkill, type RoleSkillFile, roleSkillFiles, roleSkills, type Task } from "../db/schema.js";
@@ -476,22 +477,27 @@ export function skillArchive(skill: RoleSkill, files: RoleSkillFile[]): Readable
   return Readable.from(pack).pipe(gzip);
 }
 
-/**
- * A skill archive (.tar.gz or .tar): SKILL.md at its top or in its only top-level directory, and the files next to
- * it, their content stored. Entries that are not regular files are left out and named in ``skipped``.
- */
-export async function readSkillArchive(
-  data: Buffer,
-  blobs: SkillBlobs,
-): Promise<{ dirName: string | null; markdown: string; files: StoredSkillFile[]; skipped: string[] }> {
+interface ArchiveEntry {
+  name: string;
+  data: Buffer;
+  mode: number;
+}
+
+/** A zip starts with a local file header (or, when empty, with the end of its central directory). */
+const isZip = (data: Buffer) =>
+  data[0] === 0x50 && data[1] === 0x4b && [3, 5].includes(data[2]) && data[3] === data[2] + 1;
+
+/** What packing on macOS adds next to a folder: no part of the skill. */
+const isPackingLeftover = (name: string) => name.split("/")[0] === "__MACOSX" || name.split("/").at(-1) === ".DS_Store";
+
+async function tarEntries(data: Buffer, skipped: string[]): Promise<ArchiveEntry[]> {
   let raw: Buffer;
   try {
     raw = data[0] === 0x1f && data[1] === 0x8b ? gunzipSync(data) : data;
   } catch {
     throw new BadRequest("the archive is not a valid .tar.gz");
   }
-  const entries: { name: string; data: Buffer; mode: number }[] = [];
-  const skipped: string[] = [];
+  const entries: ArchiveEntry[] = [];
   const extract = tar.extract();
   extract.end(raw);
   try {
@@ -508,6 +514,71 @@ export async function readSkillArchive(
   } catch {
     throw new BadRequest("the archive is not a valid .tar.gz or .tar");
   }
+  return entries;
+}
+
+/**
+ * The entries of a .zip. Unix file types and modes come from the high half of the external attributes; a zip made
+ * where there are none (Windows, some tools) gives 0, and then a file is executable when it starts with "#!", as
+ * in an upload from the console.
+ */
+async function zipEntries(data: Buffer, skipped: string[]): Promise<ArchiveEntry[]> {
+  let zip: yauzl.ZipFile;
+  try {
+    zip = await yauzl.fromBufferPromise(data, { lazyEntries: true, strictFileNames: false });
+  } catch {
+    throw new BadRequest("the archive is not a valid .zip");
+  }
+  const entries: ArchiveEntry[] = [];
+  try {
+    await new Promise<void>((resolve, reject) => {
+      zip.on("error", reject);
+      zip.on("end", () => resolve());
+      zip.on("entry", async (entry: yauzl.Entry) => {
+        try {
+          const name = entry.fileName
+            .replace(/\\/g, "/")
+            .replace(/^(\.\/)+/, "")
+            .replace(/\/+$/, "");
+          const unix = entry.versionMadeBy >> 8 === 3 ? entry.externalFileAttributes >>> 16 : 0;
+          const type = unix & 0o170000;
+          const excluded =
+            !name || isPackingLeftover(name) || name.split("/").some((p) => SKILL_DIR_EXCLUDE.includes(p));
+          if (excluded || entry.fileName.endsWith("/") || type === 0o040000) {
+            // directories need no entry of their own
+          } else if ((type && type !== 0o100000) || entry.isEncrypted()) skipped.push(name);
+          else {
+            const chunks: Buffer[] = [];
+            for await (const chunk of await zip.openReadStreamPromise(entry)) chunks.push(chunk as Buffer);
+            const content = Buffer.concat(chunks);
+            const mode = unix & 0o777 ? unix & 0o777 : content.subarray(0, 2).toString() === "#!" ? 0o755 : 0o644;
+            entries.push({ name, data: content, mode });
+          }
+          zip.readEntry();
+        } catch (err) {
+          reject(err);
+        }
+      });
+      zip.readEntry();
+    });
+  } catch {
+    throw new BadRequest("the archive is not a valid .zip");
+  } finally {
+    zip.close();
+  }
+  return entries;
+}
+
+/**
+ * A skill archive (.zip, .tar.gz or .tar): SKILL.md at its top or in its only top-level directory, and the files next
+ * to it, their content stored. Entries that are not regular files are left out and named in ``skipped``.
+ */
+export async function readSkillArchive(
+  data: Buffer,
+  blobs: SkillBlobs,
+): Promise<{ dirName: string | null; markdown: string; files: StoredSkillFile[]; skipped: string[] }> {
+  const skipped: string[] = [];
+  const entries = isZip(data) ? await zipEntries(data, skipped) : await tarEntries(data, skipped);
   // SKILL.md at the top, or in the one directory everything is in.
   const tops = new Set(entries.map((e) => e.name.split("/")[0]));
   const dirName =

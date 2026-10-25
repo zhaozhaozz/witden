@@ -327,7 +327,7 @@ export function SkillList({
     content: d.content.trim(),
   });
   const sorted = (rows: RoleSkill[]) => [...rows].sort((a, b) => a.name.localeCompare(b.name));
-  /** A skill package (.tar.gz, as downloaded): a skill of the same name is replaced only after asking. */
+  /** A skill package (.zip, or .tar.gz as downloaded): a skill of the same name is replaced only after asking. */
   const importArchive = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
@@ -395,7 +395,7 @@ export function SkillList({
             type="button"
             className="btn btn-xs btn-ghost memory-add"
             disabled={busy}
-            title="导入 .tar.gz 技能包：SKILL.md 和它旁边的文件"
+            title="导入 .zip、.tar.gz 或 .tar 技能包：SKILL.md 和它旁边的文件"
             onClick={() => archiveInput.current?.click()}
           >
             导入技能包
@@ -404,7 +404,7 @@ export function SkillList({
             ref={archiveInput}
             type="file"
             hidden
-            accept=".tar.gz,.tgz,.tar,application/gzip"
+            accept=".zip,.tar.gz,.tgz,.tar,application/zip,application/gzip"
             aria-label="技能包"
             onChange={importArchive}
           />

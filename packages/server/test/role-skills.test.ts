@@ -9,6 +9,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 import { eq } from "drizzle-orm";
 import tar from "tar-stream";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import yazl from "yazl";
 import { buildEnvelope, createTask } from "../src/agent/dispatch.js";
 import type { ChatMessage, ToolSchema } from "../src/agent/llm.js";
 import { TOOLS, toolsFor } from "../src/agent/tools.js";
@@ -369,6 +370,19 @@ function targz(entries: { name: string; text: string; mode?: number; type?: "sym
     pack.on("data", (c: Buffer) => chunks.push(c));
     pack.on("end", () => resolve(gzipSync(Buffer.concat(chunks))));
     pack.on("error", reject);
+  });
+}
+
+/** A .zip of these entries; ``mode`` is the Unix mode with its file type (0o100000 alone: a file without modes). */
+function zip(entries: { name: string; text: string; mode?: number }[]): Promise<Buffer> {
+  const z = new yazl.ZipFile();
+  for (const e of entries) z.addBuffer(Buffer.from(e.text), e.name, { mode: e.mode ?? 0o100644 });
+  z.end();
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    z.outputStream.on("data", (c: Buffer) => chunks.push(c));
+    z.outputStream.on("end", () => resolve(Buffer.concat(chunks)));
+    z.outputStream.on("error", reject);
   });
 }
 
@@ -766,6 +780,42 @@ describe("skill files", () => {
     expect((await w.api("DELETE", copy, { token: w.alice })).status).toBe(200);
     expect(keys.some((k) => fs.existsSync(storedPath(k)))).toBe(false);
     expect(await stored(imported.body.id)).toEqual([]);
+  });
+
+  it("people import a skill package as a .zip too: modes kept, scripts without modes found by #!, packing leftovers and links left out", async () => {
+    const importZip = (data: Buffer, q = "") =>
+      w.api("POST", `/api/roles/${w.ids.dev}/skills/import${q}`, {
+        token: w.alice,
+        ...multipart([{ name: "file", value: data, filename: "deploy.zip" }]),
+      });
+    const pkg = await zip([
+      { name: "deploy/SKILL.md", text: "---\nname: deploy\ndescription: When deploying.\n---\nRun scripts/go.sh.\n" },
+      { name: "deploy/scripts/go.sh", text: "#!/bin/sh\necho go\n", mode: 0o100755 },
+      { name: "deploy/scripts/plain.sh", text: "#!/bin/sh\necho plain\n", mode: 0o100000 },
+      { name: "deploy/notes.txt", text: "notes", mode: 0o100000 },
+      { name: "deploy/link", text: "/etc/passwd", mode: 0o120777 },
+      { name: "deploy/.DS_Store", text: "x" },
+      { name: "__MACOSX/deploy/._SKILL.md", text: "x" },
+    ]);
+    const imported = await importZip(pkg);
+    expect(imported.status, imported.raw).toBe(200);
+    expect(imported.body).toMatchObject({
+      name: "deploy",
+      description: "When deploying.",
+      content: "Run scripts/go.sh.",
+      skipped: ["deploy/link"],
+    });
+    expect(imported.body.files.map((f: any) => [f.path, f.executable])).toEqual([
+      ["notes.txt", false],
+      ["scripts/go.sh", true],
+      ["scripts/plain.sh", true],
+    ]);
+    // SKILL.md at the top works as well; a broken .zip is refused
+    const top = await zip([{ name: "SKILL.md", text: "---\nname: top\ndescription: Top.\n---\nx" }]);
+    expect((await importZip(top)).body.name).toBe("top");
+    const broken = await importZip(Buffer.concat([Buffer.from("PK\x03\x04"), Buffer.alloc(40)]));
+    expect(broken.status, broken.raw).toBe(400);
+    expect(broken.raw).toContain(".zip");
   });
 
   it("a copied role gets the skills' files as its own copies", async () => {
