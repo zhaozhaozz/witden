@@ -17,8 +17,6 @@ export const SKILL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 /** Every prompt of the role lists each description: keep them short. */
 export const SKILL_DESCRIPTION_MAX_CHARS = 500;
 export const SKILL_CONTENT_MAX_CHARS = 64000;
-/** Bounds the list in every prompt (at most this many descriptions). */
-export const ROLE_SKILLS_MAX = 50;
 
 export interface SkillFields {
   name: string;
@@ -112,12 +110,6 @@ async function checkName(db: Db, roleId: string, name: string, except?: string):
 export async function createSkill(db: Db, role: Role, fields: SkillFields, by: SkillActor): Promise<RoleSkill> {
   if (role.systemAdmin) throw new BadRequest("system administrator roles have no skills");
   await checkName(db, role.id, fields.name);
-  const [{ n }] = await db
-    .select({ n: count() })
-    .from(roleSkills)
-    .where(and(eq(roleSkills.roleId, role.id), isNull(roleSkills.deletedAt)));
-  if (n >= ROLE_SKILLS_MAX)
-    throw new BadRequest(`a role has at most ${ROLE_SKILLS_MAX} skills: change or delete one instead`);
   const [skill] = await db
     .insert(roleSkills)
     .values({

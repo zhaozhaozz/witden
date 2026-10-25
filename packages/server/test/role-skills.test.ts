@@ -12,7 +12,7 @@ import { TOOLS, toolsFor } from "../src/agent/tools.js";
 import { db, transaction } from "../src/db/client.js";
 import { newId } from "../src/db/ids.js";
 import { type Role, roleSkills, roles, tasks, users } from "../src/db/schema.js";
-import { ROLE_SKILLS_MAX, roleSkillRefusal } from "../src/services/role-skills.js";
+import { roleSkillRefusal } from "../src/services/role-skills.js";
 import { getRole, getTopic } from "../src/services/topics.js";
 import { call, lastToolResult, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -283,12 +283,9 @@ describe("role skills", () => {
     // the name is free again
     expect((await addSkill(w.ids.dev, ok)).status).toBe(200);
 
-    // every prompt lists them all: a role keeps a bounded number
-    for (let i = (await skillsOf(w.ids.dev)).length; i < ROLE_SKILLS_MAX; i++)
-      expect((await addSkill(w.ids.dev, { ...ok, name: `skill-${i}` })).status).toBe(200);
-    const over = await addSkill(w.ids.dev, { ...ok, name: "one-more" });
-    expect(over.status).toBe(400);
-    expect(over.raw).toContain(`at most ${ROLE_SKILLS_MAX} skills`);
+    // there is no limit on how many skills a role keeps
+    for (let i = 0; i < 60; i++) expect((await addSkill(w.ids.dev, { ...ok, name: `skill-${i}` })).status).toBe(200);
+    expect((await skillsOf(w.ids.dev)).length).toBe(62);
   });
 
   it("a copied role gets the skills (not the role memory); deleting a role deletes its skills", async () => {

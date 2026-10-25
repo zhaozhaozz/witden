@@ -43,7 +43,6 @@ import {
   changeSkill,
   createSkill,
   deleteSkill,
-  ROLE_SKILLS_MAX,
   roleSkillRefusal,
   SKILL_CONTENT_MAX_CHARS,
   SKILL_DESCRIPTION_MAX_CHARS,
@@ -1573,7 +1572,7 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ...spec(
         "save_skill",
         "skills",
-        `Create or replace one of your own skills: instructions for a kind of work you will do again (how to cut a release here, how this team reviews a pull request, how to use an internal tool), so you do it well every time. An existing skill of the same name is replaced whole: read it first and keep what still holds. Your skills are listed in every prompt of yours, wherever you work, and may come up in front of anyone you talk to: nothing confidential, personal or about one place only. At most ${ROLE_SKILLS_MAX} skills. Only while you work for a witden administrator (a console account).`,
+        `Create or replace one of your own skills: instructions for a kind of work you will do again (how to cut a release here, how this team reviews a pull request, how to use an internal tool), so you do it well every time. An existing skill of the same name is replaced whole: read it first and keep what still holds. Your skills are listed in every prompt of yours, wherever you work, and may come up in front of anyone you talk to: nothing confidential, personal or about one place only. Only while you work for a witden administrator (a console account).`,
         obj(
           {
             name: { type: "string", description: "a short slug: lowercase letters, digits, . _ -, e.g. release-check" },
