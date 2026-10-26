@@ -37,7 +37,6 @@ import { SessionRuns } from "../sessionParts";
 import { SkillList } from "../skillParts";
 import { TaskControls, TaskStatusChip } from "../tasks/taskParts";
 import { TopicComputer, topicComputers } from "./TopicComputer";
-import { TopicLinksTab } from "./TopicLinksTab";
 import { TriggersTab } from "./TriggersTab";
 import { InviteDialog } from "./topicDialogs";
 
@@ -185,14 +184,6 @@ export function TopicSidePanel({
                 )}
               </div>
             </details>
-            {pair ? null : (
-              <details className="sidebar-settings-section" open>
-                <summary>关联话题</summary>
-                <div className="sidebar-settings-body">
-                  <TopicLinksTab topic={topic} />
-                </div>
-              </details>
-            )}
             <details className="sidebar-settings-section" open>
               <summary>{dm ? "私信设置" : pair ? "对话设置" : "话题设置"}</summary>
               <div className="sidebar-settings-body">
@@ -510,7 +501,7 @@ function PairRolesTab({ topic }: { topic: Topic }) {
       ))}
       <p className="small muted side-note">
         每位 AI 员工只能主动联系在它的设置「协作」中允许的 AI
-        员工，对方的回复不需要设置。这段对话里没有成员，不能邀请其他成员或 AI 员工，也不能关联话题或添加触发器。
+        员工，对方的回复不需要设置。这段对话里没有成员，不能邀请其他成员或 AI 员工，也不能添加触发器。
       </p>
     </div>
   );

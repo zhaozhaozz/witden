@@ -515,8 +515,13 @@ export interface InboxItem {
   /** result: a task this conversation started or delegated finished. */
   task_id?: string;
   revision?: number;
-  /** Server-generated linked-message origin, never accepted from platform payload text. */
+  /** A message another AI employee sent here from another topic: where it came from (set by the server). */
   topic_delivery?: import("../services/collaboration-policy.js").TopicDelivery;
+  /**
+   * message: that AI employee @-mentioned this one from another topic (agent/topic-messaging.ts); its answer here
+   * goes to that AI employee's conversation in this topic. ``answered``: when it was sent.
+   */
+  answer_to?: string;
   /** The limits of the input behind it (another role's @-mention, a result, a follow-up): the run keeps them. */
   limits?: import("../services/collaboration-policy.js").SourceLimits;
   /** timer: the role's own follow-up (shown once ``due`` has passed); instruction: a console note. */
@@ -536,7 +541,7 @@ export interface InboxItem {
    * its answer goes; reply: the answer to the role's own message (message_id), or why none came (note).
    */
   contact?: import("../services/collaboration-policy.js").ContactRoute;
-  /** message with ``contact``: when the answer was sent back (it is owed from when the run was shown it). */
+  /** message with ``contact`` or ``answer_to``: when the answer was sent back (owed from when the run was shown it). */
   answered?: string;
 }
 
@@ -1050,23 +1055,6 @@ export const platformSettings = pgTable("platform_settings", {
   updatedBy: text("updated_by"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
-
-/** Explicit, bidirectional topic-message links. Linking does not grant history access. */
-export const topicLinks = pgTable(
-  "topic_links",
-  {
-    id: id(),
-    topicAId: text("topic_a_id")
-      .notNull()
-      .references(() => topics.id, { onDelete: "cascade" }),
-    topicBId: text("topic_b_id")
-      .notNull()
-      .references(() => topics.id, { onDelete: "cascade" }),
-    createdBy: text("created_by").notNull(),
-    createdAt: created(),
-  },
-  (t) => [uniqueIndex("ux_topic_link_pair").on(t.topicAId, t.topicBId), index("ix_topic_link_b").on(t.topicBId)],
-);
 
 /**
  * Every webhook trigger receives through one of these; one source may feed several independent rules. Its

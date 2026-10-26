@@ -1230,3 +1230,62 @@ describe("0053_topic_handler_role", () => {
     await db.close();
   });
 });
+
+describe("0054_drop_topic_links", () => {
+  it("drops topic links and what was sent through them and not taken up yet; other work is untouched", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0054")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    const route = { link_id: "tln_1", source_topic_id: "top_group" };
+    const item = (message: string, extra: object = {}) =>
+      JSON.stringify({ kind: "message", at: "2026-10-20T00:00:00.000Z", message_id: message, ...extra });
+    await db.exec(`
+      insert into roles (id, name, handle) values ('role_test', 'Test', 'test');
+      insert into topics (id, title, kind) values ('top_group', '#group', 'group'), ('top_work', 'work', 'group');
+      insert into topic_links (id, topic_a_id, topic_b_id, created_by) values ('tln_1', 'top_group', 'top_work', 'usr_admin');
+      insert into messages (id, topic_id, author_type, author_id, content, source, external_ref) values
+        ('msg_linked', 'top_work', 'role', 'role_dev', 'please review', 'topic', '{"topic_delivery": ${JSON.stringify(route)}}'),
+        ('msg_out', 'top_group', 'role', 'role_test', 'review done', 'topic', '{"topic_delivery": ${JSON.stringify(route)}}'),
+        ('msg_person', 'top_work', 'user', 'usr_alice', 'hello', 'web', null);
+      insert into agent_sessions (id, role_id, topic_id, inbox) values ('ses_work', 'role_test', 'top_work', '[
+        ${item("msg_linked", { topic_delivery: route })},
+        ${item("msg_seen", { topic_delivery: route, done: "2026-10-20T01:00:00.000Z" })},
+        ${item("msg_person")},
+        {"kind": "timer", "at": "2026-10-20T00:00:00.000Z"}
+      ]');
+      insert into message_routes (message_id, topic_id, user_id) values
+        ('msg_linked', 'top_work', 'usr_alice'), ('msg_person', 'top_work', 'usr_alice');
+      insert into outbound_messages (id, connection_id, conversation_external_id, message_id, idempotency_key) values
+        ('out_linked', 'conn_s', 'C1', 'msg_out', 'msg_out:lnk'), ('out_person', 'conn_s', 'C1', 'msg_person', 'msg_person:lnk');
+      insert into tasks (id, topic_id, title, owner_role_id, envelope) values
+        ('task_linked', 'top_work', 'review', 'role_test', '{"outside": true, "topic_routes": [${JSON.stringify(route)}]}');
+    `);
+    await apply(db, "0054_drop_topic_links");
+    expect((await db.query("select to_regclass('topic_links') as t")).rows).toEqual([{ t: null }]);
+    // an unread linked message is dropped, as when a person unlinked; the rest stays as it was
+    const inbox = (await db.query<{ inbox: any[] }>("select inbox from agent_sessions")).rows[0].inbox;
+    expect(inbox.map((i) => [i.message_id ?? i.kind, !!i.done])).toEqual([
+      ["msg_linked", true],
+      ["msg_seen", true],
+      ["msg_person", false],
+      ["timer", false],
+    ]);
+    expect(inbox[1].done).toBe("2026-10-20T01:00:00.000Z");
+    expect((await db.query("select message_id, status from message_routes order by message_id")).rows).toEqual([
+      { message_id: "msg_linked", status: "done" },
+      { message_id: "msg_person", status: "pending" },
+    ]);
+    expect((await db.query("select id, status from outbound_messages order by id")).rows).toEqual([
+      { id: "out_linked", status: "blocked" },
+      { id: "out_person", status: "pending" },
+    ]);
+    // work a linked message started is left to the membership check at its next step
+    expect((await db.query("select envelope from tasks")).rows).toEqual([
+      { envelope: { outside: true, topic_routes: [route] } },
+    ]);
+    await db.close();
+  });
+});

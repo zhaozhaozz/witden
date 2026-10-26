@@ -22,7 +22,6 @@ import { newId } from "../db/ids.js";
 import { type Message, messageRoutes, messages, type Role, type Topic, topics, usageRecords } from "../db/schema.js";
 import { redact } from "../security/crypto.js";
 import { audit } from "../services/audit.js";
-import { relayFrom } from "../services/collaboration-policy.js";
 import * as models from "../services/model-configs.js";
 import { DISPATCHER, type DispatcherSetting, getSetting } from "../services/platform-settings.js";
 import { chatDispatchRequest, chooseWithChat, DISPATCH_GOAL_CHARS } from "./chat-dispatch.js";
@@ -30,7 +29,6 @@ import { enqueue } from "./conversation.js";
 import { activeRoleIds, authorize, systemMessage } from "./dispatch.js";
 import type { Decision, Question } from "./systemone.js";
 import { authorName } from "./tools.js";
-import { linkedCandidates } from "./topic-messaging.js";
 
 const MAX_ATTEMPTS = 3;
 /** A role this likely, besides the most likely one, takes the message too. */
@@ -76,12 +74,9 @@ export async function routeMessage(messageId: string): Promise<void> {
   try {
     const p = await transaction((tx) => prepare(tx, messageId));
     if (!p) return;
-    // Work sent from a linked topic always reaches exactly one role here: the sender expects it handled.
-    const linked = p.msg.source === "topic";
     if (p.candidates.length <= 1 || !p.decide) {
-      // One usable role: it decides itself. None, or no dispatcher: nobody takes the message (linked work: the
-      // first role).
-      const take = p.candidates.length === 1 || (linked && p.candidates.length) ? [p.candidates[0]] : [];
+      // One usable role: it decides itself. None, or no dispatcher: nobody takes the message.
+      const take = p.candidates.length === 1 ? [p.candidates[0]] : [];
       await transaction((tx) => apply(tx, p, take, p.problem ?? ""));
       return;
     }
@@ -132,19 +127,10 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
   const [msg] = await db.select().from(messages).where(eq(messages.id, messageId)).limit(1);
   const [topic] = msg ? await db.select().from(topics).where(eq(topics.id, msg.topicId)).limit(1) : [];
   // Deleted, archived, or switched back to @-mentions meanwhile: nothing to route.
-  if (
-    !msg ||
-    msg.deletedAt ||
-    !topic ||
-    topic.status !== "active" ||
-    (topic.responseMode !== "auto" && msg.source !== "topic")
-  )
+  if (!msg || msg.deletedAt || !topic || topic.status !== "active" || topic.responseMode !== "auto")
     return done({ skipped: true });
   // Only roles this person may use are offered to the dispatcher.
-  const allowed =
-    msg.source === "topic"
-      ? await linkedCandidates(db, topic, msg)
-      : (await authorize(db, topic, route.userId, await activeRoleIds(db, topic))).allowed;
+  const allowed = (await authorize(db, topic, route.userId, await activeRoleIds(db, topic))).allowed;
   const candidates = allowed.map(([role]) => role);
   const base: Prepared = {
     msg,
@@ -164,7 +150,6 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
   else if (models.unusableReason(found.model, found.provider))
     problem = `the dispatcher model is unavailable: ${models.unusableReason(found.model, found.provider)}`;
   if (problem || !found) return { ...base, problem };
-  const linked = msg.source === "topic";
   const label = models.modelLabel(found.model, found.provider);
   let decide: () => Promise<Dispatch>;
   if (models.isSystemOne(found.provider)) {
@@ -173,12 +158,6 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
     decide = async () => {
       const answer = await model.decide(request.state, request.questions);
       const decision = readDecision(answer, candidates);
-      if (linked) {
-        const odds = answer.answers.who?.probabilities ?? {};
-        const likeliest = [...candidates].sort((a, b) => (odds[b.handle] ?? 0) - (odds[a.handle] ?? 0))[0];
-        const top = decision.roles.find((r) => r.handle === answer.answers.who?.choice);
-        decision.roles = [top ?? likeliest];
-      }
       return { ...decision, inputTokens: answer.inputTokens, outputTokens: answer.outputTokens };
     };
   } else {
@@ -186,10 +165,8 @@ async function prepare(db: Db, messageId: string): Promise<Prepared | null> {
     const request = await chatDispatchRequest(db, msg, topic, candidates);
     decide = async () => {
       const chosen = await chooseWithChat(model, request, candidates);
-      // Linked work always reaches exactly one role: the first chosen, else the first offered.
-      const roles = linked ? [chosen.roles[0] ?? candidates[0]] : chosen.roles;
-      const picked = roles.map((r) => `@${r.handle}`).join(", ") || "no role";
-      return { ...chosen, roles, reason: `${label}: ${picked}${chosen.reason ? ` — ${chosen.reason}` : ""}` };
+      const picked = chosen.roles.map((r) => `@${r.handle}`).join(", ") || "no role";
+      return { ...chosen, reason: `${label}: ${picked}${chosen.reason ? ` — ${chosen.reason}` : ""}` };
     };
   }
   return { ...base, decide, modelConfigId: found.model.id };
@@ -233,19 +210,16 @@ async function apply(db: Db, p: Prepared, chosen: Role[], reason: string): Promi
   if (route?.status !== "routing") return;
   if (p.problem) await reportProblem(db, p);
   // Permissions are checked again: they may have changed while the model was answering.
-  const relay = p.msg.source === "topic" ? relayFrom(p.msg.externalRef) : null;
   const allowed = !chosen.length
     ? []
-    : relay
-      ? (await linkedCandidates(db, p.topic, p.msg)).filter(([r]) => chosen.some((c) => c.id === r.id)).slice(0, 1)
-      : (
-          await authorize(
-            db,
-            p.topic,
-            p.userId,
-            chosen.map((r) => r.id),
-          )
-        ).allowed;
+    : (
+        await authorize(
+          db,
+          p.topic,
+          p.userId,
+          chosen.map((r) => r.id),
+        )
+      ).allowed;
   const created: string[] = [];
   for (const [role, assignment] of allowed) {
     const trace = [...(assignment.trace ?? []), { step: "dispatcher", detail: reason || "only role in the topic" }];
@@ -253,11 +227,10 @@ async function apply(db: Db, p: Prepared, chosen: Role[], reason: string): Promi
     const run = await enqueue(db, {
       topic: p.topic,
       role,
-      item: { kind: "message", message_id: p.msg.id, ...(relay ? { topic_delivery: relay } : { auto: true }) },
+      item: { kind: "message", message_id: p.msg.id, auto: true },
       requesterUserId: p.userId,
-      requesterRoleId: relay?.sender_role_id,
       sourceMessage: p.msg,
-      assignment: { ...assignment, trace, ...(relay ? { topic_delivery: relay } : {}) },
+      assignment: { ...assignment, trace },
       round: p.msg.round,
     });
     if (run) created.push(run.id);

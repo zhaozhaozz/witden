@@ -1,4 +1,4 @@
-/** Pure invariants shared by linked messages, automation and task continuations. */
+/** Pure invariants shared by cross-topic messages, automation and task continuations. */
 export interface MessageOrigin {
   topic_id: string;
   message_id: string | null;
@@ -8,15 +8,21 @@ export interface MessageOrigin {
   automated?: boolean;
 }
 
+/**
+ * A message an AI employee sent into another group topic it takes part in (agent/topic-messaging.ts): where it came
+ * from and for whom, kept by the server with the message (``topic_delivery``) and with the work it starts
+ * (``topic_routes``).
+ */
 export interface TopicDelivery {
-  link_id: string;
+  /** Only on messages sent through a topic link, before links were removed (migration 0054). */
+  link_id?: string;
   source_topic_id: string;
   source_message_id: string | null;
   sender_role_id: string;
   source_task_id: string;
   related_task_id?: string | null;
   origin: MessageOrigin;
-  /** Forwarding never turns another bot's message into a new human round. */
+  /** Another topic's message never starts a new human round. */
   round: number;
 }
 
@@ -34,15 +40,6 @@ export interface ContactRoute {
   session_id: string | null;
   /** The person the sender was working for. */
   user_id: string | null;
-}
-
-export function orderedPair(a: string, b: string): [string, string] {
-  if (!a || !b || a === b) throw new Error("choose two different topics");
-  return a < b ? [a, b] : [b, a];
-}
-
-export function messageDisposition(external: boolean, receivedFromPlatform: boolean): "dispatch" | "publish" {
-  return external && !receivedFromPlatform ? "publish" : "dispatch";
 }
 
 export function assertNextRound(current: number, limit: number): number {
@@ -71,15 +68,16 @@ export function narrowEnvelope(original: Record<string, any>, current: Record<st
   };
 }
 
-/** One linked request, however many times it reaches a run. */
+/** One request from another topic, however many times it reaches a run. */
 export const sameRoute = (a: TopicDelivery, b: TopicDelivery) =>
-  a.link_id === b.link_id &&
+  a.source_topic_id === b.source_topic_id &&
   a.source_message_id === b.source_message_id &&
   a.origin.requester_user_id === b.origin.requester_user_id;
 
 /**
  * What a run's input brings with it, whichever role works on it next: input from outside the console (`outside`,
- * `untrusted_input`), from an automation (`automation_event`) and the linked requests it answers (`topic_routes`).
+ * `untrusted_input`), from an automation (`automation_event`) and the requests from other topics it answers
+ * (`topic_routes`).
  * An @-mention hands them to the colleague's run; a delegated task inherits them from its parent (buildEnvelope).
  */
 export interface SourceLimits {
@@ -122,7 +120,7 @@ export function relayFrom(ref: Record<string, any> | null | undefined): TopicDel
   if (
     !r ||
     typeof r !== "object" ||
-    typeof r.link_id !== "string" ||
+    (r.link_id !== undefined && typeof r.link_id !== "string") ||
     typeof r.source_topic_id !== "string" ||
     typeof r.source_task_id !== "string" ||
     typeof r.sender_role_id !== "string" ||

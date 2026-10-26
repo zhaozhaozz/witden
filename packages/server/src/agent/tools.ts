@@ -40,7 +40,7 @@ import { sourceLimits } from "../services/collaboration-policy.js";
 import { configCatalog } from "../services/config-access.js";
 import { saveArtifact } from "../services/files.js";
 import { releaseTask } from "../services/leases.js";
-import { linkedTopicStatus } from "../services/linked-status.js";
+import { memberTopic } from "../services/member-topics.js";
 import { erased, memoryFields, memoryLine, memoryScore } from "../services/memories.js";
 import { ROLE_MEMORY_MAX_CHARS, roleMemories, roleMemoryRefusal } from "../services/role-memory.js";
 import {
@@ -64,6 +64,7 @@ import {
   skillsOf,
 } from "../services/role-skills.js";
 import { editSoftwareList, type SoftwareStatus } from "../services/software.js";
+import { topicStatus } from "../services/topic-status.js";
 import * as topicSvc from "../services/topics.js";
 import { getTriggerEvent, listTriggerEvents, requireWebhookHistory } from "../services/triggers.js";
 import { commandStatus, commandStop, commandWait, runCommand } from "./commands.js";
@@ -79,7 +80,7 @@ import { recordTaskUpdate } from "./task-updates.js";
 import { boundOutput } from "./tool-output.js";
 import { ALL_FEISHU_TOOLS } from "./tools-feishu.js";
 import { GITHUB_TOOLS } from "./tools-github.js";
-import { sendLinkedMessage } from "./topic-messaging.js";
+import { myTopics, postInTopic } from "./topic-messaging.js";
 import { isConversation } from "./transcript.js";
 
 export const TOOL_GROUPS: Record<string, string> = {
@@ -103,16 +104,17 @@ export const ADMIN_TOOL_GROUPS = new Set(["config"]);
 export const ORDINARY_ROLE_GROUPS = new Set(["skills"]);
 /**
  * Groups offered only for work a console account asked for in the console: not in conversations linked to Slack,
- * Feishu or GitHub, nor for requests relayed from them; changing the role or its automation stays in the console.
+ * Feishu or GitHub, nor for work their messages started in other topics; changing the role or its automation
+ * stays in the console.
  */
 export const CONSOLE_ONLY_GROUPS = new Set(["profile", "automation"]);
 
 /**
  * Permissions of a new role unless given: work in its own virtual computer, including sharing files from it
  * into the topic, and writing its own skills are always allowed; platform memory and changing its own description
- * or automation rules ask a person first. Working with the other roles of a topic needs no permission. No tool
- * reads another topic: a role learns of one by taking part in it, through a link, or from a colleague it talks to
- * directly.
+ * or automation rules ask a person first. Working with the other roles of a topic needs no permission, and neither
+ * does working with the other group topics a role takes part in (agent/topic-messaging.ts): that is what it may
+ * read and post to besides its current topic, like an employee in several group chats.
  */
 export const DEFAULT_ALLOWED_TOOLS: string[] = Object.keys(TOOL_GROUPS).filter((g) => !ADMIN_TOOL_GROUPS.has(g));
 /** A new system administrator: the configuration tools; it needs no computer. */
@@ -575,8 +577,28 @@ async function editList(ctx: ToolContext, args: Record<string, any>): Promise<To
 
 async function messageRole(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const handle = String(args.role ?? "").replace(/^@/, "");
+  if (args.topic_id && args.topic_id !== ctx.topicId) {
+    // In another group topic it takes part in: the answer comes there, to its conversation in that topic.
+    const out = await transaction(async (db) => {
+      const { task, role } = await load(ctx, db);
+      return postInTopic(
+        db,
+        task,
+        role,
+        { topic_id: String(args.topic_id), text: String(args.message ?? ""), mention: handle },
+        ctx.toolCallId,
+      );
+    });
+    return {
+      content: `${out.status === "already_accepted" ? "already posted" : "posted"} in topic ${out.topic_id} (message ${out.message_id}); @${handle} answers there, and its answer reaches your conversation in that topic.`,
+    };
+  }
   return transaction(async (db) => {
     const { task, role, topic } = await load(ctx, db);
+    if (task.envelope?.external_topic)
+      throw new BadRequest(
+        "you are the only AI employee in this conversation; @ an AI employee of another group topic you take part in with topic_id",
+      );
     const [targetRole] = await db.select().from(roles).where(eq(roles.handle, handle)).limit(1);
     if (!targetRole) throw new BadRequest(`no role @${handle}`);
     // A mention stays within the topic: it brings in no one (a person invites roles).
@@ -595,18 +617,11 @@ async function sendMessage(ctx: ToolContext, args: Record<string, any>): Promise
   if (args.topic_id && args.topic_id !== ctx.topicId) {
     return transaction(async (db) => {
       const { task, role } = await load(ctx, db);
-      const result = await sendLinkedMessage(
+      const result = await postInTopic(
         db,
         task,
         role,
-        {
-          topic_id: String(args.topic_id),
-          text: String(args.text ?? ""),
-          thread: args.thread,
-          role: args.role,
-          source_message_id: args.source_message_id,
-          task_id: args.task_id,
-        },
+        { topic_id: String(args.topic_id), text: String(args.text ?? ""), thread: args.thread },
         ctx.toolCallId,
       );
       return { content: JSON.stringify(result) };
@@ -706,12 +721,15 @@ async function contactOtherRole(ctx: ToolContext, args: Record<string, any>): Pr
 const HISTORY_LIMIT = 100;
 
 /**
- * Read this topic beyond the recent messages given at the start: page back, search, or read one Slack thread.
- * Lines carry message ids, so a thread or an earlier page can be asked for next.
+ * Read this topic beyond the recent messages given at the start, or another group topic the role takes part in:
+ * page back, search, or read one Slack thread. Lines carry message ids, so a thread or an earlier page can be
+ * asked for next.
  */
 async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promise<ToolResult> {
   const db = ctx.db();
-  const { topic } = await load(ctx, db);
+  const { role, topic: here } = await load(ctx, db);
+  const other = String(args.topic_id ?? "").trim();
+  const topic = other && other !== here.id ? await memberTopic(db, role, other) : here;
   const conds = [eq(messages.topicId, topic.id), isNull(messages.deletedAt)];
   if (args.query) conds.push(ilike(messages.content, `%${String(args.query)}%`));
   if (args.thread) {
@@ -751,7 +769,8 @@ async function topicHistory(ctx: ToolContext, args: Record<string, any>): Promis
       .from(messages)
       .where(and(...conds))
   )[0].n;
-  const text = `${Number(total)} matching message(s) in this topic, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`;
+  const where = topic === here ? "this topic" : `topic ${topic.id} «${topic.title}»`;
+  const text = `${Number(total)} matching message(s) in ${where}, oldest first; showing the latest ${rows.length}.\n${lines.join("\n") || "(none)"}`;
   return { content: await boundOutput(ctx, "topic_history", text) };
 }
 
@@ -1635,12 +1654,19 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       obj({ add: { type: "array", items: str }, remove: { type: "array", items: str } }),
       editList,
     ),
-    // Roles of one topic @ each other without a permission.
+    // Roles @ each other without a permission, in a group topic both take part in.
     spec(
       "message_role",
       null,
-      "Post a message in this topic addressed to another role of this topic (an @-mention): it reads it and answers here. Only roles taking part in this topic can be mentioned.",
-      obj({ role: str, message: str }, ["role", "message"]),
+      "Post a message addressed to another AI employee (an @-mention) so that it answers: in this topic, or with topic_id in another group topic you take part in (my_topics lists them and who is in each). It must take part in that topic; it reads the message and answers there, and an answer in another topic reaches your conversation in that topic. In a Slack, Feishu or GitHub conversation you are the only AI employee: there, use topic_id.",
+      obj(
+        {
+          role: str,
+          message: str,
+          topic_id: { type: "string", description: "Omit for this topic; otherwise a group topic you take part in" },
+        },
+        ["role", "message"],
+      ),
       messageRole,
     ),
     // Like an @-mention: only to a role of this topic, without a permission; work never leaves the topic.
@@ -1820,21 +1846,12 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
     spec(
       "send_message",
       null,
-      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. Set topic_id to send to a directly linked topic. A link joins an external conversation (Slack, Feishu, GitHub) and an internal topic: sent to the internal topic, the message goes to a role there; sent to the external one, it is only published there. Sending there is asynchronous, and thread is then a message in that topic. Links forward nothing by themselves and give no access to the other topic's history.",
+      "Post a message right away and keep working, as a person would: an acknowledgement, a partial result, a question to the room, a follow-up. You can send several. Here it goes where the request was asked (the channel, or the Slack thread); give thread (a message id) to answer in that message's thread instead. With topic_id it goes to another group topic you take part in (my_topics lists them), as your message there: in a console topic nobody acts on it unless you @ them (message_role with topic_id); in a Slack, Feishu or GitHub conversation it is published to its people. thread is then a message in that topic.",
       obj(
         {
           text: str,
-          topic_id: { type: "string", description: "Omit for this topic; otherwise a directly linked topic ID" },
+          topic_id: { type: "string", description: "Omit for this topic; otherwise a group topic you take part in" },
           thread: { type: "string", description: "Message ID IN THE DESTINATION topic whose thread to post in" },
-          source_message_id: {
-            type: "string",
-            description: "Relevant input message in this topic, for mixed requests",
-          },
-          task_id: {
-            type: "string",
-            description: "Optional independent task in this topic whose result/origin is being sent",
-          },
-          role: { type: "string", description: "Optional receiving role in an internal target topic" },
         },
         ["text"],
       ),
@@ -1867,26 +1884,45 @@ export const TOOLS: Map<string, ToolSpec> = new Map(
       ),
       updateCard,
     ),
-    // The link is the permission: an external conversation's role sees linked internal topics' work, not messages.
+    // Membership is the scope (services/member-topics.ts): the group topics a role takes part in, without a
+    // permission. A tool rather than a list in the prompt, which then stays the same from one message to the next.
     spec(
-      "linked_topic_status",
+      "my_topics",
       null,
-      "Check on an internal topic linked to this conversation instead of asking it again: its work in progress (tasks and role conversations: owner, state, what they wait for, progress), recently finished tasks with a short result, and what became of the requests you sent there (taken up by whom, still running or done, messages sent back here). Without topic_id: one line per linked internal topic. Status only: never that topic's messages or files. Tell the people here what matters in your own words.",
-      obj({ topic_id: { type: "string", description: "A directly linked internal topic ID; omit for all of them" } }),
-      async (ctx, args) => {
+      "List the group topics you take part in: console topics and the Slack, Feishu or GitHub group conversations where you are the AI employee at work. For each: its id, title, the start of its goal, where it is, its people and other AI employees, and when it was last active. These are the topics you may read (topic_history), check on (topic_status) and post to (send_message or message_role with topic_id). DMs and direct conversations between AI employees are private and never listed.",
+      obj({}),
+      async (ctx) => {
         const db = ctx.db();
-        const { task } = await load(ctx, db);
-        return {
-          content: await boundOutput(ctx, "linked_topic_status", await linkedTopicStatus(db, task, args.topic_id)),
-        };
+        const { role, topic } = await load(ctx, db);
+        return { content: await boundOutput(ctx, "my_topics", await myTopics(db, role, topic)) };
       },
     ),
     spec(
       "topic_history",
       null,
-      "Read more of this topic than the recent messages you were given: page back (before a message id or time), search for words (query), or read one Slack thread (thread = the id of its first message). Lines start with message ids.",
-      obj({ query: str, before: str, thread: str, limit: int }),
+      "Read more of this topic than the recent messages you were given: page back (before a message id or time), search for words (query), or read one Slack thread (thread = the id of its first message). Lines start with message ids. With topic_id, read another group topic you take part in the same way (my_topics lists them); DMs and direct conversations between AI employees are never read from elsewhere.",
+      obj({
+        query: str,
+        before: str,
+        thread: str,
+        limit: int,
+        topic_id: { type: "string", description: "Omit for this topic; otherwise a group topic you take part in" },
+      }),
       topicHistory,
+    ),
+    spec(
+      "topic_status",
+      null,
+      "Check on the work of a group topic you take part in (topic_id; this topic too) instead of asking there again: its goal and members, its work in progress (tasks and AI employees' conversations: owner, state, what they wait for, progress) and recently finished tasks with a short result. Its messages are read with topic_history.",
+      obj({ topic_id: { type: "string", description: "A group topic you take part in (my_topics lists them)" } }, [
+        "topic_id",
+      ]),
+      async (ctx, args) => {
+        const db = ctx.db();
+        const { role, topic } = await load(ctx, db);
+        const text = await topicStatus(db, role, topic, String(args.topic_id ?? ""));
+        return { content: await boundOutput(ctx, "topic_status", text) };
+      },
     ),
     {
       ...spec(
@@ -2037,13 +2073,14 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         (t.name !== "transfer_task" || !envelope.system_admin) &&
         // A system administrator has no skills.
         (!envelope.system_admin || (t.name !== "read_skill" && !ORDINARY_ROLE_GROUPS.has(t.group ?? ""))) &&
-        // Some only for work that stays in the console (not in, nor relayed from, an external conversation).
+        // Some only for work that stays in the console (not in an external conversation, nor started by its messages).
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
-        // In a Slack, Feishu or GitHub conversation only the role handling it works: there is no other role to @ or hand
-        // work to. A request relayed from there into a console topic may still involve that topic's roles.
-        (!["message_role", "delegate_task", "transfer_task"].includes(t.name) || !envelope.external_topic) &&
-        // Only that role reports on the linked internal topics; an internal topic has no use for an external one's.
-        (t.name !== "linked_topic_status" || !!envelope.external_topic) &&
+        // In a Slack, Feishu or GitHub conversation only the role handling it works: there is no other role to hand
+        // work to (it may @ an AI employee of another group topic it takes part in: message_role with topic_id).
+        // Work its messages start in a console topic may still involve that topic's roles.
+        (!["delegate_task", "transfer_task"].includes(t.name) || !envelope.external_topic) &&
+        // A system administrator works only where it is: no other topic is listed, read or checked on.
+        (!["my_topics", "topic_status"].includes(t.name) || !envelope.system_admin) &&
         // Writing to another role directly: only with someone to write to, never in an external conversation and
         // never for a system administrator. Where two roles talk directly nobody else is asked, involved or handed
         // work (agent/contacts.ts).
@@ -2058,9 +2095,9 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
 }
 
 export function needsApproval(envelope: Record<string, any>, tool: ToolSpec, args?: Record<string, any>): boolean {
-  // @-mentions, delegation and hand-overs stay within the topic and need no permission (an older per-tool setting
-  // is ignored).
-  if (["message_role", "delegate_task", "transfer_task"].includes(tool.name)) return false;
+  // @-mentions, delegation and hand-overs stay within a topic the role takes part in, and listing or checking on
+  // those topics needs no permission either (an older per-tool setting is ignored).
+  if (["message_role", "delegate_task", "transfer_task", "my_topics", "topic_status"].includes(tool.name)) return false;
   // Writing to an allowed AI employee needs no approval either: the person who allowed it decided.
   if (tool.name === "contact_role") return false;
   const required = new Set<string>(envelope.approval_required ?? []);

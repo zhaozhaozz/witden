@@ -88,7 +88,7 @@ export async function chooseWithChat(model: ChatModel, request: ChatMessage[], c
     }
   }
   if (!args || !Array.isArray(args.roles)) throw new ModelError("the dispatcher model did not call choose_roles");
-  // In the model's order: work from a linked topic goes to the first one only.
+  // In the model's order.
   const handles: string[] = [...new Set<string>(args.roles.map((h: unknown) => String(h).replace(/^@/, "")))];
   return {
     roles: handles.map((h) => candidates.find((r) => r.handle === h)).filter((r): r is Role => !!r),

@@ -37,7 +37,7 @@ import { appendStep } from "./transcript.js";
 
 export const MENTION = /(?<![\w@/])@([A-Za-z0-9][A-Za-z0-9_.-]{0,63})/g;
 
-/** The topic a linked message came from (who asked there, and through which connection, stay on the server). */
+/** Where a message posted from another topic came from (who asked there, and how, stays on the server). */
 const sourceTopicOf = (msg: Message) => {
   const relay = relayFrom(msg.externalRef);
   return relay ? { source_topic_id: relay.source_topic_id } : null;
@@ -627,7 +627,7 @@ export async function planDelegation(db: Db, parent: Task, sender: Role, targetH
   const here = await topicSvc.getTopic(db, parent.topicId);
   if ((await externalRoleId(db, here.id)) !== undefined)
     throw new Forbidden(
-      "only the bot's role works in a Slack, Feishu or GitHub conversation; hand work to a linked internal topic with send_message",
+      "only the role handling a Slack, Feishu or GitHub conversation works in it; to get help, @ an AI employee of another group topic you take part in (message_role with topic_id)",
     );
   const handle = targetHandle.replace(/^@/, "");
   const [target] = await db.select().from(roles).where(eq(roles.handle, handle)).limit(1);
@@ -660,7 +660,7 @@ export async function delegate(
   let brief = `Delegated by @${sender.handle}.\n\nTask:\n${instruction}`;
   if (expectedOutput) brief += `\n\nExpected output:\n${expectedOutput}`;
   if (materials) brief += `\n\nMaterials provided:\n${materials}`;
-  // The child inherits the parent's limits (buildEnvelope), including the linked requests it answers.
+  // The child inherits the parent's limits (buildEnvelope), including the requests from other topics it answers.
   return createTask(db, {
     topic,
     role: target,
@@ -679,7 +679,7 @@ export async function delegate(
 
 /**
  * Automatic rounds bound what roles set off for each other without a person (their message starts again at 0):
- * @-mentions, linked messages, direct conversations and a conversation's own follow-ups. Tasks (start_task,
+ * @-mentions, messages to other topics, direct conversations and a conversation's own follow-ups. Tasks (start_task,
  * delegate_task, transfer_task, continue_task) are not counted: they keep the round they started at.
  */
 export async function checkAutoRounds(run: Task): Promise<void> {

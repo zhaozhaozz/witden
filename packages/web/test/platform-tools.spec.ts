@@ -17,8 +17,8 @@ const calls: TaskStep[] = [
   result(2, 1, "update_memory", "记忆已更新"),
   request(3, "change_config", { method: "PATCH", path: "/api/roles/role-1", body: { description: "负责发布验证" } }),
   result(4, 3, "change_config", "配置已保存"),
-  request(5, "send_message", { topic_id: "linked-topic", text: "请协作确认发布计划。" }),
-  result(6, 5, "send_message", "消息已送达关联话题"),
+  request(5, "send_message", { topic_id: "topic-2", text: "请协作确认发布计划。" }),
+  result(6, 5, "send_message", "消息已发到话题"),
   request(7, "run_command", { command: "npm test" }),
   result(8, 7, "run_command", "48 tests passed"),
 ];

@@ -293,7 +293,7 @@ describe("direct conversations between AI employees", () => {
     expect(await contents(work)).toContain("@analyst could not answer");
   });
 
-  it("people read a pair but cannot post, invite, link, configure or add triggers", async () => {
+  it("people read a pair but cannot post, invite, configure or add triggers", async () => {
     const pair = await transaction(async (tx) =>
       getOrCreatePairTopic(tx, (await getRole(tx, w.ids.dev))!, (await getRole(tx, w.ids.analyst))!),
     );
@@ -312,11 +312,6 @@ describe("direct conversations between AI employees", () => {
     expect((await w.api("DELETE", `${base}/participants/role/${w.ids.dev}`, { token: w.alice })).status).toBe(400);
     for (const json of [{ title: "renamed" }, { response_mode: "auto" }, { status: "archived" }])
       expect((await w.api("PATCH", base, { token: w.alice, json })).status).toBe(400);
-    const group = await w.api("POST", "/api/topics", { token: w.alice, json: { title: "Partners" } });
-    await linkChannel(w, group.body.id, [], "partners");
-    const link = await w.api("POST", `${base}/links`, { token: w.alice, json: { topic_id: group.body.id } });
-    expect(link.status).toBe(400);
-    expect(link.body.error.message).toMatch(/cannot be linked/);
     const trigger = await w.api("POST", `${base}/triggers`, {
       token: w.alice,
       json: { name: "nightly", kind: "schedule", role_id: w.ids.dev, cron: "0 3 * * *" },

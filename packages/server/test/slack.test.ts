@@ -1170,9 +1170,10 @@ describe("slack", () => {
     await send(event("<@UBOT> hi", { user: "UCAROL", ts: "700.1" }));
     await w.waitFor(async () => (await allTasks()).length === 1);
     await w.drain();
-    // it brings in no other role: no tools for it, and its @-mentions hand nothing over
-    expect(offered).not.toContain("message_role");
+    // it brings in no other role: it hands no work over, and its @-mentions hand nothing over (message_role
+    // reaches only AI employees of another group topic it takes part in)
     expect(offered).not.toContain("delegate_task");
+    expect(offered).not.toContain("transfer_task");
     expect((await allTasks()).map((t) => t.ownerRoleId)).toEqual([w.ids.dev]);
     expect((await w.api("POST", "/api/integrations/deliver", { token: w.adminToken })).body).toEqual({ sent: 1 });
     // the bot speaks as itself, under no other name

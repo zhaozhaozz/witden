@@ -44,7 +44,7 @@ import { authorize, saveMessage } from "./dispatch.js";
 const MESSAGE_LIMIT = 20_000;
 const REPLY_LIMIT = 8_000;
 
-/** What the sender's input brings along; the linked requests it answers stay with the sender's work. */
+/** What the sender's input brings along; the requests from other topics it answers stay with the sender's work. */
 export function contactLimits(envelope: Record<string, any> | null | undefined): SourceLimits | null {
   const limits = sourceLimits(envelope);
   if (!limits) return null;

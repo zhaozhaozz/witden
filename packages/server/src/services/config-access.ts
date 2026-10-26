@@ -201,15 +201,8 @@ const AREAS: { title: string; endpoints: Endpoint[] }[] = [
     ],
   },
   {
-    title: "Topic links and automation configuration",
+    title: "Automation configuration",
     endpoints: [
-      { method: "GET", path: "/api/topics/:id/links" },
-      {
-        method: "POST",
-        path: "/api/topics/:id/links",
-        note: "topic_id; confirm_private: true explicitly permits linking a DM",
-      },
-      { method: "DELETE", path: "/api/topics/:id/links/:link_id" },
       { method: "GET", path: "/api/automations", note: "optional role_id" },
       {
         method: "GET",

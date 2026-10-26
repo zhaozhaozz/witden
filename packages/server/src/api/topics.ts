@@ -1,4 +1,3 @@
-import { topicLinkRoutes } from "./topic-links.js";
 import "@fastify/multipart";
 import fs from "node:fs";
 import { and, desc, eq, ilike, inArray, isNull, or, type SQL } from "drizzle-orm";
@@ -164,7 +163,6 @@ async function topicOut(db: Db, topic: Topic, user: User, detail = false, facts?
 }
 
 export async function topicRoutes(app: FastifyInstance) {
-  await topicLinkRoutes(app);
   app.get(
     "/api/topics",
     authed(async ({ db, user, req }) => {

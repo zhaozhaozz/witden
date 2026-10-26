@@ -9,7 +9,8 @@
  * - inject(): before each model call the open run turns what is new in the topic (since the cursor) and the
  *   ready inbox items into one user turn of the context.
  * - settle(): a run that would end ends only when nothing is waiting; otherwise it carries on. In a conversation
- *   between two roles (agent/contacts.ts) the turn's answer goes back to the role that wrote.
+ *   between two roles (agent/contacts.ts) the turn's answer goes back to the role that wrote, and in a group topic
+ *   to the roles that @-mentioned it from another topic (agent/topic-messaging.ts).
  * All three lock the session row, so nothing slips between "a run is open" and "the run has ended".
  *
  * Long conversations are compacted: the model summarises its context and the summary becomes the new start
@@ -32,10 +33,10 @@ import {
   taskIterations,
   taskSteps,
   tasks,
+  topics,
 } from "../db/schema.js";
 import { cardSummaryForRoles, type StoredCard } from "../services/cards.js";
 import { relayFrom, type SourceLimits, sourceLimits, withSourceLimits } from "../services/collaboration-policy.js";
-import { linkedTopicContext, relayDescription } from "../services/topic-links.js";
 import * as topicSvc from "../services/topics.js";
 import { afterTaskEnd, noticeText } from "./commands.js";
 import { answerContacts, lockPair, replyText, unansweredContacts } from "./contacts.js";
@@ -44,7 +45,7 @@ import { ACTIVE } from "./control.js";
 import { createTask, plainTitle, sessionFor } from "./dispatch.js";
 import { recordTaskIteration } from "./task-continuation.js";
 import { authorName } from "./tools.js";
-import { envelopeWithRelay } from "./topic-messaging.js";
+import { answerAskers, crossTopicNote, envelopeWithRelay, settleAskers } from "./topic-messaging.js";
 import { appendStep, nextSessionSeq } from "./transcript.js";
 
 /** Shown inbox items kept so a repeated delivery (a retried event, a late dispatcher) is recognised. */
@@ -206,11 +207,18 @@ export async function wakeDue(db: Db, sessionId: string): Promise<Task | null> {
 
 /** Whether the run should go on instead of ending: something new is waiting for it. */
 export async function settle(db: Db, run: Task): Promise<boolean> {
-  // In a pair topic its row comes between the run and the session (agent/contacts.ts lockPair).
+  // In a pair topic its row comes between the run and the session (agent/contacts.ts lockPair); so it does when
+  // the run may answer roles of another topic, whose sessions here it then locks.
   await lockPair(db, run);
+  if (run.envelope?.topic_routes?.length) {
+    await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, run.id)).for("update");
+    await db.select({ id: topics.id }).from(topics).where(eq(topics.id, run.topicId)).for("update");
+  }
   const s = await lockRun(db, run);
-  // The turn is over: its answer goes back to the roles that wrote to it here (agent/contacts.ts).
+  // The turn is over: its answer goes back to the roles that wrote to it here (agent/contacts.ts), or that
+  // @-mentioned it from another topic (agent/topic-messaging.ts).
   await answerContacts(db, run);
+  await answerAskers(db, run);
   return readyItems(s).length > 0;
 }
 
@@ -245,8 +253,10 @@ export async function afterEnd(db: Db, task: Task): Promise<void> {
   await lockPair(db, task);
   if (task.kind === "conversation" && task.sessionId && task.status === "cancelled")
     await dropReady(db, task.sessionId);
-  // Another role's messages it did not get to answer: their senders hear so (agent/contacts.ts).
+  // Another role's messages it did not get to answer: their senders hear so (agent/contacts.ts). @-mentions from
+  // another topic it did not answer get nothing: a later turn's words are no answer to them.
   await unansweredContacts(db, task);
+  await settleAskers(db, task);
   if (!task.reportSessionId) return;
   const [s] = await db.select().from(agentSessions).where(eq(agentSessions.id, task.reportSessionId)).limit(1);
   if (!s) return;
@@ -297,7 +307,7 @@ export async function contextSize(db: Db, s: AgentSession): Promise<number> {
 
 const when = (d: Date) => d.toISOString().slice(5, 16).replace("T", " ");
 
-async function line(db: Db, m: Message, forYou: boolean): Promise<string> {
+async function line(db: Db, m: Message, forYou: boolean, role: Role): Promise<string> {
   const limit = forYou ? FOR_YOU_LIMIT : CONTEXT_LINE_LIMIT;
   const text =
     m.content.length > limit ? `${m.content.slice(0, limit)}… [cut; topic_history shows it whole]` : m.content;
@@ -309,7 +319,7 @@ async function line(db: Db, m: Message, forYou: boolean): Promise<string> {
     : acted
       ? ` [on card ${acted.card}: button ${acted.action}]`
       : "";
-  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${card}${triggerContext(m)}${relayDescription(m.externalRef)}`;
+  return `[${m.id} ${when(m.createdAt)}] ${await authorName(db, m.authorType, m.authorId)}${forYou ? " → you" : ""}${thread}: ${text}${card}${triggerContext(m)}${await crossTopicNote(db, m, role.id)}`;
 }
 
 /**
@@ -401,7 +411,7 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
         .from(messages)
         .where(and(inArray(messages.id, [...forYouIds]), isNull(messages.deletedAt)))
     : [];
-  const parts: string[] = [await linkedTopicContext(db, topic.id)];
+  const parts: string[] = [];
 
   if (fresh && s.notes.length) {
     const notes = s.notes.slice(-SESSION_NOTES);
@@ -424,11 +434,11 @@ export async function inject(db: Db, run: Task, topic: Topic, role: Role): Promi
   if (roster !== s.roster) parts.push(roster);
 
   const lines: string[] = [];
-  for (const m of shown) lines.push(await line(db, m, forYouIds.has(m.id)));
+  for (const m of shown) lines.push(await line(db, m, forYouIds.has(m.id), role));
   // Messages for the role that it saw before as context (a dispatcher decided later): point at them again.
   const shownIds = new Set(shown.map((m) => m.id));
   const earlier = forYou.filter((m) => !shownIds.has(m.id));
-  for (const m of earlier) lines.push(await line(db, m, true));
+  for (const m of earlier) lines.push(await line(db, m, true, role));
   if (lines.length) {
     const more = Number(total) - shown.length;
     const head = fresh

@@ -9,7 +9,8 @@
  *   recent topic messages.
  * Both system prompts end with the role's skills (services/role-skills.ts) and its own memory
  * (services/role-memory.ts), the same wherever it works.
- * Nothing from other topics is included, and no tool reads one: the role reads only this topic (topic_history).
+ * Nothing from other topics is included: the role reads the other group topics it takes part in when it needs to
+ * (my_topics, topic_history with topic_id; agent/topic-messaging.ts).
  */
 import { COMMAND_TOOL } from "@witden/shared";
 import { and, desc, eq, isNull, lte, or } from "drizzle-orm";
@@ -42,7 +43,7 @@ export const SESSION_NOTES = 8;
 
 export const PLATFORM_RULES = `## How you work (enforced by the platform)
 - You are a member of a team, not a personal assistant. Several people may talk to you in the same topic; pay attention to who is asking.
-- You only see this topic. Never assume or invent information from other conversations.
+- Your context is this topic. Never assume or invent what was said in other conversations.
 - Your tools act only inside your own virtual computer. If it is unavailable, say so; there is no other machine.
 - Distinguish chat from work. For plain questions just answer. If a request is unclear, risky or irreversible, ask before acting.
 - The desktop is shared with people who may be watching. Hold it only while you need it (release_desktop when done) and prefer a background browser session for work nobody needs to watch.

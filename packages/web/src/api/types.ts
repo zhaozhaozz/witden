@@ -112,7 +112,7 @@ export interface Message {
   attachments: string[];
   /** A card a role posted (shown instead of ``content``, its Markdown version). */
   card?: StoredCard | null;
-  /** Sent from a linked topic: the topic it came from. */
+  /** Posted by an AI employee from another topic it takes part in: the topic it came from. */
   topic_delivery?: { source_topic_id: string } | null;
   source: string;
   round: number;

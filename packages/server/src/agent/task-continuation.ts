@@ -7,7 +7,12 @@ import { type Task, taskInputs, taskIterations, tasks, users } from "../db/schem
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
-import { continuationAllowed, narrowEnvelope } from "../services/collaboration-policy.js";
+import {
+  continuationAllowed,
+  narrowEnvelope,
+  sameRoute,
+  type TopicDelivery,
+} from "../services/collaboration-policy.js";
 import { wake } from "../services/events.js";
 import * as topicSvc from "../services/topics.js";
 import { clearRunApprovals } from "./approval-scope.js";
@@ -114,17 +119,8 @@ export async function submitTaskInput(db: Db, id: string, instruction: string, o
     if (opts.caller.envelope.automation_event) envelope.automation_event = true;
     if (opts.caller.envelope.untrusted_input || !isConsoleUser(user)) envelope.untrusted_input = true;
     const routes = [...(envelope.topic_routes ?? [])];
-    for (const route of opts.caller.envelope.topic_routes ?? []) {
-      if (
-        !routes.some(
-          (r: any) =>
-            r.link_id === route.link_id &&
-            r.source_message_id === route.source_message_id &&
-            r.origin?.requester_user_id === route.origin?.requester_user_id,
-        )
-      )
-        routes.push(route);
-    }
+    for (const route of opts.caller.envelope.topic_routes ?? [])
+      if (!routes.some((r: TopicDelivery) => sameRoute(r, route))) routes.push(route);
     if (routes.length) envelope.topic_routes = routes;
   }
   if (envelope.outside || envelope.automation_event || envelope.untrusted_input)

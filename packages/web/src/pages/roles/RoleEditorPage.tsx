@@ -13,9 +13,10 @@ import type {
 } from "../../api/types";
 import { useConfigChanged } from "../../lib/configEvents";
 import { EFFORT_LABEL, type EffortChoices } from "../../lib/effort";
-import { fmtNumber, genericStatus, instanceStatus } from "../../lib/format";
+import { fmtNumber, genericStatus, instanceStatus, PLATFORM_LABEL } from "../../lib/format";
 import { useResource } from "../../lib/hooks";
 import { useDirectory } from "../../lib/session";
+import { useTopics } from "../../lib/topics";
 import { useUnsavedChanges } from "../../lib/unsaved";
 import { useAction, useFeedback } from "../../ui/feedback";
 import {
@@ -745,6 +746,7 @@ function RoleEditor({ role, reload, setRole }: { role: Role | null; reload: () =
             ) : null}
             <RoleMemories role={role} />
             {!role.system_admin ? <RoleSkills role={role} /> : null}
+            {!role.system_admin ? <RoleGroups role={role} /> : null}
             <RoleSessions role={role} />
             {!role.system_admin ? <RoleAutomations roleId={role.id} /> : null}
           </aside>
@@ -928,6 +930,35 @@ function RoleSkills({ role }: { role: Role }) {
         中都会看到；遇到说明所描述的工作时，它先读取技能的全文再按其中的方法去做。它可以在控制台账号请求的工作中自己新建和修改技能（需要「技能」权限），你也可以在这里添加、编辑和删除。技能可能出现在与它对话的任何人面前，不要写入密钥、个人信息或机密。
       </p>
       <SkillList roleId={role.id} />
+    </Section>
+  );
+}
+
+/** The group topics it takes part in: what it may read and post to besides the topic it works in. */
+function RoleGroups({ role }: { role: Role }) {
+  const { topics } = useTopics();
+  const groups = topics.filter((t) => t.kind === "group" && t.status === "active" && t.role_ids?.includes(role.id));
+  return (
+    <Section title="参与的群组话题">
+      <p className="small muted">
+        AI 员工像在多个群里的同事一样，可以查阅它参与的群组话题、查看其中的工作，并在其中发言或 @ 其中的其他 AI
+        员工。私信和 AI 员工之间的对话不在此列，其他话题读不到。
+      </p>
+      {groups.length ? (
+        <ul className="plain-list">
+          {groups.map((t) => (
+            <li key={t.id}>
+              <Link to={`/topics/${t.id}`}>{t.title}</Link>
+              <span className="small muted">
+                {" "}
+                · {t.channel ? (PLATFORM_LABEL[t.channel.platform] ?? t.channel.platform) : "控制台"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="small muted">还没有参与任何群组话题。</p>
+      )}
     </Section>
   );
 }

@@ -110,14 +110,6 @@ export async function workspace(
     memoryDelay: 0,
     memoryRequests: [] as string[],
     topicUpdates: [] as Record<string, unknown>[],
-    links: [] as {
-      id: string;
-      topic_id: string;
-      title: string;
-      kind: string;
-      status: string;
-      roles: (typeof role)[];
-    }[],
     memories: [
       {
         id: "mem-topic",
@@ -261,23 +253,6 @@ export async function workspace(
       } else if (path === "/api/topics/topic-1/participants/role/role-1" && req.method() === "DELETE") {
         currentTopic.participants = currentTopic.participants.filter((p) => p.id !== role.id);
         json = currentTopic;
-      } else if (path === "/api/topics/topic-1/links") {
-        if (req.method() === "POST") {
-          const link = {
-            id: "link-1",
-            topic_id: req.postDataJSON().topic_id,
-            title: "设计讨论",
-            kind: "group",
-            status: "active",
-            external: true,
-            roles: [role],
-          };
-          state.links.push(link);
-          json = link;
-        } else json = state.links;
-      } else if (path === "/api/topics/topic-1/links/link-1" && req.method() === "DELETE") {
-        state.links = [];
-        json = { ok: true };
       } else if (path === "/api/memories") {
         state.memoryRequests.push(url.search);
         if (req.method() === "POST") {

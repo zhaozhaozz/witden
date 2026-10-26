@@ -192,7 +192,8 @@ export function MessageItem({
               <span className="msg-author">{author.name}</span>
             )}
             {!system &&
-            (author.kind === "external" || (msg.source && msg.source !== "web" && msg.source !== "internal")) ? (
+            (author.kind === "external" ||
+              (msg.source && msg.source !== "web" && msg.source !== "internal" && msg.source !== "topic")) ? (
               <span className="tag">来自 {PLATFORM_LABEL[msg.source] ?? msg.source}</span>
             ) : null}
             <time title={fmtDateTime(msg.created_at)}>{fmtTime(msg.created_at)}</time>
@@ -203,10 +204,10 @@ export function MessageItem({
             ) : null}
           </div>
         ) : null}
-        {/* Sent from a linked topic; how it was worked on there is in that topic's work panel. */}
+        {/* Posted by an AI employee from another topic it takes part in; its work there is in that topic. */}
         {msg.topic_delivery && !msg.deleted ? (
           <div className="msg-reply">
-            来自关联话题：<Link to={`/topics/${msg.topic_delivery.source_topic_id}`}>查看来源话题</Link>
+            从其他话题发来：<Link to={`/topics/${msg.topic_delivery.source_topic_id}`}>查看来源话题</Link>
           </div>
         ) : null}
         {replyTo ? (

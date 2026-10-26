@@ -35,7 +35,6 @@ import { audit } from "../services/audit.js";
 import { contextLimits } from "../services/context-window.js";
 import { approvalChanged } from "../services/events.js";
 import * as models from "../services/model-configs.js";
-import { linkedTopicContext } from "../services/topic-links.js";
 import { hasRunToolApproval } from "./approval-scope.js";
 import { consumeCommandNotices, hasUntoldCommands } from "./commands.js";
 import { initialMessages, recordSessionNote } from "./context.js";
@@ -337,9 +336,7 @@ export class TaskRunner {
       } else {
         transcript = await loadTranscript(tx, task);
         if (!transcript.length) {
-          await appendStep(tx, task, "user", {
-            content: `${initial[1].content}\n\n${await linkedTopicContext(tx, topic.id)}`,
-          });
+          await appendStep(tx, task, "user", { content: initial[1].content });
           transcript = await loadTranscript(tx, task);
         }
       }

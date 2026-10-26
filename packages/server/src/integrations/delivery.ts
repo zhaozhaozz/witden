@@ -4,7 +4,7 @@ import { and, asc, eq, lt } from "drizzle-orm";
 import { db as getDb } from "../db/client.js";
 import { connections, messages, outboundMessages, topics } from "../db/schema.js";
 import { relayFrom } from "../services/collaboration-policy.js";
-import { findTopicLink } from "../services/topic-links.js";
+import { participant } from "../services/topics.js";
 import { getAdapter } from "./base.js";
 
 const MAX_ATTEMPTS = 5;
@@ -50,12 +50,18 @@ export async function deliverOne(id: string): Promise<boolean> {
     return false;
   }
   if (msg.source === "topic") {
+    // Sent from another topic: still only by an AI employee taking part here, from a topic still active.
     const relay = relayFrom(msg.externalRef);
-    const link = relay ? await findTopicLink(db, relay.source_topic_id, msg.topicId) : null;
     const [source] = relay ? await db.select().from(topics).where(eq(topics.id, relay.source_topic_id)) : [];
     const [target] = await db.select().from(topics).where(eq(topics.id, msg.topicId));
-    if (!relay || !link || link.id !== relay.link_id || source?.status !== "active" || target?.status !== "active") {
-      await update({ status: "blocked", lastError: "topic link removed or a topic archived before publication" });
+    const member =
+      !!relay && msg.authorType === "role" && !!(await participant(db, msg.topicId, "role", msg.authorId ?? ""));
+    if (!relay || !member || source?.status !== "active" || target?.status !== "active") {
+      await update({
+        status: "blocked",
+        lastError:
+          "its AI employee no longer takes part in the conversation, or a topic was archived, before publication",
+      });
       return false;
     }
   }

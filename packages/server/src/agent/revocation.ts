@@ -14,7 +14,7 @@ import {
 } from "../db/schema.js";
 import { externalRoleId } from "../integrations/links.js";
 import { mayUseRoleIn } from "../security/permissions.js";
-import { linkedRequestRefusal } from "../services/topic-links.js";
+import { crossTopicRefusal } from "../services/member-topics.js";
 import { participant } from "../services/topics.js";
 import { ACTIVE, cancelTree, pause } from "./control.js";
 
@@ -30,21 +30,22 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   const bound = await externalRoleId(db, topic.id);
   if (bound !== undefined && bound !== role.id)
     return `@${role.handle} does not work in this conversation: only the role handling it does`;
-  // A task started from a linked request ends with the link. A conversation goes on with its other work:
-  // removing the link drops what has not reached it yet (services/topic-links.ts removeTopicLink).
-  const linkedRefusal = task.kind === "task" ? await linkedRequestRefusal(db, task) : null;
-  if (linkedRefusal) return linkedRefusal;
+  // A task started by a message from another topic goes on while its sender takes part in both topics
+  // (services/member-topics.ts). A conversation goes on with its other work.
+  const crossRefusal = task.kind === "task" ? await crossTopicRefusal(db, task) : null;
+  if (crossRefusal) return crossRefusal;
   if (task.requesterUserId) {
     const [user] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
     if (!user?.isActive) return "the requester is no longer an active member";
     // Work another role of the topic handed over is bounded by that role's run, not by whom the person may use.
     if (!task.requesterRoleId && !(await mayUseRoleIn(db, user, role.id, topic.id)))
       return `the requester may no longer use @${role.handle}`;
-    const linkedRequester = (task.envelope?.topic_routes ?? []).some(
+    // A person who asked in another topic, through an AI employee of both (topic_routes), is not in this one; nor
+    // in a direct conversation of two roles (agent/contacts.ts), who work for a person never there.
+    const askedElsewhere = (task.envelope?.topic_routes ?? []).some(
       (r: any) => r.origin?.requester_user_id === user.id,
     );
-    // Two roles talking directly (agent/contacts.ts) work for a person who is never in that conversation.
-    if (!linkedRequester && topic.kind !== "pair" && !(await participant(db, topic.id, "user", user.id)))
+    if (!askedElsewhere && topic.kind !== "pair" && !(await participant(db, topic.id, "user", user.id)))
       return "the requester left the topic";
   }
   return null;

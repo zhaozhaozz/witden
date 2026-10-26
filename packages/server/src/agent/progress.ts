@@ -10,7 +10,9 @@ const platformGroups = new Set(["memory", "skills", "config", "profile", "automa
 const platformNames = new Set([
   ...[...TOOLS.values()].filter((t) => t.group === null || platformGroups.has(t.group)).map((t) => t.name),
   "share_file",
-  "read_topic", // Historical calls remain readable after a tool is retired.
+  // Historical calls remain readable after a tool is retired.
+  "read_topic",
+  "linked_topic_status",
 ]);
 const platformCall = (call: { function?: { name?: string } }) => platformNames.has(call.function?.name ?? "");
 function callPreview(value: { id: string; function: { name: string; arguments: unknown } }) {
