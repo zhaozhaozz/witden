@@ -127,7 +127,7 @@ export function InviteDialog({
 }) {
   const dir = useDirectory();
   const { run, busy } = useAction();
-  // A Slack, Feishu or GitHub conversation has one role, the one its bot stands for: only people are added.
+  // A Slack, Feishu or GitHub conversation has one role, the one handling it (its settings): only people are added.
   const external = !!topic.channel;
   const [type, setType] = useState<"role" | "user">(external ? "user" : "role");
   const [id, setId] = useState("");
@@ -153,7 +153,7 @@ export function InviteDialog({
           type="button"
           className={type === "role" ? "seg seg-on" : "seg"}
           disabled={external}
-          title={external ? "外部会话中只有机器人代表的 AI 员工工作，不能邀请其他 AI 员工" : undefined}
+          title={external ? "外部会话中只有处理它的 AI 员工工作，不能邀请其他 AI 员工" : undefined}
           onClick={() => (setType("role"), setId(""))}
         >
           AI 员工

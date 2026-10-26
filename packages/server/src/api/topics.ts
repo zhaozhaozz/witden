@@ -27,6 +27,7 @@ import { BadRequest, Forbidden, NotFound, Unauthorized } from "../errors.js";
 import { type ChannelInfo, channelsOf, externalRoleId } from "../integrations/links.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { audit } from "../services/audit.js";
+import { setTopicHandler } from "../services/connection-role.js";
 import { artifactPath, deleteArtifactData, MAX_UPLOAD_BYTES, saveArtifact } from "../services/files.js";
 import { erased } from "../services/memories.js";
 import { purgeMessage } from "../services/messages.js";
@@ -39,12 +40,12 @@ import { sessionOut } from "./sessions.js";
 
 /**
  * A topic linked to a Slack, Feishu or GitHub conversation: its people are the conversation's, and its role is the
- * one the connection's bot stands for (changed on the connection, which replaces it in every linked topic).
+ * one handling it, chosen in its settings (handler_role_id; by default the connection's, services/connection-role.ts).
  */
 async function refuseExternalMembers(db: Db, topic: Topic): Promise<void> {
   if ((await externalRoleId(db, topic.id)) !== undefined)
     throw new BadRequest(
-      "members of a Slack, Feishu or GitHub conversation follow the conversation; its role is the one the connection's bot stands for",
+      "members of a Slack, Feishu or GitHub conversation follow the conversation; choose the role handling it in the topic's settings",
     );
 }
 
@@ -234,8 +235,9 @@ export async function topicRoutes(app: FastifyInstance) {
       const topic = await svc.getTopic(db, params(req).id);
       const b = body(req);
       const keys = Object.keys(b);
-      // A DM is one person and one role, always open: nothing to rename, archive or reconfigure.
-      if (topic.kind === "dm" && keys.length)
+      // A DM is one person and one role, always open: nothing to rename, archive or reconfigure. A Slack or Feishu
+      // DM with the bot may still choose the role handling it.
+      if (topic.kind === "dm" && keys.some((k) => k !== "handlerRoleId"))
         throw new BadRequest("a DM has no title, archive or response settings: it is always one person and one role");
       // So is the direct conversation of two roles (agent/contacts.ts).
       if (topic.kind === "pair" && keys.length)
@@ -251,17 +253,23 @@ export async function topicRoutes(app: FastifyInstance) {
       // A topic is configured with its name and goal; status and response mode are switched elsewhere.
       const allowed = ["title", "goal", "status", "responseMode"];
       const update = Object.fromEntries(Object.entries(b).filter(([k]) => allowed.includes(k)));
-      const [updated] = await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning();
+      let [updated] = Object.keys(update).length
+        ? await db.update(topics).set(update).where(eq(topics.id, topic.id)).returning()
+        : [topic];
       if (b.status === "archived") {
         const ids = (await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.topicId, topic.id))).map((t) => t.id);
         await recheckActiveTasks(db, "topic archived", ids);
       }
-      await audit(db, "topic.update", {
-        actorType: "user",
-        actorId: user.id,
-        topicId: topic.id,
-        detail: { fields: Object.keys(update) },
-      });
+      if (Object.keys(update).length)
+        await audit(db, "topic.update", {
+          actorType: "user",
+          actorId: user.id,
+          topicId: topic.id,
+          detail: { fields: Object.keys(update) },
+        });
+      // The role working behind an external conversation (audited as topic.handler_role).
+      if (b.handlerRoleId !== undefined)
+        updated = (await setTopicHandler(db, updated, b.handlerRoleId, user)) ?? updated;
       return topicOut(db, updated, user, true);
     }),
   );

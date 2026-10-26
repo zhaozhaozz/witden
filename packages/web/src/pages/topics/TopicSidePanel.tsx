@@ -197,7 +197,7 @@ export function TopicSidePanel({
               <summary>{dm ? "私信设置" : pair ? "对话设置" : "话题设置"}</summary>
               <div className="sidebar-settings-body">
                 {dm || pair ? (
-                  <DmSettings topic={topic} onCleared={onCleared} />
+                  <DmSettings topic={topic} onTopicChange={onTopicChange} onCleared={onCleared} />
                 ) : (
                   <SettingsTab topic={topic} onTopicChange={onTopicChange} onCleared={onCleared} />
                 )}
@@ -398,7 +398,7 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
   const { run } = useAction();
   const [inviting, setInviting] = useState(false);
   const participants = topic.participants ?? [];
-  // A Slack, Feishu or GitHub conversation: its people come with it, and its role is the one its bot stands for.
+  // A Slack, Feishu or GitHub conversation: its people come with it, and its one role is chosen in its settings.
   const external = topic.channel ?? null;
 
   const remove = async (type: string, id: string, name: string) => {
@@ -440,10 +440,9 @@ function PeopleTab({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: 
       </div>
       {external ? (
         <p className="small muted side-note">
-          这是 {PLATFORM_LABEL[external.platform] ?? external.platform} 中的会话：成员就是会话里的人，AI 员工是接入「
-          {external.connection_name}
-          」的机器人代表的 AI 员工，不能在这里邀请或移除。要换 AI 员工，在接入设置中修改机器人代表的 AI
-          员工，所有关联的会话会一起更换。
+          这是 {PLATFORM_LABEL[external.platform] ?? external.platform}{" "}
+          中的会话：成员就是会话里的人，不能在这里邀请或移除。会话中只有一位 AI 员工工作，默认是接入「
+          {external.connection_name}」的 AI 员工；要换一位，在下面「话题设置」的「处理的 AI 员工」中选择。
         </p>
       ) : null}
       <ul className="people">
@@ -753,6 +752,7 @@ function SettingsTab({
   // A topic is configured with its name and goal; the response mode is switched in the topic header.
   return (
     <div className="settings">
+      <HandlerRoleBlock topic={topic} onTopicChange={onTopicChange} />
       <form
         className="form"
         onSubmit={(e) => {
@@ -803,18 +803,88 @@ function SettingsTab({
 
 /**
  * A DM has nothing to configure: it is always you and its role; nor has the direct conversation of two AI
- * employees. Only their history can be cleared.
+ * employees. Only their history can be cleared, and a Slack or Feishu DM with the bot may choose its AI employee.
  */
-function DmSettings({ topic, onCleared }: { topic: Topic; onCleared: () => void }) {
+function DmSettings({
+  topic,
+  onTopicChange,
+  onCleared,
+}: {
+  topic: Topic;
+  onTopicChange: (t: Topic) => void;
+  onCleared: () => void;
+}) {
   const roleNames = (topic.participants ?? []).filter((p) => p.type === "role").map((p) => p.name);
   return (
     <div className="settings">
+      <HandlerRoleBlock topic={topic} onTopicChange={onTopicChange} />
       <p className="small muted side-note">
         {topic.kind === "pair"
           ? `这是 ${roleNames.join(" 与 ")} 之间一直保留的直接对话：没有标题、成员或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`
           : `私信是你和 ${roleNames[0] ?? "AI 员工"} 之间一直保留的对话：没有标题、可见范围或响应方式可设置，也不需要归档。不想保留的内容可以在下面清空。`}
       </p>
       {topic.status === "active" ? <CleanupBlock topic={topic} onCleared={onCleared} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The AI employee working behind a Slack, Feishu or GitHub conversation: its connection's by default, or one
+ * chosen for this conversation. Outwardly it always speaks as the app (bot). Changing it brings the new AI employee
+ * in and the previous one out, whose work here stops.
+ */
+function HandlerRoleBlock({ topic, onTopicChange }: { topic: Topic; onTopicChange: (t: Topic) => void }) {
+  const dir = useDirectory();
+  const { confirm } = useFeedback();
+  const { run, busy } = useAction();
+  const channel = topic.channel;
+  if (!channel) return null;
+  const fallback = channel.role_id ?? null;
+  const chosen = topic.handler_role_id ?? null;
+  const handle = (id: string | null) => (id ? `@${dir.roleById.get(id)?.handle ?? id}` : "未选择");
+  // A system administrator works only in the console; a disabled AI employee only while it is still the choice.
+  const choices = dir.roles.filter((r) => !r.system_admin && (r.status === "active" || r.id === chosen));
+  const change = async (value: string) => {
+    const next = value || null;
+    if (next === chosen) return;
+    const from = chosen ?? fallback;
+    const to = next ?? fallback;
+    if (from !== to) {
+      const ok = await confirm({
+        title: "更换处理的 AI 员工",
+        body: (
+          <p>
+            「{topic.title}」改由 {to ? dir.roleLabel(to) : "接入默认的 AI 员工（尚未选择）"} 处理。
+            {from ? `${dir.roleLabel(from)} 离开这个会话，它在这里进行中的工作会停止。` : ""}
+            对外仍以应用（机器人）的身份发言。
+          </p>
+        ),
+        confirmLabel: "更换",
+      });
+      if (!ok) return;
+    }
+    const t = await run(
+      () => api.patch<Topic>(`/api/topics/${topic.id}`, { handler_role_id: next }),
+      "处理的 AI 员工已更换",
+    );
+    if (t) onTopicChange(t);
+  };
+  return (
+    <div className="settings-block">
+      <Field
+        label="处理的 AI 员工"
+        hint="对外始终以应用（机器人）的身份发言，这里选择在背后处理这个会话的 AI 员工。更换后，这个会话的工作交给新的 AI 员工，原来的 AI 员工离开会话，它在这里进行中的工作会停止。"
+      >
+        <select value={chosen ?? ""} disabled={busy} onChange={(e) => void change(e.target.value)}>
+          <option value="">跟随接入默认（{handle(fallback)}）</option>
+          {choices.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.name} @{r.handle}
+              {r.status === "active" ? "" : "（已停用）"}
+            </option>
+          ))}
+        </select>
+      </Field>
     </div>
   );
 }

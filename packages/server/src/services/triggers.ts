@@ -7,6 +7,7 @@ import { type Db, db as getDb, transaction } from "../db/client.js";
 import { newId } from "../db/ids.js";
 import { type TopicTrigger, type TriggerEvent, topicTriggers, triggerEvents, users } from "../db/schema.js";
 import { BadRequest, Forbidden, NotFound } from "../errors.js";
+import { externalRoleId } from "../integrations/links.js";
 import { isConsoleUser } from "../security/permissions.js";
 import { publish } from "./events.js";
 import { getRole, getTopic, participant } from "./topics.js";
@@ -176,7 +177,10 @@ export async function processTriggerEvents(limit = 20): Promise<number> {
           if (!source?.enabled) return finish(db, current, "skipped", "Webhook 来源已停用或删除");
         }
         const [creator] = await db.select().from(users).where(eq(users.id, event.config.createdBy));
-        const role = await getRole(db, event.config.roleId);
+        // In a Slack, Feishu or GitHub conversation, whoever handles it now (it may have changed since).
+        const handler = await externalRoleId(db, topic.id);
+        const roleId: string | null = handler === undefined ? event.config.roleId : handler;
+        const role = roleId ? await getRole(db, roleId) : undefined;
         if (
           !creator ||
           !isConsoleUser(creator) ||

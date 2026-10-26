@@ -80,7 +80,7 @@ export async function contactRole(
     throw new Forbidden("the system administrator does not talk to other AI employees directly");
   if (task.envelope?.external_topic)
     throw new Forbidden(
-      "only the bot's role works in a Slack, Feishu or GitHub conversation; write to other AI employees from a console topic",
+      "only the role handling a Slack, Feishu or GitHub conversation works there; write to other AI employees from a console topic",
     );
   const allowed = await allowedContacts(db, sender);
   const list = allowed.length

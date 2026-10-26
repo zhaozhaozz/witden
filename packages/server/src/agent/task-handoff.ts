@@ -132,10 +132,10 @@ async function prepare(db: Db, task: Task, topic: Topic, target: Role, by: By, l
       throw new Forbidden(
         `@${target.handle} is not in this topic: hand tasks only to roles taking part in it; ask a person to invite another role`,
       );
-    // Only the bot's role works in an external conversation: nobody can be invited there to take it over.
+    // Only the role handling an external conversation works there: nobody can be invited there to take it over.
     throw new Forbidden(
       (await externalRoleId(db, topic.id)) !== undefined
-        ? "only the bot's AI employee works in a Slack, Feishu or GitHub conversation: no other AI employee can take this task over"
+        ? "only the AI employee handling a Slack, Feishu or GitHub conversation works there: no other AI employee can take this task over"
         : `@${target.handle} is not in this topic: tasks are handed only to AI employees taking part in it; invite it into the topic first (topic settings, participants), then hand the task over`,
     );
   }
@@ -319,7 +319,7 @@ function checkCaller(caller: Role, run: Task): void {
   if (caller.systemAdmin) throw new Forbidden("the system administrator does not hand work to other roles");
   if (run.envelope?.external_topic)
     throw new Forbidden(
-      "only the bot's role works in a Slack, Feishu or GitHub conversation: no role can take work over",
+      "only the role handling a Slack, Feishu or GitHub conversation works there: no role can take work over",
     );
 }
 

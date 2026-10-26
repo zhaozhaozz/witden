@@ -4,14 +4,16 @@
  * Everyone who signs in to the console is an administrator: the console is where the roles and computers are
  * configured, and it shows every conversation the roles take part in. The people the roles serve are outside
  * it — Slack / Feishu members and channels. A person from a connected workspace without a console account is
- * an *external member* of that connection and may use only the role its bot stands for. What a role may read and
+ * an *external member* of that connection and may use only the role its bot stands for, or in a conversation of
+ * the connection the role chosen to handle it (mayUseRoleIn). What a role may read and
  * use is decided by its own permissions (tool groups, knowledge spaces, connections): whatever it may read, it may
  * use wherever it works.
  */
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { connections, type User, users } from "../db/schema.js";
+import { connections, externalThreadLinks, type User, users } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
+import { externalHandler } from "../integrations/links.js";
 
 export const Perm = {
   TOPIC_CREATE: "topic.create",
@@ -45,11 +47,29 @@ export async function hasPermission(db: Db, user: User | null | undefined, perm:
   return true;
 }
 
-/** External members may use (and bring into a thread) only the role their connection's bot stands for. */
+/** External members may use (and bring into a thread) the role their connection's bot stands for; see mayUseRoleIn. */
 async function externalMemberMay(db: Db, connectionId: string, perm: Perm, roleId?: string | null): Promise<boolean> {
   if (!roleId || (perm !== Perm.ROLE_USE && perm !== Perm.ROLE_INVITE)) return false;
   const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
   return !!conn && conn.settings?.role_id === roleId;
+}
+
+/**
+ * ROLE_USE for work in a topic. In a conversation of their connection an external member also uses the role a
+ * person chose to handle it (integrations/links.ts externalHandler), which may not be the bot's own.
+ */
+export async function mayUseRoleIn(db: Db, user: User | null | undefined, roleId: string, topicId: string) {
+  if (await hasPermission(db, user, Perm.ROLE_USE, roleId)) return true;
+  if (!user?.isActive || !user.externalConnectionId) return false;
+  if ((await externalHandler(db, topicId))?.roleId !== roleId) return false;
+  const [linked] = await db
+    .select({ id: externalThreadLinks.id })
+    .from(externalThreadLinks)
+    .where(
+      and(eq(externalThreadLinks.topicId, topicId), eq(externalThreadLinks.connectionId, user.externalConnectionId)),
+    )
+    .limit(1);
+  return !!linked;
 }
 
 export async function requirePerm(db: Db, user: User | null | undefined, perm: Perm, resourceId?: string | null) {

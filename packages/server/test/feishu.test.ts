@@ -548,6 +548,61 @@ describe("feishu groups and names", () => {
     expect(await roles(groupTopic.id)).toEqual(["dev (left)", "test"]);
   });
 
+  it("a chat may have its own AI employee: it answers there as the bot, and keeps it when the bot's role changes", async () => {
+    const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
+    await w.waitFor(async () => link.open().length === 1);
+    await ready(conn);
+    w.scripts.dev = () => reply("dev 在");
+    w.scripts.test = () => reply("test 在");
+    w.scripts.analyst = () => reply("analyst 在");
+    await link.push(group("在吗", "om_h1"));
+    await link.push(textEvent("在吗", { id: "om_h2" }));
+    await w.waitFor(async () => (await allTasks()).length === 2);
+    await w.drain();
+    const feishuTopics = await db().select().from(topics).where(eq(topics.source, "feishu"));
+    const groupTopic = feishuTopics.find((t) => t.kind === "group")!;
+    const dmTopic = feishuTopics.find((t) => t.kind === "dm")!;
+    const rolesOf = async (topicId: string) =>
+      (await db().select().from(topicParticipants).where(eq(topicParticipants.topicId, topicId)))
+        .filter((p) => p.participantType === "role" && !p.removedAt)
+        .map((p) => p.participantId);
+
+    await deliverPending();
+    const sent = feishu.sent.length;
+    // the group is handled by @test; the private chat keeps following the bot's role. Feishu is not told.
+    const chosen = await w.api("PATCH", `/api/topics/${groupTopic.id}`, {
+      token: w.adminToken,
+      json: { handler_role_id: w.ids.test },
+    });
+    expect(chosen.status, chosen.raw).toBe(200);
+    expect(await rolesOf(groupTopic.id)).toEqual([w.ids.test]);
+    await deliverPending();
+    expect(feishu.sent).toHaveLength(sent);
+    await link.push(group("再看一下", "om_h3"));
+    await link.push(textEvent("再看一下", { id: "om_h4" }));
+    await w.waitFor(async () => (await allTasks()).length === 4);
+    await w.drain();
+    await deliverPending();
+    const later = (await allTasks()).slice(2);
+    expect(later.map((t) => [t.topicId, t.ownerRoleId])).toEqual([
+      [groupTopic.id, w.ids.test],
+      [dmTopic.id, w.ids.dev],
+    ]);
+    // both answers come from the bot, no name added
+    expect(feishu.sent.slice(sent).map(words).sort()).toEqual(["dev 在", "test 在"]);
+
+    // the bot now stands for @analyst: the private chat follows, the group keeps @test
+    expect((await patch(conn.id, { settings: { role_id: w.ids.analyst } })).status).toBe(200);
+    expect(await rolesOf(groupTopic.id)).toEqual([w.ids.test]);
+    expect(await rolesOf(dmTopic.id)).toEqual([w.ids.analyst]);
+    const [change] = (await db().select().from(auditLogs).where(eq(auditLogs.action, "connection.role_change"))).filter(
+      (a) => a.detail.to === w.ids.analyst,
+    );
+    expect(change.detail).toMatchObject({ from: w.ids.dev, topics: 1, kept: 1 });
+    await deliverPending();
+    expect(feishu.sent.slice(sent)).toHaveLength(2);
+  });
+
   it("a group is one topic named after it; replies in a thread point at its first message and are answered there", async () => {
     const conn = (await create({ app_id: APP_ID, app_secret: "app-secret" })).body;
     await w.waitFor(async () => link.open().length === 1);

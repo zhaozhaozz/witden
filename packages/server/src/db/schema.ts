@@ -307,6 +307,11 @@ export const topics = pgTable("topics", {
   status: text("status").notNull().default("active"),
   /** mention: roles answer only when @-mentioned; auto: un-mentioned messages may go to roles (see router). */
   responseMode: text("response_mode").notNull().default("mention"), // mention | auto
+  /**
+   * A topic linked to a Slack, Feishu or GitHub conversation: the role chosen to handle it, or null to follow the
+   * role of its connection's bot (integrations/links.ts externalHandler). Console topics have none.
+   */
+  handlerRoleId: text("handler_role_id").references(() => roles.id),
   source: text("source").notNull().default("internal"),
   createdBy: text("created_by"),
   lastMessageAt: ts("last_message_at"),

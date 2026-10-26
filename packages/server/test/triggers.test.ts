@@ -346,6 +346,22 @@ describe("topic triggers", () => {
     expect(JSON.stringify(mirrored)).not.toContain(secret);
   });
 
+  it("in an external conversation a trigger goes to the AI employee handling it, also what was queued before a change", async () => {
+    await linkChannel(w, w.ids.topic, []);
+    const trigger = await create();
+    const queued = await acceptSourceWebhook(sourceId, { token: secret }, request, "before-change");
+    const changed = await w.api("PATCH", base(), { token: w.alice, json: { handler_role_id: w.ids.test } });
+    expect(changed.status, changed.raw).toBe(200);
+    // the trigger shows the new AI employee; the delivery queued for the previous one goes to the new one too
+    const [row] = await db().select().from(topicTriggers).where(eq(topicTriggers.id, trigger.id));
+    expect(row.roleId).toBe(w.ids.test);
+    expect((await delivery(queued.id)).config.roleId).toBe(w.ids.dev);
+    await processTriggerEvents();
+    expect((await delivery(queued.id)).status).toBe("dispatched");
+    const [task] = await db().select().from(tasks).where(eq(tasks.topicId, w.ids.topic));
+    expect(task.ownerRoleId).toBe(w.ids.test);
+  });
+
   it("coalesces missed schedules, does not queue duplicate ticks, and resumes from the next occurrence", async () => {
     const trigger = await create({ kind: "schedule", source_id: undefined, cron: "*/5 * * * *", timezone: "UTC" });
     const now = new Date();

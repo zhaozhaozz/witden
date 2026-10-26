@@ -41,12 +41,13 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
   slack: {
     status: "supported",
     account_types: [
-      "Slack app bot user, standing for one role",
+      "Slack app bot user, standing for one role (the default of its conversations)",
       "Socket Mode with an app-level token (no public address), or events sent to a public URL",
     ],
     conversations: ["public channel", "private channel", "direct message", "group DM"],
     threads: "a thread (root message + replies) maps to one topic",
-    mentions: "@bot; the bot's role handles everything addressed to it",
+    mentions:
+      "@bot; the conversation's role (the bot's, unless chosen in the topic) handles everything addressed to it",
     files:
       "incoming files are downloaded whatever their size (streamed to storage, files:read); roles' attachments are uploaded (files:write, otherwise links)",
     edits_deletes: "edits update the internal message; deletes remove it and derived memories",
@@ -63,7 +64,8 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     ],
     conversations: ["group chat", "p2p chat with the bot"],
     threads: "reply threads (root_id) map to topics; p2p chats map to one topic",
-    mentions: "@bot; the bot's role handles everything addressed to it",
+    mentions:
+      "@bot; the conversation's role (the bot's, unless chosen in the topic) handles everything addressed to it",
     files:
       "images and files both ways: roles' attachments uploaded (im:resource; images in the message, up to 10 MB, files up to 30 MB, others as links), incoming ones downloaded (im:message:readonly, up to 20 MB)",
     edits_deletes: "not synchronised",
@@ -77,7 +79,8 @@ export const CAPABILITIES: Record<string, Record<string, any>> = {
     account_types: ["GitHub App (replies as <app>[bot])", "a bot account (user or machine account) with a token"],
     conversations: ["public repository", "private repository"],
     threads: "an issue or pull request maps to one topic",
-    mentions: "@app-name (or @bot-login) in an issue, pull request or comment; the app's role handles it",
+    mentions:
+      "@app-name (or @bot-login) in an issue, pull request or comment; the conversation's role (the app's, unless chosen in the topic) handles it",
     files: "not synchronised (images in comments stay links)",
     edits_deletes: "comment edits update the internal message; deletes remove it and derived memories",
     limits: [

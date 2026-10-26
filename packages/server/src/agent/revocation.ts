@@ -13,7 +13,7 @@ import {
   users,
 } from "../db/schema.js";
 import { externalRoleId } from "../integrations/links.js";
-import { hasPermission, Perm } from "../security/permissions.js";
+import { mayUseRoleIn } from "../security/permissions.js";
 import { linkedRequestRefusal } from "../services/topic-links.js";
 import { participant } from "../services/topics.js";
 import { ACTIVE, cancelTree, pause } from "./control.js";
@@ -26,10 +26,10 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
   const [topic] = await db.select().from(topics).where(eq(topics.id, task.topicId)).limit(1);
   if (topic?.status !== "active") return "the topic was archived";
   if (!(await participant(db, topic.id, "role", role.id))) return `@${role.handle} was removed from the topic`;
-  // A Slack, Feishu or GitHub conversation: only the role its bot stands for (never the system administrator).
+  // A Slack, Feishu or GitHub conversation: only the role handling it (never the system administrator).
   const bound = await externalRoleId(db, topic.id);
   if (bound !== undefined && bound !== role.id)
-    return `@${role.handle} does not work in this conversation: only the role its bot stands for does`;
+    return `@${role.handle} does not work in this conversation: only the role handling it does`;
   // A task started from a linked request ends with the link. A conversation goes on with its other work:
   // removing the link drops what has not reached it yet (services/topic-links.ts removeTopicLink).
   const linkedRefusal = task.kind === "task" ? await linkedRequestRefusal(db, task) : null;
@@ -38,7 +38,7 @@ export async function stillAllowed(db: Db, task: Task): Promise<string | null> {
     const [user] = await db.select().from(users).where(eq(users.id, task.requesterUserId)).limit(1);
     if (!user?.isActive) return "the requester is no longer an active member";
     // Work another role of the topic handed over is bounded by that role's run, not by whom the person may use.
-    if (!task.requesterRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, role.id)))
+    if (!task.requesterRoleId && !(await mayUseRoleIn(db, user, role.id, topic.id)))
       return `the requester may no longer use @${role.handle}`;
     const linkedRequester = (task.envelope?.topic_routes ?? []).some(
       (r: any) => r.origin?.requester_user_id === user.id,

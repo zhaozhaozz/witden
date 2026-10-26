@@ -1,13 +1,15 @@
 /**
  * Who handles a request, on which computer, and why it may or may not.
  *
- * 1. Outside the console a connection's bot stands for one role (its ``role_id`` setting), the only role that
- *    works there: requests go to it, and no other role is brought in. A connection without a role takes no
- *    requests.
+ * 1. Outside the console a conversation has one role at work, the only one there: by default the role its
+ *    connection's bot stands for (its ``role_id`` setting), or the one a person chose for the topic
+ *    (integrations/links.ts externalHandler). Requests go to it, and no other role is brought in. Without one
+ *    the conversation takes no requests.
  * 2. In the console the roles asked for: named, picked by the dispatcher, or the target of a role's @-mention or
  *    delegation (always a role of the same topic).
  * 3. Each role is then checked: it exists and is enabled, in a console topic it takes part, the person may use
- *    it (external members only their connection's role; when a role asks another role of the topic, the person's
+ *    it (external members only their connection's role, or the one handling their conversation; when a role asks
+ *    another role of the topic, the person's
  *    permission is not checked: working with the topic's roles needs none), and it has a computer. A system
  *    administrator role works only in the console, only for people (never for another role) and needs no
  *    computer: its tools act on witden itself.
@@ -16,8 +18,8 @@
  */
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { computerInstances, connections, roles, users } from "../db/schema.js";
-import { hasPermission, isConsoleUser, Perm } from "../security/permissions.js";
+import { computerInstances, roles, users } from "../db/schema.js";
+import { hasPermission, isConsoleUser, mayUseRoleIn, Perm } from "../security/permissions.js";
 import { participant } from "./topics.js";
 
 export interface RequestContext {
@@ -27,6 +29,10 @@ export interface RequestContext {
   conversationId?: string | null;
   /** public | private | im | mpim | internal */
   conversationKind: string;
+  /** Outside the console: the role at work in the conversation (integrations/links.ts externalHandler), or null. */
+  handlerRoleId?: string | null;
+  /** It was chosen for the conversation, rather than the connection's own. */
+  handlerChosen?: boolean;
   requestedRoleIds: string[];
   /** A role asking another role of the topic: an @-mention or a delegation. */
   byRoleId?: string | null;
@@ -57,14 +63,6 @@ function ctxJson(ctx: RequestContext) {
   };
 }
 
-/** The role a connection's bot stands for, if it has one. */
-export async function connectionRole(db: Db, connectionId: string | null | undefined): Promise<string | null> {
-  if (!connectionId) return null;
-  const [conn] = await db.select().from(connections).where(eq(connections.id, connectionId)).limit(1);
-  const roleId = conn?.settings?.role_id;
-  return typeof roleId === "string" && roleId ? roleId : null;
-}
-
 export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
   const trace: Decision["trace"] = [{ step: "request", detail: ctxJson(ctx) }];
   const deny = (reason: string): Decision => {
@@ -74,7 +72,7 @@ export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
   const [user] = ctx.userId ? await db.select().from(users).where(eq(users.id, ctx.userId)).limit(1) : [];
   if (!user?.isActive) return deny("requester is not a recognised active member");
 
-  const bound = ctx.conversationKind === "internal" ? null : await connectionRole(db, ctx.connectionId);
+  const bound = ctx.conversationKind === "internal" ? null : (ctx.handlerRoleId ?? null);
   if (ctx.conversationKind !== "internal" && !bound)
     return deny("this connection's bot has no role yet: an administrator must choose the role it stands for");
   let candidateIds = [...new Set(ctx.requestedRoleIds)];
@@ -82,7 +80,12 @@ export async function resolve(db: Db, ctx: RequestContext): Promise<Decision> {
     trace.push({ step: "candidates", detail: `asked for: ${candidateIds.join(", ")}` });
   } else if (bound) {
     candidateIds = [bound];
-    trace.push({ step: "candidates", detail: "the role the connection's bot stands for" });
+    trace.push({
+      step: "candidates",
+      detail: ctx.handlerChosen
+        ? "the role chosen to handle this conversation"
+        : "the role the connection's bot stands for",
+    });
   } else {
     return deny("no role was mentioned");
   }
@@ -111,14 +114,19 @@ async function checkRole(
   }
   const label = `@${role.handle}`;
   if (role.status !== "active") d.reasons.push(`${label} is disabled`);
-  // Console topics: only roles someone invited. Outside: only the role the bot stands for (it joins on its own).
+  // Console topics: only roles someone invited. Outside: only the role handling the conversation (it joins on its
+  // own).
   if (ctx.conversationKind === "internal" && ctx.topicId && !(await participant(db, ctx.topicId, "role", roleId))) {
     d.reasons.push(`${label} is not a participant of this topic`);
   }
   if (ctx.conversationKind !== "internal" && roleId !== bound)
-    d.reasons.push(`${label} does not work here: in a Slack, Feishu or GitHub conversation only the bot's role does`);
-  if (!ctx.byRoleId && !(await hasPermission(db, user, Perm.ROLE_USE, roleId)))
-    d.reasons.push(`you do not have permission to use ${label}`);
+    d.reasons.push(
+      `${label} does not work here: in a Slack, Feishu or GitHub conversation only the role handling it does`,
+    );
+  const usable = ctx.topicId
+    ? await mayUseRoleIn(db, user, roleId, ctx.topicId)
+    : await hasPermission(db, user, Perm.ROLE_USE, roleId);
+  if (!ctx.byRoleId && !usable) d.reasons.push(`you do not have permission to use ${label}`);
   if (role.systemAdmin) {
     if (ctx.conversationKind !== "internal")
       d.reasons.push(`${label} is a system administrator: it works only in the witden console`);

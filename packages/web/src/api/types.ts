@@ -46,6 +46,8 @@ export interface Topic {
   status: "active" | "archived";
   /** How roles respond: only when @-mentioned, or automatically (one role decides, several: the dispatcher). */
   response_mode: "mention" | "auto";
+  /** Linked outside: the AI employee chosen to handle it, or null to follow the connection's (channel.role_id). */
+  handler_role_id: string | null;
   source: string;
   created_by: string | null;
   last_message_at: string | null;
@@ -74,7 +76,7 @@ export interface ChannelInfo {
   thread_key: string;
   /** GitHub: issue | pull_request. */
   thread_kind: string | null;
-  /** The role the connection's bot stands for, if chosen. */
+  /** The role the connection's bot stands for, if chosen: the default of its conversations. */
   role_id?: string | null;
   url: string | null;
 }
@@ -950,7 +952,7 @@ export interface Connection {
   status: "active" | "paused" | "error" | string;
   status_reason: string | null;
   settings: {
-    /** The role the connection's bot stands for; external members may use only it. */
+    /** The role the connection's bot stands for: the default of its conversations, which may each choose another. */
     role_id?: string | null;
     auto_provision_users?: boolean;
     /** Feishu: how events arrive (absent: the events URL, as before there was a choice). */

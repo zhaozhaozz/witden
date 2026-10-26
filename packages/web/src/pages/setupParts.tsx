@@ -152,7 +152,7 @@ function missingSetup(r: Role): string | undefined {
   return missing.length ? `还没有${missing.join("和")}，暂时不能工作` : undefined;
 }
 
-/** Choose the role the bot stands for, and who may use it. */
+/** Choose the role the bot stands for (the default of its conversations), and who may use it. */
 export function AccessStep({
   conn,
   intro,
@@ -207,6 +207,9 @@ export function AccessStep({
           </span>
         )}
       </div>
+      <p className="small muted">
+        机器人所在会话默认由这位 AI 员工处理，对外以机器人的身份发言；之后单个会话可以在话题设置中改由其他 AI 员工处理。
+      </p>
       <h3 className="setup-sub">谁可以使用</h3>
       <p className="small muted">
         默认只有把{spaced(account)}关联到 witden
@@ -325,7 +328,7 @@ export function TryStep({
       ) : null}
       {latest?.status === "not_assigned" ? (
         <div className="callout callout-wait">
-          witden 收到了请求，但没有交给 AI 员工：{latest.detail}。常见原因是机器人代表的 AI 员工还没有分配电脑或模型（在
+          witden 收到了请求，但没有交给 AI 员工：{latest.detail}。常见原因是处理会话的 AI 员工还没有分配电脑或模型（在
           <Link to="/roles">AI 员工管理</Link>中设置），或者这个接入还没有选择 AI 员工（第 {accessStep} 步）。
           {`处理后在${on}中再发一次；${on}中提问的地方也会收到这条说明。`}
         </div>

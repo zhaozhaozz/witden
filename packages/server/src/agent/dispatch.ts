@@ -21,7 +21,7 @@ import {
   users,
 } from "../db/schema.js";
 import { Forbidden } from "../errors.js";
-import { externalContext, externalRoleId } from "../integrations/links.js";
+import { externalContext, externalHandler, externalRoleId } from "../integrations/links.js";
 import { mirrorMessage } from "../integrations/outbound.js";
 import { type RequestContext, resolve } from "../services/assignment.js";
 import { audit } from "../services/audit.js";
@@ -218,12 +218,15 @@ export async function contextForTopic(
   byRoleId: string | null = null,
 ): Promise<RequestContext> {
   const ext = await externalContext(db, topic.id);
+  const handler = ext.connectionId ? await externalHandler(db, topic.id) : undefined;
   return {
     userId,
     topicId: topic.id,
     connectionId: ext.connectionId ?? null,
     conversationId: ext.conversationId ?? null,
     conversationKind: ext.conversationKind ?? "internal",
+    handlerRoleId: handler?.roleId ?? null,
+    handlerChosen: !!handler?.chosenRoleId,
     requestedRoleIds: requested,
     byRoleId,
   };
@@ -352,7 +355,7 @@ export async function createTask(db: Db, o: CreateTaskOptions): Promise<Task> {
             ...(o.reportOnly ? { report_only: true } : {}),
             ...(o.auto ? { auto: true } : {}),
             // A conversation linked to Slack, Feishu or GitHub: console-only tools are not offered, and only the
-            // bot's role works there (external_topic).
+            // role handling it works there (external_topic).
             ...(external ? { outside: true, external_topic: true } : {}),
             // Two roles talking directly: nobody to ask and nobody else to involve (agent/contacts.ts).
             ...(topic.kind === "pair" ? { pair_topic: true } : {}),
@@ -486,7 +489,7 @@ export async function dispatchHumanMessage(
   } else if (topic.kind === "dm") {
     candidates = (await topicSvc.participants(db, topic.id, "role")).map((p) => p.participantId);
   } else if (external) {
-    // Outside the console only the role the connection's bot stands for works (empty candidate list).
+    // Outside the console only the role handling the conversation works (empty candidate list).
     candidates = [];
   } else {
     // Nobody was @-mentioned. "mention" topics stay quiet. In "auto" topics a single role sees the message and
@@ -568,7 +571,7 @@ export async function dispatchRoleMessage(
 ): Promise<Task[]> {
   const targets = msg.mentions.filter((m) => m.type === "role" && m.id !== sender.id).map((m) => m.id);
   if (!targets.length) return [];
-  // Outside the console only the bot's role works: its @-mentions of other roles are just text.
+  // Outside the console only the role handling the conversation works: its @-mentions of other roles are text.
   if ((await externalRoleId(db, topic.id)) !== undefined) return [];
   const limit = settings().maxAutoRounds;
   if (msg.round > limit) {

@@ -207,7 +207,7 @@ export function FeishuSetup({
     >
       <p className="setup-intro">
         {switching
-          ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、机器人代表的 AI 员工和已关联的账号都保持不变。`
+          ? `按下面 ${flow.length} 步把这个接入改为用${label(mode)}接收事件，沿用原来的飞书应用。群聊、私聊、处理它们的 AI 员工和已关联的账号都保持不变。`
           : `按下面 ${flow.length} 步把飞书接入 witden，需要飞书企业的应用开发权限（发布应用时可能需要企业管理员审核）。完成后，大家在群里 @ 机器人或私聊它，就能把工作交给 witden 中的 AI 员工：一个群聊是 witden 中的一个话题，和飞书中看到的一致，消息串中的消息显示为回复；AI 员工在提问的地方回复（直接在群里，或在消息串中）；私聊是一个话题。飞书接入目前为实验性，只同步文字（包括富文本和卡片中的文字）。`}
       </p>
       <div className="setup-modes">

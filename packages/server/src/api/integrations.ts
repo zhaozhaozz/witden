@@ -193,7 +193,8 @@ async function cleanSettings(db: Db, s: Record<string, any>, platform: string): 
     throw new BadRequest("bot_requests must be true or false");
   if (s.auth_only !== undefined && typeof s.auth_only !== "boolean")
     throw new BadRequest("auth_only must be true or false");
-  // The role the connection's bot stands for (null: none chosen yet, so the connection takes no requests).
+  // The role the connection's bot stands for, the default of its conversations (null: none chosen yet, so those
+  // following it take no requests).
   if (s.role_id !== undefined && s.role_id !== null && typeof s.role_id !== "string")
     throw new BadRequest("role_id must be a role id or null");
   if (s.role_id) {
@@ -353,7 +354,8 @@ export async function integrationRoutes(app: FastifyInstance) {
       const [updated] = Object.keys(update).length
         ? await db.update(connections).set(update).where(eq(connections.id, conn.id)).returning()
         : [conn];
-      // A new role for the bot replaces the previous one in every conversation linked to the connection.
+      // A new role for the bot replaces the previous one in the linked conversations that follow it (not in those
+      // given a role of their own: services/connection-role.ts).
       const roleFrom = connectionRoleId(conn);
       const roleTo = connectionRoleId(updated);
       if (roleFrom !== roleTo) {

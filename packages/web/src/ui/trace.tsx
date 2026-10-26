@@ -42,7 +42,8 @@ const KNOWN_TEXT: Record<string, string> = {
   "no role was mentioned": "消息没有 @ AI 员工",
   "this connection's bot has no role yet: an administrator must choose the role it stands for":
     "这个接入的机器人还没有选择代表的 AI 员工，需要管理员在接入详情中选择",
-  "the role the connection's bot stands for": "没有 @ AI 员工，交给机器人代表的 AI 员工",
+  "the role the connection's bot stands for": "没有 @ AI 员工，交给接入默认处理的 AI 员工",
+  "the role chosen to handle this conversation": "没有 @ AI 员工，交给为这个会话选择的 AI 员工",
 };
 
 /** Steps of the assignment rules, which were removed; older tasks still carry them. */

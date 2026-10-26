@@ -35,6 +35,7 @@ import * as topicSvc from "../services/topics.js";
 import { createUser } from "../services/users.js";
 import { CHANNEL, getAdapter, type InboundAction } from "./base.js";
 import { integrationError } from "./diagnostics.js";
+import { externalRoleId } from "./links.js";
 import { sentMessageRoot } from "./message-refs.js";
 
 export interface InboundMessage {
@@ -220,7 +221,7 @@ export async function resolveIdentity(
     await db.update(externalIdentities).set({ displayName }).where(eq(externalIdentities.id, ident.id));
   }
   if (!ident.userId && (conn.settings.auto_provision_users || bot)) {
-    // An external member of this connection: uses only the role its bot stands for, has no console sign-in.
+    // An external member of this connection: uses only the role handling its conversations, has no console sign-in.
     const user = await createUser(db, {
       name: displayName || placeholder,
       externalConnectionId: conn.id,
@@ -445,9 +446,9 @@ async function handle(msg: InboundMessage, files: Downloaded[], reply?: Reply): 
     // Anyone who can see the thread may take part; their requests are still checked individually.
     if (!(await topicSvc.participant(db, topic.id, "user", user.id)))
       await topicSvc.addParticipant(db, topic, "user", user.id);
-    // The bot stands for one role: everything addressed to it goes to that role. A bot without a role takes no
-    // requests; the dispatcher says so.
-    const bound = typeof conn.settings.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
+    // One role handles the conversation, the bot's own unless the topic chose another: everything addressed to the
+    // bot goes to it. Without one no requests are taken; the dispatcher says so.
+    const bound = (await externalRoleId(db, topic.id)) ?? null;
     // Another bot's request: only where the connection takes them, and not without end (bots answering each
     // other): after so many in a row with nobody else asking in between, they are only recorded.
     let addressed = msg.addressed;

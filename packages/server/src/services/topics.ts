@@ -121,10 +121,12 @@ export async function inviteRole(
   if (topic.kind === "pair") throw new BadRequest("a conversation between two AI employees keeps its two roles");
   if (topic.kind === "dm" && (await participants(db, topic.id, "role")).length)
     throw new BadRequest("a DM has exactly one role");
-  // A Slack, Feishu or GitHub conversation has one role: the one its bot stands for.
+  // A Slack, Feishu or GitHub conversation has one role: the one handling it, chosen in its settings.
   const bound = await externalRoleId(db, topic.id);
   if (bound !== undefined && bound !== role.id)
-    throw new BadRequest("only the role its bot stands for works in a Slack, Feishu or GitHub conversation");
+    throw new BadRequest(
+      "only the role handling a Slack, Feishu or GitHub conversation works there; choose it in the topic's settings",
+    );
   if (user) await requirePerm(db, user, Perm.ROLE_INVITE, role.id);
   return addParticipant(db, topic, "role", role.id, { invitedBy: user?.id ?? opts.byRole?.id ?? null });
 }

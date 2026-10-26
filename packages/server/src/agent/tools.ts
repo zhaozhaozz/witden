@@ -2039,7 +2039,7 @@ export function toolsFor(envelope: Record<string, any>): ToolSpec[] {
         (!envelope.system_admin || (t.name !== "read_skill" && !ORDINARY_ROLE_GROUPS.has(t.group ?? ""))) &&
         // Some only for work that stays in the console (not in, nor relayed from, an external conversation).
         (!t.group || !CONSOLE_ONLY_GROUPS.has(t.group) || !envelope.outside) &&
-        // In a Slack, Feishu or GitHub conversation only the bot's role works: there is no other role to @ or hand
+        // In a Slack, Feishu or GitHub conversation only the role handling it works: there is no other role to @ or hand
         // work to. A request relayed from there into a console topic may still involve that topic's roles.
         (!["message_role", "delegate_task", "transfer_task"].includes(t.name) || !envelope.external_topic) &&
         // Only that role reports on the linked internal topics; an internal topic has no use for an external one's.

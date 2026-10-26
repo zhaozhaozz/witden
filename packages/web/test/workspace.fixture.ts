@@ -13,6 +13,7 @@ const topic = {
   status: "active",
   source: "internal",
   response_mode: "mention",
+  handler_role_id: null as string | null,
   created_at: now,
   updated_at: now,
   last_message_at: now,
@@ -60,12 +61,19 @@ export const progressText = Array.from({ length: 12 }, (_, i) => `检查项目 $
 
 export async function workspace(
   page: Page,
-  options: { dm?: boolean; multipleRoles?: boolean; noRoles?: boolean } = {},
+  options: { dm?: boolean; multipleRoles?: boolean; noRoles?: boolean; external?: boolean } = {},
 ) {
   const otherRole = { ...role, id: "role-2", name: "质量助手", handle: "qa" };
   const currentTopic = {
     ...topic,
     kind: options.dm ? "dm" : "group",
+    // A Slack channel of the same connection: its AI employee is chosen in its settings.
+    ...(options.external
+      ? {
+          source: "slack",
+          channel: { ...designChannel.channel, conversation_id: "conv-2", conversation_name: "product" },
+        }
+      : {}),
     participants: options.noRoles
       ? [topic.participants[1]]
       : [...topic.participants, ...(options.multipleRoles ? [{ ...otherRole, type: "role", joined_at: now }] : [])],
@@ -238,7 +246,7 @@ export async function workspace(
       let json: unknown;
       if (path === "/api/auth/me") json = user;
       else if (path === "/api/users") json = [user];
-      else if (path === "/api/roles") json = [role, ...(options.multipleRoles ? [otherRole] : [])];
+      else if (path === "/api/roles") json = [role, ...(options.multipleRoles || options.external ? [otherRole] : [])];
       else if (path === "/api/setup") json = { needed: false };
       else if (path === "/api/instances/computer-1")
         json = { ...computer, status: "stopped", spec: { kind: "desktop" }, operator: null };

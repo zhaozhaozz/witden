@@ -234,7 +234,7 @@ export default function ConnectionsPage() {
     <div className="page">
       <PageHeader
         title="通讯接入"
-        sub="把 Slack、飞书、GitHub 的机器人接入进来。每个机器人代表一位 AI 员工：机器人所在频道和私信中的消息都会记录下来，@ 机器人的消息交给它代表的 AI 员工。"
+        sub="把 Slack、飞书、GitHub 的机器人接入进来。机器人所在频道和私信中的消息都会记录下来，@ 机器人的消息交给会话的 AI 员工：默认是接入选择的 AI 员工，单个会话可以在话题设置中另选。"
         actions={
           <>
             <button type="button" className="btn btn-sm" onClick={() => setShowCaps((v) => !v)}>
@@ -607,7 +607,7 @@ function ConnectionDetail({
           </div>
         ) : conn.settings?.role_id ? null : (
           <div className="callout callout-bad" role="alert">
-            这个机器人还没有选择代表的 AI 员工，发给它的请求都会被拒绝。{" "}
+            这个接入还没有选择默认处理的 AI 员工，跟随默认的会话中发给机器人的请求都会被拒绝。{" "}
             <button type="button" className="btn btn-xs" onClick={() => setEditing(true)}>
               选择 AI 员工
             </button>
@@ -657,7 +657,7 @@ function ConnectionDetail({
               : [
                   ["凭据", conn.has_credentials ? "已设置（不可查看）" : <span className="text-bad">未设置</span>],
                   [
-                    "机器人代表的 AI 员工",
+                    "默认处理的 AI 员工",
                     typeof conn.settings?.role_id === "string" && conn.settings.role_id ? (
                       dir.roleLabel(conn.settings.role_id)
                     ) : (
@@ -735,7 +735,7 @@ function ConnectionDetail({
                   [
                     "外部成员",
                     conn.settings?.auto_provision_users
-                      ? "开启：未关联的人自动成为外部成员，可以使用机器人代表的 AI 员工"
+                      ? "开启：未关联的人自动成为外部成员，可以使用处理其会话的 AI 员工"
                       : "关闭：未关联的人不能使用，需要管理员关联身份",
                   ],
                 ]
@@ -1219,9 +1219,7 @@ function ConnectionForm({
         <button type="button" className="btn" onClick={onCancel}>
           取消
         </button>
-        {authOnly || settings.role_id ? null : (
-          <span className="small muted">选择机器人代表的 AI 员工后才能保存。</span>
-        )}
+        {authOnly || settings.role_id ? null : <span className="small muted">选择默认处理的 AI 员工后才能保存。</span>}
       </div>
     </form>
   );

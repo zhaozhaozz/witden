@@ -13,11 +13,14 @@ import { newId } from "../src/db/ids.js";
 import {
   agentSessions,
   artifacts,
+  auditLogs,
   connections,
   externalConversations,
   externalIdentities,
   externalThreadLinks,
+  outboundMessages,
   processedEvents,
+  roles,
   tasks,
   topicParticipants,
   topics,
@@ -30,7 +33,7 @@ import { setSlackFetch } from "../src/integrations/slack.js";
 import { normalizeSlackApps } from "../src/integrations/slack-apps.js";
 import { socketTiming } from "../src/integrations/slack-socket.js";
 import { secretBox } from "../src/security/crypto.js";
-import { hasPermission, Perm } from "../src/security/permissions.js";
+import { hasPermission, mayUseRoleIn, Perm } from "../src/security/permissions.js";
 import { saveArtifact } from "../src/services/files.js";
 import { call, lastUser, reply } from "./support/harness.js";
 import { buildWorld, type World } from "./support/world.js";
@@ -1192,5 +1195,155 @@ describe("slack", () => {
     expect(await allTasks()).toHaveLength(1);
     const inbound = (await w.api("GET", `/api/connections/${conn.id}/inbound`, { token: w.adminToken })).body;
     expect(inbound.map((e: any) => e.event_key)).toEqual(["msg:C1:700.1"]);
+  });
+
+  describe("the AI employee handling a conversation", () => {
+    const topicTitled = async (title: string) => (await db().select().from(topics).where(eq(topics.title, title)))[0];
+    const tasksIn = async (topicId: string) => (await allTasks()).filter((t) => t.topicId === topicId);
+    const rolesIn = async (topicId: string) =>
+      (
+        await db()
+          .select()
+          .from(topicParticipants)
+          .where(and(eq(topicParticipants.topicId, topicId), eq(topicParticipants.participantType, "role")))
+      )
+        .filter((p) => !p.removedAt)
+        .map((p) => p.participantId);
+    const choose = (topicId: string, value: unknown, token = w.adminToken) =>
+      w.api("PATCH", `/api/topics/${topicId}`, { token, json: { handler_role_id: value } });
+
+    it("a channel may have its own: it takes what is addressed to the bot and speaks as the bot", async () => {
+      await w.api("PATCH", `/api/connections/${conn.id}`, {
+        token: w.adminToken,
+        json: { settings: { auto_provision_users: true } },
+      });
+      // dev's work waits for an approval, so it is still open when the channel gets another AI employee
+      await w.api("PATCH", `/api/roles/${w.ids.dev}`, { token: w.adminToken, json: { approval_required: ["shell"] } });
+      w.scripts.dev = (_m, turn) =>
+        turn === 0 ? reply("", [call("run_command", { command: "deploy" })]) : reply("ok");
+      w.scripts.test = () => reply("tests pass");
+      await send(event("<@UBOT> deploy it", { user: "UCAROL", ts: "800.1" }));
+      await send(event("<@UBOT> deploy there", { user: "UCAROL", channel: "C2", ts: "801.1" }));
+      await w.waitFor(async () => (await allTasks()).length === 2);
+      await w.drain();
+      const c1 = await topicTitled("#c1");
+      const c2 = await topicTitled("#c2");
+      expect((await tasksIn(c1.id)).map((t) => t.status)).toEqual(["waiting_approval"]);
+      const carolId = (await tasksIn(c1.id))[0].requesterUserId as string;
+
+      // #c1 is handled by @test from now on; the connection still stands for @dev
+      const changed = await choose(c1.id, w.ids.test);
+      expect(changed.status, changed.raw).toBe(200);
+      expect(changed.body).toMatchObject({ handler_role_id: w.ids.test, channel: { role_id: w.ids.dev } });
+      expect(await rolesIn(c1.id)).toEqual([w.ids.test]);
+      expect(await rolesIn(c2.id)).toEqual([w.ids.dev]);
+      // dev's work here stops, its work in #c2 goes on
+      expect((await tasksIn(c1.id)).map((t) => t.status)).toEqual(["cancelled"]);
+      expect((await tasksIn(c2.id)).map((t) => t.status)).toEqual(["waiting_approval"]);
+      // the console says who left and who joined; Slack is told nothing of it
+      const notices = (await w.messages(c1.id, w.adminToken)).filter((m: any) => m.content.endsWith("the topic."));
+      expect(notices.map((m: any) => m.content)).toEqual(["@dev left the topic.", "admin added @test to the topic."]);
+      for (const m of notices)
+        expect(await db().select().from(outboundMessages).where(eq(outboundMessages.messageId, m.id))).toEqual([]);
+      const [audited] = await db().select().from(auditLogs).where(eq(auditLogs.action, "topic.handler_role"));
+      expect(audited).toMatchObject({ actorType: "user", topicId: c1.id, connectionId: conn.id });
+      expect(audited.detail).toMatchObject({
+        from: w.ids.dev,
+        to: w.ids.test,
+        chosen: w.ids.test,
+        removed: 1,
+        added: 1,
+        tasks_cancelled: 1,
+      });
+
+      // what carol addresses to the bot in #c1 now goes to @test, answered as the bot
+      await send(event("<@UBOT> run the tests", { user: "UCAROL", ts: "802.1" }));
+      await w.waitFor(async () => (await tasksIn(c1.id)).length === 2);
+      await w.drain();
+      expect((await tasksIn(c1.id)).map((t) => t.ownerRoleId)).toEqual([w.ids.dev, w.ids.test]);
+      expect((await tasksIn(c1.id))[1].assignment.trace).toContainEqual({
+        step: "candidates",
+        detail: `asked for: ${w.ids.test}`,
+      });
+      await deliverPending();
+      const answer = slack.posts.find((p) => p.text === "tests pass");
+      expect(answer).toMatchObject({ channel: "C1" });
+      expect(answer?.username).toBeUndefined();
+      // carol, an external member, uses @test only where it handles her conversation
+      const [carol] = await db().select().from(users).where(eq(users.id, carolId));
+      expect(await hasPermission(db(), carol, Perm.ROLE_USE, w.ids.test)).toBe(false);
+      expect(await mayUseRoleIn(db(), carol, w.ids.test, c1.id)).toBe(true);
+      expect(await mayUseRoleIn(db(), carol, w.ids.test, c2.id)).toBe(false);
+
+      // a new role for the connection: #c2 follows it, #c1 keeps its own
+      const rebound = await w.api("PATCH", `/api/connections/${conn.id}`, {
+        token: w.adminToken,
+        json: { settings: { role_id: w.ids.analyst } },
+      });
+      expect(rebound.status, rebound.raw).toBe(200);
+      expect(await rolesIn(c1.id)).toEqual([w.ids.test]);
+      expect(await rolesIn(c2.id)).toEqual([w.ids.analyst]);
+      expect((await tasksIn(c2.id)).map((t) => t.status)).toEqual(["cancelled"]);
+      const [roleChange] = (
+        await db().select().from(auditLogs).where(eq(auditLogs.action, "connection.role_change"))
+      ).filter((a) => a.detail.to === w.ids.analyst);
+      expect(roleChange.detail).toMatchObject({ from: w.ids.dev, topics: 1, removed: 1, added: 1, kept: 1 });
+
+      // following the connection again: the analyst takes over #c1
+      const back = await choose(c1.id, null);
+      expect(back.status, back.raw).toBe(200);
+      expect(back.body.handler_role_id).toBeNull();
+      expect(await rolesIn(c1.id)).toEqual([w.ids.analyst]);
+      const changes = await db().select().from(auditLogs).where(eq(auditLogs.action, "topic.handler_role"));
+      expect(changes.map((c) => c.detail)).toContainEqual(
+        expect.objectContaining({ from: w.ids.test, to: w.ids.analyst, chosen: null }),
+      );
+      // choosing what is already chosen changes nothing
+      expect((await choose(c1.id, null)).status).toBe(200);
+      expect(await db().select().from(auditLogs).where(eq(auditLogs.action, "topic.handler_role"))).toHaveLength(2);
+    });
+
+    it("only an active, ordinary AI employee, only for a Slack, Feishu or GitHub conversation", async () => {
+      w.scripts.dev = () => reply("hi");
+      await send(event("<@UBOT> hi", { ts: "810.1" }));
+      await w.waitFor(async () => (await allTasks()).length === 1);
+      await w.drain();
+      const topicId = (await allTasks())[0].topicId;
+      const [admin] = await db().select().from(roles).where(eq(roles.systemAdmin, true));
+      const refused = async (value: unknown, pattern: RegExp, id = topicId, status = 400) => {
+        const res = await choose(id, value);
+        expect(res.status, res.raw).toBe(status);
+        expect(res.raw).toMatch(pattern);
+      };
+      await refused(admin.id, /system administrator/);
+      await refused("role_missing", /role not found/, topicId, 404);
+      await refused(42, /a role id or null/);
+      const disabled = await w.api("POST", `/api/roles/${w.ids.analyst}/disable`, {
+        token: w.adminToken,
+        json: { on_tasks: "cancel" },
+      });
+      expect(disabled.status, disabled.raw).toBe(200);
+      await refused(w.ids.analyst, /disabled/);
+      // a console topic has its invited AI employees, no handling one
+      await refused(w.ids.test, /only a topic linked to a Slack, Feishu or GitHub conversation/, w.ids.topic);
+      // any console account may choose it, as it may change the topic's other settings
+      expect((await choose(topicId, w.ids.test, w.alice)).status).toBe(200);
+      expect(await rolesIn(topicId)).toEqual([w.ids.test]);
+      // nobody is invited instead: the setting says where to choose
+      const invite = await w.api("POST", `/api/topics/${topicId}/participants`, {
+        token: w.adminToken,
+        json: { type: "role", id: w.ids.dev },
+      });
+      expect(invite.status).toBe(400);
+      expect(invite.raw).toMatch(/choose the role handling it in the topic's settings/);
+      // a Slack DM with the bot may choose its AI employee too, but has nothing else to set
+      await send(event("hello", { channel: "D9", ts: "811.1", etype: "message" }, { channel_type: "im" }));
+      await w.waitFor(async () => (await allTasks()).length === 2);
+      const dmId = (await allTasks())[1].topicId;
+      expect((await choose(dmId, w.ids.test)).status).toBe(200);
+      expect(await rolesIn(dmId)).toEqual([w.ids.test]);
+      const titled = await w.api("PATCH", `/api/topics/${dmId}`, { token: w.adminToken, json: { title: "x" } });
+      expect(titled.status).toBe(400);
+    });
   });
 });

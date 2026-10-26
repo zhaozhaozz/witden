@@ -257,8 +257,8 @@ export function TaskControls({
                 </>
               ) : t.channel ? (
                 <div className="callout callout-wait">
-                  这是 Slack、飞书或 GitHub 中的会话，其中只有机器人代表的 AI 员工工作，没有其他 AI
-                  员工可以接手这项任务。
+                  这是 Slack、飞书或 GitHub 中的会话，其中只有处理这个会话的 AI 员工工作，没有其他 AI
+                  员工可以接手这项任务。要换 AI 员工，在话题设置的「处理的 AI 员工」中更换。
                 </div>
               ) : (
                 <div className="callout callout-wait">

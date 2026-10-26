@@ -1205,3 +1205,28 @@ describe("0051_role_skill_files", () => {
     await db.close();
   });
 });
+
+describe("0053_topic_handler_role", () => {
+  it("lets every existing topic follow its connection's role; a chosen one must be an existing role", async () => {
+    const db = new PGlite();
+    for (const f of fs
+      .readdirSync(DIR)
+      .filter((f) => f.endsWith(".sql") && f < "0053")
+      .sort())
+      await apply(db, f.replace(/\.sql$/, ""));
+    await db.exec(`
+      insert into roles (id, name, handle) values ('role_dev', 'Dev', 'dev');
+      insert into topics (id, title, source) values ('top_slack', '#general', 'slack'), ('top_console', 'Plan', 'internal');
+    `);
+    await apply(db, "0053_topic_handler_role");
+    expect((await db.query("select id, handler_role_id from topics order by id")).rows).toEqual([
+      { id: "top_console", handler_role_id: null },
+      { id: "top_slack", handler_role_id: null },
+    ]);
+    await db.exec("update topics set handler_role_id = 'role_dev' where id = 'top_slack'");
+    await expect(db.exec("update topics set handler_role_id = 'role_gone' where id = 'top_slack'")).rejects.toThrow(
+      /topics_handler_role_id_roles_id_fk/,
+    );
+    await db.close();
+  });
+});

@@ -258,7 +258,7 @@ export function SlackSetup({
       {header}
       <p className="setup-intro">
         {switching
-          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、机器人代表的 AI 员工和已关联的账号都保持不变。`
+          ? `按下面 ${flow.length} 步把这个接入切换到${mode === "socket" ? " Socket Mode" : "事件地址"}，需要 Slack 工作区的应用管理权限。频道、私信、处理它们的 AI 员工和已关联的账号都保持不变。`
           : `按下面 ${flow.length} 步把 Slack 接入 witden，需要 Slack 工作区的应用管理权限（或由工作区管理员批准安装）。完成后，工作区里的人可以在频道或私信中 @ 机器人，把工作交给 witden 中的 AI 员工：一个频道是 witden 中的一个话题，和 Slack 中看到的一致，AI 员工在提问的地方（频道里或 thread 里）回答。`}
       </p>
       <div className="setup-modes">

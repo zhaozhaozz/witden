@@ -564,7 +564,7 @@ export class FeishuAdapter implements Adapter {
 
   /** The card changed: its Feishu copy shows the new form (the card was sent with update_multi). */
   async updateCard(_db: Db, conn: Connection, externalId: string, msg: Message): Promise<void> {
-    // Cards are roles', and the role of a Feishu conversation is the bot's own: no name to add.
+    // Cards are roles', and a Feishu conversation's one role speaks as the bot: no name to add.
     await this.call(conn, "PATCH", `im/v1/messages/${externalId}`, {
       body: { content: JSON.stringify(await this.feishuCard(msg, null)) },
     });

@@ -93,7 +93,7 @@ export function TriggersTab({ topic, version }: { topic: Topic; version: number 
       <p className="small muted">
         收到事件或到达计划时间后，交给指定的 AI 员工处理。先在「设置」的话题目标中写清工作用途和处理要求。
         {topic.channel
-          ? "这个话题对应外部频道：由机器人代表的 AI 员工处理，处理结果同步到频道。"
+          ? "这个话题对应外部会话：由处理这个会话的 AI 员工处理（见「设置」中的「处理的 AI 员工」），处理结果同步到会话。"
           : "需要同步到其他话题时，由 AI 员工用关联话题发送。"}
       </p>
       {topic.status === "archived" ? <p className="notice">话题已归档，触发器暂停接收和发起工作。</p> : null}

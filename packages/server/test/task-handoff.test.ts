@@ -205,7 +205,9 @@ describe("handing a task to another role", () => {
     await linkChannel(w, w.ids.topic, ["UCAROL"]);
     const res = await move(done.id, w.ids.test);
     expect(res.status).toBe(403);
-    expect(res.body.error.message).toContain("only the bot's AI employee works");
+    expect(res.body.error.message).toContain(
+      "only the AI employee handling a Slack, Feishu or GitHub conversation works",
+    );
     expect((await fresh(done.id)).ownerRoleId).toBe(w.ids.dev);
   });
 

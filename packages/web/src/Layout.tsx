@@ -522,8 +522,8 @@ function ConnectionLists() {
 type DirRole = ReturnType<typeof useDirectory>["roles"][number];
 
 /**
- * Who works in a connection's conversations, at a glance: the role its bot stands for first, then other roles
- * brought in, and the virtual computers they work on (faded when not running).
+ * Who works in a connection's conversations, at a glance: the role its bot stands for (their default) first, then
+ * roles chosen for single conversations, and the virtual computers they work on (faded when not running).
  */
 function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleIds: string[]; roles: DirRole[] }) {
   const ids = [...new Set([...(bound ? [bound] : []), ...roleIds])];
@@ -531,7 +531,7 @@ function ConnectionCast({ bound, roleIds, roles }: { bound: string | null; roleI
   if (!cast.length) return null;
   const computers = [...new Map(cast.filter((r) => r.instance).map((r) => [r.instance!.id, r.instance!])).values()];
   const title = [
-    ...cast.map((r) => `${r.id === bound ? "机器人代表" : "参与"}的 AI 员工：${r.name} @${r.handle}`),
+    ...cast.map((r) => `${r.id === bound ? "默认处理" : "处理部分会话"}的 AI 员工：${r.name} @${r.handle}`),
     ...computers.map((m) => `虚拟电脑：${m.name}${m.status === "running" ? "（运行中）" : "（未运行）"}`),
   ].join("\n");
   // Chips are wider than avatars were: two of each fit beside a section title.

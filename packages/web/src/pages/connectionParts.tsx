@@ -182,7 +182,7 @@ export const SLACK_FIELD_HELP: Record<string, ReactNode> = {
 
 /** A connection's settings as edited in the console. */
 export interface ConnSettings {
-  /** The role the connection's bot stands for (null: not chosen yet; the bot takes no requests). */
+  /** The role the connection's bot stands for, the default of its conversations (null: not chosen yet). */
   role_id: string | null;
   auto_provision_users: boolean;
   /** Feishu only: other bots @-mentioning the bot go to its role (otherwise their messages are context only). */
@@ -220,8 +220,8 @@ export function ConnectionSettingsFields({
     <>
       {chooseRole ? (
         <Field
-          label="机器人代表的 AI 员工"
-          hint="发给这个机器人的消息都交给这位 AI 员工，回复以机器人的名字和头像发出。需要多位 AI 员工时，为每位 AI 员工各建一个应用。"
+          label="默认处理的 AI 员工"
+          hint="机器人所在会话的消息默认交给这位 AI 员工，回复以机器人的名字和头像发出。单个会话可以在它的话题设置「处理的 AI 员工」中改由其他 AI 员工处理；更换这里时，跟随默认的会话一起更换。"
         >
           <select required value={value.role_id ?? ""} onChange={(e) => set({ role_id: e.target.value || null })}>
             {value.role_id ? null : (
@@ -246,7 +246,7 @@ export function ConnectionSettingsFields({
         label="允许未关联的人使用：自动建为外部成员（不登录控制台，私信彼此隔离）"
         hint={
           value.auto_provision_users
-            ? `外部成员可以使用这个机器人代表的 AI 员工${value.role_id ? ` ${dir.roleLabel(value.role_id)}` : ""}。`
+            ? `外部成员可以使用处理其会话的 AI 员工${value.role_id ? `（默认 ${dir.roleLabel(value.role_id)}）` : ""}。`
             : undefined
         }
       />

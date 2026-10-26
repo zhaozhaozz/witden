@@ -1,6 +1,6 @@
 import { asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client.js";
-import { type Connection, connections, externalConversations, externalThreadLinks } from "../db/schema.js";
+import { type Connection, connections, externalConversations, externalThreadLinks, topics } from "../db/schema.js";
 
 export interface ExternalContext {
   connectionId?: string;
@@ -9,9 +9,14 @@ export interface ExternalContext {
   threadKey?: string;
 }
 
-/** Where a topic lives outside (first linked conversation), for role assignment. */
+/** Where a topic lives outside: its first linked conversation, the one the console shows (channelsOf). */
 export async function externalContext(db: Db, topicId: string): Promise<ExternalContext> {
-  const [link] = await db.select().from(externalThreadLinks).where(eq(externalThreadLinks.topicId, topicId)).limit(1);
+  const [link] = await db
+    .select()
+    .from(externalThreadLinks)
+    .where(eq(externalThreadLinks.topicId, topicId))
+    .orderBy(asc(externalThreadLinks.createdAt), asc(externalThreadLinks.id))
+    .limit(1);
   if (!link) return {};
   const [conv] = await db
     .select()
@@ -31,15 +36,41 @@ export async function externalContext(db: Db, topicId: string): Promise<External
 export const connectionRoleId = (conn: Connection): string | null =>
   typeof conn.settings?.role_id === "string" && conn.settings.role_id ? conn.settings.role_id : null;
 
+/** Who handles a topic linked to a Slack, Feishu or GitHub conversation. */
+export interface ExternalHandler {
+  /** The connection of the topic's first linked conversation: its bot's role is the topic's default. */
+  connectionId: string;
+  /** The role the connection's bot stands for (null: none chosen), the default for its conversations. */
+  defaultRoleId: string | null;
+  /** The role chosen for this topic in its settings, or null: it follows the default. */
+  chosenRoleId: string | null;
+  /** The role at work there: the chosen one, else the default. */
+  roleId: string | null;
+}
+
 /**
- * A Slack, Feishu or GitHub conversation has one role at work: the one its connection's bot stands for. Returns
- * that role for a topic linked outside (null when the bot has none), or undefined for a console topic.
+ * A Slack, Feishu or GitHub conversation has one role at work. By default it is the role of its connection's bot
+ * (for a topic linked to several, the connection of the first linked conversation); a person may choose another
+ * for the topic (topics.handler_role_id). Outwardly it always speaks as the bot. Undefined for a console topic.
  */
-export async function externalRoleId(db: Db, topicId: string): Promise<string | null | undefined> {
+export async function externalHandler(db: Db, topicId: string): Promise<ExternalHandler | undefined> {
   const ext = await externalContext(db, topicId);
   if (!ext.connectionId) return undefined;
   const [conn] = await db.select().from(connections).where(eq(connections.id, ext.connectionId)).limit(1);
-  return conn ? connectionRoleId(conn) : null;
+  const [topic] = await db
+    .select({ handlerRoleId: topics.handlerRoleId })
+    .from(topics)
+    .where(eq(topics.id, topicId))
+    .limit(1);
+  const defaultRoleId = conn ? connectionRoleId(conn) : null;
+  const chosenRoleId = topic?.handlerRoleId ?? null;
+  return { connectionId: ext.connectionId, defaultRoleId, chosenRoleId, roleId: chosenRoleId ?? defaultRoleId };
+}
+
+/** The role at work in a topic linked outside (externalHandler; null: none), or undefined for a console topic. */
+export async function externalRoleId(db: Db, topicId: string): Promise<string | null | undefined> {
+  const handler = await externalHandler(db, topicId);
+  return handler ? handler.roleId : undefined;
 }
 
 /** Where a conversation lives outside the console, as the console shows it. */
@@ -56,7 +87,7 @@ export interface ChannelInfo {
   /** GitHub: issue | pull_request. */
   thread_kind: string | null;
   url: string | null;
-  /** The role the connection's bot stands for, if chosen. */
+  /** The role the connection's bot stands for, if chosen: the default of its conversations (externalHandler). */
   role_id: string | null;
 }
 
@@ -68,7 +99,7 @@ export async function channelsOf(db: Db, topicIds: string[]): Promise<Map<string
     .select()
     .from(externalThreadLinks)
     .where(inArray(externalThreadLinks.topicId, topicIds))
-    .orderBy(asc(externalThreadLinks.createdAt));
+    .orderBy(asc(externalThreadLinks.createdAt), asc(externalThreadLinks.id));
   if (!links.length) return out;
   const convs = await db
     .select()

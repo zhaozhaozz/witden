@@ -503,8 +503,8 @@ export const FEISHU_TOOLS: ToolSpec[] = [
       const access = CALENDAR_ACCESS[share?.role ?? permissions] ?? CALENDAR_ACCESS.private;
       const [task] = await db.select().from(tasks).where(eq(tasks.id, call.taskId)).limit(1);
       const [role] = task ? await db.select().from(roles).where(eq(roles.id, task.ownerRoleId)).limit(1) : [];
-      // the bot speaks as its own role; another role is named, as in its messages
-      const from = role && role.id !== conn.settings?.role_id ? `${role.name} (@${role.handle})` : null;
+      // the bot speaks as its own role, and as the role handling the chat it is in; another role is named
+      const from = role && !inHere && role.id !== conn.settings?.role_id ? `${role.name} (@${role.handle})` : null;
       const { card, markdown } = shareCard(summary, link, access, from);
       const messageId = await new FeishuAdapter().postCard(conn, chatId, inHere ? here.threadKey : null, card);
       if (inHere && task && messageId) {
