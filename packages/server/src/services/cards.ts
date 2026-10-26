@@ -21,6 +21,8 @@ const name = z
 const short = z.string().trim().min(1).max(200);
 const long = z.string().max(4000);
 const cell = z.union([z.string().max(500), z.number(), z.boolean(), z.null()]);
+/** A heading over a block, so every part of a card can be named (and numbered) alike. */
+const title = z.string().max(200).optional();
 
 const inputBlock = z.object({
   type: z.literal("input"),
@@ -40,6 +42,7 @@ const leafBlocks = [
   z.object({ type: z.literal("text"), text: long }),
   z.object({
     type: z.literal("fields"),
+    title,
     items: z
       .array(z.object({ label: short, value: z.string().max(1000) }))
       .min(1)
@@ -47,6 +50,7 @@ const leafBlocks = [
   }),
   z.object({
     type: z.literal("table"),
+    title,
     columns: z
       .array(
         z.object({
@@ -62,7 +66,7 @@ const leafBlocks = [
   z.object({
     type: z.literal("chart"),
     kind: z.enum(["bar", "line", "pie"]),
-    title: z.string().max(200).optional(),
+    title,
     labels: z.array(z.string().max(60)).min(1).max(50),
     series: z
       .array(z.object({ name: z.string().max(60), values: z.array(z.number().finite()).max(50) }))
@@ -72,6 +76,7 @@ const leafBlocks = [
   }),
   z.object({
     type: z.literal("list"),
+    title,
     items: z
       .array(z.object({ title: short, subtitle: z.string().max(500).optional(), badge: z.string().max(30).optional() }))
       .min(1)
@@ -87,6 +92,7 @@ const leafBlocks = [
   inputBlock,
   z.object({
     type: z.literal("app"),
+    title,
     /** The app's page body: inline <style> and <script> only (no network, no outside files). */
     html: z.string().min(1).max(64_000),
     /** What Feishu, Slack and GitHub show instead (they cannot run it). */
@@ -102,6 +108,7 @@ const block = z.discriminatedUnion("type", [
   ...leafBlocks,
   z.object({
     type: z.literal("tabs"),
+    title,
     tabs: z
       .array(z.object({ label: short, blocks: z.array(leaf).min(1).max(30) }))
       .min(2)
@@ -214,7 +221,20 @@ export function cardInputs(card: Card): CardInput[] {
 const cellText = (v: unknown) =>
   (v === null || v === undefined ? "" : String(v)).replace(/\|/g, "\\|").replace(/\n/g, " ");
 
+/** Blocks that may carry a title over them (a chart keeps its own in its heading row). */
+export function blockTitle(b: CardBlock): string | undefined {
+  return b.type === "fields" || b.type === "table" || b.type === "list" || b.type === "tabs" || b.type === "app"
+    ? b.title?.trim() || undefined
+    : undefined;
+}
+
 function blockMarkdown(b: CardBlock): string {
+  const t = blockTitle(b);
+  const body = blockBody(b);
+  return t ? `**${t}**\n\n${body}` : body;
+}
+
+function blockBody(b: CardBlock): string {
   switch (b.type) {
     case "text":
       return b.text;

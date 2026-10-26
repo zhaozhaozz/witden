@@ -91,6 +91,36 @@ describe("card format", () => {
     ).toThrow(/the select x needs options/);
   });
 
+  it("names any block with a title, in the console's order, in Markdown and on Feishu", () => {
+    const card = parseCard({
+      blocks: [
+        { type: "fields", title: "2. 字段", items: [{ label: "a", value: "1" }] },
+        { type: "table", title: "3. 表格", columns: [{ key: "k", label: "K" }], rows: [{ k: "x" }] },
+        { type: "list", title: "4. 列表", items: [{ title: "一项" }] },
+        {
+          type: "tabs",
+          title: "5. 分页",
+          tabs: [
+            { label: "甲", blocks: [{ type: "text", text: "甲页" }] },
+            { label: "乙", blocks: [{ type: "text", text: "乙页" }] },
+          ],
+        },
+        { type: "app", title: "6. 小应用", html: "<p>x</p>", fallback: "一个小应用" },
+      ],
+    });
+    expect(card.blocks.map((b: any) => b.title)).toEqual(["2. 字段", "3. 表格", "4. 列表", "5. 分页", "6. 小应用"]);
+    const text = cardMarkdown(card);
+    expect(text).toContain("**3. 表格**\n\n| K |");
+    expect(text.indexOf("2. 字段")).toBeLessThan(text.indexOf("3. 表格"));
+    expect(text.indexOf("5. 分页")).toBeLessThan(text.indexOf("**甲**"));
+    const elements: any[] = (toFeishuCard({ spec: card, state: { actions: [], closed: false } }, "msg_1") as any).body
+      .elements;
+    const table = elements.findIndex((e) => e.tag === "table");
+    expect(elements[table - 1]).toMatchObject({ tag: "markdown", content: expect.stringContaining("3. 表格") });
+    const panel = elements.findIndex((e) => e.tag === "collapsible_panel");
+    expect(elements[panel - 1].content).toContain("5. 分页");
+  });
+
   it("reads as Markdown where cards are not shown", () => {
     const md = cardMarkdown(parseCard(approval));
     expect(md).toContain("**发布审批**");

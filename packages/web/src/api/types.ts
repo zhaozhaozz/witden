@@ -133,9 +133,10 @@ export interface CardInput {
 }
 export type CardLeafBlock =
   | { type: "text"; text: string }
-  | { type: "fields"; items: { label: string; value: string }[] }
+  | { type: "fields"; title?: string; items: { label: string; value: string }[] }
   | {
       type: "table";
+      title?: string;
       columns: { key: string; label: string; align?: "left" | "center" | "right" }[];
       rows: Record<string, string | number | boolean | null>[];
     }
@@ -147,13 +148,15 @@ export type CardLeafBlock =
       series: { name: string; values: number[] }[];
       unit?: string;
     }
-  | { type: "list"; items: { title: string; subtitle?: string; badge?: string }[] }
+  | { type: "list"; title?: string; items: { title: string; subtitle?: string; badge?: string }[] }
   | { type: "progress"; label?: string; value: number; max?: number }
   | { type: "divider" }
   /** A small app the role wrote (HTML, CSS, JS), run sandboxed in the console (ui/AppFrame.tsx). */
-  | { type: "app"; html: string; fallback: string; height?: number }
+  | { type: "app"; title?: string; html: string; fallback: string; height?: number }
   | CardInput;
-export type CardBlock = CardLeafBlock | { type: "tabs"; tabs: { label: string; blocks: CardLeafBlock[] }[] };
+export type CardBlock =
+  | CardLeafBlock
+  | { type: "tabs"; title?: string; tabs: { label: string; blocks: CardLeafBlock[] }[] };
 export interface CardSpec {
   title?: string;
   subtitle?: string;

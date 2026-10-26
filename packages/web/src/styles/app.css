@@ -5283,6 +5283,19 @@ body.resizing {
 .wcard-tabs .wcard-blocks {
   padding: 0;
 }
+/* .wcard-blocks sets display, which would otherwise outrank the hidden attribute of inactive tabs */
+.wcard-tabs .wcard-blocks[hidden] {
+  display: none;
+}
+.wcard-titled {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.wcard-block-title {
+  font-size: 12px;
+  font-weight: 600;
+}
 .wcard-field {
   display: grid;
   gap: 4px;

@@ -13,7 +13,7 @@ import { transaction } from "../db/client.js";
 import { type Connection, messages } from "../db/schema.js";
 import { BadRequest, NotFound } from "../errors.js";
 import { applyCardAction, refreshCardCopies, storedCard } from "../services/card-actions.js";
-import { type CardBlock, cardInputs, type StoredCard } from "../services/cards.js";
+import { blockTitle, type CardBlock, cardInputs, type StoredCard } from "../services/cards.js";
 import { consoleBase } from "../services/public-url.js";
 import { addParticipant, getTopic, participant } from "../services/topics.js";
 import { toFeishu } from "./feishu-format.js";
@@ -68,8 +68,14 @@ function chart(b: Extract<CardBlock, { type: "chart" }>) {
   };
 }
 
-/** One content block (inputs go to the form, so not here). */
+/** One content block, under its title if it has one (inputs go to the form, so not here). */
 function element(b: CardBlock): object[] {
+  const t = blockTitle(b);
+  const body = content(b);
+  return t && body.length ? [md(`**${t}**`), ...body] : body;
+}
+
+function content(b: CardBlock): object[] {
   switch (b.type) {
     case "text":
       return b.text.trim() ? [md(b.text)] : [];

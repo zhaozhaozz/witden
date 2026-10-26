@@ -259,7 +259,22 @@ export function CardView({
     if (ok) await act(action.id, data);
   };
 
+  // A block under its title, if it has one (a chart shows its own; progress and inputs have labels).
   const render = (b: CardLeafBlock | CardBlock, key: string): React.ReactNode => {
+    const title =
+      b.type === "fields" || b.type === "table" || b.type === "list" || b.type === "tabs" || b.type === "app"
+        ? b.title?.trim()
+        : undefined;
+    if (!title) return renderBody(b, key);
+    return (
+      <section key={key} className="wcard-titled">
+        <div className="wcard-block-title">{title}</div>
+        {renderBody(b, key)}
+      </section>
+    );
+  };
+
+  const renderBody = (b: CardLeafBlock | CardBlock, key: string): React.ReactNode => {
     switch (b.type) {
       case "text":
         return <Markdown key={key} content={b.text} />;
