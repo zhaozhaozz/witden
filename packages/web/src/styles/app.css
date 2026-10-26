@@ -5165,8 +5165,8 @@ body.resizing {
 }
 
 /* Cards a role posts (ui/CardView.tsx): blocks, a form and buttons in one panel; the accent shows its colour. */
+/* As wide as the message's text (the timeline's column), like other messages. */
 .wcard {
-  max-width: 640px;
   margin: 4px 0;
   border: 1px solid var(--line);
   border-left: 3px solid var(--wcard-accent, var(--line));

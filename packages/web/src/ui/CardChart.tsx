@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 
 /**
  * A card's chart (bar, line or pie) as SVG. Series take the categorical slots in fixed order (the validated light
@@ -16,7 +16,9 @@ type Chart = {
   unit?: string;
 };
 
-const W = 560;
+// Bars and lines are drawn at the width they get (measured), so text and height stay the same at any card width.
+const START_W = 560;
+const MIN_W = 280;
 const H = 220;
 const PAD = { top: 12, right: 12, bottom: 40, left: 44 };
 
@@ -94,6 +96,17 @@ function DataTable({ chart }: { chart: Chart }) {
 /** Bars and lines on one value axis. */
 function XYChart({ chart }: { chart: Chart }) {
   const [hover, setHover] = useState<number | null>(null);
+  const plot = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(START_W);
+  useLayoutEffect(() => {
+    const el = plot.current;
+    if (!el) return;
+    const measure = () => setW(Math.max(MIN_W, Math.round(el.clientWidth)));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const all = chart.series.flatMap((s) => s.values);
   const axis = ticks(Math.min(...all, 0), Math.max(...all, 0));
   const lo = axis[0];
@@ -109,7 +122,7 @@ function XYChart({ chart }: { chart: Chart }) {
   const groupW = n * barW + (n - 1) * 2;
 
   return (
-    <div className="wchart-plot" onMouseLeave={() => setHover(null)}>
+    <div className="wchart-plot" ref={plot} onMouseLeave={() => setHover(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chart.title ?? "图表"}>
         {axis.map((t) => (
           <g key={t}>
